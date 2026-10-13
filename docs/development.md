@@ -53,9 +53,11 @@ Codex 使用 app-server 雙向 JSON-RPC，把 MCP 確認表單交給同一套 ca
 在臨時工作區啟動獨立的 MCP server，保留原有 Codex 登入；不修改個人設定。
 需要支援 `mcpServer/elicitation/request` 的 Codex CLI；初始化、模型及 callback
 共用同一個情境逾時上限，協定不支援或 callback 缺少時直接失敗。
+Runner 宣告 `experimentalApi`，使用僅允許 MCP 表單的 granular approval policy；
+`never` 會自動拒絕表單，不能用來驗證成功批准。
 另有內建 KD 最佳化與自建策略 walk-forward 的執行計畫情境，檢查巢狀參數說明、
-搜尋或折數覆蓋、確認及結果身分；這兩個情境目前明確要求 local provider。
-這兩個情境的確認前狀態觀察尚未接到 Codex runner，不列入一般 Codex 情境的驗證範圍。
+搜尋或折數覆蓋、確認及結果身分；兩個 provider 共用相同的確認前狀態觀察，
+在 callback 收到完整確認單時核對尚無正式工作與結果，批准後再核對工作及執行產物。
 一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
 不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
 參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
@@ -65,16 +67,14 @@ Codex 使用 app-server 雙向 JSON-RPC，把 MCP 確認表單交給同一套 ca
 入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
 `--maxfail=0`。
 
-Codex 執行時須明確排除上述兩個 local-only 執行計畫情境：
+Codex 與 local 入口都涵蓋完整情境，不需排除執行計畫測試：
 
 ```bash
 ./scripts/check-llm.sh codex --llm-model gpt-5.6-luna \
-  -k 'not test_llm_prepares_confirms_and_queries_execution_plan'
+  --llm-timeout 1800
 ```
 
-未排除時，這兩個測試會直接拒絕非 local provider，與客戶端是否支援 elicitation
-無關；其餘 Codex 情境仍須具備各自要求的能力，能力不足會失敗，不會默默略過。
-不加篩選的完整入口目前須使用 local；下列 local 命令會涵蓋全部情境。
+各情境仍須具備其要求的模型及客戶端能力，能力不足會失敗，不會默默略過。
 
 本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
@@ -113,8 +113,7 @@ Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed
 測試 client 會把錯誤回饋模型，要求重新產生下一個工具呼叫，整段對話最多兩次。
 恢復時保留已完成工具的歷史，不重新派發、不切換 provider，也不重設時間或工具次數上限。
 其他 HTTP 錯誤及逾時仍會失敗。失敗輸出附保存的設定與執行規格，之後照常清理臨時工作區。
-快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；local 移除此選項才涵蓋全部情境。
-Codex 要檢查其餘完整情境時，則使用上述排除 local-only 測試的 `-k` 條件。
+快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；移除此選項才涵蓋全部情境。
 `-k history` 驗證模型查回指定參數、翻頁交易、讀取權益與章節目錄，並請後端產生
 自選章節及 LLM 評語的 HTML；對照保存的原始交易，確認沒有再次啟動回測。
 同一情境也讀取原生成交與逐根帳戶頁，並選用這兩個報告章節；回覆逐欄對照

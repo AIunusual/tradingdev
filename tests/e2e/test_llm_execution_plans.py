@@ -1,10 +1,9 @@
 """Model-driven research plans with an explicit simulated user approval.
 
-Live cases currently connect their pre-approval observer to the local bridge.
-Offline cases use the same real MCP
-server, workers, fixture and evidence checks without calling a model. Cached
-prices are synthetic; these tests do not validate external market-data access or
-a real human interface.
+Live cases connect their pre-approval observer to either model client.
+Offline cases use the same real MCP server, workers, fixture and evidence checks
+without calling a model. Cached prices are synthetic; these tests do not validate
+external market-data access or a real human interface.
 """
 
 from __future__ import annotations
@@ -21,7 +20,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import pytest
 import yaml
 
-from tests.e2e.llm_client import ToolCall, run_local_model
+from tests.e2e.codex_harness import run_codex
+from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.execution_fixtures import execution_options
@@ -116,6 +116,9 @@ class _ObservedApproval:
         context: RequestContext[ClientSession, Any],
         params: ElicitRequestParams,
     ) -> ElicitResult:
+        return await self.respond(params)
+
+    async def respond(self, params: ElicitRequestParams) -> ElicitResult:
         database = self.workspace.workspace / "tradingdev.sqlite"
         with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as conn:
             assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
@@ -135,7 +138,7 @@ class _ObservedApproval:
         ).read_text(encoding="utf-8")
         assert expected in params.message, "The callback must see the whole document"
         self.plans.append(plan)
-        return await self.user(context, params)
+        return await self.user.respond(params)
 
 
 def _prompt(kind: PlanKind, revision_id: str | None) -> str:
@@ -408,15 +411,27 @@ def test_execution_plan_live_fixtures_without_model(kind: PlanKind) -> None:
 def test_llm_prepares_confirms_and_queries_execution_plan(
     pytestconfig: pytest.Config, kind: PlanKind
 ) -> None:
-    assert pytestconfig.getoption("llm_provider") == "local", (
-        "These cases currently connect their pre-approval observer only through "
-        "--llm-provider local. No fallback is used."
-    )
+    provider = pytestconfig.getoption("llm_provider")
+    assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         approval = _ObservedApproval(workspace)
 
         async def run() -> list[ToolCall]:
+            if provider == "codex":
+                revision_id = None
+                if kind == "walk_forward":
+                    async with workspace.connect() as client:
+                        revision_id = await _seed_walk_forward(client)
+                return codex_calls(
+                    await run_codex(
+                        workspace.root,
+                        _prompt(kind, revision_id),
+                        elicitation_callback=approval.respond,
+                        model=pytestconfig.getoption("llm_model"),
+                        timeout_seconds=pytestconfig.getoption("llm_timeout"),
+                    )
+                )
             async with workspace.connect(elicitation_callback=approval) as client:
                 revision_id = (
                     await _seed_walk_forward(client) if kind == "walk_forward" else None
