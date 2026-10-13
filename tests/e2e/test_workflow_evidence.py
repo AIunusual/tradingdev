@@ -323,6 +323,67 @@ def test_parameter_experiment_requires_explicit_overrides_and_original_revision(
         assert_workflow(calls, scenario)
 
 
+@pytest.mark.parametrize(
+    "optional_arguments",
+    [
+        {},
+        {"parameters": None},
+        {"backtest_overrides": None},
+        {"parameters": None, "backtest_overrides": None},
+    ],
+    ids=["omitted", "null-parameters", "null-backtest", "both-null"],
+)
+def test_nonexperiment_preparation_accepts_omitted_or_null_overrides(
+    optional_arguments: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[6].arguments.update(optional_arguments)
+    assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"parameters": SCENARIOS["repair"].parameters},
+        {"parameters": SCENARIOS["repair"].overrides},
+        {"parameters": {}},
+        {"backtest_overrides": {"fees": 0}},
+        {"backtest_overrides": {"fees": 0.01}},
+        {"backtest_overrides": {}},
+    ],
+    ids=[
+        "same-parameters",
+        "different-parameters",
+        "empty-parameters",
+        "same-backtest",
+        "different-backtest",
+        "empty-backtest",
+    ],
+)
+def test_nonexperiment_preparation_rejects_override_mappings(
+    overrides: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[6].arguments.update(overrides)
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [None, {}, SCENARIOS["repair"].parameters, {"fast_period": 3}],
+    ids=["null", "empty", "base-parameters", "partial-override"],
+)
+def test_parameter_experiment_requires_the_complete_requested_override(
+    parameters: dict[str, int] | None,
+) -> None:
+    scenario = replace(SCENARIOS["repair"], experiment=True)
+    calls = _repair_evidence()
+    calls[6].arguments["parameters"] = parameters
+    with pytest.raises(AssertionError, match="prepare_backtest arguments differ"):
+        assert_workflow(calls, scenario)
+
+
 def test_parameter_experiment_cannot_resave_after_base_is_runnable() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()

@@ -43,7 +43,9 @@ class Scenario:
             "沿用剛通過 dry-run 的 revision_id；不得為這次參數修改另存 revision，"
             "原 YAML 基礎參數保持不變。"
             if self.experiment
-            else ""
+            else "本次不是參數實驗：prepare_backtest 必須沿用剛通過驗證與 dry-run 的 "
+            "YAML 基礎設定；parameters 與 backtest_overrides 請省略或傳 null，"
+            "不要重複傳入基礎值。"
         )
         history = (
             "接著以 find_runs 依策略與本次參數查回同一 run_id/full scope。"

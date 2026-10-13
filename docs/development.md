@@ -60,6 +60,9 @@ Runner 宣告 `experimentalApi`，使用僅允許 MCP 表單的 granular approva
 在 callback 收到完整確認單時核對尚無正式工作與結果，批准後再核對工作及執行產物。
 一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
 不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
+一般策略建立、修復與歷史查詢情境的回測須沿用已驗證 YAML 基礎設定，
+`prepare_backtest` 的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，
+即使覆寫值等於基礎設定，也不符合這些情境的要求。
 參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
 的設定，並核對執行結果與基礎設定未被改寫。
 另有明確授權的草稿清理情境：先預覽再指定可刪版本，並逐檔確認 current、
