@@ -58,10 +58,12 @@ for line in sys.stdin:
     elif method == 'config/read':
         result = {'config': {'mcp_servers': {}}}
     elif method == 'thread/start':
+        Path('thread_request.json').write_text(json.dumps(request['params']))
         policy = request['params'].get('approvalPolicy')
         form_enabled = (isinstance(policy, dict)
                         and policy.get('granular', {}).get('mcp_elicitations'))
-        result = {'thread': {'id': 'thread'}}
+        result = {'thread': {'id': 'thread'},
+                  'model': request['params'].get('model') or 'fixture-default'}
     elif method == 'turn/start':
         result = {'turn': {'id': 'turn'}}
     else:
@@ -88,9 +90,21 @@ for line in sys.stdin:
 """
 
 
+@pytest.fixture(params=[None, "gpt-5.6-luna"], ids=["model-unset", "model-env"])
+def model_environment(
+    request: pytest.FixtureRequest, monkeypatch: MonkeyPatch
+) -> str | None:
+    model: str | None = request.param
+    if model is None:
+        monkeypatch.delenv("TRADINGDEV_CODEX_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", model)
+    return model
+
+
 @pytest.mark.parametrize("status", ["completed", "failed", "timeout"])
 def test_codex_stops_client_and_detached_child(
-    monkeypatch: MonkeyPatch, status: str
+    monkeypatch: MonkeyPatch, status: str, model_environment: str | None
 ) -> None:
     monkeypatch.setattr(
         codex_harness,
@@ -106,6 +120,8 @@ def test_codex_stops_client_and_detached_child(
             expected = "Codex turn failed" if status == "failed" else "Codex exceeded"
             with pytest.raises(AssertionError, match=expected):
                 asyncio.run(codex_harness.run_codex(root, "prompt", timeout_seconds=1))
+        requested = json.loads((root / "thread_request.json").read_text())
+        assert requested["model"] == model_environment
         pids = json.loads((root / "client_pids.json").read_text())
         for pid in pids:
             try:
@@ -117,7 +133,7 @@ def test_codex_stops_client_and_detached_child(
 
 
 def test_codex_enables_forms_and_wires_the_explicit_callback(
-    monkeypatch: MonkeyPatch,
+    monkeypatch: MonkeyPatch, model_environment: str | None
 ) -> None:
     monkeypatch.setattr(
         codex_harness,
@@ -133,8 +149,33 @@ def test_codex_enables_forms_and_wires_the_explicit_callback(
             )
         )
         assert len(approval.requests) == 1
+        requested = json.loads((root / "thread_request.json").read_text())
+        assert requested["model"] == model_environment
         answer = json.loads((root / "form_answer.json").read_text())
         assert answer["action"] == "accept" and answer["content"] == {"approved": False}
+    assert not root.exists()
+
+
+def test_codex_explicit_model_takes_precedence_over_environment(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", "environment-model")
+    command_models: list[str | None] = []
+
+    def command(root: Path, model: str | None) -> list[str]:
+        command_models.append(model)
+        return [sys.executable, "-c", _APP_SERVER, "completed"]
+
+    monkeypatch.setattr(codex_harness, "_command", command)
+    with TemporaryDirectory(prefix="tradingdev-codex-model-") as temporary:
+        root = Path(temporary)
+        events = asyncio.run(
+            codex_harness.run_codex(root, "prompt", model="explicit-model")
+        )
+        assert events[-1]["method"] == "turn/completed"
+        assert command_models == ["explicit-model"]
+        requested = json.loads((root / "thread_request.json").read_text())
+        assert requested["model"] == "explicit-model"
     assert not root.exists()
 
 
