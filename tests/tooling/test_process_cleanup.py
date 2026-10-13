@@ -11,8 +11,11 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-
-from tests.e2e.codex_harness import _process_identity, _terminate_tree
+from tooling.process_guard import (
+    process_descendants,
+    process_identity,
+    terminate_tree,
+)
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -32,7 +35,7 @@ def test_cleanup_does_not_signal_a_process_group_after_its_leader_exits(
     monkeypatch: MonkeyPatch,
 ) -> None:
     process = _sleeper()
-    identity = _process_identity(process.pid)
+    identity = process_identity(process.pid)
     assert identity is not None
     process.terminate()
     process.wait(timeout=3)
@@ -41,7 +44,7 @@ def test_cleanup_does_not_signal_a_process_group_after_its_leader_exits(
         pytest.fail("Cleanup signalled an exited process group")
 
     monkeypatch.setattr(os, "killpg", reject_signal)
-    _terminate_tree(identity)
+    terminate_tree(identity)
 
 
 def test_group_permission_error_falls_back_to_individual_process_signals(
@@ -49,7 +52,7 @@ def test_group_permission_error_falls_back_to_individual_process_signals(
 ) -> None:
     process = _sleeper()
     try:
-        identity = _process_identity(process.pid)
+        identity = process_identity(process.pid)
         assert identity is not None
         signals: list[int] = []
 
@@ -58,7 +61,7 @@ def test_group_permission_error_falls_back_to_individual_process_signals(
             raise PermissionError("Process group signalling is denied")
 
         monkeypatch.setattr(os, "killpg", deny_group)
-        _terminate_tree(identity)
+        terminate_tree(identity)
         assert process.wait(timeout=3) == -signal.SIGTERM
         assert signals == [signal.SIGTERM]
     finally:
@@ -72,7 +75,7 @@ def test_cleanup_reports_known_processes_that_remain_alive(
 ) -> None:
     process = _sleeper()
     try:
-        identity = _process_identity(process.pid)
+        identity = process_identity(process.pid)
         assert identity is not None
 
         def deny_group(pid: int, sig: int) -> None:
@@ -84,7 +87,7 @@ def test_cleanup_reports_known_processes_that_remain_alive(
         monkeypatch.setattr(os, "killpg", deny_group)
         monkeypatch.setattr(identity, "send_signal", deny_individual)
         with pytest.raises(RuntimeError, match=f"subprocesses:.*{process.pid}"):
-            _terminate_tree(identity, wait_seconds=0.01)
+            terminate_tree(identity, wait_seconds=0.01)
         assert process.poll() is None
     finally:
         if process.poll() is None:
@@ -96,19 +99,19 @@ def test_cleanup_terminates_tracked_children_after_the_leader_exits(
     monkeypatch: MonkeyPatch,
 ) -> None:
     leader = _sleeper()
-    leader_identity = _process_identity(leader.pid)
+    leader_identity = process_identity(leader.pid)
     leader.terminate()
     leader.wait(timeout=3)
     tracked = _sleeper()
     try:
-        tracked_identity = _process_identity(tracked.pid)
+        tracked_identity = process_identity(tracked.pid)
         assert tracked_identity is not None
 
         def reject_group(pid: int, sig: int) -> None:
             pytest.fail("Cleanup signalled the exited leader's process group")
 
         monkeypatch.setattr(os, "killpg", reject_group)
-        _terminate_tree(leader_identity, {tracked_identity})
+        terminate_tree(leader_identity, {tracked_identity})
         assert tracked.wait(timeout=3) == -signal.SIGTERM
     finally:
         if tracked.poll() is None:
@@ -138,7 +141,7 @@ def test_cleanup_escalates_when_a_process_ignores_sigterm(
             "Child never became ready"
         )
         assert process.stdout.readline() == b"ready\n"
-        identity = _process_identity(process.pid)
+        identity = process_identity(process.pid)
         assert identity is not None
         signals: list[int] = []
 
@@ -147,7 +150,7 @@ def test_cleanup_escalates_when_a_process_ignores_sigterm(
             raise PermissionError("Process group signalling is denied")
 
         monkeypatch.setattr(os, "killpg", deny_group)
-        _terminate_tree(identity, wait_seconds=0.01)
+        terminate_tree(identity, wait_seconds=0.01)
         assert process.wait(timeout=3) == -signal.SIGKILL
         assert signals == [signal.SIGTERM, signal.SIGKILL]
     finally:
@@ -156,3 +159,40 @@ def test_cleanup_escalates_when_a_process_ignores_sigterm(
         process.wait(timeout=3)
         if process.stdout is not None:
             process.stdout.close()
+
+
+@pytest.mark.parametrize("denied", [psutil.AccessDenied, PermissionError])
+def test_denied_descendant_inspection_is_not_an_empty_process_tree(
+    monkeypatch: MonkeyPatch, denied: type[Exception]
+) -> None:
+    process = _sleeper()
+    try:
+        identity = process_identity(process.pid)
+        assert identity is not None
+
+        def deny_inspection(recursive: bool = False) -> list[psutil.Process]:
+            raise denied(process.pid)
+
+        monkeypatch.setattr(identity, "children", deny_inspection)
+        with pytest.raises(RuntimeError, match="descendant tracking is unverified"):
+            process_descendants(identity)
+        with pytest.raises(RuntimeError, match="descendant cleanup is unverified"):
+            terminate_tree(identity)
+        assert process.wait(timeout=3) == -signal.SIGTERM
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=3)
+
+
+def test_exited_process_identity_has_no_descendants() -> None:
+    process = _sleeper()
+    try:
+        identity = process_identity(process.pid)
+        assert identity is not None
+    finally:
+        process.terminate()
+        process.wait(timeout=3)
+    assert process_identity(process.pid) is None
+    assert process_descendants(identity) == set()
+    assert process_descendants(None) == set()

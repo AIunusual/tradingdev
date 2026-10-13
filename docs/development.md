@@ -22,6 +22,11 @@ uv sync --locked --all-extras
 | `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
+開發工具與測試共用的程序管理、Codex 執行檔定位放在 `tooling/`，不依賴
+`tests/`。`tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；文件審查
+直接使用共用工具，不載入測試 harness。這些 repository 開發工具不隨產品
+wheel 發佈，並使用相同的 Ruff／strict Mypy 政策。
+
 ## 選擇性 LLM 測試
 
 兩個入口共用均線、動量、參數實驗、歷史查詢與報告、錯誤草稿修復與舊格式策略恢復情境，要求模型完成策略生成、

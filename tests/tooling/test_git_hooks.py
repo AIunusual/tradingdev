@@ -136,12 +136,14 @@ def _repository(primary: str = "main") -> Generator[GitRepository, None, None]:
         for name in (
             "__init__.py",
             "git_gate.py",
-            "process_guard.py",
             "detect-primary-branch.sh",
             "git-flow-commit.sh",
             "install-git-hooks.sh",
         ):
             shutil.copy2(_PROJECT / "scripts" / name, root / "scripts" / name)
+        (root / "tooling").mkdir()
+        for name in ("__init__.py", "process_guard.py"):
+            shutil.copy2(_PROJECT / "tooling" / name, root / "tooling" / name)
         repo.write("scripts/test_checker.py", _CHECKER)
         for mode in ("fast", "full"):
             repo.write(

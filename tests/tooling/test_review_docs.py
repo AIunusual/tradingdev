@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from scripts import review_docs
-from tests.e2e.codex_harness import _terminate_tree
+from tooling.process_guard import terminate_tree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -274,24 +275,38 @@ def test_unavailable_codex_is_an_actionable_failure(
         review_docs.review(base, tree, repo=repo)
 
 
-def test_script_is_executable_from_another_working_directory(
+def test_script_runs_from_another_directory_without_the_test_package(
     repository: tuple[Path, str, str], fake_codex: Path
 ) -> None:
     repo, base, tree = repository
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(Path(review_docs.__file__).resolve()),
-            "--base",
-            base,
-            "--tree",
-            tree,
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    with TemporaryDirectory(prefix="tradingdev-review-install-") as temporary:
+        installation = Path(temporary)
+        scripts = installation / "scripts"
+        scripts.mkdir()
+        source = Path(review_docs.__file__).resolve()
+        shutil.copy2(source, scripts / source.name)
+        shutil.copytree(
+            source.parents[1] / "tooling",
+            installation / "tooling",
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(scripts / source.name),
+                "--base",
+                base,
+                "--tree",
+                tree,
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    assert not installation.exists()
     assert result.returncode == 0, result.stderr
     assert "Documentation review passed" in result.stdout
     assert fake_codex.exists()
@@ -589,12 +604,12 @@ def test_interrupt_cancels_running_batches_and_cleans_all_reviewer_processes(
         def fail_after_cleanup(*args: Any, **kwargs: Any) -> None:
             leader = args[0]
             assert leader is not None
-            _terminate_tree(*args, **kwargs)
+            terminate_tree(*args, **kwargs)
             raise RuntimeError(
                 f"cleanup verification failed for leader PID {leader.pid}"
             )
 
-        monkeypatch.setattr(review_docs, "_terminate_tree", fail_after_cleanup)
+        monkeypatch.setattr(review_docs, "terminate_tree", fail_after_cleanup)
 
     def interrupt_result(self: Future[Any], timeout: float | None = None) -> Any:
         # Trigger the interrupt only after all slots hold real waiting
@@ -636,10 +651,10 @@ def test_batch_cleanup_error_is_reported_even_when_all_verdicts_pass(
     _use_small_batches(monkeypatch)
 
     def fail_after_cleanup(*args: Any, **kwargs: Any) -> None:
-        _terminate_tree(*args, **kwargs)
+        terminate_tree(*args, **kwargs)
         raise RuntimeError("cleanup verification failed")
 
-    monkeypatch.setattr(review_docs, "_terminate_tree", fail_after_cleanup)
+    monkeypatch.setattr(review_docs, "terminate_tree", fail_after_cleanup)
     with pytest.raises(review_docs.ReviewError, match="cleanup verification failed"):
         review_docs.review(base, tree, repo=repo)
     records = _records(fake_codex)

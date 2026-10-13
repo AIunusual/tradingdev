@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from scripts.process_guard import run_captured, run_checked
+from tooling.process_guard import run_captured, run_checked
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -112,8 +112,12 @@ def test_captured_output_preserves_diagnostics_without_pipe_blocking(
     assert not root.exists()
 
 
-def test_normal_leader_exit_cleans_child_without_signalling_exited_group(
+@pytest.mark.parametrize("returncode", [0, 7])
+@pytest.mark.parametrize("captured", [False, True])
+def test_leader_exit_cleans_child_without_signalling_exited_group(
     monkeypatch: MonkeyPatch,
+    returncode: int,
+    captured: bool,
 ) -> None:
     def reject_group(pid: int, sig: int) -> None:
         pytest.fail(f"Signalled exited leader group {pid} with {sig}")
@@ -121,13 +125,42 @@ def test_normal_leader_exit_cleans_child_without_signalling_exited_group(
     monkeypatch.setattr(os, "killpg", reject_group)
     with TemporaryDirectory(prefix="tradingdev-process-test-") as directory:
         root = Path(directory)
-        try:
-            run_checked(
-                [sys.executable, "-c", _SPAWN + "time.sleep(0.3)", _CHILD],
-                cwd=root,
-                env=dict(os.environ),
-                timeout=5,
+        original_children = psutil.Process.children
+
+        def observe_children(
+            process: psutil.Process, recursive: bool = False
+        ) -> list[psutil.Process]:
+            children: list[psutil.Process] = original_children(
+                process, recursive=recursive
             )
+            marker = root / "child.pid"
+            if marker.exists() and int(marker.read_text()) in {
+                child.pid for child in children
+            }:
+                (root / "observed").touch()
+            return children
+
+        monkeypatch.setattr(psutil.Process, "children", observe_children)
+        command = [
+            sys.executable,
+            "-c",
+            _SPAWN
+            + "while not Path('observed').exists(): time.sleep(0.01)\n"
+            + f"raise SystemExit({returncode})\n",
+            _CHILD,
+        ]
+        try:
+            if captured:
+                result = run_captured(
+                    command, cwd=root, env=dict(os.environ), timeout=5
+                )
+                assert result.returncode == returncode
+            elif returncode:
+                with pytest.raises(subprocess.CalledProcessError) as failure:
+                    run_checked(command, cwd=root, env=dict(os.environ), timeout=5)
+                assert failure.value.returncode == returncode
+            else:
+                run_checked(command, cwd=root, env=dict(os.environ), timeout=5)
             _assert_stopped(root)
         finally:
             _emergency_cleanup(root)

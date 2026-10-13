@@ -11,12 +11,13 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tooling.process_guard import run_captured  # noqa: E402
+
 from scripts.pr_context import (  # noqa: E402 - standalone entry point
     PullRequest,
     get_pull_request,
     repository_for_remote,
 )
-from scripts.process_guard import run_captured  # noqa: E402
 
 
 def _git(*arguments: str, allow_missing: bool = False) -> str:

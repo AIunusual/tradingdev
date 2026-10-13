@@ -5,18 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
-from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import psutil
+from tooling.codex_binary import resolve_codex_binary
+from tooling.process_guard import process_descendants, process_identity, terminate_tree
 
-from tests.e2e.codex_binary import resolve_codex_binary
 from tests.integration.mcp_harness import MCPWorkspace
+
+if TYPE_CHECKING:
+    import psutil
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -106,63 +107,6 @@ def _command(root: Path, model: str | None = None) -> list[str]:
     return command
 
 
-def _process_identity(pid: int) -> psutil.Process | None:
-    try:
-        return psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return None
-
-
-def _alive(process: psutil.Process) -> bool:
-    try:
-        return bool(process.is_running() and process.status() != psutil.STATUS_ZOMBIE)
-    except psutil.NoSuchProcess:
-        return False
-    except (psutil.AccessDenied, PermissionError):
-        return bool(process.is_running())
-
-
-def _descendants(process: psutil.Process | None) -> set[psutil.Process]:
-    if process is None or not _alive(process):
-        return set()
-    try:
-        return set(process.children(recursive=True))
-    except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
-        return set()
-
-
-def _terminate_tree(
-    leader: psutil.Process | None,
-    descendants: set[psutil.Process] | None = None,
-    *,
-    wait_seconds: float = 3,
-) -> None:
-    """Terminate known process identities; never signal an exited leader's group."""
-    targets = (descendants or set()) | _descendants(leader)
-    if leader is not None:
-        targets.add(leader)
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        alive = {process for process in targets if _alive(process)}
-        if not alive:
-            return
-        if leader is not None and _alive(leader):
-            with suppress(ProcessLookupError, PermissionError):
-                if os.getpgid(leader.pid) == leader.pid:
-                    os.killpg(leader.pid, sig)
-        for process in alive:
-            with suppress(psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
-                process.send_signal(sig)
-        deadline = time.monotonic() + wait_seconds
-        while any(_alive(process) for process in alive):
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.02)
-    remaining = sorted(process.pid for process in targets if _alive(process))
-    if remaining:
-        msg = f"Could not terminate test subprocesses: {remaining}"
-        raise RuntimeError(msg)
-
-
 async def run_codex(
     root: Path,
     prompt: str,
@@ -187,13 +131,13 @@ async def run_codex(
             start_new_session=True,
             limit=1024 * 1024,
         )
-        identity = _process_identity(process.pid)
+        identity = process_identity(process.pid)
         descendants: set[psutil.Process] = set()
         try:
             async with asyncio.timeout(timeout_seconds):
                 assert process.stdout is not None
                 while line := await process.stdout.readline():
-                    descendants.update(_descendants(identity))
+                    descendants.update(process_descendants(identity))
                     event = json.loads(line)
                     assert isinstance(event, dict), "Codex event must be a JSON object"
                     events.append(event)
@@ -227,8 +171,10 @@ async def run_codex(
             )
             raise AssertionError(msg) from exc
         finally:
-            _terminate_tree(identity, descendants)
-            await asyncio.wait_for(process.wait(), timeout=3)
+            try:
+                terminate_tree(identity, descendants)
+            finally:
+                await asyncio.wait_for(process.wait(), timeout=3)
     assert any(event.get("type") == "turn.completed" for event in events), (
         "Codex did not complete its turn"
     )
@@ -261,7 +207,7 @@ def verify_generated_strategy(
         text=True,
         start_new_session=True,
     )
-    identity = _process_identity(process.pid)
+    identity = process_identity(process.pid)
     try:
         deadline = time.monotonic() + startup_timeout_seconds
         while not ready.exists() and process.poll() is None:
@@ -280,8 +226,10 @@ def verify_generated_strategy(
         msg = f"Generated strategy verification exceeded {timeout_seconds:g}s"
         raise AssertionError(msg) from exc
     finally:
-        _terminate_tree(identity)
-        process.communicate(timeout=3)
+        try:
+            terminate_tree(identity)
+        finally:
+            process.communicate(timeout=3)
 
 
 def successful_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

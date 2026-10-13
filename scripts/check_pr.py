@@ -13,6 +13,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tooling.process_guard import run_captured  # noqa: E402
+
 from scripts.git_gate import (  # noqa: E402
     execution_environment,
     git,
@@ -21,7 +23,6 @@ from scripts.git_gate import (  # noqa: E402
     verify_candidate,
 )
 from scripts.pr_context import get_pull_request, remote_url  # noqa: E402
-from scripts.process_guard import run_captured  # noqa: E402
 
 
 def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:

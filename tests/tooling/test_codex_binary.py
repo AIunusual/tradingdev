@@ -9,8 +9,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-
-from tests.e2e import codex_binary
+from tooling import codex_binary
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch

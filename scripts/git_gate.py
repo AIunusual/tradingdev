@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.process_guard import (  # noqa: E402 - standalone entry point
+from tooling.process_guard import (  # noqa: E402 - standalone entry point
     run_captured,
     run_checked,
 )

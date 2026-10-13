@@ -17,11 +17,11 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.e2e.codex_binary import resolve_codex_binary  # noqa: E402
-from tests.e2e.codex_harness import (  # noqa: E402
-    _descendants,
-    _process_identity,
-    _terminate_tree,
+from tooling.codex_binary import resolve_codex_binary  # noqa: E402
+from tooling.process_guard import (  # noqa: E402
+    process_descendants,
+    process_identity,
+    terminate_tree,
 )
 
 MAX_EVIDENCE_BYTES = 600_000
@@ -308,14 +308,14 @@ def _run(
             start_new_session=True,
             env={**os.environ, "XDG_CACHE_HOME": str(root / "cache")},
         )
-        identity = _process_identity(process.pid)
+        identity = process_identity(process.pid)
         descendants = set()
         pending_input: str | None = prompt
         try:
             while True:
                 if cancelled is not None and cancelled.is_set():
                     raise _ReviewCancelledError("Codex documentation review cancelled.")
-                descendants.update(_descendants(identity))
+                descendants.update(process_descendants(identity))
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise ReviewError(
@@ -331,7 +331,7 @@ def _run(
                     pending_input = None
         finally:
             try:
-                _terminate_tree(identity, descendants)
+                terminate_tree(identity, descendants)
             finally:
                 process.communicate(timeout=5)
     if process.returncode:
