@@ -1,7 +1,7 @@
 """Model-driven research plans with an explicit simulated user approval.
 
-Live cases require the local model bridge because the Codex subprocess harness
-does not expose a form-elicitation callback. Offline cases use the same real MCP
+Live cases currently connect their pre-approval observer to the local bridge.
+Offline cases use the same real MCP
 server, workers, fixture and evidence checks without calling a model. Cached
 prices are synthetic; these tests do not validate external market-data access or
 a real human interface.
@@ -409,8 +409,8 @@ def test_llm_prepares_confirms_and_queries_execution_plan(
     pytestconfig: pytest.Config, kind: PlanKind
 ) -> None:
     assert pytestconfig.getoption("llm_provider") == "local", (
-        "These form-elicitation cases require --llm-provider local; the Codex "
-        "subprocess harness has no simulated-user callback bridge. No fallback is used."
+        "These cases currently connect their pre-approval observer only through "
+        "--llm-provider local. No fallback is used."
     )
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())

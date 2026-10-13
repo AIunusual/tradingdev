@@ -26,8 +26,8 @@ class ToolCall:
 
 
 def tool_payload(result: dict[str, Any]) -> Any:
-    """Accept MCP wire format and Codex's snake_case JSON event representation."""
-    structured = result.get("structuredContent", result.get("structured_content"))
+    """Read MCP wire results shared by the SDK and Codex app-server."""
+    structured = result.get("structuredContent")
     if structured is None:
         for block in result.get("content", []):
             if block.get("type") == "text":
@@ -115,6 +115,7 @@ def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def codex_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
+    """Read completed app-server calls, retaining failed application responses."""
     calls = []
     for item in successful_mcp_calls(events):
         arguments = item.get("arguments", {})

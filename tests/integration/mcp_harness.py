@@ -49,6 +49,10 @@ class SimulatedUserApproval:
         context: RequestContext[ClientSession, Any],
         params: ElicitRequestParams,
     ) -> ElicitResult:
+        return await self.respond(params)
+
+    async def respond(self, params: ElicitRequestParams) -> ElicitResult:
+        """Record and answer a form from either supported test transport."""
         self.requests.append(params)
         return ElicitResult(
             action=self.action,

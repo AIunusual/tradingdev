@@ -46,11 +46,16 @@ uv sync --locked --all-extras
 計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
 證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
 的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
-Local harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
+Local 與 Codex harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
 測試使用者 callback 回應並記錄。這是模擬使用者批准，不是已驗證真人操作的客戶端 UI。
+Codex 使用 app-server 雙向 JSON-RPC，把 MCP 確認表單交給同一套 callback，再回傳其決定；
+不使用無法接回表單的 `codex exec`。測試會停用其他 MCP server、外掛與 hooks，
+在臨時工作區啟動獨立的 MCP server，保留原有 Codex 登入；不修改個人設定。
+需要支援 `mcpServer/elicitation/request` 的 Codex CLI；初始化、模型及 callback
+共用同一個情境逾時上限，協定不支援或 callback 缺少時直接失敗。
 另有內建 KD 最佳化與自建策略 walk-forward 的執行計畫情境，檢查巢狀參數說明、
 搜尋或折數覆蓋、確認及結果身分；這兩個情境目前明確要求 local provider。
-Codex runner 尚未接通表單 callback，這些證據不代表 Codex 表單整合已驗證。
+這兩個情境的確認前狀態觀察尚未接到 Codex runner，不列入一般 Codex 情境的驗證範圍。
 一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
 不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
 參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
