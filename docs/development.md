@@ -22,10 +22,23 @@ uv sync --locked --all-extras
 | `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
-開發工具與測試共用的程序管理、Codex 執行檔定位放在 `tooling/`，不依賴
-`tests/`。`tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；文件審查
-直接使用共用工具，不載入測試 harness。這些 repository 開發工具不隨產品
-wheel 發佈，並使用相同的 Ruff／strict Mypy 政策。
+`scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；Python 實作
+集中在 `tooling/`，以同一個 `.venv` interpreter 執行 `python -m tooling...`。
+`tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
+`tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
+
+`tooling/git/candidates.py` 管理獨立的 snapshot／合併候選與驗證；`gate.py`、
+`check_pr.py`、`cleanup_pr.py` 分別協調 hook／本機 full、PR 檢查與分支清理，
+`pr_context.py` 共用 GitHub PR 身分讀取。文件審查位於 `tooling/review_docs.py`，
+與測試共用 `tooling/` 的程序管理及 Codex 執行檔定位，不依賴 `tests/`。
+候選驗證使用執行檢查的 checkout 內的 reviewer 讀取候選 Git 內容，再執行
+候選 snapshot 內的品質檢查與離線測試。
+
+`tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
+研究原型，用法見 [README](../README.md#mae-研究原型)。`tooling/` 與 `research/`
+不隨產品 wheel 發佈，Python 程式仍使用相同的 Ruff／strict Mypy 政策。
+原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
+直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
 
 ## 選擇性 LLM 測試
 
@@ -223,8 +236,15 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 context 的用量。每批必須完成且通過；任何 finding、缺少必要跨檔脈絡、容量不足、
 執行失敗或逾時都令整體失敗。全部 diff 提供跨檔變更脈絡，但分批不等於所有
 原始檔同時放在單一上下文，也不能保證模型不漏判。
-單獨執行 `review_docs.py` 不代表 PR 檢查通過，仍須使用上述入口完成離線測試
-及遠端版本核對。
+若要單獨執行文件審查，從本 repository 根目錄呼叫模組；`--repo` 指定要讀取
+Git 證據的 repository，`--base` 與 `--tree` 在該 repository 內解析：
+
+```bash
+uv run --no-sync python -m tooling.review_docs \
+  --repo /absolute/path/to/repository --base main --tree HEAD
+```
+
+此命令僅執行文件審查；PR 檢查仍須使用上述入口完成離線測試及遠端版本核對。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -247,7 +267,7 @@ git pull --ff-only origin main
 ## 尚未建立 PR 的本機檢查
 
 ```bash
-uv run --no-sync python scripts/git_gate.py full --base main
+uv run --no-sync python -m tooling.git.gate full --base main
 ```
 
 此命令檢查指定本機主線與目前提交的合併候選。

@@ -10,8 +10,8 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-from scripts import cleanup_pr
-from scripts.pr_context import PullRequest
+from tooling.git import cleanup_pr
+from tooling.git.pr_context import PullRequest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

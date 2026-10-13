@@ -6,4 +6,4 @@ if [[ "$(git branch --show-current)" == "$primary" ]]; then
     echo "Commits on $primary are not allowed; integrate through a GitHub PR." >&2
     exit 1
 fi
-exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" scripts/git_gate.py commit
+exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -m tooling.git.gate commit

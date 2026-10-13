@@ -65,6 +65,27 @@ crawlers、loader 與 DataManager 仍執行網路及檔案 I/O，StrategyLoader 
 背景 worker 使用相同 Python interpreter，並明確繼承解析後的 workspace 與資料根目錄。
 Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存於使用者 workspace。
 
+### Repository 開發工具與研究原型
+
+產品程式位於 `src/tradingdev/`；repository 的開發工具、測試與研究原型分開管理：
+
+| 位置 | 目前責任 |
+| ---- | -------- |
+| `scripts/`、`.githooks/` | Shell 操作與 Git hook 入口，選定 repository 與 interpreter 後呼叫 Python 模組 |
+| `tooling/quality.py` | 共用品質檢查與格式化，涵蓋 `src/`、`tests/`、`tooling/`、`research/` |
+| `tooling/git/` | 候選 snapshot／合併 tree 的建立與驗證，以及 hook、本機 full、PR 檢查與分支清理流程 |
+| `tooling/review_docs.py` | 擷取固定 Git 版本的完整證據，協調文件審查批次與判定 |
+| `tooling/process_guard.py`、`tooling/codex_binary.py` | 開發工具與測試共用的程序觀測／清理及 Codex 執行檔定位 |
+| `tests/` | 測試案例、fixtures、MCP 與模型測試情境 |
+| `research/` | 獨立研究原型；MAE 原型直接讀取指定行情檔案，與正式 Dashboard 分開 |
+
+`tooling` 不依賴 `tests`；測試可直接使用共用工具。Git gate 與 PR 檢查共用候選
+驗證服務，文件審查使用執行檢查的 checkout 內的工具讀取候選 Git 內容，
+品質檢查與離線測試則使用候選 snapshot 內的入口與程式。
+`tooling/`、`research/` 不隨產品 wheel 發佈，也不屬於產品 application services。
+操作入口與檢查流程見[開發指南](docs/development.md)，研究原型用法見
+[README](README.md#mae-研究原型)。
+
 ## 核心概念與身分
 
 | 概念 | 意義與責任 |

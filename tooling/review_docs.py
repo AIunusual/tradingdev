@@ -14,11 +14,8 @@ from tempfile import TemporaryDirectory
 from threading import Event
 from typing import Any
 
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from tooling.codex_binary import resolve_codex_binary  # noqa: E402
-from tooling.process_guard import (  # noqa: E402
+from tooling.codex_binary import resolve_codex_binary
+from tooling.process_guard import (
     process_descendants,
     process_identity,
     terminate_tree,
@@ -104,7 +101,9 @@ def _relevant(path: str) -> bool:
     if candidate.parts[0] in {"workspace", ".git", ".venv"}:
         return False
     return (
-        path.startswith(("scripts/", ".githooks/", ".Codex/hooks/"))
+        path.startswith(
+            ("scripts/", "tooling/", "research/", ".githooks/", ".Codex/hooks/")
+        )
         or candidate.suffix
         in {
             ".py",

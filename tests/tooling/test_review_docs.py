@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from scripts import review_docs
+from tooling import review_docs
 from tooling.process_guard import terminate_tree
 
 if TYPE_CHECKING:
@@ -149,6 +149,8 @@ def test_evidence_includes_deleted_files_and_all_existing_docs(
     "tooling_path",
     [
         "scripts/hooks/pre-commit",
+        "tooling/check-custom",
+        "research/example.py",
         ".githooks/pre-commit",
         ".Codex/hooks/finalize-python",
         ".vscode/settings.json",
@@ -275,16 +277,13 @@ def test_unavailable_codex_is_an_actionable_failure(
         review_docs.review(base, tree, repo=repo)
 
 
-def test_script_runs_from_another_directory_without_the_test_package(
+def test_module_reviews_another_repository_without_the_test_package(
     repository: tuple[Path, str, str], fake_codex: Path
 ) -> None:
     repo, base, tree = repository
     with TemporaryDirectory(prefix="tradingdev-review-install-") as temporary:
         installation = Path(temporary)
-        scripts = installation / "scripts"
-        scripts.mkdir()
         source = Path(review_docs.__file__).resolve()
-        shutil.copy2(source, scripts / source.name)
         shutil.copytree(
             source.parents[1] / "tooling",
             installation / "tooling",
@@ -293,14 +292,17 @@ def test_script_runs_from_another_directory_without_the_test_package(
         result = subprocess.run(
             [
                 sys.executable,
-                "-I",
-                str(scripts / source.name),
+                "-E",
+                "-m",
+                "tooling.review_docs",
+                "--repo",
+                str(repo),
                 "--base",
                 base,
                 "--tree",
                 tree,
             ],
-            cwd=repo,
+            cwd=installation,
             capture_output=True,
             text=True,
             check=False,

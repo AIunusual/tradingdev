@@ -11,8 +11,9 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-from scripts import check_pr, git_gate, review_docs
-from scripts.pr_context import PullRequest
+from tooling import review_docs
+from tooling.git import candidates, check_pr, gate
+from tooling.git.pr_context import PullRequest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -97,7 +98,7 @@ def scenario(monkeypatch: MonkeyPatch) -> Iterator[Scenario]:
             temporary_paths.append(Path(result.name))
             return result
 
-        monkeypatch.setattr(git_gate, "TemporaryDirectory", directory)
+        monkeypatch.setattr(candidates, "TemporaryDirectory", directory)
         yield Scenario(source, request, temporary_paths)
 
 
@@ -136,7 +137,8 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
             (temporary_root / "model-output.txt").write_text("temporary output")
         else:
             calls.append("docs")
-            assert Path(command[1]).name == "review_docs.py"
+            assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
+            assert cwd == Path(review_docs.__file__).resolve().parents[1]
             assert command[command.index("--base") + 1] == scenario.request.base_sha
             assert Path(command[command.index("--repo") + 1]).exists()
             if budget is None:
@@ -145,11 +147,11 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
             else:
                 assert command[command.index("--max-evidence-bytes") + 1] == str(budget)
 
-    monkeypatch.setattr(git_gate, "run", run)
+    monkeypatch.setattr(candidates, "run", run)
     if runner == "pr":
         check_pr.check_pr(7, max_evidence_bytes=budget)
     else:
-        git_gate.check_full("main", "feature/work", max_evidence_bytes=budget)
+        gate.check_full("main", "feature/work", max_evidence_bytes=budget)
     assert calls == ["docs", "full"]
     assert _source_state(scenario.source) == before
     assert len(scenario.temporary_paths) == 2
@@ -172,7 +174,7 @@ def test_check_cli_forwards_evidence_budget(
         )
         calls.append(max_evidence_bytes)
 
-    module = check_pr if runner == "pr" else git_gate
+    module = check_pr if runner == "pr" else gate
     monkeypatch.setattr(module, "git", lambda *_: str(Path.cwd()))
     monkeypatch.setattr(module, "check_pr" if runner == "pr" else "check_full", check)
     arguments = (
@@ -194,34 +196,36 @@ def test_invalid_budget_fails_before_git_or_review(
         check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
     )
     monkeypatch.setattr(check_pr, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(git_gate, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(git_gate, "run", lambda *_, **__: pytest.fail("Review called"))
+    monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
+    monkeypatch.setattr(
+        candidates, "run", lambda *_, **__: pytest.fail("Review called")
+    )
     with pytest.raises(RuntimeError, match="budget must be positive"):
         if entry == "pr":
             check_pr.check_pr(7, max_evidence_bytes=budget)
         elif entry == "full":
-            git_gate.check_full("main", "HEAD", max_evidence_bytes=budget)
+            gate.check_full("main", "HEAD", max_evidence_bytes=budget)
         elif entry == "verify":
-            candidate = git_gate.MergeCandidate(Path.cwd(), "base", "head", "tree")
-            git_gate.verify_candidate(candidate, max_evidence_bytes=budget)
+            candidate = candidates.MergeCandidate(Path.cwd(), "base", "head", "tree")
+            candidates.verify_candidate(candidate, max_evidence_bytes=budget)
         else:
             arguments = ["7"] if entry == "pr_cli" else ["full", "--base", "main"]
             monkeypatch.setattr(
                 sys, "argv", ["check", *arguments, "--max-evidence-bytes", str(budget)]
             )
-            (check_pr if entry == "pr_cli" else git_gate).main()
+            (check_pr if entry == "pr_cli" else gate).main()
 
 
 @pytest.mark.parametrize("action", ["commit", "push"])
 def test_budget_option_is_not_silently_ignored_by_other_git_actions(
     monkeypatch: MonkeyPatch, action: str, capsys: CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(git_gate, "git", lambda *_: pytest.fail("Git called"))
+    monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
     monkeypatch.setattr(
-        sys, "argv", ["git_gate", action, "--max-evidence-bytes", "1000000"]
+        sys, "argv", ["gate", action, "--max-evidence-bytes", "1000000"]
     )
     with pytest.raises(SystemExit) as failure:
-        git_gate.main()
+        gate.main()
     assert failure.value.code == 2
     assert "only valid for full checks" in capsys.readouterr().err
 
@@ -325,7 +329,7 @@ def test_verifier_failure_or_interrupt_cleans_up_and_preserves_source(
     before = _source_state(scenario.source)
 
     def fail(
-        candidate: git_gate.MergeCandidate, *, max_evidence_bytes: int | None
+        candidate: candidates.MergeCandidate, *, max_evidence_bytes: int | None
     ) -> None:
         (candidate.repository / "partial-model-output").write_text("temporary result")
         raise failure
@@ -353,7 +357,7 @@ def test_full_snapshot_failure_cleans_both_temporary_repositories(
             (cwd / "partial-test-output").write_text("temporary")
             raise RuntimeError("full suite failed")
 
-    monkeypatch.setattr(git_gate, "run", run)
+    monkeypatch.setattr(candidates, "run", run)
     with pytest.raises(RuntimeError, match="full suite failed"):
         check_pr.check_pr(7)
     assert _source_state(scenario.source) == before
@@ -371,7 +375,7 @@ def test_dirty_runner_is_rejected_before_fetch(
             check_pr.check_pr(7)
     else:
         with pytest.raises(RuntimeError, match="Commit the task stages"):
-            git_gate.check_full("main", "HEAD")
+            gate.check_full("main", "HEAD")
     assert not scenario.temporary_paths
     assert (scenario.source / "uncommitted.txt").read_text() == "user work"
 
@@ -380,7 +384,7 @@ def test_dirty_runner_is_rejected_before_fetch(
 def test_runner_changes_during_pr_check_are_detected(
     scenario: Scenario, monkeypatch: MonkeyPatch, mutation: str
 ) -> None:
-    def mutate(_: git_gate.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
+    def mutate(_: candidates.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
         if mutation == "new_file":
             (scenario.source / "user-work.txt").write_text("keep this")
         else:
@@ -397,11 +401,11 @@ def test_manual_full_uses_explicit_base_and_preserves_source(
     scenario: Scenario, monkeypatch: MonkeyPatch
 ) -> None:
     before = _source_state(scenario.source)
-    observed: list[git_gate.MergeCandidate] = []
+    observed: list[candidates.MergeCandidate] = []
     monkeypatch.setattr(
-        git_gate, "verify_candidate", lambda candidate, **_: observed.append(candidate)
+        gate, "verify_candidate", lambda candidate, **_: observed.append(candidate)
     )
-    git_gate.check_full("main", "feature/work")
+    gate.check_full("main", "feature/work")
     assert len(observed) == 1
     assert observed[0].base == scenario.request.base_sha
     assert observed[0].head == scenario.request.head_sha
@@ -413,15 +417,15 @@ def test_manual_full_uses_explicit_base_and_preserves_source(
 def test_manual_full_rejects_ref_movement(
     scenario: Scenario, monkeypatch: MonkeyPatch, ref: str
 ) -> None:
-    def mutate(_: git_gate.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
+    def mutate(_: candidates.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
         replacement = (
             scenario.request.head_sha if ref == "main" else scenario.request.base_sha
         )
         _git(scenario.source, "update-ref", f"refs/heads/{ref}", replacement)
 
-    monkeypatch.setattr(git_gate, "verify_candidate", mutate)
+    monkeypatch.setattr(gate, "verify_candidate", mutate)
     with pytest.raises(RuntimeError, match="compared refs changed"):
-        git_gate.check_full("main", "feature/work")
+        gate.check_full("main", "feature/work")
     _assert_cleaned(scenario)
 
 
@@ -457,7 +461,7 @@ def test_api_base_lag_does_not_override_live_remote_base(
     )
     responses = iter((first, final))
     monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: next(responses))
-    checked: list[git_gate.MergeCandidate] = []
+    checked: list[candidates.MergeCandidate] = []
     monkeypatch.setattr(
         check_pr, "verify_candidate", lambda candidate, **_: checked.append(candidate)
     )
@@ -484,7 +488,7 @@ def test_actual_remote_ref_movement_invalidates_unchanged_api_response(
     ref: str,
     change: str,
 ) -> None:
-    def mutate(_: git_gate.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
+    def mutate(_: candidates.MergeCandidate, *, max_evidence_bytes: int | None) -> None:
         if change == "delete":
             _git(scenario.source, "update-ref", "-d", ref)
         else:

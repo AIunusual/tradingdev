@@ -10,19 +10,15 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from tooling.process_guard import run_captured  # noqa: E402
-
-from scripts.git_gate import (  # noqa: E402
+from tooling.git.candidates import (
     execution_environment,
     git,
     merge_candidate,
     validate_evidence_budget,
     verify_candidate,
 )
-from scripts.pr_context import get_pull_request, remote_url  # noqa: E402
+from tooling.git.pr_context import get_pull_request, remote_url
+from tooling.process_guard import run_captured
 
 
 def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:
@@ -66,7 +62,13 @@ def check_pr(
     validate_evidence_budget(max_evidence_bytes)
     request = get_pull_request(number, remote)
     primary = subprocess.check_output(
-        ["bash", str(Path(__file__).with_name("detect-primary-branch.sh"))], text=True
+        [
+            "bash",
+            str(
+                Path(__file__).resolve().parents[2] / "scripts/detect-primary-branch.sh"
+            ),
+        ],
+        text=True,
     ).strip()
     if request.merged or request.state != "open":
         raise RuntimeError("Choose an open, unmerged PR.")

@@ -8,16 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from tooling.process_guard import run_captured  # noqa: E402
-
-from scripts.pr_context import (  # noqa: E402 - standalone entry point
+from tooling.git.pr_context import (
     PullRequest,
     get_pull_request,
     repository_for_remote,
 )
+from tooling.process_guard import run_captured
 
 
 def _git(*arguments: str, allow_missing: bool = False) -> str:
@@ -34,7 +30,12 @@ def _git(*arguments: str, allow_missing: bool = False) -> str:
 
 def _primary_branch() -> str:
     result = subprocess.run(
-        ["bash", str(Path(__file__).with_name("detect-primary-branch.sh"))],
+        [
+            "bash",
+            str(
+                Path(__file__).resolve().parents[2] / "scripts/detect-primary-branch.sh"
+            ),
+        ],
         capture_output=True,
         text=True,
         check=False,

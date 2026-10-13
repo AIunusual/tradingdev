@@ -173,7 +173,7 @@
   都重新執行。純本機結果只代表當次版本，不能鎖住網站或消除檢查後競態。
   本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。
 - 尚未建立 PR 時，可在乾淨且已提交的 checkout 執行
-  `uv run --no-sync python scripts/git_gate.py full --base <主線ref>`。
+  `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
   此命令只驗證本機指定 ref，不代表遠端 PR 已驗證。
 - 一次 snapshot 檢查逾時為 900 秒，文件審查為 180 秒，程序清理另計；
   這不是整個開發任務時限。檢查結束清理臨時內容與啟動的程序。

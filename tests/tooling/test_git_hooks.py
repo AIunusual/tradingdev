@@ -31,8 +31,9 @@ root = Path.cwd()
 if mode == 'docs':
     base = sys.argv[sys.argv.index('--base') + 1]
     tree = sys.argv[sys.argv.index('--tree') + 1]
+    repository = sys.argv[sys.argv.index('--repo') + 1]
     content = subprocess.check_output(
-        ['git', 'show', f'{tree}:src/app.py'], text=True
+        ['git', '-C', repository, 'show', f'{tree}:src/app.py'], text=True
     )
 else:
     base = tree = None
@@ -134,16 +135,21 @@ def _repository(primary: str = "main") -> Generator[GitRepository, None, None]:
         shutil.copytree(_PROJECT / ".githooks", root / ".githooks")
         (root / "scripts").mkdir()
         for name in (
-            "__init__.py",
-            "git_gate.py",
             "detect-primary-branch.sh",
             "git-flow-commit.sh",
             "install-git-hooks.sh",
         ):
             shutil.copy2(_PROJECT / "scripts" / name, root / "scripts" / name)
-        (root / "tooling").mkdir()
-        for name in ("__init__.py", "process_guard.py"):
-            shutil.copy2(_PROJECT / "tooling" / name, root / "tooling" / name)
+        for name in (
+            "__init__.py",
+            "process_guard.py",
+            "git/__init__.py",
+            "git/gate.py",
+            "git/candidates.py",
+        ):
+            destination = root / "tooling" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_PROJECT / "tooling" / name, destination)
         repo.write("scripts/test_checker.py", _CHECKER)
         for mode in ("fast", "full"):
             repo.write(
@@ -152,7 +158,7 @@ def _repository(primary: str = "main") -> Generator[GitRepository, None, None]:
                 f"exec {shlex.quote(sys.executable)} scripts/test_checker.py {mode}\n",
             )
         repo.write(
-            "scripts/review_docs.py",
+            "tooling/review_docs.py",
             "import sys\n" + _CHECKER.replace("mode = sys.argv[1]", "mode = 'docs'"),
         )
         repo.write("src/app.py", "VALUE = 'initial'\n")
@@ -269,7 +275,7 @@ def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
                         f"GIT_{role}_DATE": f"{year}-01-01T00:00:00+00:00",
                     }
                 )
-            repo.run(sys.executable, "scripts/git_gate.py", "commit")
+            repo.run(sys.executable, "-m", "tooling.git.gate", "commit")
 
         events = repo.events("fast")
         assert len(events) == 2
@@ -296,7 +302,7 @@ def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
             sys.executable,
             "-B",
             "-c",
-            "import sys; from scripts.git_gate import check_snapshot; "
+            "import sys; from tooling.git.candidates import check_snapshot; "
             "check_snapshot(sys.argv[1], 'full')",
             tree,
             check=False,
@@ -329,6 +335,30 @@ def _advance_primary(repo: GitRepository, path: str, content: str) -> str:
     repo.git("update-ref", "refs/heads/main", upstream, before)
     repo.git("switch", current)
     return upstream
+
+
+def test_local_full_uses_runner_reviewer_and_candidate_checks() -> None:
+    with _repository() as repo:
+        repo.commit_task()
+        _advance_primary(
+            repo,
+            "tooling/review_docs.py",
+            "raise RuntimeError('candidate reviewer must not be executed')\n",
+        )
+        before = repo.git("rev-parse", "HEAD")
+        result = repo.run(
+            sys.executable, "-m", "tooling.git.gate", "full", "--base", "main"
+        )
+        assert "Full checks passed" in result.stdout
+        reviews = repo.events("docs")
+        checks = repo.events("full")
+        assert len(reviews) == len(checks) == 1
+        assert Path(str(reviews[0]["root"])).samefile(repo.root)
+        assert checks[0]["content"] == "VALUE = 'feature'\n"
+        assert checks[0]["head_tree"] == str(reviews[0]["tree"]) + "\n"
+        assert not Path(str(checks[0]["root"])).parent.exists()
+        assert repo.git("rev-parse", "HEAD") == before
+        assert repo.git("status", "--porcelain") == ""
 
 
 @pytest.mark.parametrize("primary", ["main", "master", "trunk"])
