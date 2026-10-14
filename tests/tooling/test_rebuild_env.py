@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-from scripts.process_guard import run_checked
+from tooling.process_guard import run_checked
 
 if TYPE_CHECKING:
     from collections.abc import Generator

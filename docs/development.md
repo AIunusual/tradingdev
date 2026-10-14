@@ -22,19 +22,47 @@ uv sync --locked --all-extras
 | `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
+`scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；Python 實作
+集中在 `tooling/`，以同一個 `.venv` interpreter 執行 `python -m tooling...`。
+`tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
+`tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
+
+`tooling/git/candidates.py` 管理獨立的 snapshot／合併候選與驗證；`gate.py`、
+`check_pr.py`、`cleanup_pr.py` 分別協調 hook／本機 full、PR 檢查與分支清理，
+`pr_context.py` 共用 GitHub PR 身分讀取。文件審查位於 `tooling/review_docs.py`，
+與測試共用 `tooling/` 的程序管理及 Codex 執行檔定位，不依賴 `tests/`。
+候選驗證使用執行檢查的 checkout 內的 reviewer 讀取候選 Git 內容，再執行
+候選 snapshot 內的品質檢查與離線測試。
+
+`tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
+研究原型，用法見 [README](../README.md#mae-研究原型)。`tooling/` 與 `research/`
+不隨產品 wheel 發佈，Python 程式仍使用相同的 Ruff／strict Mypy 政策。
+原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
+直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
+
 ## 選擇性 LLM 測試
 
 兩個入口共用均線、動量、參數實驗、歷史查詢與報告、錯誤草稿修復與舊格式策略恢復情境，要求模型完成策略生成、
 計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
 證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
 的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
-Local harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
+Local 與 Codex harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
 測試使用者 callback 回應並記錄。這是模擬使用者批准，不是已驗證真人操作的客戶端 UI。
+Codex 使用 app-server 雙向 JSON-RPC，把 MCP 確認表單交給同一套 callback，再回傳其決定；
+不使用無法接回表單的 `codex exec`。測試會停用其他 MCP server、外掛與 hooks，
+在臨時工作區啟動獨立的 MCP server，保留原有 Codex 登入；不修改個人設定。
+需要支援 `mcpServer/elicitation/request` 的 Codex CLI；初始化、模型及 callback
+共用同一個情境逾時上限，協定不支援或 callback 缺少時直接失敗。
+Runner 宣告 `experimentalApi`，使用僅允許 MCP 表單的 granular approval policy；
+`never` 會自動拒絕表單，不能用來驗證成功批准。
 另有內建 KD 最佳化與自建策略 walk-forward 的執行計畫情境，檢查巢狀參數說明、
-搜尋或折數覆蓋、確認及結果身分；這兩個情境目前明確要求 local provider。
-Codex runner 尚未接通表單 callback，這些證據不代表 Codex 表單整合已驗證。
+搜尋或折數覆蓋、確認及結果身分；兩個 provider 共用相同的確認前狀態觀察，
+在 callback 收到完整確認單時核對尚無正式工作與結果，批准後再核對工作及執行產物。
 一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
 不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
+一般策略建立、修復與歷史查詢情境的回測須沿用已驗證 YAML 基礎設定，
+`prepare_backtest` 的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，
+即使覆寫值等於基礎設定，也不符合這些情境的要求。
 參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
 的設定，並核對執行結果與基礎設定未被改寫。
 另有明確授權的草稿清理情境：先預覽再指定可刪版本，並逐檔確認 current、
@@ -42,16 +70,14 @@ Codex runner 尚未接通表單 callback，這些證據不代表 Codex 表單整
 入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
 `--maxfail=0`。
 
-Codex 執行時須明確排除上述兩個 local-only 執行計畫情境：
+Codex 與 local 入口都涵蓋完整情境，不需排除執行計畫測試：
 
 ```bash
 ./scripts/check-llm.sh codex --llm-model gpt-5.6-luna \
-  -k 'not test_llm_prepares_confirms_and_queries_execution_plan'
+  --llm-timeout 1800
 ```
 
-未排除時，這兩個測試會直接拒絕非 local provider，與客戶端是否支援 elicitation
-無關；其餘 Codex 情境仍須具備各自要求的能力，能力不足會失敗，不會默默略過。
-不加篩選的完整入口目前須使用 local；下列 local 命令會涵蓋全部情境。
+各情境仍須具備其要求的模型及客戶端能力，能力不足會失敗，不會默默略過。
 
 本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
@@ -90,8 +116,7 @@ Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed
 測試 client 會把錯誤回饋模型，要求重新產生下一個工具呼叫，整段對話最多兩次。
 恢復時保留已完成工具的歷史，不重新派發、不切換 provider，也不重設時間或工具次數上限。
 其他 HTTP 錯誤及逾時仍會失敗。失敗輸出附保存的設定與執行規格，之後照常清理臨時工作區。
-快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；local 移除此選項才涵蓋全部情境。
-Codex 要檢查其餘完整情境時，則使用上述排除 local-only 測試的 `-k` 條件。
+快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；移除此選項才涵蓋全部情境。
 `-k history` 驗證模型查回指定參數、翻頁交易、讀取權益與章節目錄，並請後端產生
 自選章節及 LLM 評語的 HTML；對照保存的原始交易，確認沒有再次啟動回測。
 同一情境也讀取原生成交與逐根帳戶頁，並選用這兩個報告章節；回覆逐欄對照
@@ -218,8 +243,15 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 context 的用量。每批必須完成且通過；任何 finding、缺少必要跨檔脈絡、容量不足、
 執行失敗或逾時都令整體失敗。全部 diff 提供跨檔變更脈絡，但分批不等於所有
 原始檔同時放在單一上下文，也不能保證模型不漏判。
-單獨執行 `review_docs.py` 不代表 PR 檢查通過，仍須使用上述入口完成離線測試
-及遠端版本核對。
+若要單獨執行文件審查，從本 repository 根目錄呼叫模組；`--repo` 指定要讀取
+Git 證據的 repository，`--base` 與 `--tree` 在該 repository 內解析：
+
+```bash
+uv run --no-sync python -m tooling.review_docs \
+  --repo /absolute/path/to/repository --base main --tree HEAD
+```
+
+此命令僅執行文件審查；PR 檢查仍須使用上述入口完成離線測試及遠端版本核對。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -242,7 +274,7 @@ git pull --ff-only origin main
 ## 尚未建立 PR 的本機檢查
 
 ```bash
-uv run --no-sync python scripts/git_gate.py full --base main
+uv run --no-sync python -m tooling.git.gate full --base main
 ```
 
 此命令檢查指定本機主線與目前提交的合併候選。

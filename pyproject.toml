@@ -114,7 +114,7 @@ markers = [
 [dependency-groups]
 dev = [
     "jsonschema>=4.26.0",
-    # Markdown checks and explicit formatting share scripts/quality.py.
+    # Markdown checks and explicit formatting share tooling/quality.py.
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",
     "types-jsonschema>=4.26.0.20260518",

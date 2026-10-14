@@ -945,53 +945,73 @@ def test_model_deadline_also_cancels_stalled_mcp_tool_discovery() -> None:
 
 def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> None:
     completed: dict[str, Any] = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "get_strategy",
-            "arguments": '{"strategy_id": "example"}',
-            "result": {"structured_content": {"success": False, "error": "Repair"}},
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "get_strategy",
+                "arguments": '{"strategy_id": "example"}',
+                "result": {"structuredContent": {"success": False, "error": "Repair"}},
+            },
         },
     }
     wrapped = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "list_strategies",
-            "arguments": {},
-            "result": {"structuredContent": {"result": [{"strategy_id": "example"}]}},
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "list_strategies",
+                "arguments": {},
+                "result": {
+                    "structuredContent": {"result": [{"strategy_id": "example"}]}
+                },
+            },
         },
     }
     text_only = {
-        "type": "item.completed",
-        "item": {
-            "type": "mcp_tool_call",
-            "status": "completed",
-            "tool": "get_job_status",
-            "arguments": {"job_id": "job-1"},
-            "result": {
-                "content": [
-                    {"type": "text", "text": "Diagnostic before payload"},
-                    {"type": "text", "text": '{"status": "done"}'},
-                ]
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "mcpToolCall",
+                "status": "completed",
+                "tool": "get_job_status",
+                "arguments": {"job_id": "job-1"},
+                "result": {
+                    "content": [
+                        {"type": "text", "text": "Diagnostic before payload"},
+                        {"type": "text", "text": '{"status": "done"}'},
+                    ]
+                },
             },
         },
     }
-    calls = codex_calls(
-        [
-            {"type": "item.started", "item": completed["item"]},
-            {"type": "item.completed", "item": {"type": "agent_message"}},
-            {
-                "type": "item.completed",
-                "item": {**completed["item"], "status": "failed"},
+    events = [
+        {"method": "item/started", "params": completed["params"]},
+        {
+            "method": "item/completed",
+            "params": {"item": {"type": "agentMessage"}},
+        },
+        {
+            "method": "item/completed",
+            "params": {
+                **completed["params"],
+                "item": {**completed["params"]["item"], "status": "failed"},
             },
-            completed,
-            wrapped,
-            text_only,
-        ]
-    )
+        },
+        completed,
+        wrapped,
+        text_only,
+    ]
+    original = deepcopy(events)
+    calls = codex_calls(events)
     assert calls == [
         ToolCall(
             "get_strategy",
@@ -1001,3 +1021,4 @@ def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> Non
         ToolCall("list_strategies", {}, [{"strategy_id": "example"}]),
         ToolCall("get_job_status", {"job_id": "job-1"}, {"status": "done"}),
     ]
+    assert events == original, "The adapter must retain raw app-server evidence"

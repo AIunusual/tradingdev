@@ -23,12 +23,21 @@ from tradingdev.mcp.schemas import BacktestInput, OptimizationInput
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+    from pydantic.json_schema import JsonSchemaValue
+
+
+def _elicitation_form_schema(schema: JsonSchemaValue) -> None:
+    """Emit MCP's restricted root schema while keeping strict response validation."""
+    for keyword in ("title", "description", "additionalProperties"):
+        schema.pop(keyword, None)
 
 
 class UserApproval(BaseModel):
     """Only the client elicitation response can supply this model."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid", strict=True, json_schema_extra=_elicitation_form_schema
+    )
     approved: bool = Field(default=False, title="同意依上述設定開始正式執行")
 
 

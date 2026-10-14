@@ -18,6 +18,7 @@ TradingDev 提供操作指引、檢查與執行工具；讀取契約、驗證、
 - [查看結果與圖表](#查看結果與圖表)
 - [資料與工作區](#資料與工作區)
 - [終端機與 HTTP 用法](#終端機與-http-用法)
+- [MAE 研究原型](#mae-研究原型)
 - [常見問題](#常見問題)
 - [相關文件](#相關文件)
 
@@ -370,6 +371,24 @@ uv run --locked tradingdev-mcp \
 將客戶端的 MCP URL 設為 `http://127.0.0.1:8000/mcp`，並保持此終端機執行。
 這是本機工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
 只支援雲端 URL 的客戶端無法透過這個本機位址連接。
+
+## MAE 研究原型
+
+Repository 另附獨立的 MAE（最大不利變動）Streamlit 研究原型，
+可觀察固定持倉時間內 BTC/USDT 的逆向價格幅度。這個原型不屬於正式 Dashboard 功能。
+
+先自行準備 BTC/USDT 一分鐘行情，放在專案根目錄下固定的
+`data/processed/btcusdt_1m_2024_2025.parquet`。檔案至少須包含可轉換為 UTC
+時間的 `timestamp`，以及數值欄位 `high`、`low`、`close`；原型直接讀取這份檔案。
+在專案根目錄安裝圖表依賴並啟動：
+
+```bash
+uv sync --locked --extra dashboard
+uv run --locked --extra dashboard streamlit run research/mae_analysis.py
+```
+
+開啟終端機顯示的本機網址，選擇日期、持倉分鐘數與停損比例，查看 MAE 分布及統計。
+結束時按 `Ctrl+C`。舊的 `scripts/mae_analysis.py` 路徑已移除，請改用上述命令。
 
 ## 常見問題
 

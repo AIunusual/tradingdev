@@ -84,7 +84,20 @@ def test_prepare_read_and_user_confirmation_bind_one_manifest_and_one_job(
             assert prepared["confirmation_text"] in approval.requests[0].message
             form = approval.requests[0]
             assert form.mode == "form"
-            assert form.requestedSchema["properties"]["approved"]["default"] is False
+            assert set(form.requestedSchema) <= {
+                "$schema",
+                "type",
+                "properties",
+                "required",
+            }, "MCP elicitation supports only the restricted root schema fields"
+            assert form.requestedSchema["type"] == "object"
+            assert form.requestedSchema["properties"] == {
+                "approved": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "同意依上述設定開始正式執行",
+                }
+            }
             assert (
                 context.service.jobs.load_manifest(started["job_id"]).manifest_hash
                 == prepared["manifest_hash"]

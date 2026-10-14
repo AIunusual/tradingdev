@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
-from scripts import pr_context
+from tooling.git import pr_context
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

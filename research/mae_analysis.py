@@ -1,7 +1,7 @@
 """MAE (Max Adverse Excursion) 分析 — 評估 stop-loss 水位是否合理.
 
 Usage:
-    uv run streamlit run scripts/mae_analysis.py
+    uv run streamlit run research/mae_analysis.py
 """
 
 from pathlib import Path

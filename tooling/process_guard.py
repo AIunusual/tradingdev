@@ -1,4 +1,4 @@
-"""Run a check with bounded cleanup of its observed subprocess identities."""
+"""Observe and stop subprocess identities, and run bounded development checks."""
 
 from __future__ import annotations
 
@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 _GRACE_SECONDS = 5.0
 _STOP_SECONDS = 3.0
 _POLL_SECONDS = 0.02
+
+
+def process_identity(pid: int) -> psutil.Process | None:
+    """Capture a PID and creation time for safe observation and signalling."""
+    try:
+        return psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return None
 
 
 def _alive(process: psutil.Process) -> bool:
@@ -43,6 +51,18 @@ def _observe(known: set[psutil.Process]) -> bool:
     return complete
 
 
+def process_descendants(process: psutil.Process | None) -> set[psutil.Process]:
+    """Observe descendants, failing when permissions prevent verification."""
+    known = {process} if process is not None else set()
+    if not _observe(known):
+        raise RuntimeError(
+            "Process inspection was denied; descendant tracking is unverified"
+        )
+    if process is not None:
+        known.discard(process)
+    return known
+
+
 def _signal_leader(leader: psutil.Process | None, sig: signal.Signals) -> None:
     if leader is None or not _alive(leader):
         return
@@ -56,7 +76,20 @@ def _signal_leader(leader: psutil.Process | None, sig: signal.Signals) -> None:
         leader.send_signal(sig)
 
 
-def _cleanup(leader: psutil.Process | None, known: set[psutil.Process]) -> None:
+def terminate_tree(
+    leader: psutil.Process | None,
+    descendants: set[psutil.Process] | None = None,
+    *,
+    wait_seconds: float = _STOP_SECONDS,
+) -> None:
+    """Stop known identities, reporting denied inspection or surviving processes.
+
+    Continue observing all known descendants during teardown, including children
+    in independent sessions. Never signal an exited leader's process group.
+    """
+    known = set(descendants or ())
+    if leader is not None:
+        known.add(leader)
     inspection_complete = _observe(known)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if not any(_alive(process) for process in known):
@@ -68,7 +101,7 @@ def _cleanup(leader: psutil.Process | None, known: set[psutil.Process]) -> None:
                     psutil.NoSuchProcess, psutil.AccessDenied, PermissionError
                 ):
                     process.send_signal(sig)
-        deadline = time.monotonic() + _STOP_SECONDS
+        deadline = time.monotonic() + wait_seconds
         while any(_alive(process) for process in known):
             inspection_complete = _observe(known) and inspection_complete
             if time.monotonic() >= deadline:
@@ -76,7 +109,7 @@ def _cleanup(leader: psutil.Process | None, known: set[psutil.Process]) -> None:
             time.sleep(_POLL_SECONDS)
     survivors = sorted(process.pid for process in known if _alive(process))
     if survivors:
-        raise RuntimeError(f"Could not terminate check subprocesses: {survivors}")
+        raise RuntimeError(f"Could not terminate subprocesses: {survivors}")
     if not inspection_complete:
         raise RuntimeError(
             "Process inspection was denied; descendant cleanup is unverified"
@@ -103,8 +136,8 @@ def _run(
     known: set[psutil.Process] = set()
     failure: BaseException | None = None
     try:
-        with suppress(psutil.NoSuchProcess):
-            leader = psutil.Process(process.pid)
+        leader = process_identity(process.pid)
+        if leader is not None:
             known.add(leader)
         deadline = time.monotonic() + timeout
         while process.poll() is None:
@@ -125,7 +158,7 @@ def _run(
                 time.sleep(_POLL_SECONDS)
     finally:
         try:
-            _cleanup(leader, known)
+            terminate_tree(leader, known)
         except RuntimeError as error:
             if failure is not None:
                 raise RuntimeError(

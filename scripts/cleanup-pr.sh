@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" scripts/cleanup_pr.py "$@"
+exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -m tooling.git.cleanup_pr "$@"

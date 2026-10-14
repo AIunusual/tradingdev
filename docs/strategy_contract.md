@@ -269,6 +269,14 @@ data:
    client to obtain the user's response; a model-supplied approval argument is not
    accepted. The CLI remains an explicit execution interface without this MCP form.
 
+Clients must support MCP's restricted form `requestedSchema`: root fields are
+limited to `$schema`, `type`, `properties`, and `required`. The approval form omits
+root-level `title`, `description`, and `additionalProperties`; its `approved`
+property retains a human-readable title, boolean type, and `default: false`.
+The server still validates responses strictly: unknown fields, strings such as
+`"true"`, and numeric substitutes are rejected. Omitting `approved` does not
+authorize execution.
+
 The lifecycle gate is enforced again at execution time inside `BacktestService`,
 so the CLI and subprocess workers cannot bypass it, and the config's `source_path`
 must match the selected revision's source.

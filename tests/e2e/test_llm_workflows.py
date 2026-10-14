@@ -491,21 +491,33 @@ def test_llm_authors_backtests_and_queries_results(
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
             }
-            if provider == "codex":
-                return codex_calls(
-                    await run_codex(workspace.root, scenario.prompt, **options)
-                )
             approval = SimulatedUserApproval()
-            async with workspace.connect(elicitation_callback=approval) as client:
-                calls = await run_local_model(
-                    client,
-                    scenario.prompt,
-                    base_url=pytestconfig.getoption("llm_base_url"),
-                    temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
-                    **options,
+            if provider == "codex":
+                calls = codex_calls(
+                    await run_codex(
+                        workspace.root,
+                        scenario.prompt,
+                        elicitation_callback=approval.respond,
+                        **options,
+                    )
                 )
-            assert len(approval.requests) == 1, "Expected one simulated user approval"
+            else:
+                async with workspace.connect(elicitation_callback=approval) as client:
+                    calls = await run_local_model(
+                        client,
+                        scenario.prompt,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            confirmations = [
+                c.result for c in calls if c.name == "request_execution_confirmation"
+            ]
+            assert len(approval.requests) == 1, (
+                "Expected one simulated user approval; confirmation results: "
+                f"{confirmations}"
+            )
             return calls
 
         calls = asyncio.run(run())

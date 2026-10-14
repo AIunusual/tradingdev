@@ -1,8 +1,7 @@
-"""Check immutable Git candidates without changing the developer checkout."""
+"""Build and verify immutable Git candidates in disposable repositories."""
 
 from __future__ import annotations
 
-import argparse
 import os
 import subprocess
 import sys
@@ -13,16 +12,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
+from tooling.process_guard import run_captured, run_checked
+
 if TYPE_CHECKING:
     from collections.abc import Generator
-
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from scripts.process_guard import (  # noqa: E402 - standalone entry point
-    run_captured,
-    run_checked,
-)
 
 
 def git(*arguments: str) -> str:
@@ -129,18 +122,6 @@ def check_snapshot(tree: str, profile: str, *, repo: Path | None = None) -> None
             raise RuntimeError("A check modified the candidate snapshot.")
 
 
-def assert_index_unchanged(tree: str) -> None:
-    if git("write-tree") != tree:
-        raise RuntimeError("The staged content changed during checks; stage and retry.")
-
-
-def check_commit() -> None:
-    git("diff", "--cached", "--check")
-    tree = git("write-tree")
-    check_snapshot(tree, "fast")
-    assert_index_unchanged(tree)
-
-
 @dataclass(frozen=True)
 class MergeCandidate:
     repository: Path
@@ -222,7 +203,8 @@ def verify_candidate(
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     command = [
         sys.executable,
-        str(Path(__file__).with_name("review_docs.py")),
+        "-m",
+        "tooling.review_docs",
         "--repo",
         str(candidate.repository),
         "--base",
@@ -233,76 +215,5 @@ def verify_candidate(
     if max_evidence_bytes is not None:
         print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
         command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
-    run(command, cwd=Path(__file__).resolve().parents[1])
+    run(command, cwd=Path(__file__).resolve().parents[2])
     check_snapshot(candidate.tree, "full", repo=candidate.repository)
-
-
-def check_full(
-    base_ref: str, head_ref: str, *, max_evidence_bytes: int | None = None
-) -> None:
-    validate_evidence_budget(max_evidence_bytes)
-    if git("status", "--porcelain", "--untracked-files=all"):
-        raise RuntimeError("Commit the task stages before running full checks.")
-    base = git("rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}")
-    head = git("rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}")
-    with merge_candidate(str(Path.cwd()), base, head) as candidate:
-        verify_candidate(candidate, max_evidence_bytes=max_evidence_bytes)
-        if (
-            git("status", "--porcelain", "--untracked-files=all")
-            or git(
-                "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}"
-            )
-            != base
-            or git(
-                "rev-parse", "--verify", "--end-of-options", f"{head_ref}^{{commit}}"
-            )
-            != head
-        ):
-            raise RuntimeError("The checkout or compared refs changed during checks.")
-        print(f"Full checks passed. Base: {base} Head: {head} Tree: {candidate.tree}")
-
-
-def check_push() -> None:
-    primary = subprocess.check_output(
-        ["bash", "scripts/detect-primary-branch.sh"], text=True
-    ).strip()
-    for line in sys.stdin:
-        _, _, remote_ref, _ = line.split()
-        if remote_ref == f"refs/heads/{primary}":
-            raise RuntimeError(
-                f"Direct pushes/deletions of {primary} are blocked; use a GitHub PR."
-            )
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["commit", "full", "push"])
-    parser.add_argument("--base", help="Explicit local comparison base for full checks")
-    parser.add_argument("--head", default="HEAD")
-    parser.add_argument(
-        "--max-evidence-bytes",
-        type=int,
-        help="Override the documentation reviewer byte limit for this full check",
-    )
-    args = parser.parse_args()
-    action = args.action
-    if action == "full" and not args.base:
-        parser.error("full requires --base; use scripts/check-pr.sh for a remote PR")
-    if args.max_evidence_bytes is not None and action != "full":
-        parser.error("--max-evidence-bytes is only valid for full checks")
-    validate_evidence_budget(args.max_evidence_bytes)
-    os.chdir(git("rev-parse", "--show-toplevel"))
-    if action == "commit":
-        check_commit()
-    elif action == "push":
-        check_push()
-    else:
-        check_full(args.base, args.head, max_evidence_bytes=args.max_evidence_bytes)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (RuntimeError, subprocess.SubprocessError, OSError) as error:
-        print(f"Git checks failed: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
