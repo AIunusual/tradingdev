@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import uvicorn
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from sse_starlette import sse
 from tests.integration.mcp_harness import MCPClient
 from tests.mcp.execution_fixtures import PlanContext, plan_context
 
@@ -35,6 +36,7 @@ class HTTPPlanServer:
     task: asyncio.Task[None]
     listener: socket.socket
     address: tuple[str, int]
+    shutdown_watchers: set[asyncio.Task[None]]
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[MCPClient]:
@@ -63,6 +65,15 @@ async def http_plan_server(
 ) -> AsyncIterator[HTTPPlanServer]:
     root = Path(mkdtemp(prefix="tradingdev-http-test-")).resolve()
     task: asyncio.Task[None] | None = None
+    shutdown_watchers: set[asyncio.Task[None]] = set()
+    original_watcher = sse._shutdown_watcher
+
+    async def tracked_shutdown_watcher() -> None:
+        watcher = asyncio.current_task()
+        assert watcher is not None
+        shutdown_watchers.add(watcher)
+        await original_watcher()
+
     stopped = True
     try:
         context = plan_context(root)
@@ -75,7 +86,12 @@ async def http_plan_server(
                 lambda *args, **kwargs: context.service,
             )
             mcp = server_module.create_server(WorkspacePaths(root / "workspace"))
-        with socket.socket() as listener:
+        # sse-starlette keeps process-wide shutdown state and starts a detached
+        # watcher. Scope both to this in-process server, including teardown, so
+        # a previous server cannot immediately terminate the next SSE response.
+        with monkeypatch.context() as patch, socket.socket() as listener:
+            patch.setattr(sse.AppStatus, "should_exit", False)
+            patch.setattr(sse, "_shutdown_watcher", tracked_shutdown_watcher)
             listener.bind(("127.0.0.1", 0))
             address = listener.getsockname()
             server = uvicorn.Server(
@@ -95,18 +111,28 @@ async def http_plan_server(
                             await task
                             raise RuntimeError("HTTP test server exited during startup")
                         await asyncio.sleep(0.01)
-                yield HTTPPlanServer(root, context, server, task, listener, address)
+                yield HTTPPlanServer(
+                    root, context, server, task, listener, address, shutdown_watchers
+                )
             finally:
                 server.should_exit = True
+                sse.AppStatus.should_exit = True
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                if shutdown_watchers:
+                    await asyncio.wait_for(
+                        asyncio.gather(*shutdown_watchers), timeout=5
+                    )
                 assert not server.server_state.tasks
                 assert not server.server_state.connections
                 stopped = True
     finally:
         if not stopped:
+            pending = [watcher for watcher in shutdown_watchers if not watcher.done()]
             if task is not None and not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                pending.append(task)
+            for pending_task in pending:
+                pending_task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
             raise RuntimeError(
                 f"HTTP test server cleanup failed; temporary directory retained: {root}"
             )

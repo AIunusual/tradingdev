@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sse_starlette.sse import AppStatus
 from tests.mcp.http_harness import http_plan_server
 
 
@@ -101,9 +102,12 @@ def test_http_invalid_decision_does_not_consume_or_launch_plan(
 
 
 @pytest.mark.parametrize("exit_mode", ["normal", "exception", "timeout"])
+@pytest.mark.parametrize("previous_shutdown", [False, True])
 def test_http_harness_closes_listener_tasks_and_temporary_files(
-    monkeypatch: pytest.MonkeyPatch, exit_mode: str
+    monkeypatch: pytest.MonkeyPatch, exit_mode: str, previous_shutdown: bool
 ) -> None:
+    monkeypatch.setattr(AppStatus, "should_exit", previous_shutdown)
+
     async def check() -> None:
         try:
             async with (
@@ -136,12 +140,36 @@ def test_http_harness_closes_listener_tasks_and_temporary_files(
             assert exit_mode == "normal"
         assert runtime.task.done() and not runtime.task.cancelled()
         assert runtime.task.exception() is None
+        assert runtime.shutdown_watchers
+        assert all(watcher.done() for watcher in runtime.shutdown_watchers)
+        assert all(not watcher.cancelled() for watcher in runtime.shutdown_watchers)
+        assert all(watcher.exception() is None for watcher in runtime.shutdown_watchers)
         assert not runtime.server.server_state.tasks
         assert not runtime.server.server_state.connections
         assert runtime.listener.fileno() == -1
         assert not runtime.root.exists()
+        assert AppStatus.should_exit is previous_shutdown
         with socket.socket() as probe:
             probe.settimeout(0.5)
             assert probe.connect_ex(runtime.address) != 0
+
+    asyncio.run(check())
+
+
+def test_http_harness_can_restart_within_one_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def check() -> None:
+        for _ in range(2):
+            async with (
+                http_plan_server(monkeypatch) as runtime,
+                runtime.connect() as client,
+            ):
+                prepared = await client.call(
+                    "prepare_backtest", **runtime.context.arguments
+                )
+                assert prepared["success"]
+            assert all(watcher.done() for watcher in runtime.shutdown_watchers)
+            assert not runtime.root.exists()
 
     asyncio.run(check())
