@@ -372,6 +372,10 @@ uv run --locked tradingdev-mcp \
 這是本機工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
 只支援雲端 URL 的客戶端無法透過這個本機位址連接。
 
+HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆與 MCP 表單確認；
+確認表單會在工具執行途中送達，收到你的回覆後才結束該次工具呼叫。
+若經過代理轉送，須保留串流，不能只等待或緩衝最後的 JSON 結果。
+
 ## MAE 研究原型
 
 Repository 另附獨立的 MAE（最大不利變動）Streamlit 研究原型，
