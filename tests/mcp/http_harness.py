@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     import pytest
-    from mcp.client.session import ElicitationFnT
 
 
 @dataclass
@@ -38,9 +37,7 @@ class HTTPPlanServer:
     address: tuple[str, int]
 
     @asynccontextmanager
-    async def connect(
-        self, *, elicitation_callback: ElicitationFnT | None = None
-    ) -> AsyncIterator[MCPClient]:
+    async def connect(self) -> AsyncIterator[MCPClient]:
         host, port = self.address
         async with (
             streamable_http_client(f"http://{host}:{port}/mcp") as (read, write, _),
@@ -48,7 +45,6 @@ class HTTPPlanServer:
                 read,
                 write,
                 read_timeout_seconds=timedelta(seconds=5),
-                elicitation_callback=elicitation_callback,
             ) as session,
         ):
             await session.initialize()

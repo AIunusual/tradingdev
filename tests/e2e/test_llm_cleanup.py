@@ -16,10 +16,7 @@ from tests.e2e.strategy_scenarios import Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
 from tests.integration.execution_fixtures import execution_options
-from tests.integration.mcp_harness import (
-    SimulatedUserApproval,
-    temporary_mcp_workspace,
-)
+from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPWorkspace
@@ -37,7 +34,7 @@ _FORBIDDEN_MUTATIONS = {
     "prepare_backtest",
     "prepare_walk_forward",
     "prepare_optimization",
-    "request_execution_confirmation",
+    "submit_execution_decision",
     "cancel_job",
     "ensure_data",
     "record_feature_request",
@@ -72,8 +69,7 @@ current revision、已 runnable 的版本及歷史回測都必須保留。
 async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
     """Create three revisions and a retained real backtest without model calls."""
     workspace.seed_market(market_frame())
-    approval = SimulatedUserApproval()
-    async with workspace.connect(elicitation_callback=approval) as client:
+    async with workspace.connect() as client:
         contract = await client.call("get_strategy_contract")
         code = contract["example_strategy_code"]
         config = yaml.safe_load(contract["example_yaml_config"])
@@ -125,10 +121,9 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
         )
         assert prepared["success"], prepared
         started = await client.call(
-            "request_execution_confirmation", plan_id=prepared["plan_id"]
+            "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
         )
         assert started["job_id"], started
-        assert len(approval.requests) == 1
         done = await client.wait_for_job(started["job_id"])
         assert done["status"] == "done", done
         current = await save()

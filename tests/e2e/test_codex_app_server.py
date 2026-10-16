@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
@@ -83,9 +84,12 @@ class _Peer:
         rpc_failure: str | None = None,
         servers: dict[str, Any] | None = None,
         returned_model: str | None = "specified-model",
+        turns: list[list[dict[str, Any]]] | None = None,
     ) -> None:
         self.reader = asyncio.StreamReader()
         self.messages = messages
+        self.turns = turns or [messages]
+        self.turn_count = 0
         self.sent: list[dict[str, Any]] = []
         self.early_events = early_events
         self.rpc_failure = rpc_failure
@@ -124,14 +128,18 @@ class _Peer:
                 }
             )
         elif method == "turn/start":
-            response = {"id": message["id"], "result": {"turn": {"id": "turn-1"}}}
+            messages = self.turns[self.turn_count]
+            self.turn_count += 1
+            response = {
+                "id": message["id"],
+                "result": {"turn": {"id": f"turn-{self.turn_count}"}},
+            }
             for event in (
-                [*self.messages, response]
-                if self.early_events
-                else [response, *self.messages]
+                [*messages, response] if self.early_events else [response, *messages]
             ):
                 self._feed(event)
-            self.reader.feed_eof()
+            if self.turn_count == len(self.turns):
+                self.reader.feed_eof()
 
     async def drain(self) -> None:
         pass
@@ -186,6 +194,97 @@ def test_handshake_and_turn_preserve_native_events(early_events: bool) -> None:
             "input": [{"type": "text", "text": "Use MCP only", "text_elements": []}],
         }
         assert peer.observations == 6
+
+    asyncio.run(run())
+
+
+def _conversation_turn(number: int) -> list[dict[str, Any]]:
+    events = deepcopy([_tool(id=f"call-{number}"), _completed()])
+    events[0]["params"]["turnId"] = f"turn-{number}"
+    events[1]["params"]["turn"]["id"] = f"turn-{number}"
+    return events
+
+
+@pytest.mark.parametrize("early_events", [False, True])
+def test_user_reply_starts_a_new_turn_on_the_same_codex_thread(
+    early_events: bool,
+) -> None:
+    async def run() -> None:
+        turns = [_conversation_turn(1), _conversation_turn(2)]
+        peer = _Peer([], turns=turns, early_events=early_events)
+        observed: list[list[dict[str, Any]]] = []
+
+        async def user_reply(events: list[dict[str, Any]]) -> str | None:
+            assert events[-1]["method"] == "turn/completed"
+            observed.append(events)
+            assert peer.turn_count == len(observed)
+            return "我已閱讀，同意執行。" if len(observed) == 1 else None
+
+        events = await peer.client().run(
+            "先準備並等我確認", {}, mcp_config=_MCP_CONFIG, user_reply=user_reply
+        )
+        assert observed == turns
+        assert events == turns[0] + turns[1]
+        assert (
+            sum(message.get("method") == "thread/start" for message in peer.sent) == 1
+        )
+        starts = [
+            message for message in peer.sent if message.get("method") == "turn/start"
+        ]
+        assert len(starts) == 2
+        assert {message["params"]["threadId"] for message in starts} == {"thread-1"}
+        assert starts[1]["params"]["input"][0]["text"] == "我已閱讀，同意執行。"
+
+    asyncio.run(run())
+
+
+def test_codex_tool_budget_is_shared_across_conversation_turns() -> None:
+    async def run() -> None:
+        peer = _Peer([], turns=[_conversation_turn(1), _conversation_turn(2)])
+
+        async def user_reply(events: list[dict[str, Any]]) -> str:
+            return "同意執行"
+
+        with pytest.raises(AssertionError, match="exceeded 1 MCP tool calls"):
+            await peer.client(max_tool_calls=1).run(
+                "prepare", {}, mcp_config=_MCP_CONFIG, user_reply=user_reply
+            )
+
+    asyncio.run(run())
+
+
+def test_codex_user_observer_failure_does_not_start_another_turn() -> None:
+    async def run() -> None:
+        peer = _Peer([_completed()])
+
+        async def user_reply(events: list[dict[str, Any]]) -> str:
+            raise AssertionError("Plan was submitted before user consent")
+
+        with pytest.raises(AssertionError, match="before user consent"):
+            await peer.client().run(
+                "prepare", {}, mcp_config=_MCP_CONFIG, user_reply=user_reply
+            )
+        assert peer.turn_count == 1
+
+    asyncio.run(run())
+
+
+def test_codex_conversation_turn_budget_is_enforced_before_next_turn() -> None:
+    async def run() -> None:
+        peer = _Peer([_completed()])
+
+        async def user_reply(events: list[dict[str, Any]]) -> str:
+            return "continue"
+
+        with pytest.raises(AssertionError, match="exceeded 1 conversation turns"):
+            await peer.client().run(
+                "prepare",
+                {},
+                mcp_config=_MCP_CONFIG,
+                user_reply=user_reply,
+                max_turns=1,
+            )
+        assert peer.turn_count == 1
 
     asyncio.run(run())
 

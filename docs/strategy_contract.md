@@ -262,20 +262,23 @@ data:
    confirmation and HTML artifact. Only runnable or promoted generated strategies,
    and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
-6. `request_execution_confirmation(plan_id)`: asks the MCP client to show a form
-   with an unchecked approval field. Only an accepted form with `approved: true`
-   submits the captured manifest. Decline, cancellation, timeout, malformed responses,
-   and clients without form elicitation do not launch a job. The server trusts the
-   client to obtain the user's response; a model-supplied approval argument is not
-   accepted. The CLI remains an explicit execution interface without this MCP form.
+6. Present `confirmation_summary` and a clickable link to the complete HTML,
+   then end the conversation turn. Wait for the user to read it and explicitly
+   approve, decline or request changes in a later turn. Do not paste the full
+   settings, search grid or trial evidence into the conversation.
+7. `submit_execution_decision(plan_id, decision)` relays that decision:
+   `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
+   with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
+   trial and another user confirmation. Initial task instructions, silence,
+   questions or ambiguous replies must not be treated as approval.
 
-Clients must support MCP's restricted form `requestedSchema`: root fields are
-limited to `$schema`, `type`, `properties`, and `required`. The approval form omits
-root-level `title`, `description`, and `additionalProperties`; its `approved`
-property retains a human-readable title, boolean type, and `default: false`.
-The server still validates responses strictly: unknown fields, strings such as
-`"true"`, and numeric substitutes are rejected. Omitting `approved` does not
-authorize execution.
+The backend trusts the caller to relay the user's actual decision. It cannot
+independently prove that a human supplied it. Plan integrity, expiry, executable
+source checks and submission deduplication still apply. No native MCP elicitation
+capability is required; the former `request_execution_confirmation` tool is removed.
+The complete text and HTML remain saved plan artifacts; only the short summary
+and artifact location are returned by preparation and plan lookup. The CLI remains
+an explicit execution interface without this conversation workflow.
 
 The lifecycle gate is enforced again at execution time inside `BacktestService`,
 so the CLI and subprocess workers cannot bypass it, and the config's `source_path`

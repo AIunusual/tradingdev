@@ -1,4 +1,4 @@
-"""Prepare reviewable research plans and admit client-confirmed executions."""
+"""Prepare reviewable research plans and apply decisions relayed by clients."""
 
 from __future__ import annotations
 
@@ -12,10 +12,16 @@ from uuid import uuid4
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
+    render_confirmation_summary,
     render_confirmation_text,
 )
 from tradingdev.adapters.storage.execution_plans import ExecutionPlanStore
-from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
+from tradingdev.app.contracts.plans import (
+    ExecutionDecision,
+    PlanRejected,
+    PlanResponse,
+    PlanStarted,
+)
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
     PreparedExecution,
@@ -44,11 +50,10 @@ class PlanOperationError(ValueError):
 
 @dataclass(frozen=True)
 class ConfirmationChallenge:
-    """Server-owned binding; never accepted as a model-authored tool argument."""
+    """Internal reservation binding a submission to one immutable plan."""
 
     plan: ExecutionPlan
     token: str
-    message: str
 
 
 class ExecutionPlanService:
@@ -123,7 +128,7 @@ class ExecutionPlanService:
             return self._rejected(exc)
 
     def begin_confirmation(self, plan_id: str) -> ConfirmationChallenge | PlanStarted:
-        """Reserve one interaction without holding a lock while a human reads."""
+        """Reserve a submission after the client relays the user's approval."""
         with self.plans.lock(plan_id):
             plan, record = self.plans.get(plan_id)
             if record["state"] == "submitted":
@@ -147,18 +152,50 @@ class ExecutionPlanService:
             self.plans.transition(
                 plan_id, "ready", "awaiting_confirmation", token=token
             )
-            return ConfirmationChallenge(
-                plan,
-                token,
-                render_confirmation_text(plan.document)
-                + "\n\n請由使用者本人確認是否依上述設定啟動正式執行。"
-                + "模型不得代填同意；調整設定請取消此表單，再以自然語言告知修改內容。",
+            return ConfirmationChallenge(plan, token)
+
+    def decide(
+        self, plan_id: str, *, decision: ExecutionDecision
+    ) -> PlanStarted | PlanRejected:
+        """Apply the client's report of the user's explicit conversation decision.
+
+        The caller must collect that decision after presenting the saved HTML.
+        This service validates the plan, not the human origin of the decision.
+        """
+        if decision not in {"approve", "decline", "revise"}:
+            return PlanRejected(
+                success=False,
+                code="invalid_execution_decision",
+                error="不支援的確認決策。",
             )
+        if decision != "approve":
+            cancelled = self.cancel(plan_id)
+            if isinstance(cancelled, PlanRejected):
+                return cancelled
+            return PlanRejected(
+                success=False,
+                code="confirmation_adjustment_requested"
+                if decision == "revise"
+                else "confirmation_declined",
+                error=(
+                    "使用者要求修改設定，原計畫已取消，正式回測未啟動。"
+                    "請收集修改內容，重新準備、試跑並等待使用者確認新計畫。"
+                    if decision == "revise"
+                    else "使用者未同意，計畫已取消，正式回測未啟動。"
+                ),
+            )
+        try:
+            challenge = self.begin_confirmation(plan_id)
+            if isinstance(challenge, PlanStarted):
+                return challenge
+            return self.finish_confirmation(challenge, accepted=True)
+        except (LookupError, OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            return self._rejected(exc)
 
     def finish_confirmation(
         self, challenge: ConfirmationChallenge, *, accepted: bool
     ) -> PlanStarted | PlanRejected:
-        """Accept only the adapter's live response for this exact challenge."""
+        """Complete one reservation, checking it still names the same ready plan."""
         plan_id = challenge.plan.plan_id
         try:
             with self.plans.lock(plan_id):
@@ -203,7 +240,7 @@ class ExecutionPlanService:
             return self._rejected(exc)
 
     def abandon_confirmation(self, challenge: ConfirmationChallenge) -> None:
-        """Protocol errors never authorize execution; allow a fresh interaction."""
+        """Release an unused reservation without authorizing execution."""
         with self.plans.lock(challenge.plan.plan_id):
             _plan, record = self.plans.get(challenge.plan.plan_id)
             if (
@@ -250,7 +287,9 @@ class ExecutionPlanService:
             status=record["state"],
             manifest_hash=plan.manifest.manifest_hash,
             expires_at=plan.expires_at.isoformat(),
-            confirmation_text=render_confirmation_text(plan.document),
+            confirmation_summary=render_confirmation_summary(
+                plan.document, mode=plan.manifest.config_copy()["backtest"]["mode"]
+            ),
             html_path=str(self.plans.directory(plan.plan_id) / "confirmation.html"),
             artifact_id=f"{plan.plan_id}:confirmation_html",
             preflight=plan.preflight,

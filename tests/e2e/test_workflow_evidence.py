@@ -57,15 +57,15 @@ def _repair_evidence() -> list[ToolCall]:
                 "status": "ready",
                 "plan_id": "plan",
                 "manifest_hash": "a" * 64,
-                "confirmation_text": "確認本次參數與歷史模擬期間。",
+                "confirmation_summary": "確認本次參數與歷史模擬期間。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
                 "preflight": {"status": "passed"},
             },
         ),
         ToolCall(
-            "request_execution_confirmation",
-            {"plan_id": "plan"},
+            "submit_execution_decision",
+            {"plan_id": "plan", "decision": "approve"},
             {
                 "success": True,
                 "plan_id": "plan",
@@ -209,7 +209,7 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
         (6, ("prepare_backtest", "ready plan_id", "after successful dry_run_strategy")),
         (
             7,
-            ("request_execution_confirmation", "plan_id='plan'", "nonempty job_id"),
+            ("submit_execution_decision", "plan_id='plan'", "nonempty job_id"),
         ),
         (
             8,
@@ -217,7 +217,7 @@ def test_failed_lookup_does_not_count_as_reading_the_draft() -> None:
                 "get_job_status",
                 "job_id='job'",
                 "status='done'",
-                "after request_execution_confirmation",
+                "after submit_execution_decision",
             ),
         ),
         (9, ("get_run", "run_id='run'", "after get_job_status reported done")),
@@ -405,19 +405,19 @@ def test_confirmation_of_another_plan_cannot_supply_execution_evidence(
 ) -> None:
     calls = _repair_evidence()
     getattr(calls[7], location)["plan_id"] = "another_plan"
-    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+    with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 
-def test_model_supplied_approval_does_not_count_as_user_confirmation() -> None:
+def test_legacy_approval_field_does_not_match_the_decision_contract() -> None:
     calls = _repair_evidence()
     calls[7].arguments["approved"] = True
-    with pytest.raises(AssertionError, match="request_execution_confirmation"):
+    with pytest.raises(AssertionError, match="submit_execution_decision"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 
 @pytest.mark.parametrize(
-    "field", ["confirmation_text", "html_path", "artifact_id", "preflight"]
+    "field", ["confirmation_summary", "html_path", "artifact_id", "preflight"]
 )
 def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> None:
     calls = _repair_evidence()

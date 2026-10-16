@@ -205,19 +205,23 @@ ZIP 宣告的 CSV 解壓大小上限 128 MiB；超限即回報失敗。
 搜尋候選先套用與策略載入相同的純參數合併函數，再呈現完整有效值；巢狀映射未指定的
 欄位保留原值，空映射不清除既有映射，清單與其他值則整體取代。
 這些說明隨計畫保存，不改寫策略 revision 的 YAML。使用者可用自然語言要求調整，
-不必閱讀程式、內部變數或設定檔。文字與 HTML 共讀同一份具型別的確認文件，
-核心章節不可省略；技術身分與檔案位置放在獨立資訊區。
+不必閱讀程式、內部變數或設定檔。完整文字與 HTML 共讀同一份具型別的確認文件，
+核心章節不可省略；技術身分與檔案位置放在獨立資訊區。工具回覆只提供後端產生的
+`confirmation_summary` 與 HTML 位置，完整文字保留在計畫產物，不重貼到對話。
 
-`request_execution_confirmation` 要求客戶端支援 MCP form elicitation，透過該介面的
-明確接受與勾選回覆提交計畫。模型不能用工具參數傳入 `confirmed: true` 代替確認；
-不支援 form、拒絕、取消、無效回覆或協定失敗都不啟動工作。協定錯誤可重新要求確認。
+助手提供簡短摘要與可點的 HTML 連結後結束回合，等待使用者閱讀並在後續回合明確回覆。
+`submit_execution_decision(plan_id, decision)` 接受 `approve`、`decline` 或 `revise`；
+只有明確同意才提交原計畫，拒絕與修改要求都取消計畫。修改要求回傳
+`confirmation_adjustment_requested`，助手收集修改內容、重新準備與試跑，再等待新確認。
+提問、沉默、模糊回覆與最初的回測請求都不是對尚未閱讀計畫的同意。
+原 `request_execution_confirmation` 與 MCP 原生表單路徑已移除，不保留相容轉接。
 
-Streamable HTTP 使用 SSE 串流回覆，在原工具請求的回覆串流傳送
-`elicitation/create`，待客戶端回覆後才傳送工具結果。Server 不啟用純 JSON
-回覆模式，因為該模式無法交付同一請求中的確認互動；stdio 使用原有雙向通道。
+Streamable HTTP 使用 SSE 串流回覆；stdio 使用雙向通道。對話確認不要求
+elicitation capability，也不維持等待使用者五分鐘的工具呼叫。
 
-伺服器信任客戶端將表單交給使用者；協定本身不能證明任意客戶端的回覆一定由真人操作。
-計畫預設一小時有效，確認時再次核對設定、策略完整性與資格。一次只允許一個確認互動，
+伺服器信任助手如實轉交使用者的對話決策，無法獨立證明人類同意；模型可讀的
+token 或原話也不能提供這種證明。計畫在對話等待期間保持 ready，預設一小時有效。
+提交時再次核對設定、策略完整性與資格；內部 reservation 防止並行提交競爭，
 重複提交已成功計畫回傳原 job，不重複執行。修改程式或有效設定須重新準備、試跑及確認。
 提交使用固定的計畫 ID 作為 job ID。若 worker 已啟動但最後的計畫狀態寫入失敗，
 回覆仍提供原 job 與警告；計畫查詢保留 submitting 及該 job ID。
@@ -239,9 +243,9 @@ sequenceDiagram
     MCP->>Plan: prepare_* 策略與執行設定
     Plan->>Preflight: 固定設定並完成受限試跑
     Preflight-->>Plan: manifest、試跑證據與清理確認
-    Plan-->>MCP: 計畫與文字／HTML 確認內容
-    MCP->>User: form elicitation 顯示確認內容
-    User-->>MCP: 明確接受
+    Plan-->>MCP: 簡短摘要與完整 HTML 位置
+    MCP->>User: 提供連結並結束回合等待
+    User-->>MCP: 閱讀後在下一回合明確同意
     MCP->>Plan: 核對本次確認與固定計畫
     Plan->>Submit: 提交已確認 manifest
     Submit->>Store: 發佈 manifest 並建立 queued job

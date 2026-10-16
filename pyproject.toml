@@ -114,6 +114,8 @@ markers = [
 [dependency-groups]
 dev = [
     "jsonschema>=4.26.0",
+    # Conversation tests verify rendered Markdown links, including code exclusions.
+    "markdown-it-py>=4.2.0",
     # Markdown checks and explicit formatting share tooling/quality.py.
     "pymarkdownlnt>=0.9.38",
     "pytest>=9.1.1",

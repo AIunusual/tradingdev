@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 from tests.integration.execution_fixtures import confirm_prepared, execution_options
-from tests.integration.mcp_harness import SimulatedUserApproval
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -85,9 +84,7 @@ async def test_generated_strategy_full_mcp_workflow(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache_path = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
         assert {
             "get_strategy_contract",
@@ -297,9 +294,7 @@ async def test_generated_strategy_full_mcp_workflow(
         assert inspection["market"]["rows"] == len(sample_ohlcv_with_kd)
 
     # Persist across MCP sessions; a new draft does not inherit old approval.
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
             "status"
         ] == "done"
@@ -337,9 +332,7 @@ async def test_generated_strategy_full_mcp_workflow(
 async def test_rejected_drafts_diagnostics_and_repair(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         code, config_text, saved = await save_example(client)
         before = {
             path: path.read_bytes()
@@ -432,9 +425,7 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     cache = mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         await save_example(client)
         await make_runnable(client)
         prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
@@ -461,9 +452,7 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
 async def test_real_quality_gates_reject_invalid_llm_output(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         code, config_text, _ = await save_example(client)
         await client.call(
             "save_strategy",
@@ -493,9 +482,7 @@ async def test_walk_forward_runs_through_real_worker(
     sample_ohlcv_with_kd: pd.DataFrame,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         code, config_text, _ = await save_example(client)
         config = yaml.safe_load(config_text)
         config["validation"] = {"n_splits": 2, "train_ratio": 0.6}

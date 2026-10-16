@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
+    render_confirmation_summary,
     render_confirmation_text,
 )
 from tradingdev.domain.data.requirements import DataRequirement
@@ -180,6 +181,57 @@ def _document(manifest: ExecutionManifest) -> ConfirmationDocument:
     return build_confirmation_document(
         manifest, _presentation(manifest), _receipt(manifest), plan_id="plan-private"
     )
+
+
+@pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])
+def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
+    document = _document(_manifest(kind))
+    summary = render_confirmation_summary(document, mode="signal")
+    html = unescape(render_confirmation_html(document))
+    assert len(summary.splitlines()) <= 7
+    assert len(summary) < 900
+    for expected in (
+        "BTC/USDT",
+        "每根 K 線 1 小時",
+        "2024-01-01",
+        "2024-12-31",
+        "10000",
+        "0.06%",
+        "0.05%",
+        "完整 HTML",
+        "於對話回覆",
+    ):
+        assert expected in summary
+    assert "試跑只涵蓋有限樣本" in summary
+    assert "閱讀本頁不會啟動回測" in html
+    for detail in ("最低歷史資料需求", "試跑沒有觀察到交易", "策略設定 1"):
+        assert detail not in summary and detail in html
+    if kind == "optimization":
+        assert "參數組合總數：3" in summary
+        assert "搜尋組 1／候選 3" not in summary
+        assert "搜尋組 1／候選 3" in html
+
+
+@pytest.mark.parametrize("position_size", [None, 0, 200, 450])
+def test_volume_summary_uses_actual_trade_notional_instead_of_unused_capital(
+    position_size: int | None,
+) -> None:
+    document = _document(
+        _manifest(
+            backtest={
+                "mode": "volume",
+                "init_cash": 10000,
+                "position_size": position_size,
+            }
+        )
+    )
+    summary = render_confirmation_summary(document, mode="volume")
+    assert "固定名目金額、逐筆累計損益" in summary
+    assert "單次投入金額：" in summary
+    assert str(position_size or 200) in summary
+    assert "初始資金" not in summary
+    assert "10000" not in summary
+    assert "此計算方式不使用初始資金" in render_confirmation_html(document)
 
 
 @pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])

@@ -12,7 +12,6 @@ import pytest
 import yaml
 
 from tests.integration.execution_fixtures import confirm_prepared, execution_options
-from tests.integration.mcp_harness import SimulatedUserApproval
 from tradingdev.domain.execution import ExecutionManifest
 
 if TYPE_CHECKING:
@@ -100,9 +99,7 @@ async def _save_runnable(
 async def test_optimization_rejects_walk_forward_config_through_mcp(
     mcp_workspace: MCPWorkspace,
 ) -> None:
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         saved = await _save_runnable(client, walk_forward=True)
         rejected = await client.call(
             "prepare_optimization",
@@ -128,12 +125,12 @@ async def test_optimization_confirmation_search_and_persisted_oos(
     mcp_workspace: MCPWorkspace,
 ) -> None:
     mcp_workspace.seed_market(_opposite_trends())
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         saved = await _save_runnable(client)
         assert not (
-            await client.call("request_execution_confirmation", plan_id="missing")
+            await client.call(
+                "submit_execution_decision", plan_id="missing", decision="approve"
+            )
         )["success"]
         overlapping = await client.call(
             "prepare_optimization",
@@ -184,7 +181,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert replacement["revision_id"] != saved["revision_id"]
         assert replacement["status"] == "draft"
         # A newer draft cannot change the previously prepared revision. Only the
-        # explicit test client's elicitation callback authorizes formal execution.
+        # explicit test decision submits the frozen plan for formal execution.
         confirmed = await confirm_prepared(client, prepared)
         job_id = confirmed["job_id"]
         completed = await client.wait_for_job(job_id, timeout=180)
@@ -210,7 +207,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             assert metrics["total_trades"] == 0
         assert completed["train_metrics"]["profit_factor"] is None
         repeated = await client.call(
-            "request_execution_confirmation", plan_id=prepared["plan_id"]
+            "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
         )
         assert repeated["success"] and repeated["job_id"] == job_id
         assert len(await client.call("list_jobs")) == 1
@@ -350,9 +347,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert original["backtest"]["symbol"] == "ETH/USDT"
         assert original["backtest"]["timeframe"] == "4h"
 
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         reloaded = await client.call("get_job_status", job_id=job_id)
         assert reloaded["status"] == "done"
         assert reloaded["manifest_hash"] == manifest_hash

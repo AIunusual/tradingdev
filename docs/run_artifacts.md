@@ -87,8 +87,9 @@ directories and are never unlinked while another process might use their inode.
 
 Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
-`plan_id`; they do not create a job. `request_execution_confirmation` returns the
-job ID only after the client accepts the confirmation form. Job status, job lists, and run
+`plan_id`; they do not create a job. `submit_execution_decision` with `approve`
+returns the job ID after the caller relays the user's explicit consent.
+Job status, job lists, and run
 records carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
@@ -353,10 +354,11 @@ resources; publication rolls back its new directory on handled failure.
 
 Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
 `cancelled`, or `failed`. A retained `.approval.lock` and state comparison
-serialize transitions; only one confirmation can be active. Confirmation checks
-expiry and current executable-source integrity before asking and again before
-submitting. A live server-owned challenge binds the response to the same plan
-content; a model-supplied boolean is not an approval credential. Repeating a
+serialize transitions; only one submission reservation can be active. The plan
+stays `ready` while the user reads it. On approval, the service checks expiry and
+current executable-source integrity before reserving and again before submitting.
+An internal server-owned challenge binds the submission to the same plan content;
+the client is responsible for truthfully relaying user consent. Repeating a
 successful submission returns its original job ID rather than launching twice.
 The deterministic job ID equals the plan ID. If worker launch succeeds but the
 final `submitted` state write fails, the response still identifies that job and
@@ -367,19 +369,26 @@ its manifest matches and it has a complete worker-control identity; it records
 queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
-`request_execution_confirmation` requires advertised MCP form elicitation.
-Only an accepted response with the explicit approval field set to true submits
-the fixed manifest. Unsupported clients, declined/cancelled forms and malformed
-responses never launch work. Each form response has a separate 300-second
-(five-minute) deadline, independent of the plan's one-hour lifetime. A form timeout
-returns `confirmation_failed`, launches no job and releases the active interaction
-back to `ready`; the user can request confirmation again while the plan remains
-valid. Protocol errors likewise release the interaction; a rejected form cancels
-the plan. The server relies on
-the client to present the form to the user and cannot prove arbitrary clients
-obtained a human decision. Source or effective-setting changes require a new
-plan, fresh sample evidence and another confirmation. CLI commands are explicit
-execution requests and do not use this MCP interaction.
+Preparation and lookup return `confirmation_summary` and the complete HTML's
+`html_path`/`artifact_id`. Full confirmation text remains in the saved plan; it is
+not copied into ordinary tool responses. The assistant presents the short summary
+and HTML link, ends the turn and waits for the user to review it. Reading the
+artifact does not submit a job. A local path must be made available through the
+client's file/artifact interface when the user is not on the server's machine.
+
+`submit_execution_decision(plan_id, decision)` relays an explicit later user reply.
+`approve` submits the fixed manifest; `decline` cancels without running;
+`revise` cancels and returns `confirmation_adjustment_requested`, requiring a new
+plan and fresh confirmation after changes. Questions, ambiguous replies and the
+initial task request are not approval. Conversation waiting leaves the plan
+`ready`; there is no five-minute form deadline, but the one-hour plan lifetime
+still applies. A new plan must be prepared after expiry.
+
+The server trusts the assistant to convey the user's decision; it cannot prove
+human consent from a tool argument. Source and effective-setting checks, internal
+submission reservations and duplicate-job prevention remain enforced. The former
+native MCP form tool is removed. CLI commands remain explicit execution requests
+and do not use this conversation workflow.
 
 ## MCP Lookup
 

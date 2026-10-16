@@ -48,12 +48,12 @@ def execution_options(parameters: dict[str, Any]) -> dict[str, Any]:
 async def confirm_prepared(
     client: MCPClient, prepared: dict[str, Any]
 ) -> dict[str, Any]:
-    """Request the client's explicit test user callback for one ready plan."""
+    """Submit the test user's explicit approval for one ready plan."""
     assert prepared["success"] is True, prepared
     assert prepared["status"] == "ready", prepared
     assert not prepared.get("job_id"), prepared
     confirmed: dict[str, Any] = await client.call(
-        "request_execution_confirmation", plan_id=prepared["plan_id"]
+        "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
     )
     assert confirmed["success"] is True, confirmed
     assert confirmed["plan_id"] == prepared["plan_id"]

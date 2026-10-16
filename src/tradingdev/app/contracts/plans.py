@@ -1,4 +1,4 @@
-"""Public plan and confirmation responses without model-supplied approval."""
+"""Public review plans and conversation-mediated execution decisions."""
 
 from typing import Literal
 
@@ -8,6 +8,8 @@ from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.execution_plan import PlanState
 from tradingdev.domain.preflight import PreflightReceipt
 
+type ExecutionDecision = Literal["approve", "decline", "revise"]
+
 
 class PlanResponse(ContractModel):
     success: Literal[True] = True
@@ -15,7 +17,7 @@ class PlanResponse(ContractModel):
     status: PlanState
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     expires_at: str
-    confirmation_text: str
+    confirmation_summary: str
     html_path: str
     artifact_id: str
     preflight: PreflightReceipt
