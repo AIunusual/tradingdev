@@ -25,7 +25,6 @@ from tests.e2e.test_llm_workflows import assert_workflow
 from tests.integration.execution_fixtures import execution_options
 from tests.integration.mcp_harness import (
     MCPWorkspace,
-    SimulatedUserApproval,
     temporary_mcp_workspace,
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -122,8 +121,7 @@ async def _complete_workflow(
     workspace: MCPWorkspace, scenario: Scenario
 ) -> CompletedWorkflow:
     calls: list[ToolCall] = []
-    approval = SimulatedUserApproval()
-    async with workspace.connect(elicitation_callback=approval) as client:
+    async with workspace.connect() as client:
 
         async def call(name: str, **arguments: Any) -> Any:
             result = await client.call(name, **arguments)
@@ -176,10 +174,9 @@ async def _complete_workflow(
         )
         assert prepared["success"], prepared
         started = await call(
-            "request_execution_confirmation", plan_id=prepared["plan_id"]
+            "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
         )
         assert started["job_id"], started
-        assert len(approval.requests) == 1
         finished = await client.wait_for_job(started["job_id"])
         assert finished["status"] == "done", finished
         await call("get_job_status", job_id=started["job_id"])

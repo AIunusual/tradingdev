@@ -14,7 +14,6 @@ import pytest
 
 from tests.integration.execution_fixtures import confirm_prepared, execution_options
 from tests.integration.mcp_harness import (
-    SimulatedUserApproval,
     temporary_mcp_workspace,
     worker_is_alive,
 )
@@ -48,9 +47,7 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
         with temporary_mcp_workspace() as workspace:
             root = workspace.root
             workspace.seed_market(sample_ohlcv_with_kd)
-            async with workspace.connect(
-                elicitation_callback=SimulatedUserApproval()
-            ) as client:
+            async with workspace.connect() as client:
                 contract = await client.call("get_strategy_contract")
                 saved = await client.call(
                     "save_strategy",

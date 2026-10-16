@@ -12,7 +12,6 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import TextContent
 from tests.integration.execution_fixtures import execution_options
-from tests.integration.mcp_harness import SimulatedUserApproval
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
@@ -105,12 +104,9 @@ def test_revision_omission_prepares_bundled_strategy_without_launching(
     tmp_path: Path,
 ) -> None:
     context = plan_context(tmp_path)
-    approval = SimulatedUserApproval()
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(
-            context.server, elicitation_callback=approval
-        ) as client:
+        async with create_connected_server_and_client_session(context.server) as client:
             result = await client.call_tool("prepare_backtest", context.arguments)
             assert not result.isError
             assert result.structuredContent is not None
@@ -119,7 +115,8 @@ def test_revision_omission_prepares_bundled_strategy_without_launching(
             assert context.runner.calls == []
             assert context.service.jobs.list_all_jobs() == []
             started = await client.call_tool(
-                "request_execution_confirmation", {"plan_id": prepared["plan_id"]}
+                "submit_execution_decision",
+                {"plan_id": prepared["plan_id"], "decision": "approve"},
             )
             assert not started.isError
             assert started.structuredContent is not None

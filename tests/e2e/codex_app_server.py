@@ -1,4 +1,4 @@
-"""One bounded Codex turn over app-server JSON-RPC, including MCP forms."""
+"""A bounded Codex conversation over one app-server thread."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     import asyncio
 
 ElicitationCallback = Callable[[ElicitRequestParams], Awaitable[ElicitResult]]
+TurnCallback = Callable[[list[dict[str, Any]]], Awaitable[str | None]]
 
 
 class CodexAppServer:
@@ -186,6 +187,8 @@ class CodexAppServer:
         thread_params: dict[str, Any],
         *,
         mcp_config: dict[str, Any],
+        user_reply: TurnCallback | None = None,
+        max_turns: int = 8,
     ) -> list[dict[str, Any]]:
         await self.request(
             "initialize",
@@ -220,22 +223,38 @@ class CodexAppServer:
         self.thread_id = started["thread"]["id"]
         assert isinstance(self.thread_id, str) and self.thread_id
         print(f"[codex] thread started with model {started.get('model')}", flush=True)
-        self.turn_started = True
-        pending_events: list[dict[str, Any]] = []
-        result = await self.request(
-            "turn/start",
-            {
-                "threadId": self.thread_id,
-                "input": [{"type": "text", "text": prompt, "text_elements": []}],
-            },
-            pending_events=pending_events,
-        )
-        self.turn_id = result["turn"]["id"]
-        assert isinstance(self.turn_id, str) and self.turn_id
-        # Notifications may precede the ACK. Never approve one until the ACK
-        # establishes which turn this client actually started.
-        for message in pending_events:
-            await self.dispatch(message)
-        while not self.completed:
-            await self.dispatch(await self.read())
-        return self.events
+        turn_ids: set[str] = set()
+        for turn_number in range(1, max_turns + 1):
+            self.turn_started = True
+            self.completed = False
+            event_start = len(self.events)
+            pending_events: list[dict[str, Any]] = []
+            result = await self.request(
+                "turn/start",
+                {
+                    "threadId": self.thread_id,
+                    "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                },
+                pending_events=pending_events,
+            )
+            self.turn_id = result["turn"]["id"]
+            assert isinstance(self.turn_id, str) and self.turn_id
+            assert self.turn_id not in turn_ids, "Codex reused a completed turn ID"
+            turn_ids.add(self.turn_id)
+            # Notifications may precede the ACK. Dispatch only after the ACK
+            # establishes which turn this client actually started.
+            for message in pending_events:
+                await self.dispatch(message)
+            while not self.completed:
+                await self.dispatch(await self.read())
+            if user_reply is None:
+                return self.events
+            reply = await user_reply(self.events[event_start:])
+            if reply is None:
+                return self.events
+            assert reply.strip(), "Test user reply must not be empty"
+            assert turn_number < max_turns, (
+                f"Codex exceeded {max_turns} conversation turns"
+            )
+            prompt = reply
+        raise AssertionError("Conversation requires at least one turn")

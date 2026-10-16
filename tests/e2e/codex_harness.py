@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import psutil
 
     from tests.e2e.codex_app_server import ElicitationCallback
+    from tests.e2e.conversation import UserReply
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -34,7 +35,7 @@ LIFECYCLE_TOOLS = [
     "prepare_walk_forward",
     "prepare_optimization",
     "get_execution_plan",
-    "request_execution_confirmation",
+    "submit_execution_decision",
     "get_job_status",
     "list_runs",
     "get_run",
@@ -112,8 +113,27 @@ async def run_codex(
     max_tool_calls: int = 64,
     model: str | None = None,
     elicitation_callback: ElicitationCallback | None = None,
+    user_reply: UserReply | None = None,
+    max_turns: int = 8,
 ) -> list[dict[str, Any]]:
-    """Run one MCP-only turn with an explicit test user and reap its process tree."""
+    """Run an MCP-only conversation with one thread and reap its process tree."""
+    from tests.e2e.conversation import ModelTurn
+    from tests.e2e.llm_client import codex_calls
+
+    turn_number = 0
+
+    async def respond_to_turn(events: list[dict[str, Any]]) -> str | None:
+        nonlocal turn_number
+        turn_number += 1
+        assert user_reply is not None
+        text = "\n".join(
+            str(event["params"]["item"].get("text", ""))
+            for event in events
+            if event.get("method") == "item/completed"
+            and event.get("params", {}).get("item", {}).get("type") == "agentMessage"
+        )
+        return await user_reply(ModelTurn(turn_number, text, codex_calls(events)))
+
     stderr_path = root / "codex_stderr.log"
     with stderr_path.open("w", encoding="utf-8") as stderr:
         process = await asyncio.create_subprocess_exec(
@@ -163,10 +183,14 @@ async def run_codex(
                         "allowProviderModelFallback": False,
                         "developerInstructions": (
                             "Use only the configured tradingdev MCP tools. "
-                            "User confirmation is handled by the MCP client callback."
+                            "Present the prepared summary and HTML link, then end "
+                            "the turn. Submit a decision only after the user replies "
+                            "explicitly in a later turn of this conversation."
                         ),
                     },
                     mcp_config=_mcp_config(root),
+                    user_reply=respond_to_turn if user_reply is not None else None,
+                    max_turns=max_turns,
                 )
         except TimeoutError as exc:
             msg = (

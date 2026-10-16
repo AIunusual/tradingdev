@@ -45,7 +45,8 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     store = get_sqlite_store(workspace)
     mcp = StrictFastMCP(
         name="tradingdev",
-        json_response=True,
+        # Preserve the standard streaming channel for server-to-client messages.
+        json_response=False,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
         ),

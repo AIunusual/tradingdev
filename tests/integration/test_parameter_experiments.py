@@ -10,7 +10,6 @@ import pytest
 import yaml
 
 from tests.integration.execution_fixtures import confirm_prepared, execution_options
-from tests.integration.mcp_harness import SimulatedUserApproval
 from tests.integration.test_mcp_protocol import (
     RUN_ARGUMENTS,
     STRATEGY_ID,
@@ -33,9 +32,7 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
     walk_forward: bool,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
-    async with mcp_workspace.connect(
-        elicitation_callback=SimulatedUserApproval()
-    ) as client:
+    async with mcp_workspace.connect() as client:
         code, yaml_config, saved = await save_example(client)
         if walk_forward:
             config = yaml.safe_load(yaml_config)

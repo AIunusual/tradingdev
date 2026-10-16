@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, create_autospec, patch
 
 import httpx
@@ -21,6 +21,9 @@ from tests.e2e.llm_client import (
     run_local_model,
 )
 from tests.integration.mcp_harness import MCPClient, temporary_mcp_workspace
+
+if TYPE_CHECKING:
+    from tests.e2e.conversation import ModelTurn
 
 
 def _call(
@@ -77,6 +80,110 @@ def _mock_client(
         content=[], structuredContent={"result": []}
     )
     return MCPClient(session, "Use MCP tools."), session.call_tool
+
+
+def test_local_user_reply_keeps_prior_messages_and_observes_only_completed_turns() -> (
+    None
+):
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        requests: list[dict[str, Any]] = []
+        turns: list[ModelTurn] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            requests.append(body)
+            if len(requests) in {1, 3}:
+                return _reply([_call(call_id=f"call-{len(requests)}")])
+            return _reply()
+
+        async def user_reply(turn: ModelTurn) -> str | None:
+            turns.append(turn)
+            assert turn.number == len(turns)
+            assert turn.text == "Complete."
+            assert len(turn.calls) == 1
+            assert call_tool.await_count == len(turns)
+            return "同意執行" if turn.number == 1 else None
+
+        calls = await run_local_model(
+            client,
+            "先準備",
+            model="fixture",
+            base_url="http://fixture/v1",
+            timeout_seconds=5,
+            transport=httpx.MockTransport(respond),
+            user_reply=user_reply,
+        )
+        assert len(calls) == len(turns) == 2
+        assert requests[2]["messages"][:-2] == requests[1]["messages"]
+        assert requests[2]["messages"][-2:] == [
+            {"role": "assistant", "content": "Complete."},
+            {"role": "user", "content": "同意執行"},
+        ]
+        assert (
+            requests[3]["messages"][: len(requests[2]["messages"])]
+            == requests[2]["messages"]
+        )
+
+    asyncio.run(run())
+
+
+def test_local_tool_budget_remains_shared_after_user_reply() -> None:
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        count = 0
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal count
+            count += 1
+            return _reply() if count == 2 else _reply([_call(call_id=f"call-{count}")])
+
+        async def user_reply(turn: ModelTurn) -> str:
+            return "同意執行"
+
+        with pytest.raises(AssertionError, match="exceeded 1 MCP tool calls"):
+            await run_local_model(
+                client,
+                "prepare",
+                model="fixture",
+                base_url="http://fixture/v1",
+                timeout_seconds=5,
+                transport=httpx.MockTransport(respond),
+                user_reply=user_reply,
+                max_tool_calls=1,
+            )
+        assert call_tool.await_count == 1
+
+    asyncio.run(run())
+
+
+def test_local_user_observer_error_does_not_request_another_model_turn() -> None:
+    async def run() -> None:
+        client, call_tool = _mock_client()
+        requests = 0
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal requests
+            requests += 1
+            return _reply()
+
+        async def user_reply(turn: ModelTurn) -> str:
+            raise AssertionError("No reviewable plan")
+
+        with pytest.raises(AssertionError, match="No reviewable plan"):
+            await run_local_model(
+                client,
+                "prepare",
+                model="fixture",
+                base_url="http://fixture/v1",
+                timeout_seconds=5,
+                transport=httpx.MockTransport(respond),
+                user_reply=user_reply,
+            )
+        assert requests == 1
+        call_tool.assert_not_awaited()
+
+    asyncio.run(run())
 
 
 def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> None:

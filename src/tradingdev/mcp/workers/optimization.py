@@ -1,6 +1,6 @@
 """Subprocess worker that executes a parameter optimization job.
 
-Start jobs through prepare_optimization and request_execution_confirmation.
+Start jobs through prepare_optimization and submit_execution_decision after review.
 The submission service uses
 ProcessRunner to launch a supervisor, which starts this worker and supplies
 TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.

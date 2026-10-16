@@ -11,14 +11,12 @@ import pytest
 import yaml
 
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
+from tests.e2e.conversation_user import ObservedPlanUser
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
-from tests.integration.mcp_harness import (
-    SimulatedUserApproval,
-    temporary_mcp_workspace,
-)
+from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -268,21 +266,21 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     manifest_hash = prepared.result.get("manifest_hash")
     assert isinstance(manifest_hash, str) and len(manifest_hash) == 64
     plan_id = prepared.result["plan_id"]
-    assert prepared.result.get("confirmation_text")
+    assert prepared.result.get("confirmation_summary")
     assert prepared.result.get("html_path") and prepared.result.get("artifact_id")
     assert prepared.result.get("preflight"), (
         "Preparation must retain preflight evidence"
     )
     assert not prepared.result.get("job_id"), "Preparing must not launch a formal job"
     start_index = require_index(
-        f"request_execution_confirmation(plan_id={plan_id!r}) returning a nonempty "
+        f"submit_execution_decision(plan_id={plan_id!r}) returning a nonempty "
         "job_id after prepare_backtest",
         (
             index
             for index, call in enumerate(calls)
             if index > prepare_index
-            and call.name == "request_execution_confirmation"
-            and call.arguments == {"plan_id": plan_id}
+            and call.name == "submit_execution_decision"
+            and call.arguments == {"plan_id": plan_id, "decision": "approve"}
             and call.result
             and call.result.get("success") is True
             and call.result.get("plan_id") == plan_id
@@ -294,7 +292,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     job_id = started.result["job_id"]
     done_index = require_index(
         f"get_job_status(job_id={job_id!r}) returning status='done' "
-        f"after request_execution_confirmation for {target}",
+        f"after submit_execution_decision for {target}",
         (
             index
             for index, call in enumerate(calls)
@@ -432,7 +430,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
         ]
         assert sum(call.name == "prepare_backtest" for call in calls) == 1
-        assert sum(call.name == "request_execution_confirmation" for call in calls) == 1
+        assert sum(call.name == "submit_execution_decision" for call in calls) == 1
     if scenario.repair:
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
@@ -491,33 +489,28 @@ def test_llm_authors_backtests_and_queries_results(
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
             }
-            approval = SimulatedUserApproval()
+            user = ObservedPlanUser(workspace)
             if provider == "codex":
                 calls = codex_calls(
                     await run_codex(
                         workspace.root,
                         scenario.prompt,
-                        elicitation_callback=approval.respond,
+                        user_reply=user,
                         **options,
                     )
                 )
             else:
-                async with workspace.connect(elicitation_callback=approval) as client:
+                async with workspace.connect() as client:
                     calls = await run_local_model(
                         client,
                         scenario.prompt,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
                         reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        user_reply=user,
                         **options,
                     )
-            confirmations = [
-                c.result for c in calls if c.name == "request_execution_confirmation"
-            ]
-            assert len(approval.requests) == 1, (
-                "Expected one simulated user approval; confirmation results: "
-                f"{confirmations}"
-            )
+            user.assert_complete()
             return calls
 
         calls = asyncio.run(run())

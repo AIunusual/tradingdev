@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.integration.execution_fixtures import confirmation_presentation
@@ -32,6 +32,9 @@ from tradingdev.app.preflight_service import PreflightError
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+
+if TYPE_CHECKING:
+    from tradingdev.app.contracts.plans import ExecutionDecision
 
 
 def _prepare(context: PlanContext) -> PlanResponse:
@@ -375,3 +378,117 @@ def test_changed_generated_revision_after_question_cannot_start(
     assert not runner.calls
     current = service.get(prepared.plan_id)
     assert isinstance(current, PlanResponse) and current.status == "failed"
+
+
+@pytest.mark.parametrize(
+    "decision,code",
+    [
+        ("approve", None),
+        ("decline", "confirmation_declined"),
+        ("revise", "confirmation_adjustment_requested"),
+    ],
+)
+def test_conversation_decision_applies_to_the_prepared_plan(
+    tmp_path: Path, decision: ExecutionDecision, code: str | None
+) -> None:
+    context = plan_context(tmp_path)
+    prepared = _prepare(context)
+    assert prepared.confirmation_summary
+    assert "confirmation_text" not in prepared.model_dump()
+    assert "<html" in Path(prepared.html_path).read_text(encoding="utf-8")
+    assert context.service.get(prepared.plan_id) == prepared
+    assert context.runner.calls == []
+    assert context.service.jobs.list_all_jobs() == []
+    result = context.service.decide(prepared.plan_id, decision=decision)
+    if code is None:
+        assert isinstance(result, PlanStarted)
+        assert result.manifest_hash == prepared.manifest_hash
+        assert context.service.decide(prepared.plan_id, decision="approve") == result
+        assert len(context.runner.calls) == 1
+    else:
+        assert isinstance(result, PlanRejected) and result.code == code
+        saved = context.service.get(prepared.plan_id)
+        assert isinstance(saved, PlanResponse) and saved.status == "cancelled"
+        later = context.service.decide(prepared.plan_id, decision="approve")
+        assert isinstance(later, PlanRejected) and later.code == "plan_not_ready"
+        assert context.runner.calls == []
+        assert context.service.jobs.list_all_jobs() == []
+
+
+def test_conversation_approval_checks_expiration_after_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = plan_context(tmp_path)
+    prepared = _prepare(context)
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Later:
+            return cls.fromtimestamp(
+                (datetime.now(UTC) + timedelta(hours=2)).timestamp(), tz
+            )
+
+    monkeypatch.setattr("tradingdev.app.execution_plan_service.datetime", Later)
+    result = context.service.decide(prepared.plan_id, decision="approve")
+    assert isinstance(result, PlanRejected) and result.code == "plan_expired"
+    assert context.runner.calls == []
+    assert context.service.jobs.list_all_jobs() == []
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["manifest", "preflight", "document", "confirmation.html", "confirmation.txt"],
+)
+def test_conversation_approval_rejects_changes_to_reviewed_evidence(
+    tmp_path: Path, target: str
+) -> None:
+    context = plan_context(tmp_path)
+    prepared = _prepare(context)
+    if target.startswith("confirmation."):
+        (context.service.plans.directory(prepared.plan_id) / target).write_text(
+            "altered", encoding="utf-8"
+        )
+    else:
+        plan, _record = context.service.plans.get(prepared.plan_id)
+        payload = plan.model_dump(mode="json")
+        if target == "manifest":
+            payload[target]["config"]["backtest"]["fees"] = 0.5
+        elif target == "preflight":
+            payload[target]["trade_count"] = 99
+        else:
+            payload[target]["summary"] = "Unreviewed settings"
+        _rewrite_payload(context, prepared.plan_id, payload)
+    result = context.service.decide(prepared.plan_id, decision="approve")
+    assert isinstance(result, PlanRejected)
+    assert context.runner.calls == []
+    assert context.service.jobs.list_all_jobs() == []
+
+
+def test_parallel_conversation_approvals_submit_only_one_job(tmp_path: Path) -> None:
+    context = plan_context(tmp_path)
+    prepared = _prepare(context)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(context.service.decide, prepared.plan_id, decision="approve")
+            for _ in range(2)
+        ]
+        results = [future.result(timeout=10) for future in futures]
+    started = [result for result in results if isinstance(result, PlanStarted)]
+    assert started
+    assert {result.job_id for result in started} == {prepared.plan_id}
+    assert len(context.runner.calls) == 1
+    assert len(context.service.jobs.list_all_jobs()) == 1
+
+
+@pytest.mark.parametrize("decision", ["decline", "revise"])
+def test_conversation_rejection_cannot_cancel_an_already_submitted_job(
+    tmp_path: Path, decision: ExecutionDecision
+) -> None:
+    context = plan_context(tmp_path)
+    prepared = _prepare(context)
+    started = context.service.decide(prepared.plan_id, decision="approve")
+    assert isinstance(started, PlanStarted)
+    result = context.service.decide(prepared.plan_id, decision=decision)
+    assert isinstance(result, PlanRejected) and result.code == "plan_not_cancellable"
+    assert context.service.decide(prepared.plan_id, decision="approve") == started
+    assert len(context.runner.calls) == 1

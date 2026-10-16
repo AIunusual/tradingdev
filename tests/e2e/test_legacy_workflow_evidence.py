@@ -66,15 +66,15 @@ def legacy_calls() -> list[ToolCall]:
                 "status": "ready",
                 "plan_id": "plan-1",
                 "manifest_hash": "a" * 64,
-                "confirmation_text": "確認本次歷史研究設定。",
+                "confirmation_summary": "確認本次歷史研究設定。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
                 "preflight": {"status": "passed"},
             },
         ),
         ToolCall(
-            "request_execution_confirmation",
-            {"plan_id": "plan-1"},
+            "submit_execution_decision",
+            {"plan_id": "plan-1", "decision": "approve"},
             {
                 "success": True,
                 "plan_id": "plan-1",

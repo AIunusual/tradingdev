@@ -83,16 +83,25 @@ minimum_history_bars=20、sample_bars=128；presentation 必須提供中文 titl
 說明每個參數的白話意義與單位，不要把程式識別字當作唯一說明。
 {experiment}
 本次行情已預先放入後端快取，不下載行情、不使用外部資料。
-取得 success=true、status=ready 的 plan_id 後，呼叫
-request_execution_confirmation(plan_id)。這會向測試客戶端的模擬使用者提出確認，
-不能自行傳 approved 或 confirmed。收到成功且非空 job_id 後才查詢正式工作。
+取得 success=true、status=ready 的 plan_id 後，將 confirmation_summary 逐行原文引用，
+建議每行加 > 作為 Markdown 引用；只可調整排版，
+不可改寫、刪除欄名、值、單位或訓練／測試角色。
+摘要已由後端完成，不要再摘要。引用外另行用 [閱讀確認單](<FULL_HTML_PATH>) 提供連結，
+把 FULL_HTML_PATH 替換為工具回覆 html_path 的實際完整值；角括號可保留空白路徑。
+連結放在一般 Markdown 文字行，不放 code block，不加 file:// 或自行創造其他 URI 前綴。
+然後結束本回合等待我回覆。一般解釋及回答問題可用自己的表達方式。
+現在尚未同意正式執行，不可在本回合呼叫 submit_execution_decision。
+只有同一段對話的後續回合收到我的明確同意，才用 plan_id、decision=approve 提交。
+拒絕用 decision=decline；要求修改用 decision=revise，再重新準備並呈現新計畫，
+結束回合重新等待確認。模糊回覆須澄清，不可當作同意；不可重用已取消的計畫。
+收到成功且非空 job_id 後才查詢正式工作。
 持續 get_job_status 查詢直到 done，再以回傳的 run_id 呼叫 get_run，
 以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
 再以 get_run_metrics 查同一 run_id 的 daily_pnl_mean、total_volume、n_days，
 確認這些未列於摘要的指標仍可查詢。{history}
 確認結果後就結束，只回答「完成」與 run_id。不得只啟動工作就結束。
 只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
-直接呼叫工具，不敘述計畫或重貼程式碼；程式、YAML 與 request_summary 保持精簡，
+直接呼叫工具，不重貼程式碼或完整確認內容；程式、YAML 與 request_summary 保持精簡，
 但不得省略需求或驗證步驟。
 """
 

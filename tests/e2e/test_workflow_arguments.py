@@ -103,7 +103,7 @@ def test_conversion_preserves_failed_calls_source_text_and_unknown_fields() -> N
     saved = ToolCall("save_strategy", raw, {"success": True})
     assert effective_workflow_calls([saved])[0].arguments == raw
     confirmed = ToolCall(
-        "request_execution_confirmation",
+        "submit_execution_decision",
         {"plan_id": "plan", "approved": "true"},
         {"success": True},
     )

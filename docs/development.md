@@ -46,20 +46,22 @@ uv sync --locked --all-extras
 計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
 證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
 的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
-Local 與 Codex harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker；確認由明確注入的
-測試使用者 callback 回應並記錄。這是模擬使用者批准，不是已驗證真人操作的客戶端 UI。
-Codex 使用 app-server 雙向 JSON-RPC，把 MCP 確認表單交給同一套 callback，再回傳其決定；
-不使用無法接回表單的 `codex exec`。測試會停用其他 MCP server、外掛與 hooks，
-在臨時工作區啟動獨立的 MCP server，保留原有 Codex 登入；不修改個人設定。
-需要支援 `mcpServer/elicitation/request` 的 Codex CLI；初始化、模型及 callback
-共用同一個情境逾時上限，協定不支援或 callback 缺少時直接失敗。
-Runner 宣告 `experimentalApi`，使用僅允許 MCP 表單的 granular approval policy；
-`never` 會自動拒絕表單，不能用來驗證成功批准。
-另有內建 KD 最佳化與自建策略 walk-forward 的執行計畫情境，檢查巢狀參數說明、
-搜尋或折數覆蓋、確認及結果身分；兩個 provider 共用相同的確認前狀態觀察，
-在 callback 收到完整確認單時核對尚無正式工作與結果，批准後再核對工作及執行產物。
-一般測試連線預設不支援 elicitation；成功案例須明確選擇 callback，拒絕、取消、
-不支援與無效回覆另有回歸測試。不得把模型輸入的 `approved` 當成確認。
+Local 與 Codex harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker。
+測試使用者在模型結束回合後才回覆；Local 沿用相同 messages，Codex app-server
+沿用相同 thread 再啟動下一個 turn，不以兩次獨立對話冒充多回合流程。
+第一回合核對已呈現短摘要與 HTML 連結、計畫 ready、尚無正式工作或結果，
+再注入明確同意；後續回合才允許 `submit_execution_decision` 提交同一計畫。
+修改情境先取消原計畫，準備新計畫並再次停下，收到新同意後才能提交。
+測試 callback 是模擬使用者，不代表已驗證真人操作；後端也不能自行證明回覆來源。
+整段對話共用情境逾時與工具呼叫預算，不因新回合重設。
+Codex 測試停用其他 MCP server、外掛與 hooks，在臨時工作區啟動獨立 MCP server，
+保留原有登入，不修改個人設定。初始化、模型與使用者回合共用同一逾時上限。
+流程不再依賴 MCP elicitation；拒絕、修改、無效決策、來源異動與過期另有回歸測試。
+另有內建 KD 最佳化與自建策略 walk-forward 情境，核對巢狀參數說明、搜尋或折數、
+確認前狀態及執行產物，不能用模型聲稱完成取代保存的證據。
+離線 HTTP 回歸測試啟動 localhost Streamable HTTP 端點，以正式 server 組裝及真實
+MCP client 驗證準備、讀取確認單與決策提交；行情試跑及 worker 使用替代實作隔離。
+此測試不代表已驗證桌面客戶端的檔案呈現或對話按鈕。
 一般策略建立、修復與歷史查詢情境的回測須沿用已驗證 YAML 基礎設定，
 `prepare_backtest` 的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，
 即使覆寫值等於基礎設定，也不符合這些情境的要求。
@@ -125,8 +127,8 @@ Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed
 同時確認原有檔案未變。
 `--llm-timeout` 是每個模型情境的秒數上限，不是預期執行時間；簡例可用 900 秒，
 包含歷史查詢與報告的長流程建議預留 1800 秒，並依硬體調整。
-Codex 入口使用 CLI 的 MCP 客戶端能力；工具 approval 設定與 MCP 使用者表單是不同機制。
-若該客戶端無法完成 elicitation，執行情境會明確失敗，不能跳過確認或改用另一個 provider。
+Codex 入口使用 CLI 的 MCP 客戶端能力；工具 approval 設定不等於使用者已同意執行計畫。
+所選 provider 無法完成多回合確認時須明確失敗，不得跳過使用者回合或切換 provider。
 
 ## 開發階段的程式碼審查
 

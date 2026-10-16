@@ -15,6 +15,7 @@ import httpx
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS, successful_mcp_calls
 
 if TYPE_CHECKING:
+    from tests.e2e.conversation import UserReply
     from tests.integration.mcp_harness import MCPClient
 
 
@@ -220,6 +221,8 @@ async def run_local_model(
     reasoning_effort: str | None = None,
     max_tool_calls: int = 64,
     transport: httpx.AsyncBaseTransport | None = None,
+    user_reply: UserReply | None = None,
+    max_turns: int = 8,
 ) -> list[ToolCall]:
     """Bridge local Chat Completions tool calls to real stdio MCP, with bounds.
 
@@ -234,6 +237,8 @@ async def run_local_model(
     stage = "MCP tool discovery"
     round_number = 0
     provider_tool_repairs = 0
+    turn_number = 1
+    turn_start = 0
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": client.instructions},
         {"role": "user", "content": prompt},
@@ -356,7 +361,28 @@ async def run_local_model(
                         f"provider_tool_repairs={provider_tool_repairs}; "
                         f"final text: {final_text or '(empty)'}"
                     )
-                    return calls
+                    messages.append(message)
+                    if user_reply is None:
+                        return calls
+                    from tests.e2e.conversation import ModelTurn
+
+                    reply = await user_reply(
+                        ModelTurn(
+                            turn_number,
+                            content if isinstance(content, str) else "",
+                            calls[turn_start:],
+                        )
+                    )
+                    if reply is None:
+                        return calls
+                    assert reply.strip(), "Test user reply must not be empty"
+                    assert turn_number < max_turns, (
+                        f"Model exceeded {max_turns} conversation turns"
+                    )
+                    messages.append({"role": "user", "content": reply})
+                    turn_number += 1
+                    turn_start = len(calls)
+                    continue
                 assert choice.get("finish_reason") in {"tool_calls", "stop"}, choice
                 assert len(calls) + len(requested) <= max_tool_calls, (
                     f"Model exceeded {max_tool_calls} MCP tool calls"

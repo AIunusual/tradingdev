@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 from tradingdev.adapters.presentation.html import escape, render_html_document
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     from tradingdev.domain.presentation.confirmation import (
         ConfirmationDocument,
         ConfirmationField,
@@ -36,6 +38,45 @@ def render_confirmation_text(document: ConfirmationDocument) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_confirmation_summary(
+    document: ConfirmationDocument, *, mode: Literal["signal", "volume"]
+) -> str:
+    """Keep the chat review short; the HTML retains every setting and limitation."""
+    labels = {
+        "strategy": {"執行方式"},
+        "market": {"回測商品", "回測 K 線週期", "回測開始", "回測結束"},
+        "execution": {
+            "計算方式",
+            "單次投入金額",
+            "手續費率",
+            "滑價率",
+            *({"初始資金"} if mode == "signal" else set()),
+        },
+        "optimization": {
+            "訓練開始日",
+            "訓練結束日",
+            "保留測試開始日",
+            "保留測試結束日",
+            "參數組合總數",
+        },
+    }
+    lines = [document.title]
+    for section in document.sections:
+        selected = labels.get(section.id, set())
+        values = [
+            f"{field.label}：{_value(field)}"
+            for field in section.fields
+            if field.label in selected
+        ]
+        if values:
+            lines.append("；".join(values))
+    lines.append("試跑只涵蓋有限樣本，不代表完整回測已完成。")
+    lines.append(
+        "請先閱讀完整 HTML 確認單中的設定與試跑限制，再於對話回覆同意、拒絕或修改要求。"
+    )
+    return "\n".join(lines)
+
+
 def _field_html(field: ConfirmationField) -> str:
     description = escape(field.description)
     if field.explanation_source == "model":
@@ -60,6 +101,9 @@ def render_confirmation_html(document: ConfirmationDocument) -> str:
         f"<h1>{escape(document.title)}</h1>"
         "<p class='muted'>策略名稱與下方說明由模型提供。</p>"
         f"<p>{escape(document.summary)}</p></header>"
+        "<section><h2>閱讀後回到對話確認</h2>"
+        "<p>請閱讀下方完整設定與試跑限制。確認後，在原對話回覆同意執行、拒絕，"
+        "或說明要修改的內容。閱讀本頁不會啟動回測；修改設定後會產生新的確認單。</p></section>"
     )
     for section in document.sections:
         body += (
