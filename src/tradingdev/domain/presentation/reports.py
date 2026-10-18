@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 
-REPORT_SCHEMA_VERSION = 1
-REPORT_TEMPLATE_VERSION = "6"
+REPORT_SCHEMA_VERSION = 2
+REPORT_TEMPLATE_VERSION = "17"
+SCOPED_REPORT_SECTIONS = frozenset(
+    {"settings", "metrics", "equity", "ledger", "trades"}
+)
 
 
 @dataclass(frozen=True)
@@ -24,8 +27,10 @@ REPORT_SECTIONS = MappingProxyType(
         for section in (
             ReportSectionDefinition(
                 "overview",
-                "總覽",
-                "Run identity, recorded coverage and default-scope comparison.",
+                "參數與結果比較總覽",
+                "All run/scope parameters, dates, roles and saved performance, "
+                "linked to individual result details when detail sections "
+                "are selected.",
             ),
             ReportSectionDefinition(
                 "settings",
@@ -34,8 +39,9 @@ REPORT_SECTIONS = MappingProxyType(
             ),
             ReportSectionDefinition(
                 "metrics",
-                "保存績效指標",
-                "Original values, units, definitions and unavailable reasons.",
+                "績效分析與保存指標",
+                "QuantStats HTML analysis derived from saved returns, plus original "
+                "values, definitions and explicit unavailable reasons.",
             ),
             ReportSectionDefinition(
                 "equity",
@@ -43,21 +49,17 @@ REPORT_SECTIONS = MappingProxyType(
                 "All saved equity points and a derived drawdown visualization.",
             ),
             ReportSectionDefinition(
+                "ledger",
+                "委託、成交與帳戶核對",
+                "One chronological ledger of order attempts and bar-close "
+                "valuations, with Bokeh status filters and selectable columns, "
+                "static HTML and full-precision CSV/JSON exports.",
+            ),
+            ReportSectionDefinition(
                 "trades",
-                "完整交易紀錄",
-                "All trades with raw fields, sort, filter and offline CSV export.",
-            ),
-            ReportSectionDefinition(
-                "executions",
-                "原生執行紀錄",
-                "Native order attempts, prices, fees and before/after "
-                "account transitions.",
-            ),
-            ReportSectionDefinition(
-                "account_history",
-                "逐根帳戶狀態",
-                "Saved end-of-bar VectorBT cash, position and equity; "
-                "not exchange margin.",
+                "配對交易損益",
+                "Supplementary paired position/trade PnL; not individual "
+                "order attempts or the account reconciliation ledger.",
             ),
             ReportSectionDefinition(
                 "limitations",
@@ -77,6 +79,6 @@ REPORT_RECIPES = MappingProxyType(
     {
         "standard": tuple(REPORT_SECTIONS),
         "comparison": ("overview", "metrics", "equity", "provenance"),
-        "trades": ("overview", "trades", "provenance"),
+        "trades": ("overview", "ledger", "trades", "provenance"),
     }
 )

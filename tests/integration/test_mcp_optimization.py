@@ -247,7 +247,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             train_detail["metadata"]["execution_context"]["end_date"]
             == "2024-01-03T23:59:59.999999"
         )
-        assert train_detail["metadata"]["providers"]["empyrical-reloaded"]
+        assert train_detail["metadata"]["providers"]["quantstats"]
         assert (
             train_detail["definitions"]["max_drawdown"]["optimization_direction"]
             == "minimize"

@@ -160,7 +160,7 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert detail["success"] and detail["scope"] == "full"
         assert set(detail["metrics"]) == {"daily_pnl_mean", "total_volume", "n_days"}
-        assert detail["metadata"]["providers"]["empyrical-reloaded"]
+        assert detail["metadata"]["providers"]["quantstats"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
         assert {
@@ -222,13 +222,14 @@ async def test_generated_strategy_full_mcp_workflow(
         assert accounts["availability"] == "available"
         assert accounts["states"] == observations["account_history"][:2]
         assert accounts["states"][0]["equity"] == observations["equity_curve"][0]
-        assert {"executions", "account_history"} <= set(
+        assert "ledger" in catalog["templates"]["standard"]
+        assert not {"executions", "account_history"} & set(
             catalog["templates"]["standard"]
         )
         report = await client.call(
             "generate_report",
             run_ids=[run_id],
-            sections=["metrics", "trades", "executions", "account_history"],
+            sections=["overview", "metrics", "ledger", "trades"],
             commentary=[{"title": "評語", "text": "這是模擬結果。"}],
         )
         assert report["success"], report
@@ -243,11 +244,12 @@ async def test_generated_strategy_full_mcp_workflow(
             include_content=True,
         )
         assert json.loads(report_manifest["content"])["sections"] == [
+            "overview",
             "metrics",
+            "ledger",
             "trades",
-            "executions",
-            "account_history",
         ]
+        assert json.loads(report_manifest["content"])["schema_version"] == 2
         source = await client.call(
             "get_artifact",
             artifact_id=by_type["strategy_source"]["artifact_id"],

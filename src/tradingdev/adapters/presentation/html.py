@@ -105,6 +105,7 @@ def render_html_document(
     script: str = "",
     data: object = None,
     data_id: str = "document-data",
+    allow_embedded_frames: bool = False,
 ) -> str:
     """Wrap built-in HTML in a self-contained document with no network sources.
 
@@ -113,6 +114,7 @@ def render_html_document(
     Documents without a built-in script disallow script execution altogether.
     """
     script_policy = "'unsafe-inline'" if script else "'none'"
+    frame_policy = "frame-src 'self'; " if allow_embedded_frames else ""
     embedded = (
         f"<script id='{escape(data_id)}' type='application/json'>"
         + _script_data(data)
@@ -125,7 +127,8 @@ def render_html_document(
         "<!doctype html><html lang='zh-Hant'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
-        f"script-src {script_policy}; style-src 'unsafe-inline'; img-src data:;\">"
+        f"script-src {script_policy}; style-src 'unsafe-inline'; "
+        f'{frame_policy}img-src data:;">'
         f"<title>{escape(title)}</title><style>{_BASE_STYLE}{style}</style>"
         f"</head><body><main>{body}</main>{embedded}{javascript}</body></html>"
     )

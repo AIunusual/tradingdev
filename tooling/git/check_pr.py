@@ -11,10 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from tooling.git.candidates import (
+    DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     execution_environment,
     git,
     merge_candidate,
     validate_evidence_budget,
+    validate_snapshot_timeout,
     verify_candidate,
 )
 from tooling.git.pr_context import get_pull_request, remote_url
@@ -57,9 +59,14 @@ def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:
 
 
 def check_pr(
-    number: int, remote: str = "origin", *, max_evidence_bytes: int | None = None
+    number: int,
+    remote: str = "origin",
+    *,
+    max_evidence_bytes: int | None = None,
+    snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> None:
     validate_evidence_budget(max_evidence_bytes)
+    validate_snapshot_timeout(snapshot_timeout_seconds)
     request = get_pull_request(number, remote)
     primary = subprocess.check_output(
         [
@@ -90,7 +97,11 @@ def check_pr(
             f"Head: {candidate.head}\nTree: {candidate.tree}",
             flush=True,
         )
-        verify_candidate(candidate, max_evidence_bytes=max_evidence_bytes)
+        verify_candidate(
+            candidate,
+            max_evidence_bytes=max_evidence_bytes,
+            snapshot_timeout_seconds=snapshot_timeout_seconds,
+        )
         current = get_pull_request(number, remote)
         # API base metadata can lag the advertised main ref, and GitHub computes
         # provisional merge SHAs asynchronously. Validate actual Git tips below.
@@ -132,10 +143,26 @@ def main() -> None:
         type=int,
         help="Override the documentation reviewer byte limit for this PR check",
     )
+    parser.add_argument(
+        "--snapshot-timeout-seconds",
+        type=int,
+        help="Set a positive timeout for this full snapshot check (default: 900)",
+    )
     args = parser.parse_args()
     validate_evidence_budget(args.max_evidence_bytes)
+    snapshot_timeout_seconds = (
+        DEFAULT_SNAPSHOT_TIMEOUT_SECONDS
+        if args.snapshot_timeout_seconds is None
+        else args.snapshot_timeout_seconds
+    )
+    validate_snapshot_timeout(snapshot_timeout_seconds)
     os.chdir(git("rev-parse", "--show-toplevel"))
-    check_pr(args.number, args.remote, max_evidence_bytes=args.max_evidence_bytes)
+    check_pr(
+        args.number,
+        args.remote,
+        max_evidence_bytes=args.max_evidence_bytes,
+        snapshot_timeout_seconds=snapshot_timeout_seconds,
+    )
 
 
 if __name__ == "__main__":

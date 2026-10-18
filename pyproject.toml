@@ -7,7 +7,8 @@ dependencies = [
     # AutoGluon constrains the shared scientific stack; update its pandas,
     # NumPy and vectorbt dependencies together when refreshing the lock.
     "vectorbt>=1.0.0",
-    "empyrical-reloaded>=0.5.12",
+    "quantstats>=0.0.86",
+    "bokeh>=3.10.1",
     "pandas>=2.3.3",
     "numpy>=2.2.6",
     "TA-Lib>=0.8.1",
@@ -73,11 +74,6 @@ plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
-
-[[tool.mypy.overrides]]
-# Empyrical 0.5.12 ships neither inline typing nor a py.typed marker.
-module = ["empyrical.*"]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # Locked PyArrow 20.0.0 has no py.typed marker or stubs for the sample scanner.

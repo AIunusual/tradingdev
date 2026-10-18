@@ -8,21 +8,33 @@ import sqlite3
 from dataclasses import asdict
 from typing import Any
 
+from tradingdev.adapters.reporting.bokeh_tables import bokeh_provenance
 from tradingdev.adapters.reporting.html import render_report
+from tradingdev.adapters.reporting.quantstats_report import (
+    QuantStatsReportError,
+    build_quantstats_report,
+)
 from tradingdev.adapters.reporting.storage import (
     ReportPublicationError,
     publish_report,
     read_report_html,
 )
+from tradingdev.adapters.reporting.tables import (
+    comparison_table,
+    ledger_table,
+    trade_table,
+)
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_service import RunService
 from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
+from tradingdev.domain.presentation.ledger import build_ledger
 from tradingdev.domain.presentation.reports import (
     REPORT_RECIPES,
     REPORT_SCHEMA_VERSION,
     REPORT_SECTIONS,
     REPORT_TEMPLATE_VERSION,
+    SCOPED_REPORT_SECTIONS,
 )
 
 
@@ -132,6 +144,17 @@ class ReportService:
             payload = self._load(run_ids)
             payload["sections"] = list(selected)
             payload["commentary"] = [dict(note) for note in notes]
+            payload["comparison_table"] = comparison_table(
+                payload, navigate=bool(SCOPED_REPORT_SECTIONS.intersection(selected))
+            )
+            if set(selected) & {"overview", "ledger", "trades"}:
+                payload["renderers"] = {"bokeh": bokeh_provenance()}
+            if "metrics" in selected:
+                for run in payload["runs"]:
+                    for scope in run["scopes"]:
+                        scope["quantstats"] = build_quantstats_report(
+                            {**scope, "report_source": run["provenance"]}
+                        )
             encoded = _encode(payload)
             report_id = hashlib.sha256(encoded).hexdigest()
             report_html = render_report(payload, report_id).encode("utf-8")
@@ -144,7 +167,21 @@ class ReportService:
                 "content_sha256": report_id,
                 "html_sha256": hashlib.sha256(report_html).hexdigest(),
                 "sources": [run["provenance"] for run in payload["runs"]],
+                "derived_analytics": {
+                    run["identity"]["run_id"]: {
+                        scope["scope_id"]: {
+                            key: value
+                            for key, value in scope["quantstats"].items()
+                            if key not in {"html", "tables_html"}
+                        }
+                        for scope in run["scopes"]
+                        if "quantstats" in scope
+                    }
+                    for run in payload["runs"]
+                    if "metrics" in selected
+                },
                 "scope_count": scope_count,
+                "renderers": payload.get("renderers", {}),
                 "sections": list(selected),
                 "omitted_sections": [
                     key for key in REPORT_SECTIONS if key not in selected
@@ -194,7 +231,7 @@ class ReportService:
             ReportPublicationError,
         ) as exc:
             return _error(exc.code, str(exc))
-        except (OSError, ValueError, sqlite3.Error) as exc:
+        except (OSError, ValueError, sqlite3.Error, QuantStatsReportError) as exc:
             return _error("report_generation_failed", str(exc))
 
     def _load(self, run_ids: list[str]) -> dict[str, Any]:
@@ -219,6 +256,16 @@ class ReportService:
                         parameter_provenance=history.parameter_provenance,
                         parameters_complete=history.parameters_complete,
                     )
+                    entry["tables"] = {
+                        "ledger": ledger_table(
+                            build_ledger(
+                                history.observations.execution_records,
+                                history.observations.account_history,
+                                mode=scope.mode,
+                            )
+                        ),
+                        "trades": trade_table(entry),
+                    }
                     config = history.execution_config
                 else:
                     entry["observations"] = None
@@ -277,12 +324,13 @@ class ReportService:
                     str(comparison.get("code", "report_comparison_failed")),
                     str(comparison.get("error", "Cannot compare recorded results")),
                 )
-        return {
+        payload = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "template_version": REPORT_TEMPLATE_VERSION,
             "runs": runs,
             "default_scope_comparison": comparison,
         }
+        return payload
 
 
 def _encode(value: dict[str, Any]) -> bytes:

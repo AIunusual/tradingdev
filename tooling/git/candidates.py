@@ -17,6 +17,8 @@ from tooling.process_guard import run_captured, run_checked
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+DEFAULT_SNAPSHOT_TIMEOUT_SECONDS = 900
+
 
 def git(*arguments: str) -> str:
     result = subprocess.run(
@@ -59,7 +61,14 @@ def run(
     run_checked(command, cwd=cwd, env=environment, timeout=timeout)
 
 
-def check_snapshot(tree: str, profile: str, *, repo: Path | None = None) -> None:
+def check_snapshot(
+    tree: str,
+    profile: str,
+    *,
+    repo: Path | None = None,
+    timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
+) -> None:
+    validate_snapshot_timeout(timeout_seconds)
     with TemporaryDirectory(prefix="tradingdev-git-check-") as temporary:
         root = Path(temporary)
         archive = root / "candidate.tar"
@@ -112,6 +121,7 @@ def check_snapshot(tree: str, profile: str, *, repo: Path | None = None) -> None
         run(
             ["bash", f"scripts/check-{profile}.sh"],
             cwd=candidate,
+            timeout=timeout_seconds,
             temporary_root=root / "runtime",
         )
         if (
@@ -195,11 +205,27 @@ def validate_evidence_budget(max_evidence_bytes: int | None) -> None:
         raise RuntimeError("Documentation evidence budget must be positive.")
 
 
+def validate_snapshot_timeout(timeout_seconds: int) -> None:
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or timeout_seconds <= 0
+    ):
+        raise RuntimeError(
+            "Snapshot timeout must be a positive integer number of seconds."
+        )
+
+
 def verify_candidate(
-    candidate: MergeCandidate, *, max_evidence_bytes: int | None = None
+    candidate: MergeCandidate,
+    *,
+    max_evidence_bytes: int | None = None,
+    snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> None:
     """Always run a fresh review and full suite for an explicit candidate."""
     validate_evidence_budget(max_evidence_bytes)
+    validate_snapshot_timeout(snapshot_timeout_seconds)
+    print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     command = [
         sys.executable,
@@ -216,4 +242,9 @@ def verify_candidate(
         print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
         command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
     run(command, cwd=Path(__file__).resolve().parents[2])
-    check_snapshot(candidate.tree, "full", repo=candidate.repository)
+    check_snapshot(
+        candidate.tree,
+        "full",
+        repo=candidate.repository,
+        timeout_seconds=snapshot_timeout_seconds,
+    )

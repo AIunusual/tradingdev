@@ -65,6 +65,12 @@ def test_tmp_path_is_removed_after_success_failure_timeout_and_interrupt(
         import subprocess
         import sys
         from pathlib import Path
+        import matplotlib as mpl
+        from matplotlib import font_manager
+
+        # Collection-time imports must already use a disposable plotting cache.
+        Path('allocated_plot_cache').write_text(mpl.get_cachedir())
+        assert list(Path(mpl.get_cachedir()).glob('fontlist-*.json'))
 
         def test_01_creates_strategy_and_data(tmp_path):
             Path('allocated_path').write_text(str(tmp_path))
@@ -79,6 +85,7 @@ def test_tmp_path_is_removed_after_success_failure_timeout_and_interrupt(
     expected_code = 0 if outcome == "passed" else 2 if outcome == "interrupt" else 1
     assert result.returncode == expected_code, result.stdout + result.stderr
     assert not Path((tmp_path / "allocated_path").read_text()).exists()
+    assert not Path((tmp_path / "allocated_plot_cache").read_text()).exists()
     assert list((tmp_path / "runtime").iterdir()) == []
     if outcome != "interrupt":
         assert "1 passed" in result.stdout or "2 passed" in result.stdout
@@ -114,6 +121,33 @@ def test_tmp_path_cleanup_failure_is_a_test_error(tmp_path: Path) -> None:
     leftover = Path((tmp_path / "allocated_path").read_text())
     assert leftover.is_relative_to(tmp_path / "runtime")
     assert (leftover / "strategy.py").exists()
+
+
+def test_plot_cache_cleanup_failure_is_reported(tmp_path: Path) -> None:
+    result = _run_pytest(
+        tmp_path,
+        """\
+        import os
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        def test_cannot_remove_plot_cache():
+            cache = os.environ['MPLCONFIGDIR']
+            Path('allocated_plot_cache').write_text(cache)
+            original = TemporaryDirectory._rmtree
+
+            def refuse_cache(path, *args, **kwargs):
+                if path == cache:
+                    raise PermissionError('intentional plot cache cleanup denial')
+                return original(path, *args, **kwargs)
+
+            TemporaryDirectory._rmtree = staticmethod(refuse_cache)
+        """,
+    )
+    assert result.returncode != 0
+    assert "intentional plot cache cleanup denial" in result.stdout + result.stderr
+    leftover = Path((tmp_path / "allocated_plot_cache").read_text())
+    assert leftover.is_relative_to(tmp_path / "runtime") and leftover.is_dir()
 
 
 @pytest.mark.parametrize(

@@ -190,7 +190,7 @@ data:
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
 
-Performance analysis uses Empyrical for return/risk metrics and VectorBT for
+Performance analysis uses QuantStats for return/risk metrics and VectorBT for
 closed-trade statistics. `periods_per_year` is the explicit annualization factor
 for observed UTC **daily returns**, independent of the strategy's bar timeframe:
 365 for this continuously traded crypto example, or an appropriate trading-day

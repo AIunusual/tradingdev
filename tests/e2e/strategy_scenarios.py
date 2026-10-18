@@ -54,7 +54,7 @@ class Scenario:
             "呼叫 get_run_executions(limit=1) 讀第一筆原生成交，"
             "以及 get_run_account_history(limit=2) 讀前兩根帳戶狀態。"
             "最後先呼叫 get_report_sections，然後 generate_report，"
-            "run_ids=[這個run_id]、sections=[metrics,trades,executions,account_history]"
+            "run_ids=[這個run_id]、sections=[overview,metrics,ledger,trades]"
             "（字串陣列），"
             "commentary=[{title:研究評語,text:本次結果僅為歷史模擬。}]。"
             "由後端產生指定章節及你的評語，"

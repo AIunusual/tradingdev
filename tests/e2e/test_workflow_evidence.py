@@ -516,7 +516,7 @@ def test_history_workflow_accepts_sdk_encoded_report_and_query_arguments() -> No
                 "generate_report",
                 {
                     "run_ids": '["run"]',
-                    "sections": '["metrics","trades","executions","account_history"]',
+                    "sections": '["overview","metrics","ledger","trades"]',
                     "commentary": json.dumps(
                         [{"title": "研究評語", "text": "本次結果僅為歷史模擬。"}]
                     ),

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Any
+from typing import Any, cast
 
-import empyrical as ep
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import quantstats as qs
 import vectorbt as vbt
 from vectorbt.portfolio.enums import trade_dt
 
@@ -79,7 +79,7 @@ def calculate_metrics(
     frequency: str = "1h",
     timestamps: pd.DatetimeIndex | None = None,
 ) -> PerformanceAnalysis:
-    """Analyze portfolio returns with Empyrical and trades with vectorbt."""
+    """Analyze portfolio returns with QuantStats and trades with vectorbt."""
     orders = pf.orders.records_arr
     return _analyze(
         np.asarray(pf.value(), dtype=np.float64),
@@ -166,6 +166,7 @@ def _analyze(
     mode = "volume" if init_cash is None else "signal"
     metrics: dict[str, Any] = dict.fromkeys(METRIC_CATALOG)
     unavailable: dict[str, str] = {}
+    fallbacks: dict[str, dict[str, str]] = {}
     for metric_id, definition in METRIC_CATALOG.items():
         if mode not in definition.modes:
             unavailable[metric_id] = "not_applicable"
@@ -221,10 +222,11 @@ def _analyze(
                 risk_free_rate,
                 required_return,
                 daily_sampling_reason,
+                fallbacks,
             )
         else:
             for metric_id, definition in METRIC_CATALOG.items():
-                if definition.provider == "empyrical":
+                if definition.provider == "quantstats":
                     unavailable[metric_id] = (
                         "insufficient_data"
                         if not len(equity)
@@ -241,8 +243,9 @@ def _analyze(
     metadata: dict[str, Any] = {
         "schema_version": 1,
         "providers": {
-            "empyrical-reloaded": version("empyrical-reloaded"),
+            "quantstats": version("quantstats"),
             "vectorbt": version("vectorbt"),
+            **({"numpy": version("numpy")} if fallbacks else {}),
         },
         "mode": mode,
         "settings": {
@@ -276,8 +279,10 @@ def _analyze(
             else "commission_and_slippage_adjusted_fill_prices",
             "return_std_ddof": 1,
             "period_pnl_std_ddof": 0,
+            "excess_return_adjustment": "configured_rate_before_quantstats",
         },
         "unavailable": unavailable,
+        "calculation_fallbacks": fallbacks,
     }
     return PerformanceAnalysis(metrics, metadata, returns)
 
@@ -297,26 +302,22 @@ def _return_metrics(
     risk_free_rate: float,
     required_return: float,
     daily_sampling_reason: str | None,
+    fallbacks: dict[str, dict[str, str]],
 ) -> None:
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        metrics["total_return"] = float(ep.cum_returns_final(returns))
-        metrics["max_drawdown"] = abs(float(ep.max_drawdown(returns)))
+        series = pd.Series(returns, index=timestamps)
+        metrics["total_return"] = _scalar(qs.stats.comp(series))
+        metrics["max_drawdown"] = _maximum_drawdown(series, "max_drawdown", fallbacks)
         if daily_sampling_reason is not None:
             for metric_id in DAILY_EQUITY_METRICS:
-                if METRIC_CATALOG[metric_id].provider == "empyrical":
+                if METRIC_CATALOG[metric_id].provider == "quantstats":
                     unavailable[metric_id] = daily_sampling_reason
             return
         if timestamps is not None:
-            daily_returns = np.asarray(
-                (
-                    pd.Series(1 + returns, index=timestamps)
-                    .groupby(timestamps.date)
-                    .prod()
-                    - 1
-                ),
-                dtype=np.float64,
+            daily_returns = series.add(1).groupby(timestamps.normalize()).prod() - 1
+            metrics["daily_max_drawdown"] = _maximum_drawdown(
+                daily_returns, "daily_max_drawdown", fallbacks
             )
-            metrics["daily_max_drawdown"] = abs(float(ep.max_drawdown(daily_returns)))
         else:
             unavailable["daily_max_drawdown"] = "missing_timestamps"
         if periods_per_year is None:
@@ -332,29 +333,105 @@ def _return_metrics(
                 ):
                     unavailable[metric_id] = "missing_timestamps"
             return
-        returns = daily_returns
-        kwargs = {"annualization": periods_per_year}
-        metrics["annual_return"] = float(ep.annual_return(returns, **kwargs))
-        metrics["calmar_ratio"] = float(ep.calmar_ratio(returns, **kwargs))
-        if len(returns) < 2:
+        # QuantStats annotates periods as int, but these statistics only divide
+        # by it or take its square root. Preserve supported fractional settings;
+        # cast is a typing bridge, not an int() conversion or calendar rounding.
+        periods = cast("int", periods_per_year)
+        if _prepared_as_prices(daily_returns):
+            _fallback(fallbacks, "annual_return", "quantstats_returns_price_heuristic")
+            metrics["annual_return"] = float(
+                np.power(
+                    qs.stats.comp(daily_returns) + 1,
+                    periods_per_year / len(daily_returns),
+                )
+                - 1
+            )
+        else:
+            metrics["annual_return"] = _scalar(
+                qs.stats.cagr(daily_returns, periods=periods)
+            )
+        # No observed drawdown has no finite Calmar interpretation. QuantStats
+        # otherwise returns infinity here, unlike this metric's saved definition.
+        if metrics["daily_max_drawdown"] == 0:
+            unavailable["calmar_ratio"] = "zero_denominator"
+        else:
+            metrics["calmar_ratio"] = float(
+                qs.stats.calmar(daily_returns, prepare_returns=False, periods=periods)
+            )
+        if len(daily_returns) < 2:
             for metric_id in ("sharpe_ratio", "sortino_ratio", "annual_volatility"):
                 unavailable[metric_id] = "insufficient_data"
             return
-        metrics["sharpe_ratio"] = float(
-            ep.sharpe_ratio(
-                returns,
-                risk_free=_period_rate(risk_free_rate, periods_per_year),
-                **kwargs,
+        # QuantStats 0.0.86 ignores negative scalar rf. Adjust explicitly so
+        # Sharpe's risk-free rate and Sortino's separate target both keep their
+        # established meaning, for positive as well as negative annual rates.
+        risk_free = _period_rate(risk_free_rate, periods_per_year)
+        target = _period_rate(required_return, periods_per_year)
+        assert risk_free is not None and target is not None
+        excess = daily_returns - risk_free
+        if _prepared_as_prices(excess):
+            _fallback(fallbacks, "sharpe_ratio", "quantstats_returns_price_heuristic")
+            metrics["sharpe_ratio"] = float(
+                excess.mean() / excess.std(ddof=1) * np.sqrt(periods_per_year)
             )
-        )
-        metrics["sortino_ratio"] = float(
-            ep.sortino_ratio(
-                returns,
-                required_return=_period_rate(required_return, periods_per_year),
-                **kwargs,
+        else:
+            metrics["sharpe_ratio"] = _scalar(
+                qs.stats.sharpe(excess, rf=0.0, periods=periods)
             )
+        excess = daily_returns - target
+        if not (excess < 0).any():
+            # Keep all-winning returns distinct from a flat zero denominator.
+            unavailable["sortino_ratio"] = (
+                "unbounded" if excess.mean() > 0 else "zero_denominator"
+            )
+        else:
+            # A negative observation also makes QuantStats' price heuristic
+            # unambiguous, so this path never needs a numerical fallback.
+            metrics["sortino_ratio"] = _scalar(
+                qs.stats.sortino(excess, rf=0.0, periods=periods)
+            )
+        metrics["annual_volatility"] = _scalar(
+            qs.stats.volatility(daily_returns, periods=periods, prepare_returns=False)
         )
-        metrics["annual_volatility"] = float(ep.annual_volatility(returns, **kwargs))
+
+
+def _scalar(value: float | pd.Series) -> float:
+    """QuantStats' union annotation also covers DataFrame inputs we never pass."""
+    if isinstance(value, pd.Series):
+        raise TypeError("Single-series performance statistics must return a scalar")
+    return float(value)
+
+
+def _prepared_as_prices(returns: pd.Series) -> bool:
+    """Detect valid returns misread as prices by QuantStats' public API."""
+    return bool(returns.min() >= 0 and returns.max() > 1)
+
+
+def _fallback(
+    fallbacks: dict[str, dict[str, str]], metric_id: str, reason: str
+) -> None:
+    fallbacks[metric_id] = {"provider": "numpy", "reason": reason}
+
+
+def _maximum_drawdown(
+    returns: pd.Series,
+    metric_id: str,
+    fallbacks: dict[str, dict[str, str]],
+) -> float:
+    """Use QuantStats without inventing dates or misidentifying large returns."""
+    if not isinstance(returns.index, pd.DatetimeIndex):
+        # QuantStats subtracts a Timedelta from the first index; a RangeIndex
+        # cannot represent that phantom point. A calendar is not needed for MDD.
+        _fallback(fallbacks, metric_id, "quantstats_drawdown_requires_timestamps")
+        equity = np.concatenate(([1.0], np.asarray(qs.stats.compsum(returns)) + 1))
+        return float(np.max(1 - equity / np.maximum.accumulate(equity)))
+    if returns.min() >= 0 and returns.max() >= 1:
+        # Its drawdown API uses a different heuristic from _prepare_returns:
+        # exactly +100% can also be mistaken for a price. Nonnegative returns
+        # cannot create a drawdown, regardless of their magnitude.
+        _fallback(fallbacks, metric_id, "quantstats_returns_price_heuristic")
+        return 0.0
+    return abs(float(qs.stats.max_drawdown(returns)))
 
 
 def _period_metrics(
