@@ -173,6 +173,47 @@ def test_summary_uses_saved_flags_and_detail_keeps_every_value(
     assert persisted is not None and persisted["metrics"]["total_volume"] == 210
 
 
+def test_quantstats_migration_keeps_historical_provider_and_definitions(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+) -> None:
+    workspace, _, service = storage
+    historical = _scope(values={"total_return": 0.11})
+    _publish(
+        storage,
+        "historical",
+        scopes={"full": historical},
+        snapshot_changes={"total_return": {"provider": "empyrical"}},
+    )
+    original = {
+        path: path.read_bytes()
+        for path in (workspace.runs / "historical").rglob("*")
+        if path.is_file()
+    }
+    metadata = historical.model_dump(mode="json")["metadata"]
+    metadata["providers"] = {"quantstats": "0.0.86", "vectorbt": "1.0.0"}
+    _publish(
+        storage,
+        "current",
+        scopes={"full": historical.model_copy(update={"metadata": metadata})},
+    )
+    assert METRIC_CATALOG["total_return"].provider == "quantstats"
+    old = RunMetricsResponse.model_validate(service.get_run_metrics("historical"))
+    new = RunMetricsResponse.model_validate(service.get_run_metrics("current"))
+    assert old.metrics == new.metrics == {"total_return": 0.11}
+    assert old.definitions["total_return"].provider == "empyrical"
+    old_providers = old.metadata["providers"]
+    assert isinstance(old_providers, dict)
+    assert old_providers["empyrical-reloaded"] == "0.5.12"
+    assert new.definitions["total_return"].provider == "quantstats"
+    comparison = CompareRunsResponse.model_validate(
+        service.compare_runs(["historical", "current"], metric_ids=["total_return"])
+    )
+    reasons = comparison.metric_compatibility["total_return"].reasons
+    assert "definition.provider_differs:current" in reasons
+    assert "providers_differ:current" in reasons
+    assert all(path.read_bytes() == content for path, content in original.items())
+
+
 def test_scope_and_metric_selection_errors_include_available_choices(
     storage: tuple[WorkspacePaths, SQLiteStore, RunService],
 ) -> None:

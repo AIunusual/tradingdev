@@ -102,7 +102,7 @@ Signals use 1 = long, -1 = short, 0 = flat, and must never use data after
 the bar being signalled. Strategy parameters live only in YAML
 strategy.parameters. Generated strategies must remain in workspace/.
 
-Performance metrics use Empyrical for return/risk statistics and VectorBT for
+Performance metrics use QuantStats for return/risk statistics and VectorBT for
 closed-trade statistics. Set backtest.periods_per_year for observed UTC daily
 returns (365 for continuously traded crypto; choose the appropriate calendar
 for other markets); this factor is independent of bar timeframe. risk_free_rate

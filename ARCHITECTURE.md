@@ -329,7 +329,7 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 | 元件 | 責任 |
 | ---- | ---- |
 | `domain/backtest/metrics.py` | 統一時間、淨值與交易紀錄，整合第三方統計，記錄計算設定與不可用原因 |
-| `empyrical-reloaded` | 報酬與風險統計；Python 匯入名稱為 `empyrical` |
+| `QuantStats` | 報酬與風險統計；日報酬統計與已平倉交易統計分開 |
 | `vectorbt` | 兩種引擎的已平倉交易統計；signal 引擎另使用其 portfolio 模擬 |
 | `domain/performance/catalog.py` | 指標 ID、定義、單位、適用模式、摘要選擇及最佳化方向 |
 | `domain/performance/sampling.py` | 日級觀測需求與 K 棒頻率判斷，供績效計算及最佳化提交共用 |
@@ -345,6 +345,13 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 在建立工作前拒絕不適用的目標。
 Volume 模式沒有初始資金基準，不產生虛構的資金報酬率。
 無法計算或不適用的數值保留原因，不以零代替。
+
+Sharpe 的無風險利率與 Sortino 的目標報酬先按設定轉為每期報酬並扣除，
+再交給 QuantStats，保留負利率與兩種不同門檻的語意。QuantStats 的價格自動判別
+無法辨識部分高報酬序列，且回撤介面需要時間索引；這些特例以原有數學定義計算，
+在 `metadata.calculation_fallbacks` 記錄指標、實際來源與原因，不新增推測日期。
+交易勝率與交易盈虧比仍來自 VectorBT，不能以 QuantStats 的獲利日比例或日報酬
+盈虧比替代。
 
 完整指標連同套件版本、計算設定與定義快照一起保存。一般 run／job 回覆只挑摘要，
 LLM 可先探索指標目錄與該 run 的可用範圍，再查詢未出現在摘要的指標。

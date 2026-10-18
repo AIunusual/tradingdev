@@ -160,7 +160,7 @@ async def test_generated_strategy_full_mcp_workflow(
         )
         assert detail["success"] and detail["scope"] == "full"
         assert set(detail["metrics"]) == {"daily_pnl_mean", "total_volume", "n_days"}
-        assert detail["metadata"]["providers"]["empyrical-reloaded"]
+        assert detail["metadata"]["providers"]["quantstats"]
         artifacts = await client.call("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
         assert {

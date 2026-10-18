@@ -47,7 +47,7 @@ def strategy_contract_payload(package_root: Path) -> dict[str, Any]:
             "The indicator facade uses TA-Lib and preserves its warm-up and "
             "NaN behavior; keep signals flat until all required values are "
             "finite, and never backfill indicators from future rows. "
-            "Performance uses Empyrical daily return/risk statistics and "
+            "Performance uses QuantStats daily return/risk statistics and "
             "VectorBT closed-trade statistics. Set backtest.periods_per_year "
             "explicitly for annualized daily-return metrics (365 for this crypto "
             "example; choose the appropriate trading calendar for other markets). "

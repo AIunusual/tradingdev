@@ -541,6 +541,20 @@ context, and unavailable-value reasons. Examples include `not_applicable`,
 `unknown_bar_frequency`. Numeric JSON values remain finite; unavailable values
 use `null`.
 
+New runs use QuantStats for return/risk statistics and retain VectorBT's
+closed-trade statistics. Sharpe uses the configured risk-free rate and Sortino
+uses the separately configured required return, both converted to an observed-day
+rate before calling QuantStats. Negative rates retain the same interpretation.
+The `excess_return_adjustment` setting records this conversion. QuantStats's
+automatic price detection cannot accept some valid nonnegative returns above
+100%, and its drawdown interface requires timestamps. Narrow numerical fallbacks
+preserve the metric definitions in these cases; `metadata.calculation_fallbacks`
+records each affected metric's actual `provider` and `reason`, with its package
+version in `metadata.providers`. Missing dates are never fabricated for these
+calculations. No observed drawdown makes Calmar unavailable, and positive returns
+with no downside make Sortino unbounded, rather than a finite zero. Historical
+Empyrical results retain their original saved definitions, providers and values.
+
 Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
 a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
 retain bar observations, total return/PnL, bar drawdown, observed date/month counts

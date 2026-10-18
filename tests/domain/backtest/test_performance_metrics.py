@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from importlib.metadata import version
 from typing import Any
 
 import numpy as np
@@ -71,6 +72,133 @@ def test_daily_return_risk_uses_sample_std_and_bar_drawdown() -> None:
     )
     assert analysis.returns is not None
     assert len(analysis.returns) == len(timestamps)
+    assert analysis.metadata["providers"]["quantstats"] == version("quantstats")
+    assert "empyrical-reloaded" not in analysis.metadata["providers"]
+    assert analysis.metadata["calculation_fallbacks"] == {}
+
+
+@pytest.mark.parametrize("initial_cash", [0.01, 100.0, 1_000_000.0])
+def test_quantstats_drawdown_includes_first_loss_at_any_capital_scale(
+    initial_cash: float,
+) -> None:
+    analysis = calculate_metrics_from_simulation(
+        np.array([0.9, 0.8, 1.1]) * initial_cash,
+        [],
+        initial_cash,
+        pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+        periods_per_year=365,
+        frequency="1d",
+    )
+    assert analysis.metrics["max_drawdown"] == pytest.approx(0.2)
+    assert analysis.metrics["daily_max_drawdown"] == pytest.approx(0.2)
+    assert analysis.metrics["annual_return"] == pytest.approx(1.1 ** (365 / 3) - 1)
+    assert analysis.metadata["calculation_fallbacks"] == {}
+
+
+@pytest.mark.parametrize(
+    ("risk_free_rate", "required_return"), [(0.1, 0.2), (-0.2, -0.1), (-0.1, 0.1)]
+)
+def test_quantstats_keeps_distinct_rates_including_negative_thresholds(
+    risk_free_rate: float, required_return: float
+) -> None:
+    returns = np.array([0.05, -0.2, 0.1])
+    periods = 3.5
+    analysis = calculate_metrics_from_simulation(
+        100 * np.cumprod(1 + returns),
+        [],
+        100.0,
+        pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+        periods_per_year=periods,
+        risk_free_rate=risk_free_rate,
+        required_return=required_return,
+        frequency="1d",
+    )
+    sharpe_excess = returns - ((1 + risk_free_rate) ** (1 / periods) - 1)
+    sortino_excess = returns - ((1 + required_return) ** (1 / periods) - 1)
+    assert analysis.metrics["sharpe_ratio"] == pytest.approx(
+        sharpe_excess.mean() / sharpe_excess.std(ddof=1) * math.sqrt(periods)
+    )
+    assert analysis.metrics["sortino_ratio"] == pytest.approx(
+        sortino_excess.mean()
+        / math.sqrt(float(np.mean(np.minimum(sortino_excess, 0) ** 2)))
+        * math.sqrt(periods)
+    )
+    assert analysis.metrics["annual_return"] == pytest.approx(
+        np.prod(1 + returns) ** (periods / 3) - 1
+    )
+    assert analysis.metadata["calculation_fallbacks"] == {}
+
+
+@pytest.mark.parametrize("first_return", [1.0, 1.5])
+def test_large_nonnegative_returns_are_not_reinterpreted_as_prices(
+    first_return: float,
+) -> None:
+    returns = np.array([first_return, 0.25])
+    analysis = calculate_metrics_from_simulation(
+        100 * np.cumprod(1 + returns),
+        [],
+        100.0,
+        pd.date_range("2024-01-01", periods=2, freq="D", tz="UTC"),
+        periods_per_year=2,
+        frequency="1d",
+    )
+    assert analysis.metrics["annual_return"] == pytest.approx(np.prod(1 + returns) - 1)
+    assert analysis.metrics["sharpe_ratio"] == pytest.approx(
+        returns.mean() / returns.std(ddof=1) * math.sqrt(2)
+    )
+    assert analysis.metrics["annual_volatility"] == pytest.approx(
+        returns.std(ddof=1) * math.sqrt(2)
+    )
+    assert analysis.metrics["max_drawdown"] == 0
+    assert analysis.metrics["daily_max_drawdown"] == 0
+    assert analysis.metrics["calmar_ratio"] is None
+    assert analysis.metadata["unavailable"]["calmar_ratio"] == "zero_denominator"
+    assert analysis.metadata["unavailable"]["sortino_ratio"] == "unbounded"
+    fallbacks = analysis.metadata["calculation_fallbacks"]
+    expected = {"max_drawdown", "daily_max_drawdown"}
+    if first_return > 1:
+        expected.update({"annual_return", "sharpe_ratio"})
+    assert set(fallbacks) == expected
+    assert all(
+        item == {"provider": "numpy", "reason": "quantstats_returns_price_heuristic"}
+        for item in fallbacks.values()
+    )
+
+
+def test_drawdown_without_calendar_retains_first_loss_without_inventing_dates() -> None:
+    analysis = calculate_metrics_from_simulation(np.array([90.0, 80.0, 110.0]), [], 100)
+    assert analysis.metrics["total_return"] == pytest.approx(0.1)
+    assert analysis.metrics["max_drawdown"] == pytest.approx(0.2)
+    assert analysis.metrics["n_days"] is None
+    assert analysis.metadata["calculation_fallbacks"] == {
+        "max_drawdown": {
+            "provider": "numpy",
+            "reason": "quantstats_drawdown_requires_timestamps",
+        }
+    }
+
+
+@pytest.mark.parametrize("equity", [[90.0], [100.0, 90.0, 0.0]])
+def test_short_sample_and_terminal_wipeout_preserve_return_meaning(
+    equity: list[float],
+) -> None:
+    analysis = calculate_metrics_from_simulation(
+        np.array(equity),
+        [],
+        100.0,
+        pd.date_range("2024-01-01", periods=len(equity), freq="D", tz="UTC"),
+        periods_per_year=365,
+        frequency="1d",
+    )
+    assert analysis.metrics["total_return"] == pytest.approx(equity[-1] / 100 - 1)
+    assert analysis.metrics["max_drawdown"] == pytest.approx(1 - equity[-1] / 100)
+    assert analysis.metrics["annual_return"] == pytest.approx(
+        (equity[-1] / 100) ** (365 / len(equity)) - 1
+    )
+    if len(equity) == 1:
+        for metric in ("sharpe_ratio", "sortino_ratio", "annual_volatility"):
+            assert analysis.metrics[metric] is None
+            assert analysis.metadata["unavailable"][metric] == "insufficient_data"
 
 
 def test_date_aggregation_uses_market_timestamp_and_preserves_first_pnl() -> None:
