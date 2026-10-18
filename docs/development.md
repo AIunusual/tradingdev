@@ -35,10 +35,42 @@ uv sync --locked --all-extras
 候選 snapshot 內的品質檢查與離線測試。
 
 `tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
-研究原型，用法見 [README](../README.md#mae-研究原型)。`tooling/` 與 `research/`
+研究原型，用法見 [MAE 研究原型](#mae-研究原型)。`tooling/` 與 `research/`
 不隨產品 wheel 發佈，Python 程式仍使用相同的 Ruff／strict Mypy 政策。
 原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
 直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
+
+## 更新文件
+
+文件分工與審查判準見 [AGENTS.md 的政策與溝通](../AGENTS.md#政策與溝通)。
+準備變更時，先列出使用者操作是否改變，再決定要更新哪份既有文件。例如報告新增下載功能：
+
+- README 說明如何下載、匯出是否包含畫面外的資料，以及分享或解讀時的限制。
+- 執行產物契約說明 CSV／JSON 欄位、格式與相容性；涉及服務分工時才更新架構文件。
+- 若新增檢查命令或開發步驟，在本指南說明。
+
+提交前查看文件差異，確認沒有把完整 API 參數、內部渲染流程或版本變更紀錄追加到
+使用者操作段落。已由契約文件承接的細節，用連結引導；必要操作與資料限制仍需留下。
+PR 文件審查也會檢查本次修改的讀者與內容歸屬。審查器將文件宣告的用途當作比對資料，
+不執行文件內的指令；這項語意判斷仍可能漏判，不能代替提交前的人工檢視。
+
+## MAE 研究原型
+
+Repository 另附獨立的 MAE（最大不利變動）Streamlit 研究原型，
+可觀察固定持倉時間內 BTC/USDT 的逆向價格幅度。這個原型不屬於正式 Dashboard 功能。
+
+先自行準備 BTC/USDT 一分鐘行情，放在專案根目錄下固定的
+`data/processed/btcusdt_1m_2024_2025.parquet`。檔案至少須包含可轉換為 UTC
+時間的 `timestamp`，以及數值欄位 `high`、`low`、`close`；原型直接讀取這份檔案。
+在專案根目錄安裝圖表依賴並啟動：
+
+```bash
+uv sync --locked --extra dashboard
+uv run --locked --extra dashboard streamlit run research/mae_analysis.py
+```
+
+開啟終端機顯示的本機網址，選擇日期、持倉分鐘數與停損比例，查看 MAE 分布及統計。
+結束時按 `Ctrl+C`。
 
 ## 選擇性 LLM 測試
 
@@ -225,7 +257,8 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 ```
 
 審閱者可留在目前開發分支執行；腳本會自動檢查合併候選、執行 Codex 文件
-審查與完整離線 pytest，並清理臨時產物；真實模型策略測試由審閱者視變更另行執行。
+一致性與讀者定位審查，再執行完整離線 pytest，並清理臨時產物；
+真實模型策略測試由審閱者視變更另行執行。
 
 完整 snapshot 的快速檢查與離線測試合計預設限時 900 秒。若已量測完整套件
 需要更久，可明確指定當次正整數秒數；例如 3,600 秒：
