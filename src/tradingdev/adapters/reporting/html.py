@@ -12,6 +12,7 @@ from tradingdev.adapters.presentation.html import (
     render_html_document,
     value_html,
 )
+from tradingdev.adapters.reporting.columns import COLUMN_ORDER, RecordDataset
 from tradingdev.adapters.reporting.csv_export import render_records_csv
 from tradingdev.adapters.reporting.labels import (
     RECORD_LABELS,
@@ -276,17 +277,17 @@ def _charts(scope: dict[str, Any]) -> str:
 
 _TRADE_COLUMNS = (
     ("#", "序號"),
-    ("status", "持倉狀態"),
-    ("direction", "交易方向"),
     ("entry UTC", "進場時間（UTC）"),
-    ("entry price", "進場價格"),
     ("exit UTC", "平倉時間（UTC）"),
-    ("exit price", "平倉價格"),
     ("mark UTC", "期末估值時間（UTC）"),
+    ("direction", "交易方向"),
+    ("status", "持倉狀態"),
+    ("entry price", "進場價格"),
+    ("exit price", "平倉價格"),
     ("mark price", "期末估值價格"),
     ("size", "數量（標的單位）"),
-    ("net P&L", "淨損益（報價貨幣）"),
     ("fees", "手續費（報價貨幣）"),
+    ("net P&L", "淨損益（報價貨幣）"),
     ("raw", "原始資料"),
 )
 
@@ -346,7 +347,7 @@ def _trade_cell(key: str, value: Any) -> str:
 def _download_csv(
     records: list[dict[str, Any]],
     *,
-    dataset: Literal["trades", "execution_records", "account_history"],
+    dataset: RecordDataset,
     run_index: int,
     scope_index: int,
 ) -> str:
@@ -399,6 +400,7 @@ def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
         )
         + "</div><p class='muted'>CSV 使用中文欄名、單位及已知狀態說明，"
         "保留全部交易與完整數值精度，不受畫面篩選或排序影響。"
+        "欄位依進出場 K 線索引、方向與狀態、價格與數量、成本與損益排列。"
         "未平倉交易的平倉／期末估值欄位表示估值；K 線索引從 0 起算。"
         "以公式字元開頭的文字加單引號，避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
@@ -457,14 +459,13 @@ def _saved_table(
 ) -> str:
     """Render every saved row with reusable search, sorting and dataset-bound CSV."""
     identifier = f"{dataset}-{run_index}-{scope_index}"
+    columns = (*COLUMN_ORDER[dataset], "raw")
     headers = "".join(
         f"<th><button data-column='{index}'>{escape(RECORD_LABELS[key])}</button></th>"
-        for index, key in enumerate(rows[0])
+        for index, key in enumerate(columns)
     )
     body = "".join(
-        "<tr>"
-        + "".join(_record_cell(key, value, row) for key, value in row.items())
-        + "</tr>"
+        "<tr>" + "".join(_record_cell(key, row[key], row) for key in columns) + "</tr>"
         for row in rows
     )
     return (
@@ -480,6 +481,7 @@ def _saved_table(
         + "</div><p class='muted'>點欄名排序，水平捲動查看完整欄位。"
         "CSV 使用中文欄名、單位及已知狀態說明，保留全部紀錄與完整數值精度，"
         "不受畫面篩選或排序影響；費率保留原始比例，1 表示 100%。"
+        "HTML 與 CSV 均以時間、索引或編號起頭，依相同欄位順序閱讀。"
         "以公式字元開頭的文字加單引號避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
         f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
@@ -539,7 +541,7 @@ def _executions(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
                 "side",
             )
         }
-        row["bar UTC"] = (
+        row["timestamp"] = (
             _utc(record["timestamp"]).isoformat() if record["timestamp"] else None
         )
         for key in ("open", "high", "low", "close"):
@@ -591,7 +593,7 @@ def _account_history(scope: dict[str, Any], run_index: int, scope_index: int) ->
     for record in records:
         row = {
             "bar_index": record["bar_index"],
-            "bar UTC": _utc(record["timestamp"]).isoformat()
+            "timestamp": _utc(record["timestamp"]).isoformat()
             if record["timestamp"]
             else None,
         }

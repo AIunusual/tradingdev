@@ -33,7 +33,16 @@ class ReportMarkup(HTMLParser):
         self.sections: list[str] = []
         self.rows: dict[str, int] = {}
         self.downloads: list[dict[str, str | None]] = []
+        self.headers: dict[str, list[str]] = {}
+        self.sort_columns: dict[str, list[str | None]] = {}
+        self.cells: dict[str, list[list[str]]] = {}
+        self.sort_values: dict[str, list[list[str | None]]] = {}
         self._table = ""
+        self._header: list[str] | None = None
+        self._cell: list[str] | None = None
+        self._cell_sort: str | None = None
+        self._row: list[str] = []
+        self._row_sort: list[str | None] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
@@ -43,12 +52,41 @@ class ReportMarkup(HTMLParser):
             self._table = attributes.get("id") or ""
             if self._table:
                 self.rows[self._table] = 0
+                self.headers[self._table] = []
+                self.sort_columns[self._table] = []
+                self.cells[self._table] = []
+                self.sort_values[self._table] = []
         if tag == "tr" and self._table:
             self.rows[self._table] += 1
+            self._row = []
+            self._row_sort = []
+        if tag == "th" and self._table:
+            self._header = []
+        if tag == "td" and self._table:
+            self._cell = []
+            self._cell_sort = attributes.get("data-sort-value")
+        if tag == "button" and self._table and "data-column" in attributes:
+            self.sort_columns[self._table].append(attributes["data-column"])
         if tag == "button" and "data-download" in attributes:
             self.downloads.append(attributes)
 
+    def handle_data(self, data: str) -> None:
+        if self._header is not None:
+            self._header.append(data)
+        if self._cell is not None:
+            self._cell.append(data)
+
     def handle_endtag(self, tag: str) -> None:
+        if tag == "th" and self._header is not None:
+            self.headers[self._table].append("".join(self._header))
+            self._header = None
+        if tag == "td" and self._cell is not None:
+            self._row.append("".join(self._cell))
+            self._row_sort.append(self._cell_sort)
+            self._cell = None
+        if tag == "tr" and self._table and self._row:
+            self.cells[self._table].append(self._row)
+            self.sort_values[self._table].append(self._row_sort)
         if tag == "table":
             self._table = ""
 
@@ -127,25 +165,165 @@ def test_saved_real_engine_records_render_all_rows_and_separate_csv_streams(
         exports[button["data-dataset"]] = list(
             csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
         )
+    expected_headers = {
+        "execution_records": [
+            "K 線時間（UTC）",
+            "K 線索引（從 0 起算）",
+            "執行紀錄編號",
+            "成交單編號",
+            "買賣方向",
+            "執行狀態",
+            "狀態原因",
+            "允許的持倉方向",
+            "委託規模數值類別",
+            "委託規模類型",
+            "委託規模（依規模類型）",
+            "委託價格",
+            "成交數量（標的單位）",
+            "成交價格",
+            "執行時權益估值價格",
+            "市場開盤價",
+            "市場最高價",
+            "市場最低價",
+            "市場收盤價",
+            "單邊手續費率",
+            "每次固定費用（報價貨幣）",
+            "滑價率",
+            "成交手續費（報價貨幣）",
+            "執行前總持倉（標的單位）",
+            "執行後總持倉（標的單位）",
+            "執行前現金（報價貨幣）",
+            "執行後現金（報價貨幣）",
+            "執行前可用現金（引擎帳本，報價貨幣）",
+            "執行後可用現金（引擎帳本，報價貨幣）",
+            "執行前空單負債（引擎帳本，報價貨幣）",
+            "執行後空單負債（引擎帳本，報價貨幣）",
+            "執行前帳戶權益（報價貨幣）",
+            "執行後帳戶權益（報價貨幣）",
+        ],
+        "account_history": [
+            "K 線時間（UTC）",
+            "K 線索引（從 0 起算）",
+            "收盤估值價格",
+            "總持倉數量（標的單位）",
+            "持倉市值（報價貨幣）",
+            "現金（報價貨幣）",
+            "可用現金（引擎帳本，報價貨幣）",
+            "帳戶權益（報價貨幣）",
+        ],
+    }
+    csv_header_overrides = {
+        "K 線時間（UTC）": "K 線時間（含保存時區）",
+        "委託規模（依規模類型）": "委託規模（單位依規模類型；比例以 1 = 100% 表示）",
+        "單邊手續費率": "單邊手續費率（比例，1 = 100%）",
+        "滑價率": "滑價率（比例，1 = 100%）",
+        **{
+            label: f"{label}（報價貨幣／標的單位）"
+            for label in (
+                "委託價格",
+                "成交價格",
+                "執行時權益估值價格",
+                "市場開盤價",
+                "市場最高價",
+                "市場最低價",
+                "市場收盤價",
+                "收盤估值價格",
+            )
+        },
+    }
+    for dataset, headers in expected_headers.items():
+        identifier = f"{dataset}-0-0"
+        assert document.headers[identifier] == [*headers, "原始資料"]
+        assert document.sort_columns[identifier] == list(
+            map(str, range(len(headers) + 1))
+        )
+        csv_headers = [csv_header_overrides.get(label, label) for label in headers]
+        assert all(list(row) == csv_headers for row in exports[dataset])
+        assert all(len(row) == len(headers) + 1 for row in document.cells[identifier])
     scope = _payload(path)["runs"][0]["scopes"][0]
     assert result.execution_records is not None and result.account_history is not None
     assert len(exports["execution_records"]) == len(result.execution_records)
-    for exported, record in zip(
-        exports["execution_records"], result.execution_records, strict=True
+    for cells, sort_values, exported, record in zip(
+        document.cells["execution_records-0-0"],
+        document.sort_values["execution_records-0-0"],
+        exports["execution_records"],
+        result.execution_records,
+        strict=True,
     ):
+        assert record.timestamp is not None
+        assert cells[:4] == [
+            pd.Timestamp(record.timestamp).isoformat(),
+            str(record.bar_index),
+            str(record.execution_id),
+            str(record.order_id),
+        ]
+        assert exported["K 線時間（含保存時區）"] == record.timestamp
         assert exported["執行紀錄編號"] == str(record.execution_id)
         assert exported["執行前現金（報價貨幣）"] == str(record.before.cash)
         assert exported["執行後現金（報價貨幣）"] == str(record.after.cash)
         assert exported["執行後總持倉（標的單位）"] == str(record.after.position)
         assert exported["成交數量（標的單位）"] == str(record.filled_size)
+        amounts = {
+            "委託價格": record.requested_price,
+            "成交數量（標的單位）": record.filled_size,
+            "成交價格": record.filled_price,
+            "執行時權益估值價格": record.valuation_price,
+            "市場開盤價": record.market.open,
+            "市場最高價": record.market.high,
+            "市場最低價": record.market.low,
+            "市場收盤價": record.market.close,
+            "每次固定費用（報價貨幣）": record.requested_fixed_fees,
+            "成交手續費（報價貨幣）": record.fees,
+        }
+        for phase, snapshot in (("執行前", record.before), ("執行後", record.after)):
+            amounts.update(
+                {
+                    f"{phase}總持倉（標的單位）": snapshot.position,
+                    f"{phase}現金（報價貨幣）": snapshot.cash,
+                    f"{phase}可用現金（引擎帳本，報價貨幣）": snapshot.free_cash,
+                    f"{phase}空單負債（引擎帳本，報價貨幣）": snapshot.debt,
+                    f"{phase}帳戶權益（報價貨幣）": snapshot.equity,
+                }
+            )
+        for label, value in amounts.items():
+            column_index = expected_headers["execution_records"].index(label)
+            assert value is not None
+            assert cells[column_index] == f"{value:z.2f}"
+            assert sort_values[column_index] == str(value)
+            assert exported[csv_header_overrides.get(label, label)] == str(value)
+        assert cells[19] == "0.10%" and sort_values[19] == "0.001"
+        assert cells[21] == "1.00%" and sort_values[21] == "0.01"
+        assert '"execution_id"' in cells[-1]
     assert len(exports["account_history"]) == len(result.account_history)
-    for exported, state in zip(
-        exports["account_history"], result.account_history, strict=True
+    for cells, sort_values, exported, state in zip(
+        document.cells["account_history-0-0"],
+        document.sort_values["account_history-0-0"],
+        exports["account_history"],
+        result.account_history,
+        strict=True,
     ):
+        assert state.timestamp is not None
+        assert cells[:2] == [
+            pd.Timestamp(state.timestamp).isoformat(),
+            str(state.bar_index),
+        ]
+        assert exported["K 線時間（含保存時區）"] == state.timestamp
         assert exported["K 線索引（從 0 起算）"] == str(state.bar_index)
         assert exported["現金（報價貨幣）"] == str(state.cash)
         assert exported["總持倉數量（標的單位）"] == str(state.position)
         assert exported["帳戶權益（報價貨幣）"] == str(state.equity)
+        account_amounts = [
+            state.mark_price,
+            state.position,
+            state.asset_value,
+            state.cash,
+            state.free_cash,
+            state.equity,
+        ]
+        assert cells[2:-1] == [f"{value:z.2f}" for value in account_amounts]
+        assert sort_values[2:-1] == [str(value) for value in account_amounts]
+        assert list(exported.values())[2:] == [str(value) for value in account_amounts]
+        assert '"bar_index"' in cells[-1]
     assert scope["observations"]["execution_records"] == [
         record.model_dump(mode="json") for record in result.execution_records
     ]

@@ -279,37 +279,39 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
             map(str, range(13)),
             [
                 "序號",
-                "持倉狀態",
-                "交易方向",
                 "進場時間（UTC）",
-                "進場價格",
                 "平倉時間（UTC）",
-                "平倉價格",
                 "期末估值時間（UTC）",
+                "交易方向",
+                "持倉狀態",
+                "進場價格",
+                "平倉價格",
                 "期末估值價格",
                 "數量（標的單位）",
-                "淨損益（報價貨幣）",
                 "手續費（報價貨幣）",
+                "淨損益（報價貨幣）",
                 "原始資料",
             ],
             strict=True,
         )
     )
     cells = re.findall(r"<td(?: [^>]*)?>(.*?)</td>", table, flags=re.DOTALL)
-    assert cells[:5] == [
-        "1",
-        status_label,
-        direction_label,
-        "2024-01-01T00:00:00+00:00",
-        "50.00",
-    ]
     final_time = "2024-01-03T00:00:00+00:00"
     missing = "未知／未記錄"
-    assert cells[5:7] == (
-        [final_time, "45.00"] if status == "closed" else [missing] * 2
-    )
-    assert cells[7:9] == ([final_time, "45.00"] if status == "open" else [missing] * 2)
-    assert cells[9:12] == ["2.00", "9.90", "0.10"]
+    assert cells[:12] == [
+        "1",
+        "2024-01-01T00:00:00+00:00",
+        final_time if status == "closed" else missing,
+        final_time if status == "open" else missing,
+        direction_label,
+        status_label,
+        "50.00",
+        "45.00" if status == "closed" else missing,
+        "45.00" if status == "open" else missing,
+        "2.00",
+        "0.10",
+        "9.90",
+    ]
     assert "&lt;script&gt;unsafe()&lt;/script&gt;" in cells[12]
     assert "placeholder='狀態 / 方向 / 日期 / 文字'" in text
     assert "每單位標的的報價貨幣金額" in text
@@ -320,6 +322,18 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
         csv.DictReader(io.StringIO(base64.b64decode(encoded[0]).decode("utf-8-sig")))
     )
     assert len(csv_rows) == 1
+    assert list(csv_rows[0]) == [
+        "進場 K 線索引（從 0 起算）",
+        "平倉／期末估值 K 線索引（從 0 起算）",
+        "交易方向",
+        "持倉狀態",
+        "進場價格（報價貨幣／標的單位）",
+        "平倉／期末估值價格（報價貨幣／標的單位）",
+        "數量（標的單位）",
+        "手續費合計（報價貨幣）",
+        "淨損益（報價貨幣）",
+        '未識別欄位（["note"]）',
+    ]
     assert csv_rows[0]["淨損益（報價貨幣）"] == "9.9"
     assert csv_rows[0]["手續費合計（報價貨幣）"] == "0.1"
     assert "<script>unsafe()</script>" in csv_rows[0].values()
@@ -395,8 +409,9 @@ def test_trade_table_preserves_missing_values_and_empty_history(
         "</table>", 1
     )[0]
     cells = re.findall(r"<td>(.*?)</td>", table, flags=re.DOTALL)
-    assert cells[:3] == ["1", "未平倉", "做空"]
-    assert cells[3:12] == ["未知／未記錄"] * 9
+    assert cells[:4] == ["1"] + ["未知／未記錄"] * 3
+    assert cells[4:6] == ["做空", "未平倉"]
+    assert cells[6:12] == ["未知／未記錄"] * 6
 
     _save(context, "empty", trades=[])
     empty = service.generate_report(["empty"], sections=["trades"])
@@ -441,7 +456,7 @@ def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
         ]
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9"])
+@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9", "10"])
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,

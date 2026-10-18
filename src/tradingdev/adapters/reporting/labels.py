@@ -135,7 +135,6 @@ RECORD_LABELS = {
     "status": "執行狀態",
     "status_info": "狀態原因",
     "side": "買賣方向",
-    "bar UTC": "K 線時間（UTC）",
     "timestamp": "K 線時間（UTC）",
     "market.open": "市場開盤價",
     "market.high": "市場最高價",

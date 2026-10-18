@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 REPORT_SCHEMA_VERSION = 1
-REPORT_TEMPLATE_VERSION = "10"
+REPORT_TEMPLATE_VERSION = "11"
 
 
 @dataclass(frozen=True)

@@ -695,6 +695,18 @@ percentages, while identifiers and integer counts retain integer form. Fold stat
 labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
 notes accompany the tables; sorting uses original values even when displays are equal.
 CSV exports use Traditional Chinese headers with units and translated known enums.
+Record columns follow a defined reading order rather than code-name sorting or
+object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL
+and account balances. Execution and account HTML/CSV share the same column order;
+HTML adds expandable raw data last. Execution columns start with timestamp, bar index,
+execution ID and order ID; each before/after balance pair stays adjacent, ordered by
+position, cash, free cash, debt and equity. Account history starts with timestamp and
+bar index, followed by mark price, position, asset value, cash, free cash and equity.
+Trade CSV starts with entry and exit/valuation indices; trade HTML starts with a
+display sequence and separate entry, closing and valuation timestamps. Both then show
+direction/status, prices/quantities and costs before PnL. CSV extension columns follow
+the standard columns in deterministic field-path order, even when absent in earlier
+rows. Consumers relying on positional CSV columns must adjust to this order.
 All saved columns and rows remain present in original row order, independent of
 screen filtering or sorting; numeric values retain full precision. Rates remain
 fractions (1 = 100%), timestamps retain their saved timezone and precision, and

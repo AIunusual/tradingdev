@@ -7,11 +7,14 @@ import csv
 import io
 import json
 import math
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tradingdev.adapters.reporting.csv_export import RecordDataset, render_records_csv
+from tradingdev.adapters.reporting.csv_export import render_records_csv
+
+if TYPE_CHECKING:
+    from tradingdev.adapters.reporting.columns import RecordDataset
 
 
 def _read_csv(content: bytes) -> list[dict[str, str]]:
@@ -62,6 +65,102 @@ def test_trade_csv_localizes_all_fields_from_both_engines_without_rounding() -> 
     content = render_records_csv([trade], dataset="trades")
     assert _read_csv(content) == [expected]
     assert content.endswith(b"\r\n") and content.count(b"\r\n") == 2
+
+
+@pytest.mark.parametrize("reverse_fields", [False, True])
+@pytest.mark.parametrize(
+    ("dataset", "record", "headers"),
+    [
+        (
+            "trades",
+            {
+                "fee": 1,
+                "status": "closed",
+                "exit_idx": 2,
+                "entry_idx": 0,
+                "direction": 1,
+                "net_pnl": 9,
+                "entry_price": 100,
+                "size": 2,
+            },
+            [
+                "進場 K 線索引（從 0 起算）",
+                "平倉／期末估值 K 線索引（從 0 起算）",
+                "交易方向",
+                "持倉狀態",
+                "進場價格（報價貨幣／標的單位）",
+                "數量（標的單位）",
+                "手續費合計（報價貨幣）",
+                "淨損益（報價貨幣）",
+            ],
+        ),
+        (
+            "execution_records",
+            {
+                "after": {"cash": 90, "position": 1},
+                "fees": 1,
+                "before": {"cash": 100, "position": 0},
+                "execution_id": 7,
+                "side": "buy",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "bar_index": 0,
+            },
+            [
+                "K 線時間（含保存時區）",
+                "K 線索引（從 0 起算）",
+                "執行紀錄編號",
+                "買賣方向",
+                "成交手續費（報價貨幣）",
+                "執行前總持倉（標的單位）",
+                "執行後總持倉（標的單位）",
+                "執行前現金（報價貨幣）",
+                "執行後現金（報價貨幣）",
+            ],
+        ),
+        (
+            "account_history",
+            {
+                "equity": 100,
+                "cash": 90,
+                "asset_value": 10,
+                "position": 1,
+                "mark_price": 10,
+                "bar_index": 0,
+                "timestamp": "2024-01-01T00:00:00Z",
+            },
+            [
+                "K 線時間（含保存時區）",
+                "K 線索引（從 0 起算）",
+                "收盤估值價格（報價貨幣／標的單位）",
+                "總持倉數量（標的單位）",
+                "持倉市值（報價貨幣）",
+                "現金（報價貨幣）",
+                "帳戶權益（報價貨幣）",
+            ],
+        ),
+    ],
+)
+def test_csv_orders_columns_by_reading_flow_independently_of_input_order(
+    dataset: RecordDataset,
+    record: dict[str, Any],
+    headers: list[str],
+    reverse_fields: bool,
+) -> None:
+    if reverse_fields:
+        record = dict(reversed(record.items()))
+    # An extension-only first row must not determine the order or hide later fields.
+    records = [{"z_extension": "first", "a_extension": "retained"}, record, {}]
+    rows = _read_csv(render_records_csv(records, dataset=dataset))
+    assert list(rows[0]) == headers + [
+        '未識別欄位（["a_extension"]）',
+        '未識別欄位（["z_extension"]）',
+    ]
+    assert rows[0][headers[0]] == rows[2][headers[0]] == ""
+    assert rows[1][headers[0]] == str(
+        record["entry_idx" if dataset == "trades" else "timestamp"]
+    )
+    assert rows[0]['未識別欄位（["z_extension"]）'] == "first"
+    assert len(rows) == 3
 
 
 @pytest.mark.parametrize("dataset", ["execution_records", "account_history"])

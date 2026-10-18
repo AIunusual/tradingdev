@@ -7,11 +7,11 @@ import io
 import json
 import math
 from collections import Counter
-from typing import Any, Literal
+from typing import Any
 
+from tradingdev.adapters.reporting.columns import COLUMN_ORDER, RecordDataset
 from tradingdev.adapters.reporting.labels import RECORD_LABELS, enum_label
 
-type RecordDataset = Literal["trades", "execution_records", "account_history"]
 type FieldPath = tuple[str, ...]
 
 _TRADE_LABELS = {
@@ -34,7 +34,7 @@ _TRADE_LABELS = {
     "slippage": "滑價成本合計（報價貨幣）",
 }
 _RECORD_CSV_LABELS = {
-    key: label for key, label in RECORD_LABELS.items() if key not in {"bar UTC", "raw"}
+    key: label for key, label in RECORD_LABELS.items() if key != "raw"
 } | {
     **{
         key: f"{RECORD_LABELS[key]}（報價貨幣／標的單位）"
@@ -167,7 +167,13 @@ def render_records_csv(
         else _flatten(record)
         for record in records
     ]
-    columns = sorted({path for row in rows for path in row})
+    present = {path for row in rows for path in row}
+    preferred = [
+        (key,) if dataset == "trades" else tuple(key.split("."))
+        for key in COLUMN_ORDER[dataset]
+    ]
+    columns = [path for path in preferred if path in present]
+    columns.extend(sorted(present.difference(preferred)))
     output = io.StringIO(newline="")
     writer = csv.writer(output, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
     if columns:
