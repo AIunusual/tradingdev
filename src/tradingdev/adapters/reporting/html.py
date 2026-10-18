@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from tradingdev.adapters.presentation.html import (
     details_html,
@@ -11,7 +12,9 @@ from tradingdev.adapters.presentation.html import (
     render_html_document,
     value_html,
 )
+from tradingdev.adapters.reporting.csv_export import render_records_csv
 from tradingdev.adapters.reporting.labels import (
+    RECORD_LABELS,
     enum_label,
     metric_label,
     reason_label,
@@ -59,35 +62,12 @@ document.querySelectorAll('table[data-sortable] th button').forEach(button=>{
   button.dataset.direction=direction===1?'asc':'desc';
  });
 });
-const payload=JSON.parse(document.getElementById('report-data').textContent);
-const csvCell=value=>{
- let text=typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'');
- // Quoted cells still require protection from spreadsheet formula interpretation.
- if(typeof value==='string'&&/^[=+@\\-\\t\\r]/.test(text))text="'"+text;
- return '"'+text.replaceAll('"','""')+'"';
-};
-const flattenRecord=(record,prefix='',result={})=>{
- Object.entries(record).forEach(([key,value])=>{
-  const name=prefix?prefix+'.'+key:key;
-  if(value!==null&&typeof value==='object'&&!Array.isArray(value)){
-   flattenRecord(value,name,result);
-  }else{result[name]=value;}
- });
- return result;
-};
 document.querySelectorAll('[data-download]').forEach(button=>{
  button.addEventListener('click',()=>{
   const [runIndex,scopeIndex]=button.dataset.download.split(':').map(Number);
-  const run=payload.runs[runIndex],scope=run.scopes[scopeIndex];
-  const dataset=button.dataset.dataset||'trades';
-  if(!['trades','execution_records','account_history'].includes(dataset))return;
-  const records=scope.observations[dataset];
-  if(!Array.isArray(records))return;
-  const rows=dataset==='trades'?records:records.map(record=>flattenRecord(record));
-  const columns=Array.from(new Set(rows.flatMap(row=>Object.keys(row)))).sort();
-  const text=[columns.map(csvCell).join(','),
-   ...rows.map(row=>columns.map(key=>csvCell(row[key])).join(','))].join('\\r\\n');
-  const blob=new Blob(['\\ufeff'+text],{type:'text/csv;charset=utf-8'});
+  const dataset=button.dataset.dataset;
+  const bytes=Uint8Array.from(atob(button.dataset.csv),char=>char.charCodeAt(0));
+  const blob=new Blob([bytes],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const link=document.createElement('a');link.href=url;
   link.download=dataset+'_'+runIndex+'_'+scopeIndex+'.csv';link.click();
@@ -363,6 +343,28 @@ def _trade_cell(key: str, value: Any) -> str:
     return "<td>" + value_html(value) + "</td>"
 
 
+def _download_csv(
+    records: list[dict[str, Any]],
+    *,
+    dataset: Literal["trades", "execution_records", "account_history"],
+    run_index: int,
+    scope_index: int,
+) -> str:
+    """Embed the exact export bytes; the browser never rebuilds evidence values."""
+    encoded = base64.b64encode(render_records_csv(records, dataset=dataset)).decode(
+        "ascii"
+    )
+    title = {
+        "trades": "交易",
+        "execution_records": "執行紀錄",
+        "account_history": "帳戶狀態",
+    }[dataset]
+    return (
+        f"<button data-download='{run_index}:{scope_index}' data-dataset='{dataset}' "
+        f"data-csv='{encoded}'>下載全部{title} CSV（中文欄名）</button>"
+    )
+
+
 def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     rows = _trade_rows(scope)
     identifier = f"trades-{run_index}-{scope_index}"
@@ -388,9 +390,16 @@ def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
         prefix + f"<p>共 {len(rows)} 筆，無分頁截斷。</p><div class='controls'>"
         f"<label>篩選 <input data-filter='{identifier}' "
         "placeholder='狀態 / 方向 / 日期 / 文字'>"
-        f"</label><button data-download='{run_index}:{scope_index}'>"
-        "下載全部原始交易 CSV</button></div>"
-        "<p class='muted'>CSV 保留全部原始欄位與交易，不受畫面篩選影響；"
+        "</label>"
+        + _download_csv(
+            scope["observations"]["trades"],
+            dataset="trades",
+            run_index=run_index,
+            scope_index=scope_index,
+        )
+        + "</div><p class='muted'>CSV 使用中文欄名、單位及已知狀態說明，"
+        "保留全部交易與完整數值精度，不受畫面篩選或排序影響。"
+        "未平倉交易的平倉／期末估值欄位表示估值；K 線索引從 0 起算。"
         "以公式字元開頭的文字加單引號，避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
         f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
@@ -408,49 +417,6 @@ _LEDGER_SEMANTICS = (
     "持倉市值保留相同正負號。空單負債為未回補空單的成本基礎金額。</p>"
 )
 
-_RECORD_LABELS = {
-    "execution_id": "執行紀錄編號",
-    "order_id": "成交單編號",
-    "bar_index": "K 線索引（從 0 起算）",
-    "status": "執行狀態",
-    "status_info": "狀態原因",
-    "side": "買賣方向",
-    "bar UTC": "K 線時間（UTC）",
-    "market.open": "市場開盤價",
-    "market.high": "市場最高價",
-    "market.low": "市場最低價",
-    "market.close": "市場收盤價",
-    "requested_price": "委託價格",
-    "filled_price": "成交價格",
-    "filled_size": "成交數量（標的單位）",
-    "fees": "成交手續費（報價貨幣）",
-    "valuation_price": "執行時權益估值價格",
-    "requested_size": "委託規模（依規模類型）",
-    "requested_size_kind": "委託規模數值類別",
-    "requested_size_type": "委託規模類型",
-    "requested_direction": "允許的持倉方向",
-    "requested_fee_rate": "單邊手續費率",
-    "requested_fixed_fees": "每次固定費用（報價貨幣）",
-    "requested_slippage": "滑價率",
-    "mark_price": "收盤估值價格",
-    "cash": "現金（報價貨幣）",
-    "free_cash": "可用現金（引擎帳本，報價貨幣）",
-    "position": "總持倉數量（標的單位）",
-    "asset_value": "持倉市值（報價貨幣）",
-    "equity": "帳戶權益（報價貨幣）",
-    "raw": "原始資料",
-    **{
-        f"{phase}.{key}": f"{phase_label}{label}（{unit}）"
-        for phase, phase_label in (("before", "執行前"), ("after", "執行後"))
-        for key, label, unit in (
-            ("cash", "現金", "報價貨幣"),
-            ("position", "總持倉", "標的單位"),
-            ("equity", "帳戶權益", "報價貨幣"),
-            ("free_cash", "可用現金", "引擎帳本，報價貨幣"),
-            ("debt", "空單負債", "引擎帳本，報價貨幣"),
-        )
-    },
-}
 _RECORD_ENUMS = {
     "status",
     "status_info",
@@ -485,14 +451,14 @@ def _record_cell(key: str, value: Any, row: dict[str, Any]) -> str:
 def _saved_table(
     rows: list[dict[str, Any]],
     *,
-    dataset: str,
+    dataset: Literal["execution_records", "account_history"],
     run_index: int,
     scope_index: int,
 ) -> str:
     """Render every saved row with reusable search, sorting and dataset-bound CSV."""
     identifier = f"{dataset}-{run_index}-{scope_index}"
     headers = "".join(
-        f"<th><button data-column='{index}'>{escape(_RECORD_LABELS[key])}</button></th>"
+        f"<th><button data-column='{index}'>{escape(RECORD_LABELS[key])}</button></th>"
         for index, key in enumerate(rows[0])
     )
     body = "".join(
@@ -505,10 +471,15 @@ def _saved_table(
         f"<p>已記錄 {len(rows)} 筆，全部顯示且無分頁截斷。</p>"
         "<div class='controls'><label>篩選 "
         f"<input data-filter='{identifier}' placeholder='狀態 / 日期 / 文字'></label>"
-        f"<button data-download='{run_index}:{scope_index}' data-dataset='{dataset}'>"
-        "下載全部原始紀錄 CSV</button></div>"
-        "<p class='muted'>點欄名排序，水平捲動查看完整欄位。CSV 不受篩選影響，"
-        "保留原始欄位與值；巢狀欄位以 before.cash、market.close 等路徑展平。"
+        + _download_csv(
+            [row["raw"] for row in rows],
+            dataset=dataset,
+            run_index=run_index,
+            scope_index=scope_index,
+        )
+        + "</div><p class='muted'>點欄名排序，水平捲動查看完整欄位。"
+        "CSV 使用中文欄名、單位及已知狀態說明，保留全部紀錄與完整數值精度，"
+        "不受畫面篩選或排序影響；費率保留原始比例，1 表示 100%。"
         "以公式字元開頭的文字加單引號避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
         f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"

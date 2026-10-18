@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -311,8 +314,16 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
     assert "placeholder='狀態 / 方向 / 日期 / 文字'" in text
     assert "每單位標的的報價貨幣金額" in text
     assert _payload(path)["runs"][0]["scopes"][0]["observations"]["trades"] == [trade]
-    assert "const rows=dataset==='trades'?records:" in text
-    assert "下載全部原始交易 CSV" in text
+    encoded = re.findall(r"data-csv='([^']*)'", text)
+    assert len(encoded) == 1
+    csv_rows = list(
+        csv.DictReader(io.StringIO(base64.b64decode(encoded[0]).decode("utf-8-sig")))
+    )
+    assert len(csv_rows) == 1
+    assert csv_rows[0]["淨損益（報價貨幣）"] == "9.9"
+    assert csv_rows[0]["手續費合計（報價貨幣）"] == "0.1"
+    assert "<script>unsafe()</script>" in csv_rows[0].values()
+    assert "下載全部交易 CSV（中文欄名）" in text
 
 
 @pytest.mark.parametrize(
@@ -395,7 +406,42 @@ def test_trade_table_preserves_missing_values_and_empty_history(
     assert "<table id='trades-" not in text
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7", "8"])
+def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(
+        context, "first", trades=[{"net_pnl": 1e-12}, {"net_pnl": -2.345678901234567}]
+    )
+    _save(
+        context,
+        "second",
+        trades=[{"net_pnl": 9007199254740993}],
+        scopes={"full": _scope(), "test": _scope(split="test")},
+    )
+    response = service.generate_report(["first", "second"], sections=["trades"])
+    assert response["success"], response
+    path = Path(response["path"])
+    downloads = re.findall(
+        r"data-download='([^']+)' data-dataset='trades' data-csv='([^']*)'",
+        path.read_text(),
+    )
+    payload = _payload(path)
+    assert {key for key, _ in downloads} == {"0:0", "1:0", "1:1"}
+    for key, encoded in downloads:
+        run_index, scope_index = map(int, key.split(":"))
+        rows = list(
+            csv.DictReader(io.StringIO(base64.b64decode(encoded).decode("utf-8-sig")))
+        )
+        source = payload["runs"][run_index]["scopes"][scope_index]["observations"][
+            "trades"
+        ]
+        assert [row["淨損益（報價貨幣）"] for row in rows] == [
+            str(trade["net_pnl"]) for trade in source
+        ]
+
+
+@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9"])
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,

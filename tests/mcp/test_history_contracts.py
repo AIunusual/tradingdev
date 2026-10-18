@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import csv
+import io
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -371,6 +375,15 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert "<th>單邊手續費率</th>" in path.read_text()
         assert "<th>總淨損益</th>" in path.read_text()
         assert "<th>執行識別碼</th>" in path.read_text()
+        encoded = re.findall(r"data-csv='([^']*)'", path.read_text())
+        assert len(encoded) == 1
+        rows = list(
+            csv.DictReader(
+                io.StringIO(base64.b64decode(encoded[0]).decode("utf-8-sig"))
+            )
+        )
+        assert rows and "淨損益（報價貨幣）" in rows[0]
+        assert "net_pnl" not in rows[0]
         assert (
             "<button data-column='10'>淨損益（報價貨幣）</button>" in path.read_text()
         )

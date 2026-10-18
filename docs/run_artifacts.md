@@ -694,8 +694,19 @@ Numeric displays use two decimal places; fractional rates and returns display as
 percentages, while identifiers and integer counts retain integer form. Fold statistics show
 labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
 notes accompany the tables; sorting uses original values even when displays are equal.
-Expandable raw records, embedded observations and CSV exports retain their original
-field names and values. Presentation changes create a new template version and report
+CSV exports use Traditional Chinese headers with units and translated known enums.
+All saved columns and rows remain present in original row order, independent of
+screen filtering or sorting; numeric values retain full precision. Rates remain
+fractions (1 = 100%), timestamps retain their saved timezone and precision, and
+missing values are empty cells. Execution/account nested fields are flattened with
+distinct headers; unknown columns and enum codes remain identifiable. Trade closing
+index/price columns explicitly include end-of-period valuation for open trades.
+The renderer prepares UTF-8 BOM CSV bytes with CRLF records and quoted fields;
+formula-leading text is prefixed with an apostrophe. Browsers download these embedded
+bytes directly without parsing or rounding numeric values. Programs consuming old
+code-based CSV headers must update their mappings for newly generated reports.
+Expandable raw records and embedded observations retain original field names and
+values. Presentation changes create a new template version and report
 identity without modifying earlier reports or backtest results.
 
 The content digest includes source snapshots, template version, section order and

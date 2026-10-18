@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import csv
+import io
 import json
 from html.parser import HTMLParser
 from pathlib import Path
@@ -115,8 +118,34 @@ def test_saved_real_engine_records_render_all_rows_and_separate_csv_streams(
         (button["data-dataset"], button["data-download"])
         for button in document.downloads
     ] == [("execution_records", "0:0"), ("account_history", "0:0")]
+    exports = {}
+    for button in document.downloads:
+        encoded = button["data-csv"]
+        assert isinstance(encoded, str)
+        content = base64.b64decode(encoded, validate=True)
+        assert content.startswith(b"\xef\xbb\xbf")
+        exports[button["data-dataset"]] = list(
+            csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
+        )
     scope = _payload(path)["runs"][0]["scopes"][0]
     assert result.execution_records is not None and result.account_history is not None
+    assert len(exports["execution_records"]) == len(result.execution_records)
+    for exported, record in zip(
+        exports["execution_records"], result.execution_records, strict=True
+    ):
+        assert exported["執行紀錄編號"] == str(record.execution_id)
+        assert exported["執行前現金（報價貨幣）"] == str(record.before.cash)
+        assert exported["執行後現金（報價貨幣）"] == str(record.after.cash)
+        assert exported["執行後總持倉（標的單位）"] == str(record.after.position)
+        assert exported["成交數量（標的單位）"] == str(record.filled_size)
+    assert len(exports["account_history"]) == len(result.account_history)
+    for exported, state in zip(
+        exports["account_history"], result.account_history, strict=True
+    ):
+        assert exported["K 線索引（從 0 起算）"] == str(state.bar_index)
+        assert exported["現金（報價貨幣）"] == str(state.cash)
+        assert exported["總持倉數量（標的單位）"] == str(state.position)
+        assert exported["帳戶權益（報價貨幣）"] == str(state.equity)
     assert scope["observations"]["execution_records"] == [
         record.model_dump(mode="json") for record in result.execution_records
     ]
