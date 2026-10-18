@@ -125,28 +125,75 @@ def test_saved_real_engine_records_render_all_rows_and_separate_csv_streams(
     ]
     assert scope["observations"]["execution_records"][1]["after"]["position"] < 0
     for column in (
-        "market.open",
-        "market.high",
-        "market.low",
-        "market.close",
-        "requested_price",
-        "filled_price",
-        "fees",
-        "before.cash",
-        "after.cash",
-        "before.position",
-        "after.position",
-        "mark_price",
+        "市場開盤價",
+        "市場最高價",
+        "市場最低價",
+        "市場收盤價",
+        "委託價格",
+        "成交價格",
+        "成交數量（標的單位）",
+        "成交手續費（報價貨幣）",
+        "執行前現金（報價貨幣）",
+        "執行後現金（報價貨幣）",
+        "執行前總持倉（標的單位）",
+        "執行後總持倉（標的單位）",
+        "收盤估值價格",
     ):
         assert f">{column}</button>" in text
-    assert "vectorbt_generic" in text and "不是 Binance" in text
-    assert "不是 tick" in text and "滑價前" in text
-    assert "filled_size" in text and "valuation_price" in text
+    assert "一般資產帳本" in text and "不是 Binance" in text
+    assert "精確盤中成交時間" in text and "滑價前" in text
+    assert "<td>已成交</td>" in text and "<td>買入</td>" in text
+    assert "<td data-sort-value='0.001'>0.10%</td>" in text
+    assert "<td data-sort-value='1000.0'>1000.00</td>" in text
+    assert "排序、原始資料與 CSV 保留完整精度" in text
     manifest = json.loads((path.parent / "manifest.json").read_text())
     availability = manifest["available_data"]["execution"]["full"]
     assert availability["execution_record_count"] == 4
     assert availability["account_history_count"] == 5
     assert {p: p.read_bytes() for p in directory.iterdir()} == saved
+
+
+@pytest.mark.parametrize(
+    ("status", "label"), [("ignored", "已忽略"), ("rejected", "已拒絕")]
+)
+def test_execution_table_preserves_missing_fills_and_unknown_enum_codes(
+    tmp_path: Path,
+    status: str,
+    label: str,
+) -> None:
+    result = SignalBacktestEngine(init_cash=1e-12, fees=0.0, slippage=0.0).run(
+        _market([1, 0, 0, 0, 0])
+    )
+    assert result.execution_records is not None
+    index = next(
+        i for i, row in enumerate(result.execution_records) if row.status == "rejected"
+    )
+    record = result.execution_records[index].model_copy(
+        update={
+            "status": status,
+            "status_info": "future_<reason>",
+            "requested_direction": "future_<direction>",
+        }
+    )
+    result.execution_records[index] = record
+    service, _ = _save(tmp_path, result)
+    response = service.generate_report(["execution"], ["executions"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    table = text.split("<table id='execution_records-0-0' data-sortable>", 1)[1].split(
+        "</table>", 1
+    )[0]
+    assert "未識別選項：future_&lt;reason&gt;" in table
+    assert "未識別選項：future_&lt;direction&gt;" in table
+    assert f"<td>{label}</td>" in table
+    assert "future_<reason>" not in table
+    assert "<td>未知／未記錄</td>" in table
+    saved = _payload(path)["runs"][0]["scopes"][0]["observations"]["execution_records"][
+        index
+    ]
+    assert saved == record.model_dump(mode="json")
+    assert saved["filled_size"] is None and saved["fees"] is None
 
 
 def test_standard_template_includes_new_sections_and_custom_order_can_omit_them(
@@ -223,9 +270,9 @@ def test_missing_unsupported_and_recorded_empty_streams_are_distinct(
             is None
         )
     else:
-        assert "已記錄：0 筆 order attempt" in text
+        assert "已記錄：0 筆委託嘗試" in text
         assert "data-availability='unavailable'" not in text
         if mode == "empty":
-            assert "已記錄：0 根 bar" in text and document.downloads == []
+            assert "已記錄：0 根 K 線" in text and document.downloads == []
         else:
             assert document.rows == {"account_history-0-0": 6}

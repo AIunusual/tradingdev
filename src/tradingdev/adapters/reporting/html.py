@@ -8,10 +8,14 @@ from typing import Any
 from tradingdev.adapters.presentation.html import (
     details_html,
     escape,
-    json_text,
-    pairs_html,
     render_html_document,
     value_html,
+)
+from tradingdev.adapters.reporting.labels import (
+    enum_label,
+    metric_label,
+    reason_label,
+    unit_label,
 )
 from tradingdev.domain.presentation.reports import REPORT_SECTIONS
 
@@ -99,12 +103,60 @@ def _object(value: Any) -> dict[str, Any]:
 
 def _format_metric(value: Any, unit: str) -> str:
     if value is None:
-        return "N/A"
+        return "未知／未記錄"
     if isinstance(value, dict):
-        return escape(json_text(value))
+        labels = {
+            "mean": "平均值",
+            "std": "標準差",
+            "min": "最小值",
+            "max": "最大值",
+            "valid_count": "有效折數",
+        }
+        return (
+            "<ul>"
+            + "".join(
+                f"<li>{escape(labels.get(key, '未識別統計：' + key))}："
+                + _format_metric(item, "count" if key == "valid_count" else unit)
+                + "</li>"
+                for key, item in value.items()
+            )
+            + "</ul>"
+        )
+    if isinstance(value, bool):
+        return "是" if value else "否"
     if isinstance(value, int | float):
-        return f"{value:.4%}" if unit == "fraction" else f"{value:,.8g}"
+        if unit == "fraction":
+            return f"{value:z.2%}"
+        if isinstance(value, int) and unit in ("", "count"):
+            return str(value)
+        return f"{value:z.2f}"
+    if isinstance(value, list):
+        return "、".join(_format_metric(item, unit) for item in value) or "無"
     return escape(value)
+
+
+def _pairs_html(values: dict[str, Any]) -> str:
+    """Render already-labelled report fields without changing shared raw helpers."""
+    return (
+        "<table><tbody>"
+        + "".join(
+            f"<tr><th>{escape(label)}</th><td>{_format_metric(value, '')}</td></tr>"
+            for label, value in values.items()
+        )
+        + "</tbody></table>"
+    )
+
+
+def _percentage(value: Any) -> Any:
+    return (
+        f"{value:z.2%}"
+        if isinstance(value, int | float) and not isinstance(value, bool)
+        else value
+    )
+
+
+def _enum(field: str, value: Any) -> Any:
+    return enum_label(field, value) if isinstance(value, str) else value
 
 
 def _metrics(scope: dict[str, Any]) -> str:
@@ -113,25 +165,33 @@ def _metrics(scope: dict[str, Any]) -> str:
     for key, value in scope["values"].items():
         definition = scope["definitions"][key]
         unit = definition["unit"]
-        reason = unavailable.get(key, "未記錄原因") if value is None else ""
-        description = definition["description"]
+        reason = (
+            reason_label(str(unavailable[key]))
+            if value is None and key in unavailable
+            else "未記錄原因"
+            if value is None
+            else ""
+        )
         rows.append(
-            f"<tr><th>{escape(key)}</th><td class='metric'>"
-            f"{_format_metric(value, unit)}</td><td>{escape(unit)}</td>"
-            f"<td>{escape(reason)}</td><td>{escape(description)}</td></tr>"
+            f"<tr><th>{escape(metric_label(key))}</th><td class='metric'>"
+            f"{_format_metric(value, unit)}</td><td>{escape(unit_label(unit))}</td>"
+            f"<td>{escape(reason)}</td><td>"
+            + details_html("保存定義與指標代碼（原文）", definition)
+            + "</td></tr>"
         )
     note = (
-        "折疊摘要為每個 test fold 的描述統計（mean/std/min/max/valid_count），"
-        "不是串接資金、 pooled return 或可交易的單一權益曲線。"
+        "各折摘要呈現每個測試折的平均值、標準差、最小值、最大值與有效折數，"
+        "不是串接資金、合併報酬率或可交易的單一權益曲線。"
         if scope["kind"] == "fold_summary"
-        else "以下值與定義取自保存結果；fraction 顯示為百分比，原始值保留於報告資料。"
+        else "以下值與定義取自保存結果；比例顯示為百分比，原始值保留於報告資料。"
     )
     return (
         f"<h3>保存績效指標</h3><p>{note}</p><div class='scroll'><table>"
-        "<thead><tr><th>指標</th><th>值</th><th>原始單位</th>"
+        "<thead><tr><th>指標</th><th>值</th><th>顯示單位</th>"
         "<th>不可用原因</th><th>保存定義</th></tr></thead><tbody>"
         + "".join(rows)
-        + "</tbody></table></div>"
+        + "</tbody></table></div><p class='muted'>小數與百分比顯示至小數點後兩位；"
+        "原始值及保存定義保留完整精度與原文。</p>"
     )
 
 
@@ -157,7 +217,7 @@ def _chart(
         lines.append(
             f'<line x1="{left}" x2="{width - right}" y1="{y}" '
             f'y2="{y}" stroke="#e3eaf2"/><text x="{left - 9}" '
-            f'y="{y + 4}" text-anchor="end">{tick:,.5g}</text>'
+            f'y="{y + 4}" text-anchor="end">{tick:z,.2f}</text>'
         )
     segments: list[str] = []
     current: list[str] = []
@@ -178,12 +238,14 @@ def _chart(
         for segment in segments
     )
     first = (
-        _utc(timestamps[0]).strftime("%Y-%m-%d %H:%M UTC") if timestamps else "bar 0"
+        _utc(timestamps[0]).strftime("%Y-%m-%d %H:%M UTC")
+        if timestamps
+        else "K 線索引 0"
     )
     last = (
         _utc(timestamps[-1]).strftime("%Y-%m-%d %H:%M UTC")
         if timestamps
-        else f"bar {len(values) - 1}"
+        else f"K 線索引 {len(values) - 1}"
     )
     return (
         f"<h3>{escape(title)} <small>({escape(unit)})</small></h3>"
@@ -217,17 +279,18 @@ def _charts(scope: dict[str, Any]) -> str:
             else value - peak
         )
     return (
-        _chart(values, obs["timestamps"], "權益／保存序列", "quote amount", "#2367cc")
+        _chart(values, obs["timestamps"], "權益／保存序列", "報價貨幣金額", "#2367cc")
         + _chart(
             drawdown,
             obs["timestamps"],
             "觀測值回撤",
-            "%" if is_return else "quote amount",
+            "%" if is_return else "報價貨幣金額",
             "#ba4456",
         )
-        + "<p class='muted'>保留全部觀測點、極值與缺值間隙，橫軸按保存 bar 等距排列；"
+        + "<p class='muted'>保留全部觀測點、極值與缺值間隙，橫軸按保存 K 線等距排列；"
         "有時間戳時使用 UTC 日期標記。回撤圖僅由保存序列的歷史高點導出，"
-        "不取代上方保存指標；沒有初始資金的 volume 模式使用金額回撤。</p>"
+        "不取代上方保存指標；沒有初始資金的名目金額回測使用金額回撤。"
+        "座標軸數值顯示至小數點後兩位，圖形仍使用原始精度。</p>"
     )
 
 
@@ -337,11 +400,86 @@ def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
 
 
 _LEDGER_SEMANTICS = (
-    "<p class='notice'>帳戶欄位採 VectorBT generic accounting（vectorbt_generic）："
-    "cash、free_cash、debt、position 與 equity 為引擎的一般資產帳本，"
+    "<p class='notice'>帳戶欄位採 VectorBT 一般資產帳本："
+    "現金、可用現金、空單負債、總持倉與帳戶權益都是引擎保存值，"
     "不是 Binance 永續合約錢包、可用保證金或清算狀態。"
-    "timestamp 是 bar 時間，不是 tick 或精確盤中成交時間。</p>"
+    "時間為 K 線時間，不是精確盤中成交時間；K 線索引與識別編號從 0 起算。"
+    "價格以報價貨幣／標的單位表示。持倉數量為正代表多倉，為負代表空倉；"
+    "持倉市值保留相同正負號。空單負債為未回補空單的成本基礎金額。</p>"
 )
+
+_RECORD_LABELS = {
+    "execution_id": "執行紀錄編號",
+    "order_id": "成交單編號",
+    "bar_index": "K 線索引（從 0 起算）",
+    "status": "執行狀態",
+    "status_info": "狀態原因",
+    "side": "買賣方向",
+    "bar UTC": "K 線時間（UTC）",
+    "market.open": "市場開盤價",
+    "market.high": "市場最高價",
+    "market.low": "市場最低價",
+    "market.close": "市場收盤價",
+    "requested_price": "委託價格",
+    "filled_price": "成交價格",
+    "filled_size": "成交數量（標的單位）",
+    "fees": "成交手續費（報價貨幣）",
+    "valuation_price": "執行時權益估值價格",
+    "requested_size": "委託規模（依規模類型）",
+    "requested_size_kind": "委託規模數值類別",
+    "requested_size_type": "委託規模類型",
+    "requested_direction": "允許的持倉方向",
+    "requested_fee_rate": "單邊手續費率",
+    "requested_fixed_fees": "每次固定費用（報價貨幣）",
+    "requested_slippage": "滑價率",
+    "mark_price": "收盤估值價格",
+    "cash": "現金（報價貨幣）",
+    "free_cash": "可用現金（引擎帳本，報價貨幣）",
+    "position": "總持倉數量（標的單位）",
+    "asset_value": "持倉市值（報價貨幣）",
+    "equity": "帳戶權益（報價貨幣）",
+    "raw": "原始資料",
+    **{
+        f"{phase}.{key}": f"{phase_label}{label}（{unit}）"
+        for phase, phase_label in (("before", "執行前"), ("after", "執行後"))
+        for key, label, unit in (
+            ("cash", "現金", "報價貨幣"),
+            ("position", "總持倉", "標的單位"),
+            ("equity", "帳戶權益", "報價貨幣"),
+            ("free_cash", "可用現金", "引擎帳本，報價貨幣"),
+            ("debt", "空單負債", "引擎帳本，報價貨幣"),
+        )
+    },
+}
+_RECORD_ENUMS = {
+    "status",
+    "status_info",
+    "side",
+    "requested_size_kind",
+    "requested_size_type",
+    "requested_direction",
+}
+_RECORD_RATES = {"requested_fee_rate", "requested_slippage"}
+
+
+def _record_cell(key: str, value: Any, row: dict[str, Any]) -> str:
+    if key == "raw":
+        return "<td>" + details_html("原始欄位", value) + "</td>"
+    if key in _RECORD_ENUMS:
+        return "<td>" + _format_metric(_enum(key, value), "") + "</td>"
+    if key in {"execution_id", "order_id", "bar_index"}:
+        return "<td>" + _format_metric(value, "count") + "</td>"
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        rate = key in _RECORD_RATES or (
+            key == "requested_size"
+            and row["requested_size_type"] in ("percent", "targetpercent")
+        )
+        return (
+            f"<td data-sort-value='{escape(value)}'>"
+            + _format_metric(value, "fraction" if rate else "amount")
+            + "</td>"
+        )
+    return "<td>" + _format_metric(value, "") + "</td>"
 
 
 def _saved_table(
@@ -354,17 +492,12 @@ def _saved_table(
     """Render every saved row with reusable search, sorting and dataset-bound CSV."""
     identifier = f"{dataset}-{run_index}-{scope_index}"
     headers = "".join(
-        f"<th><button data-column='{index}'>{escape(key)}</button></th>"
+        f"<th><button data-column='{index}'>{escape(_RECORD_LABELS[key])}</button></th>"
         for index, key in enumerate(rows[0])
     )
     body = "".join(
         "<tr>"
-        + "".join(
-            "<td>"
-            + (details_html("原始欄位", value) if key == "raw" else value_html(value))
-            + "</td>"
-            for key, value in row.items()
-        )
+        + "".join(_record_cell(key, value, row) for key, value in row.items())
         + "</tr>"
         for row in rows
     )
@@ -379,6 +512,9 @@ def _saved_table(
         "以公式字元開頭的文字加單引號避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
         f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
+        "<p class='muted'>金額、數量與百分比顯示至小數點後兩位，"
+        "較小數值可能顯示為 0.00；"
+        "排序、原始資料與 CSV 保留完整精度。</p>"
     )
 
 
@@ -392,13 +528,13 @@ def _stream_unavailable(scope: dict[str, Any], dataset: str) -> str:
     reason = metadata.get(availability_key)
     if scope["mode"] == "volume" or reason == "unsupported_volume_accounting":
         reason = "unsupported_volume_accounting"
-        detail = "volume 模式不提供這類資金帳戶／原生成交紀錄。"
+        detail = "名目金額回測模式不提供這類資金帳戶／原生成交紀錄。"
     else:
         reason = "not_recorded" if reason in (None, "available") else reason
         detail = "此保存結果未記錄這個資料流（舊產物亦可能缺少欄位），不能解讀為零筆。"
     return (
         "<p class='notice' data-availability='unavailable'>不可用："
-        + escape(reason)
+        + escape(reason_label(str(reason)))
         + "。"
         + detail
         + "報告不重跑策略，也不由交易或權益曲線回推帳戶狀態。</p>"
@@ -408,20 +544,17 @@ def _stream_unavailable(scope: dict[str, Any], dataset: str) -> str:
 def _executions(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     records = scope["observations"].get("execution_records")
     intro = (
-        _LEDGER_SEMANTICS
-        + "<p>每列為一個原生 order attempt，狀態包含 filled、ignored、rejected。"
-        "反手可能是同一筆 order 同時平舊倉並開新倉；不拆成虛構成交。"
-        "OHLC 是原始 bar 的市場參考；requested_price、filled_price 與 "
-        "valuation_price 分開顯示。before/after equity 以保存的 valuation_price "
-        "估值（request price、滑價前），不是當根收盤權益；fees 為該次實際費用。"
-        "未成交的 filled_* 與 fees 保持 null，不當成零費用成交。</p>"
+        _LEDGER_SEMANTICS + "<p>每列為一次委託嘗試，包含已成交、已忽略與已拒絕。"
+        "反手可能是同一筆委託同時平舊倉並開新倉；不拆成虛構成交。"
+        "市場開高低收價格取自原始 K 線；委託價格、成交價格與權益估值價格分開顯示。"
+        "執行前後權益使用保存的委託價格（滑價前）估值，不是當根收盤權益；"
+        "成交手續費為該次實際費用。未成交的成交欄位保持未知，不當成零費用成交。"
+        "委託規模需搭配規模類型與數值類別閱讀；正負無限值不代表已成交無限數量。</p>"
     )
     if records is None:
         return intro + _stream_unavailable(scope, "execution_records")
     if not records:
-        return (
-            intro + "<p data-availability='available'>已記錄：0 筆 order attempt。</p>"
-        )
+        return intro + "<p data-availability='available'>已記錄：0 筆委託嘗試。</p>"
     rows = []
     for record in records:
         row = {
@@ -472,16 +605,16 @@ def _executions(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
 def _account_history(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     records = scope["observations"].get("account_history")
     intro = (
-        _LEDGER_SEMANTICS + "<p>每列保存一根 bar 結束後的帳戶狀態，"
-        "包括沒有 order 的 bar。mark_price 為 bar close；equity 是該價格下的"
-        "cash 加 asset_value，與執行紀錄的 request-price 估值分開。"
+        _LEDGER_SEMANTICS + "<p>每列保存一根 K 線結束後的帳戶狀態，"
+        "包括沒有委託的 K 線。收盤估值價格為當根收盤價；帳戶權益等於"
+        "現金加持倉市值，與執行紀錄採用的委託價格估值分開。"
         "表內數值直接取自保存帳本，不由報告重建。</p>"
     )
     if records is None:
         return intro + _stream_unavailable(scope, "account_history")
     if not records:
         return (
-            intro + "<p data-availability='available'>已記錄：0 根 bar 的帳戶狀態。</p>"
+            intro + "<p data-availability='available'>已記錄：0 根 K 線的帳戶狀態。</p>"
         )
     rows = []
     for record in records:
@@ -511,67 +644,120 @@ def _account_history(scope: dict[str, Any], run_index: int, scope_index: int) ->
     )
 
 
+def _scope_name(scope_id: str | None) -> str | None:
+    if scope_id is None:
+        return None
+    names = {
+        "full": "完整區間",
+        "train": "訓練區間",
+        "test": "測試區間",
+        "test_summary": "各折測試摘要",
+    }
+    if scope_id in names:
+        return names[scope_id]
+    parts = scope_id.split("/")
+    if (
+        len(parts) == 3
+        and parts[0] in ("fold", "trial")
+        and parts[1].isascii()
+        and parts[1].isdigit()
+        and parts[2] in names
+    ):
+        try:
+            index = str(int(parts[1]) + 1)
+        except ValueError:
+            pass  # Excessively long numeric identifiers remain custom scopes.
+        else:
+            group = "折" if parts[0] == "fold" else "次參數試驗"
+            return f"第 {index} {group} · {names[parts[2]]}（{scope_id}）"
+    return f"自訂結果範圍（{scope_id}）"
+
+
+def _parameters_html(parameters: dict[str, Any]) -> str:
+    if not parameters:
+        return "<p>沒有保存策略參數。</p>"
+    return (
+        "<table><tbody>"
+        + "".join(
+            f"<tr><th>{escape('自訂參數（' + key + '）')}</th><td>"
+            + (
+                details_html("結構化參數原始值", value)
+                if isinstance(value, dict | list)
+                else _format_metric(value, "")
+            )
+            + "</td></tr>"
+            for key, value in parameters.items()
+        )
+        + "</tbody></table>"
+    )
+
+
 def _scope_settings(run: dict[str, Any], scope: dict[str, Any]) -> str:
     context = _object(scope["metadata"].get("execution_context"))
     observations = scope["observations"]
     coverage: dict[str, Any] = {
-        "scope": scope["scope_id"],
-        "kind": scope["kind"],
-        "mode": scope["mode"],
-        "split": scope["split"],
-        "fold_index": scope["fold_index"],
-        "trial_index": scope["trial_index"],
+        "結果範圍": _scope_name(scope["scope_id"]),
+        "結果類型": _enum("kind", scope["kind"]),
+        "回測模式": _enum("mode", scope["mode"]),
+        "資料用途": _enum("split", scope["split"]),
+        "折索引（從 0 起算）": scope["fold_index"],
+        "參數試驗索引（從 0 起算）": scope["trial_index"],
     }
     if observations is not None:
         stamps = observations["timestamps"]
         coverage.update(
             {
-                "actual_bars": len(observations["equity_curve"]),
-                "observed_start_utc": _utc(stamps[0]).isoformat() if stamps else None,
-                "observed_end_utc": _utc(stamps[-1]).isoformat() if stamps else None,
-                "initial_cash": observations["init_cash"],
+                "實際 K 線數": len(observations["equity_curve"]),
+                "實際開始時間（UTC）": _utc(stamps[0]).isoformat() if stamps else None,
+                "實際結束時間（UTC）": _utc(stamps[-1]).isoformat() if stamps else None,
+                "初始資金（報價貨幣）": observations["init_cash"],
             }
         )
     identity = run["identity"]
     controls = {
-        key: context.get(key)
-        for key in (
-            "symbol",
-            "timeframe",
-            "start_date",
-            "end_date",
-            "fees",
-            "slippage",
-            "position_size",
-            "init_cash",
-            "random_seed",
-            "stop_loss",
-            "take_profit",
-            "signal_as_position",
-            "re_entry_after_sl",
-            "periods_per_year",
-        )
+        "交易標的": context.get("symbol"),
+        "K 線週期": context.get("timeframe"),
+        "設定開始日期": context.get("start_date"),
+        "設定結束日期": context.get("end_date"),
+        "單邊手續費率": _percentage(context.get("fees")),
+        "滑價率": _percentage(context.get("slippage")),
+        "每次交易名目金額（報價貨幣）": context.get("position_size"),
+        "設定初始資金（報價貨幣）": context.get("init_cash"),
+        "隨機種子": context.get("random_seed", identity.get("random_seed")),
+        "停損比例": _percentage(context.get("stop_loss")),
+        "停利比例": _percentage(context.get("take_profit")),
+        "訊號代表目標持倉": context.get("signal_as_position")
+        if scope["mode"] == "volume"
+        else "不適用（此設定僅用於名目金額回測）",
+        "停損／停利後重新進場": context.get("re_entry_after_sl")
+        if scope["mode"] == "volume"
+        else "不適用（此設定僅用於名目金額回測）",
+        "每年計算期數": context.get("periods_per_year"),
     }
-    controls["random_seed"] = context.get("random_seed", identity.get("random_seed"))
     config = _object(run["execution_config"])
     data = config.get("data")
     return (
         "<div class='two'><div><h3>資料與實際覆蓋</h3>"
-        + pairs_html(coverage)
-        + details_html("保存資料來源設定", data)
+        + _pairs_html(coverage)
+        + details_html("保存資料來源設定（原始欄位）", data)
         + "<p class='notice'>暖機／區間前資料：保存產物沒有標準化暖機證據，"
         "因此未知；不能由第一筆交易日期推定暖機長度。</p></div>"
         + "<div><h3>有效參數與執行設定</h3>"
-        + pairs_html(
+        + _pairs_html(
             {
-                "parameters": scope["parameters"],
-                "parameter_provenance": scope["parameter_provenance"],
-                "parameters_complete": scope["parameters_complete"],
+                "參數來源": _enum(
+                    "parameter_provenance", scope["parameter_provenance"]
+                ),
+                "參數是否完整": scope["parameters_complete"],
             }
         )
-        + pairs_html(controls)
+        + _parameters_html(scope["parameters"])
+        + "<p class='muted'>自訂參數保留策略原名；未保存用途說明時不推測其含義。"
+        "小數與百分比顯示至小數點後兩位，完整精度見原始參數。</p>"
+        + details_html("策略參數（原始名稱與完整精度）", scope["parameters"])
+        + _pairs_html(controls)
         + "</div></div>"
-        + details_html("全部保存 scope 中繼資料", scope["metadata"])
+        + details_html("全部保存範圍中繼資料（原始欄位）", scope["metadata"])
     )
 
 
@@ -617,13 +803,13 @@ _LIMITATIONS = (
     "缺少設定或語意時明示未知，不推定 1x、全倉或成交時點。</li>"
     "<li>資金費率、槓桿／保證金、交易所精度與流動性限制：若未保存於"
     "執行設定，是否模擬及金額均未知。此報告不自行補入成本。</li>"
-    "<li>實際 observations 日期、bar 數與請求起迄分開顯示；沒有市場檔"
-    "快照時，dataset_id 只是保存識別資訊，不能證明行情完整無缺。</li>"
-    "<li>open 交易為期末持倉估值，不能當成已平倉；報告不強制平倉或補收費用。</li>"
-    "<li>walk-forward summary 只描述 fold 分佈；optimization 的 "
-    "selected_train_scope 標示選取範圍，歷史最佳不代表未來績效。</li>"
+    "<li>實際觀測日期、K 線數與請求起迄分開顯示；沒有市場檔"
+    "快照時，資料集識別碼只是保存識別資訊，不能證明行情完整無缺。</li>"
+    "<li>未平倉交易為期末持倉估值，不能當成已平倉；報告不強制平倉或補收費用。</li>"
+    "<li>滾動驗證摘要只描述各折結果的分佈；參數最佳化的選定訓練範圍"
+    "用來標示選取結果，歷史最佳不代表未來績效。</li>"
     "<li>圖表回撤由保存權益繪製，績效表使用保存值及其原始定義。"
-    "時間戳缺失時只顯示 bar 索引，不猜測日期。</li></ul>"
+    "時間戳缺失時只顯示 K 線索引，不猜測日期。</li></ul>"
 )
 
 
@@ -633,28 +819,48 @@ def _overview(payload: dict[str, Any]) -> str:
         f"<p class='notice'>{escape(note)}</p>" for note in _overlap_warnings(payload)
     )
     for run in payload["runs"]:
-        result += pairs_html(
+        result += _pairs_html(
             {
-                "run_id": run["identity"]["run_id"],
-                "default_scope": run["default_scope"],
-                "selected_train_scope": run["selected_train_scope"],
-                "available_scopes": [s["scope_id"] for s in run["scopes"]],
+                "執行識別碼": run["identity"]["run_id"],
+                "預設結果範圍": _scope_name(run["default_scope"]),
+                "選定的訓練範圍": _scope_name(run["selected_train_scope"]),
+                "可用結果範圍": [_scope_name(s["scope_id"]) for s in run["scopes"]],
             }
         )
     if comparison is not None:
         result += (
-            "<h3>保存預設範圍比較</h3><p>保留每個 run 的預設 scope，"
-            "不合併或重算績效。comparable 依指標定義與設定判斷，"
+            "<h3>保存預設範圍比較</h3><p>保留每次執行的預設結果範圍，"
+            "不合併或重算績效。可比較性依指標定義與設定判斷，"
             "仍須核對日期及資料差異。</p>"
-            + pairs_html(
+            + _pairs_html(
                 {
-                    "comparable": comparison["comparable"],
-                    "context_differences": comparison["context_differences"],
+                    "指標是否可比較": comparison["comparable"],
+                    "設定與觀測差異項目數": len(comparison["context_differences"]),
                 }
             )
-            + details_html("完整比較與每指標相容性原因", comparison)
+            + details_html("完整比較與每指標相容性原因（原始資料）", comparison)
         )
     return result
+
+
+_IDENTITY_LABELS = {
+    "run_id": "執行識別碼",
+    "job_id": "工作識別碼",
+    "strategy_id": "策略識別碼",
+    "revision_id": "策略修訂識別碼",
+    "manifest_hash": "執行設定雜湊",
+    "source_hash": "策略原始碼雜湊",
+    "config_hash": "策略設定雜湊",
+    "random_seed": "隨機種子",
+    "dataset_id": "資料集識別碼",
+    "created_at": "建立時間（保存值）",
+}
+
+
+def _identity_html(identity: dict[str, Any]) -> str:
+    return _pairs_html(
+        {_IDENTITY_LABELS[key]: value for key, value in identity.items()}
+    )
 
 
 def _provenance(payload: dict[str, Any]) -> str:
@@ -665,15 +871,15 @@ def _provenance(payload: dict[str, Any]) -> str:
             "<h3>"
             + escape(identity["run_id"])
             + "</h3>"
-            + pairs_html(identity)
-            + pairs_html(
+            + _identity_html(identity)
+            + _pairs_html(
                 {
-                    "manifest_integrity": "verified"
+                    "執行設定完整性": "已驗證"
                     if identity["manifest_hash"]
-                    else "unknown / legacy"
+                    else "未知／舊版資料未保存",
                 }
             )
-            + details_html("Artifact SHA-256 來源", run["provenance"])
+            + details_html("來源產物 SHA-256 證據（原始欄位）", run["provenance"])
         )
     return result
 
@@ -686,7 +892,7 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
                 f"<div class='scope' data-scope='scope-{ri}-{si}'"
                 f"{' hidden' if ri or si else ''}>"
                 f"<h3>{escape(run['identity']['run_id'])} · "
-                f"{escape(scope['scope_id'])}</h3>"
+                f"{escape(_scope_name(scope['scope_id']))}</h3>"
             )
             if section == "settings":
                 result += _scope_settings(run, scope)
@@ -695,7 +901,7 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
             elif scope["observations"] is None:
                 result += (
                     "<p>折疊摘要沒有單一交易帳本或權益曲線；"
-                    "請選擇原始 train/test fold，不將 fold 串接或 pooled。</p>"
+                    "請選擇原始訓練／測試折，不將各折串接或合併計算。</p>"
                 )
             elif section == "equity":
                 result += _charts(scope)
@@ -725,7 +931,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             options.append(
                 f"<option value='scope-{ri}-{si}'>"
                 f"{escape(identity['run_id'])} / "
-                f"{escape(scope['scope_id'])} ({scope['kind']})</option>"
+                f"{escape(_scope_name(scope['scope_id']))} "
+                f"({escape(enum_label('kind', scope['kind']))})</option>"
             )
     sections = []
     for key in payload["sections"]:
@@ -767,7 +974,7 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "account_history",
     }:
         selector = (
-            "<div class='panel'><label for='scope-select'>選擇 run / scope</label>"
+            "<div class='panel'><label for='scope-select'>選擇執行／結果範圍</label>"
             "<select id='scope-select'>" + "".join(options) + "</select>"
             "<p class='muted'>切換選取章節的範圍；列印時展開全部範圍。</p></div>"
         )
@@ -777,15 +984,20 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "<p>資料取自已驗證 JSON 產物；不重跑策略、不載入 pickle，"
         "也不讀取目前策略設定。僅顯示呼叫端選取的章節；未選取章節不表示資料不存在。</p>"
         f"<p class='muted'>Report SHA-256 <code>{escape(report_id)}</code></p>"
-        + pairs_html(
+        + _pairs_html(
             {
-                "selected_sections": payload["sections"],
-                "omitted_sections": [
-                    key for key in REPORT_SECTIONS if key not in payload["sections"]
+                "已選取章節": [
+                    REPORT_SECTIONS[key].title for key in payload["sections"]
                 ],
-                "source_identities": identities,
+                "未選取章節": [
+                    section.title
+                    for key, section in REPORT_SECTIONS.items()
+                    if key not in payload["sections"]
+                ],
             }
         )
+        + "<h3>來源執行</h3>"
+        + "".join(_identity_html(identity) for identity in identities)
         + "</header>"
         + selector
         + "".join(sections)

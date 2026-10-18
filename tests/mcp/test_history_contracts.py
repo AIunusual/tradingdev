@@ -353,7 +353,7 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert "standard" in catalog.templates
         args = {
             "run_ids": ["run"],
-            "sections": ["overview", "trades"],
+            "sections": ["overview", "settings", "metrics", "trades"],
             "commentary": [
                 {"title": "使用者觀察", "text": "<script>unsafe()</script> 僅為解讀"}
             ],
@@ -368,6 +368,9 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert "&lt;script&gt;unsafe()&lt;/script&gt;" in path.read_text()
         assert "<script>unsafe()</script>" not in path.read_text()
         assert "<button data-column='3'>進場時間（UTC）</button>" in path.read_text()
+        assert "<th>單邊手續費率</th>" in path.read_text()
+        assert "<th>總淨損益</th>" in path.read_text()
+        assert "<th>執行識別碼</th>" in path.read_text()
         assert (
             "<button data-column='10'>淨損益（報價貨幣）</button>" in path.read_text()
         )

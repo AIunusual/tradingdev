@@ -680,11 +680,20 @@ claiming every suggested section is present. Included trade tables expose all
 records, sorting, text search and local CSV export; SVG equity and drawdown charts
 and scripts are embedded for offline use. UTC times, units, unavailable reasons,
 provenance and known overlap/interpretation limits are supplied by the backend.
-Paired-trade tables use Traditional Chinese column, status and direction labels,
-with distinct closing and end-of-period valuation fields. Prices are quote currency
+Overview, settings, metrics, provenance and record tables use Traditional Chinese
+field names, known metric names, units and enum explanations. Saved metric definitions
+remain authoritative and are expandable in their original form; current display
+labels never replace saved units or descriptions. Unknown codes remain visible with
+an explicit fallback, and strategy-defined parameters retain their original names.
+Paired-trade tables keep distinct closing and end-of-period valuation fields.
+Execution tables identify before/after balances; account history identifies closing
+balances. These remain generic engine accounting, not exchange margin wallets.
+Prices are quote currency
 per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
-These numeric cells display two decimal places, with a precision note below the
-table; sorting uses the original values, including when displayed values are equal.
+Numeric displays use two decimal places; fractional rates and returns display as
+percentages, while identifiers and integer counts retain integer form. Fold statistics show
+labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
+notes accompany the tables; sorting uses original values even when displays are equal.
 Expandable raw records, embedded observations and CSV exports retain their original
 field names and values. Presentation changes create a new template version and report
 identity without modifying earlier reports or backtest results.

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from tradingdev.adapters.cli.reports import main as report_cli_main
+from tradingdev.adapters.reporting.labels import metric_label, unit_label
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -78,6 +79,7 @@ def _save(
         "2024-01-03T00:00:00Z",
     ),
     trades: list[dict[str, Any]] | None = None,
+    definitions: dict[str, MetricDefinitionSnapshot] | None = None,
 ) -> None:
     workspace, store, _ = context
     scopes = scopes or {"full": _scope()}
@@ -119,7 +121,7 @@ def _save(
             path=path,
             sha256=sha256_file(path),
         )
-    definitions = {
+    definitions = definitions or {
         key: MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key]))
         for scope in scopes.values()
         for key in scope.values
@@ -205,7 +207,7 @@ def test_report_uses_immutable_saved_evidence_and_deterministic_retry(
     assert scope["values"]["total_return"] == 0.25
     assert scope["observations"]["trades"][0]["exit_price"] == 45.0
     text = path.read_text()
-    assert "25.0000%" in text and "no_closed_trades" in text
+    assert "25.00%" in text and "沒有已平倉交易" in text
     assert "期末估值時間（UTC）" in text and "期末估值價格" in text
     assert "不是實際平倉" in text and "暖機" in text
     assert "&lt;/script&gt;&lt;img" in text
@@ -393,7 +395,7 @@ def test_trade_table_preserves_missing_values_and_empty_history(
     assert "<table id='trades-" not in text
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7"])
+@pytest.mark.parametrize("previous_version", ["6", "7", "8"])
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,
@@ -426,6 +428,155 @@ def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
         == old_content
     )
     assert service.generate_report(["run"], sections=["trades"]) == new
+
+
+@pytest.mark.parametrize("via_cli", [False, True])
+def test_report_tables_use_readable_names_units_and_settings(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    capsys: pytest.CaptureFixture[str],
+    via_cli: bool,
+) -> None:
+    workspace, _, service = context
+    _save(context)
+    if via_cli:
+        report_cli_main(["--workspace", str(workspace.root), "--run-id", "run"])
+        response = json.loads(capsys.readouterr().out)
+    else:
+        response = service.generate_report(["run"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    for label in (
+        "已選取章節",
+        "未選取章節",
+        "執行識別碼",
+        "預設結果範圍",
+        "選定的訓練範圍",
+        "策略識別碼",
+        "執行設定完整性",
+        "結果範圍",
+        "結果類型",
+        "回測模式",
+        "實際 K 線數",
+        "實際開始時間（UTC）",
+        "初始資金（報價貨幣）",
+        "單邊手續費率",
+        "參數來源",
+        "參數是否完整",
+        "累積報酬率",
+        "已平倉交易勝率",
+    ):
+        assert f"<th>{label}</th>" in text
+    assert "<td>0.04%</td>" in text
+    assert "<td>訊號回測模式</td>" in text
+    assert "<td>保存範圍的參數快照</td>" in text
+    assert "<td>否</td>" in text
+    assert ">百分比</td>" in text
+    assert "沒有已平倉交易" in text
+    assert "Cumulative return on initial capital." in text
+    assert "自訂參數（slow）" in text
+    assert _payload(path)["runs"][0]["scopes"][0]["values"]["total_return"] == 0.25
+
+
+def test_report_preserves_unknown_codes_and_historical_metric_definitions(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    code = "custom_<img>"
+    definition = MetricDefinitionSnapshot.model_validate(
+        asdict(METRIC_CATALOG["total_return"])
+    )
+    historical = definition.model_copy(
+        update={
+            "unit": "amount",
+            "description": "Saved historical definition <not current>",
+        }
+    )
+    custom = definition.model_copy(update={"id": code, "unit": "unknown_<unit>"})
+    _save(
+        context,
+        scopes={
+            "custom_<scope>": _scope(
+                values={"total_return": 0.25, code: None},
+                metadata={"unavailable": {code: "new_<reason>"}},
+                parameters={"<param>": 1.2345},
+            )
+        },
+        default_scope="custom_<scope>",
+        definitions={"total_return": historical, code: custom},
+    )
+    response = service.generate_report(["run"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    assert "未識別指標：custom_&lt;img&gt;" in text
+    assert "未識別單位：unknown_&lt;unit&gt;" in text
+    assert "未識別原因：new_&lt;reason&gt;" in text
+    assert "自訂結果範圍（custom_&lt;scope&gt;）" in text
+    assert "自訂參數（&lt;param&gt;）" in text
+    assert "<td>1.23</td>" in text
+    assert "<td class='metric'>0.25</td><td>報價貨幣金額</td>" in text
+    assert "Saved historical definition &lt;not current&gt;" in text
+    saved = _payload(path)["runs"][0]["scopes"][0]
+    assert saved["definitions"]["total_return"] == historical.model_dump(mode="json")
+    assert saved["parameters"] == {"<param>": 1.2345}
+
+
+def test_builtin_metrics_have_readable_labels_and_units() -> None:
+    for key, definition in METRIC_CATALOG.items():
+        assert not metric_label(key).startswith("未識別")
+        assert not unit_label(definition.unit).startswith("未識別")
+
+
+@pytest.mark.parametrize(
+    "scope_id",
+    [
+        "fold/²/train",
+        "fold/٣/test",
+        "trial/" + "9" * 5000 + "/train",
+        "trial/" + "9" * 4300 + "/train",
+    ],
+    ids=["superscript", "unicode_decimal", "too_long_to_parse", "too_long_to_display"],
+)
+def test_unusual_numeric_scope_identifiers_keep_custom_fallback(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], scope_id: str
+) -> None:
+    _, _, service = context
+    _save(context, scopes={scope_id: _scope()}, default_scope=scope_id)
+    response = service.generate_report(["run"])
+    assert response["success"], response
+    path = Path(response["path"])
+    assert f"自訂結果範圍（{scope_id}）" in path.read_text()
+    assert _payload(path)["runs"][0]["scopes"][0]["scope_id"] == scope_id
+
+
+@pytest.mark.parametrize("mode", ["signal", "volume"])
+def test_mode_specific_settings_are_not_presented_as_active_in_signal_mode(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], mode: str
+) -> None:
+    _, _, service = context
+    settings = {"signal_as_position": False, "re_entry_after_sl": True}
+    _save(
+        context,
+        volume=mode == "volume",
+        scopes={"full": _scope(mode=mode, metadata={"execution_context": settings})},
+    )
+    response = service.generate_report(["run"], ["settings"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    for label, active_value in (
+        ("訊號代表目標持倉", "否"),
+        ("停損／停利後重新進場", "是"),
+    ):
+        expected = (
+            active_value if mode == "volume" else "不適用（此設定僅用於名目金額回測）"
+        )
+        assert f"<th>{label}</th><td>{expected}</td>" in text
+    assert (
+        _payload(path)["runs"][0]["scopes"][0]["metadata"]["execution_context"]
+        == settings
+    )
 
 
 def test_optional_sections_order_and_commentary_are_saved_and_escaped(
@@ -557,6 +708,10 @@ def test_all_walk_forward_and_optimization_scopes_preserved_with_summary_semanti
     assert payload["default_scope_comparison"]["comparable"] is False
     text = Path(response["path"]).read_text()
     assert "fold_descriptive" in text and "不是串接資金" in text
+    assert "<li>平均值：25.00%</li>" in text
+    assert "<li>標準差：0.00%</li>" in text
+    assert "<li>有效折數：2</li>" in text
+    assert "<th>指標是否可比較</th><td>否</td>" in text
     assert "的觀測日期重疊" in text
     assert "scope-1-2" in text and "trial/0/train" in text
 
@@ -644,7 +799,7 @@ def test_volume_without_timestamps_uses_index_and_amount_drawdown(
     response = service.generate_report(["run"], ["equity"])
     assert response["success"], response
     text = Path(response["path"]).read_text()
-    assert "quote amount" in text and "bar 0" in text and "bar 2" in text
+    assert "報價貨幣金額" in text and "K 線索引 0" in text and "K 線索引 2" in text
 
 
 def test_registered_missing_report_is_not_silently_rebuilt(
