@@ -17,6 +17,7 @@ from tradingdev.app.execution_plan_service import ExecutionPlanService
 from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
+from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
@@ -31,6 +32,7 @@ from tradingdev.mcp.tools import (
     feature_requests,
     history,
     jobs,
+    ml,
     runs,
     strategy,
     strategy_cleanup,
@@ -78,6 +80,7 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
     )
     artifacts.register(mcp, artifact_service)
     feature_requests.register(mcp, feature_request_service)
+    ml.register(mcp, MLService(workspace=workspace, data_service=data_service))
     return mcp
 
 

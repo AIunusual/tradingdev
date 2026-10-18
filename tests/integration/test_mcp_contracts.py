@@ -40,6 +40,9 @@ _READ_ONLY_TOOLS = {
     "list_artifacts",
     "get_artifact",
     "list_feature_requests",
+    "get_ml_contract",
+    "predict",
+    "leaderboard",
 }
 
 # readOnly, destructive, idempotent, openWorld: expected public behavior,
@@ -60,6 +63,14 @@ _MUTATING_HINTS = {
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
+    # The ML tools write a dataset, panel or model artifact, or - in the case
+    # of evaluate_signal - a leaderboard row. None of them overwrite anything
+    # that already exists, and their ids are content-derived, so asking twice
+    # is the same as asking once.
+    "evaluate_signal": (False, False, True, False),
+    "build_dataset": (False, False, True, False),
+    "build_panel": (False, False, True, False),
+    "train_model": (False, False, True, False),
 }
 
 
@@ -125,7 +136,11 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     ]
     async with mcp_workspace.connect() as client:
         tools = {tool.name: tool for tool in (await client.session.list_tools()).tools}
-        assert len(tools) == 37
+        # Counted from the inventory above rather than from a literal, so the
+        # number cannot drift away from the hints that are actually declared.
+        # A tool that is advertised but not listed still fails, on the
+        # equality check just below.
+        assert len(tools) == len(expected_hints)
         assert (
             not {
                 "start_backtest",

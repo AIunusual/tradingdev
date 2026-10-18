@@ -185,9 +185,9 @@ def test_artifact_service_cache_pipeline_records_run_lineage(
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
-    monkeypatch.setattr(
-        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "fixed-source"
-    )
+    # The code identity used to come from a git call inside the cache helper and
+    # had to be stubbed to keep the key stable. It now comes from the strategy
+    # revision pinned in the manifest, which is stable on its own.
 
     strategy_source = tmp_path / "cli_strategy.py"
     strategy_source.write_text("class CliStrategy: pass\n", encoding="utf-8")
@@ -261,9 +261,6 @@ backtest:
     # Reading follows the recorded artifact path even if current key inputs differ.
     config_path.unlink()
     processed_path.unlink()
-    monkeypatch.setattr(
-        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "changed-source"
-    )
     loaded = ArtifactService(workspace=workspace, store=store).load_pipeline_result(
         run["run_id"]
     )
@@ -283,9 +280,6 @@ def test_cli_cache_uses_manifest_even_after_original_config_is_removed(
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(workspace.root / "data"))
-    monkeypatch.setattr(
-        "tradingdev.shared.utils.cache._code_fingerprint", lambda: "fixed-source"
-    )
     config_path = tmp_path / "cli.yaml"
     original = {
         "strategy": {"id": "fixture"},

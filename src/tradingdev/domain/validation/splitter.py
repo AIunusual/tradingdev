@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
@@ -37,6 +38,83 @@ class DataSplitter:
             return self._explicit_split(df)
 
         return self._auto_split(df)
+
+    def split_windows(
+        self, df: pd.DataFrame
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """Positional ``[start, end)`` train/test windows, one per fold.
+
+        Mirrors :meth:`split` but reports integer geometry instead of frames,
+        so callers can audit fold boundaries (purge/embargo) without
+        re-deriving positions from the returned DataFrames. The two are kept
+        consistent by a contract test rather than by construction.
+        """
+        cfg = self._config
+
+        if (
+            cfg.train_start is not None
+            and cfg.train_end is not None
+            and cfg.test_start is not None
+            and cfg.test_end is not None
+        ):
+            return self._explicit_windows(df)
+
+        return self._auto_windows(df)
+
+    def _explicit_windows(
+        self, df: pd.DataFrame
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """Single window pair derived from the explicit date masks."""
+        cfg = self._config
+        ts = df["timestamp"]
+        train_mask = (
+            (ts >= _to_utc_ts(cfg.train_start))  # type: ignore[arg-type]
+            & (ts < _to_utc_ts(cfg.train_end) + pd.Timedelta(days=1))  # type: ignore[arg-type]
+        ).to_numpy()
+        test_mask = (
+            (ts >= _to_utc_ts(cfg.test_start))  # type: ignore[arg-type]
+            & (ts < _to_utc_ts(cfg.test_end) + pd.Timedelta(days=1))  # type: ignore[arg-type]
+        ).to_numpy()
+        train_pos = np.flatnonzero(train_mask)
+        test_pos = np.flatnonzero(test_mask)
+        if train_pos.size == 0 or test_pos.size == 0:
+            return []
+        return [
+            (
+                (int(train_pos.min()), int(train_pos.max()) + 1),
+                (int(test_pos.min()), int(test_pos.max()) + 1),
+            )
+        ]
+
+    def _auto_windows(
+        self, df: pd.DataFrame
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """Rolling or expanding window geometry, mirroring ``_auto_split``."""
+        cfg = self._config
+        n = len(df)
+        total_per_split = n // cfg.n_splits
+        train_size = int(total_per_split * cfg.train_ratio)
+        test_size = total_per_split - train_size
+
+        windows: list[tuple[tuple[int, int], tuple[int, int]]] = []
+        for i in range(cfg.n_splits):
+            if cfg.expanding:
+                train_start_idx = 0
+                train_end_idx = train_size + i * test_size
+            else:
+                train_start_idx = i * test_size
+                train_end_idx = train_start_idx + train_size
+            test_start_idx = train_end_idx
+            test_end_idx = test_start_idx + test_size
+
+            if test_end_idx > n:
+                break
+
+            windows.append(
+                ((train_start_idx, train_end_idx), (test_start_idx, test_end_idx))
+            )
+
+        return windows
 
     def _explicit_split(
         self, df: pd.DataFrame

@@ -30,3 +30,12 @@ class BaseModel(ABC):
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
         """Return class probabilities for each row."""
         ...
+
+    def feature_importance(self) -> tuple[tuple[str, float], ...]:
+        """``(feature, importance)`` pairs, most important first.
+
+        Estimators without a gain notion return an empty tuple. An empty
+        result means *unavailable*, never *unimportant*: callers must not
+        fabricate a ranking to fill the gap.
+        """
+        return ()

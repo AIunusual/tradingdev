@@ -42,3 +42,6 @@ Thumbs.db
 workspace/
 workspace/tradingdev.sqlite
 workspace/data/
+
+# CatBoost training output
+catboost_info/

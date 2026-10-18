@@ -499,6 +499,29 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     assert "訓練開始：2024-01-01" in text
 
 
+def test_leakage_controls_are_rendered_instead_of_being_swallowed() -> None:
+    """Purge settings change what a fold may see, so they need a human view."""
+    enabled = render_confirmation_text(
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={
+                    "label_horizon": 5,
+                    "embargo_bars": 2,
+                    "purged_split": True,
+                },
+            )
+        )
+    )
+    assert "標籤前視根數：5 根 K 線" in enabled
+    assert "淨化分段：是" in enabled
+    assert "額外隔離根數：2 根 K 線" in enabled
+
+    defaults = render_confirmation_text(_document(_manifest("walk_forward")))
+    assert "標籤前視根數：不檢查" in defaults
+    assert "淨化分段：否" in defaults
+
+
 @pytest.mark.parametrize(
     "change",
     [

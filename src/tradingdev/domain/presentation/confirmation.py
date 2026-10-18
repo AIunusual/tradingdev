@@ -546,11 +546,15 @@ def _validation_section(value: object) -> ConfirmationSection:
             "train_ratio",
             "expanding",
             "target_metric",
+            "label_horizon",
+            "embargo_bars",
+            "purged_split",
         },
         "validation",
     )
     dates = ("train_start", "train_end", "test_start", "test_end")
     explicit = all(values[key] is not None for key in dates)
+    horizon = values["label_horizon"]
     fields = [
         _field(
             "分段方式",
@@ -588,6 +592,26 @@ def _validation_section(value: object) -> ConfirmationSection:
             "驗證紀錄重點指標",
             _metric(values["target_metric"]),
             "用於驗證紀錄；策略如何訓練另依其策略設定。",
+        ),
+        _field(
+            "標籤前視根數",
+            horizon if horizon != 0 else "不檢查（標籤不取自未來資料）",
+            "訓練標籤取自未來幾根 K 線；大於 0 時會先檢查每組區間是否用到未來價格。",
+            unit="根 K 線" if horizon != 0 else None,
+            detail=True,
+        ),
+        _field(
+            "淨化分段",
+            values["purged_split"],
+            "啟用時每組訓練區間會先移除與測試區間重疊的資料；需要前視根數大於 0。",
+            detail=True,
+        ),
+        _field(
+            "額外隔離根數",
+            values["embargo_bars"],
+            "淨化之外再多移除的 K 線；只有啟用淨化分段時才會生效。",
+            unit="根 K 線",
+            detail=True,
         ),
     ]
     return _section("validation", fields)

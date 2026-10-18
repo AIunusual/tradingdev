@@ -72,6 +72,27 @@ class WalkForwardConfig(BaseModel):
     train_ratio: float = 0.8
     expanding: bool = False
     target_metric: str = "sharpe_ratio"
+    label_horizon: int = 0
+    """Bars a label looks ahead; >0 enables the leakage gate on the folds.
+
+    With ``0`` no fold geometry is audited (a plain price-series walk-forward
+    has no forward-looking label). Set it to the prediction horizon when the
+    folds train on interval-based labels, so bars whose answer is computed
+    from test-window prices are rejected before any fold runs.
+    """
+    embargo_bars: int = 0
+    """Extra bars removed around each test window, on top of the purge.
+
+    Purge width is derivable from ``label_horizon``; this buffer is not, and
+    exists because financial features are serially correlated. Only used by
+    the purged splitter.
+    """
+    purged_split: bool = False
+    """Use :class:`PurgedDataSplitter` instead of :class:`DataSplitter`.
+
+    Requires ``label_horizon >= 1``. Folds are then purged and embargoed by
+    construction, so the leakage gate passes instead of blocking the run.
+    """
 
 
 class ParallelConfig(BaseModel):

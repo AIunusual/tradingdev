@@ -134,6 +134,12 @@ class ArtifactService:
         key = compute_cache_key(
             manifest_hash=manifest.manifest_hash,
             processed_path=processed_path,
+            # The code that produced this result is the strategy revision that
+            # ran, and its identity is pinned in the manifest. Deriving it here
+            # instead would mean asking git about the local checkout, which is
+            # a different question - the checkout is not necessarily the code
+            # that ran, and it may not be there to ask.
+            code_fingerprint=f"{source.revision_id or '-'}:{source.source_hash or '-'}",
         )
         run_id = f"cli_{key}_{uuid4().hex}"
         performance = bundles_from_pipeline(run_id, pipeline, metrics)

@@ -1,0 +1,212 @@
+"""Tests for MLService.predict against a cached parquet fixture.
+
+``predict`` is what closes the loop: a stored model is scored against a stored
+dataset so the resulting signal can be judged by ``evaluate_signal``. These
+tests cover that hand-off plus the two safety gates the artifact registry was
+designed for (tamper detection and the feature-contract check).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.ml_service import MLService
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _write_cached_bars(workspace: WorkspacePaths, rows: int = 300) -> None:
+    """Write one year of oscillating OHLCV bars under the canonical name."""
+    index = np.arange(rows, dtype=float)
+    close = 100.0 + 10.0 * np.sin(index / 5.0) + index * 0.01
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=rows, freq="h", tz="UTC"),
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.full(rows, 10.0),
+        }
+    )
+    path = workspace.processed_data / "btcusdt_1h_2024.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
+
+
+@pytest.fixture
+def workspace(tmp_path: Path) -> WorkspacePaths:
+    paths = WorkspacePaths(tmp_path / "workspace")
+    paths.ensure()
+    _write_cached_bars(paths)
+    return paths
+
+
+@pytest.fixture
+def service(workspace: WorkspacePaths) -> MLService:
+    return MLService(workspace=workspace)
+
+
+def _build(service: MLService, **overrides: object) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+        "start_date": "2024-01-01",
+        "end_date": "2024-01-31",
+        "feature_set": "returns",
+        "horizon": 1,
+    }
+    kwargs.update(overrides)
+    return service.build_dataset(**kwargs)  # type: ignore[arg-type]
+
+
+def _train(service: MLService, dataset_id: str, **overrides: object) -> dict:
+    # Deep enough to actually separate the classes: an underfit model predicts
+    # a single class, which would make the signal a constant series.
+    kwargs: dict[str, object] = {
+        "dataset_id": dataset_id,
+        "model_kind": "xgboost_direction",
+        "parameters": {"n_estimators": 60, "max_depth": 3},
+    }
+    kwargs.update(overrides)
+    return service.train_model(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def trained(service: MLService) -> tuple[str, str]:
+    """Return ``(model_id, dataset_id)`` for a small trained direction model."""
+    dataset_id = str(_build(service)["dataset"]["dataset_id"])
+    model_id = str(_train(service, dataset_id)["model"]["model_id"])
+    return model_id, dataset_id
+
+
+class TestPredict:
+    def test_signal_is_aligned_with_the_realised_returns(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        model_id, dataset_id = trained
+        prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        signal = prediction["signal"]
+        realized = prediction["forward_returns"]
+        assert len(signal) == len(realized) == prediction["n_rows"]
+        assert prediction["n_rows"] == _build(service)["dataset"]["rows"]
+        assert all(value in (-1.0, 0.0, 1.0) for value in signal)
+
+    def test_reports_the_model_identity(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        model_id, dataset_id = trained
+        prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        assert prediction["model_id"] == model_id
+        assert prediction["dataset_id"] == dataset_id
+        assert prediction["model_name"] == "xgboost_direction"
+        assert prediction["framework"] == "xgboost"
+        assert prediction["horizon"] == 1
+
+    def test_is_deterministic(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        model_id, dataset_id = trained
+        first = service.predict(model_id=model_id, dataset_id=dataset_id)
+        second = service.predict(model_id=model_id, dataset_id=dataset_id)
+        assert first["prediction"]["signal"] == second["prediction"]["signal"]
+
+    def test_feeds_straight_into_evaluate_signal(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        """The whole point of predict: its output is evaluate_signal's input."""
+        model_id, dataset_id = trained
+        prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        verdict = service.evaluate_signal(
+            prediction["signal"],
+            prediction["forward_returns"],
+            horizon=prediction["horizon"],
+        )
+        assert verdict["success"] is True
+        assert verdict["n_observations"] == prediction["n_rows"]
+        assert set(verdict["metrics"])
+
+    @pytest.mark.parametrize(
+        "model_kind",
+        ["xgboost_direction", "lightgbm_direction", "catboost_direction"],
+    )
+    def test_every_zoo_kind_can_predict(
+        self, service: MLService, model_kind: str
+    ) -> None:
+        dataset_id = str(_build(service)["dataset"]["dataset_id"])
+        model_id = str(
+            _train(service, dataset_id, model_kind=model_kind)["model"]["model_id"]
+        )
+        prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        assert prediction["framework"] == model_kind.split("_")[0]
+        assert len(prediction["signal"]) == prediction["n_rows"]
+
+
+class TestPredictRejectsBadInput:
+    def test_unknown_model_id_is_rejected(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        _, dataset_id = trained
+        with pytest.raises(ValueError, match="unknown model_id"):
+            service.predict(model_id="0" * 16, dataset_id=dataset_id)
+
+    def test_malformed_model_id_cannot_escape_the_store(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        _, dataset_id = trained
+        for bad in (
+            "../../etc/passwd",
+            "0" * 15,
+            "ABCDEF0123456789",
+            "",
+            "0" * 16 + "0",
+        ):
+            with pytest.raises(ValueError, match="malformed model_id"):
+                service.predict(model_id=bad, dataset_id=dataset_id)
+
+    def test_unknown_dataset_id_is_rejected(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        model_id, _ = trained
+        with pytest.raises(ValueError, match="unknown dataset_id"):
+            service.predict(model_id=model_id, dataset_id="ds_" + "0" * 16)
+
+    def test_feature_contract_mismatch_is_rejected(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        """A model trained on one feature set must not score another.
+
+        This is the payoff of folding the feature contract into the model
+        fingerprint: the columns are compared before any prediction is made,
+        so a silently wrong-column score cannot happen.
+        """
+        model_id, _ = trained
+        other_dataset = str(
+            _build(service, feature_set="technical")["dataset"]["dataset_id"]
+        )
+        assert other_dataset != trained[1]
+        with pytest.raises(ValueError, match="feature contract mismatch"):
+            service.predict(model_id=model_id, dataset_id=other_dataset)
+
+    def test_tampered_blob_is_refused(
+        self, service: MLService, trained: tuple[str, str], workspace: WorkspacePaths
+    ) -> None:
+        model_id, dataset_id = trained
+        blob = workspace.models / f"{model_id}.bin"
+        blob.write_bytes(b"not the model that was registered")
+        with pytest.raises(ValueError, match="tampered"):
+            service.predict(model_id=model_id, dataset_id=dataset_id)

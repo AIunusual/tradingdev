@@ -85,6 +85,8 @@ module = [
     "vectorbt.*",
     "ccxt.*",
     "xgboost.*",
+    "lightgbm.*",
+    "catboost.*",
     "sklearn.*",
     "pandas.*",
     "yaml.*",

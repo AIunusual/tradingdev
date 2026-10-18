@@ -32,6 +32,22 @@ class WorkspacePaths:
         return self.root / "runs"
 
     @property
+    def models(self) -> Path:
+        return self.root / "models"
+
+    @property
+    def ml_datasets(self) -> Path:
+        return self.root / "ml_datasets"
+
+    @property
+    def ml_leaderboard(self) -> Path:
+        return self.root / "ml_leaderboard"
+
+    @property
+    def ml_feature_cache(self) -> Path:
+        return self.root / "ml_feature_cache"
+
+    @property
     def feature_requests(self) -> Path:
         return self.root / "feature_requests"
 
@@ -50,6 +66,10 @@ class WorkspacePaths:
             self.generated_strategies,
             self.configs,
             self.runs,
+            self.models,
+            self.ml_datasets,
+            self.ml_leaderboard,
+            self.ml_feature_cache,
             self.feature_requests,
             self.raw_data,
             self.processed_data,
