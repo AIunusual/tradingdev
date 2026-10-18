@@ -10,6 +10,8 @@ import json
 import os
 import re
 from dataclasses import asdict
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +182,48 @@ def _payload(path: Path) -> dict[str, Any]:
     return parsed
 
 
+def _static_table(text: str, identifier: str) -> tuple[list[str], list[list[str]]]:
+    table = text.split(f"<table id='{identifier}-static'>", 1)[1].split("</table>", 1)[
+        0
+    ]
+    headers = re.findall(r"<th>(.*?)</th>", table)
+    body = table.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    rows = [
+        re.findall(r"<td>(.*?)</td>", row, flags=re.DOTALL)
+        for row in re.findall(r"<tr>(.*?)</tr>", body, flags=re.DOTALL)
+    ]
+    return headers, rows
+
+
+def _csv_rows(text: str, identifier: str) -> list[dict[str, str]]:
+    encoded = re.search(
+        rf"data-table-csv='{re.escape(identifier)}' data-csv='([^']*)'", text
+    )
+    assert encoded is not None
+    return list(
+        csv.DictReader(io.StringIO(base64.b64decode(encoded[1]).decode("utf-8-sig")))
+    )
+
+
+class _ExternalResources(HTMLParser):
+    """Inspect actual resource elements, not URLs in bundled library comments."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.resources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in {"script", "link", "img", "iframe"}:
+            return
+        for name, value in attrs:
+            if (
+                name in {"src", "href"}
+                and value
+                and value.startswith(("https://", "http://", "//"))
+            ):
+                self.resources.append(value)
+
+
 def test_quantstats_analysis_is_scoped_derived_evidence_with_versioned_identity(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,
@@ -221,8 +265,9 @@ def test_quantstats_analysis_is_scoped_derived_evidence_with_versioned_identity(
     assert "<td>Native metric 12.34%</td>" in body
     assert body.count("<td>Native metric 12.34%</td>") == 2
     no_script = body.split("<noscript>", 1)[1].split("</noscript>", 1)[0]
-    assert ".scope[hidden]{display:block}" in no_script
-    assert "#scope-controls,.quantstats-frame,[data-quantstats-download]" in no_script
+    assert ".scope[hidden],#result-view[hidden],#overview-view[hidden]" in no_script
+    assert "display:block!important" in no_script
+    assert ".bokeh-table,.quantstats-frame,[data-quantstats-download]" in no_script
     assert "以下展開全部結果範圍" in no_script
     manifest = json.loads(path.with_name("manifest.json").read_text())
     assert set(manifest["derived_analytics"]["run"]) == {"train", "test"}
@@ -321,7 +366,10 @@ def test_report_uses_immutable_saved_evidence_and_deterministic_retry(
     assert "不是實際平倉" in text and "暖機" in text
     assert "&lt;/script&gt;&lt;img" in text
     assert "</script><img" not in text and "\\u003c/script\\u003e" in text
-    assert "https://" not in text and "<svg" in text
+    resources = _ExternalResources()
+    resources.feed(text)
+    assert resources.resources == []
+    assert "<svg" in text
     assert not list((workspace.root / "reports").rglob(".report-*"))
     assert not list((workspace.root / "reports").glob("*.publishing"))
 
@@ -333,7 +381,7 @@ def test_report_uses_immutable_saved_evidence_and_deterministic_retry(
         ("closed", 1, "已平倉", "做多"),
         ("open", -1, "未平倉", "做空"),
         (None, None, "未知", "未知"),
-        ("unrecognized", 0, "未知", "未知"),
+        ("unrecognized", 0, "未識別狀態：unrecognized", "未識別方向：0"),
     ],
 )
 def test_trade_table_has_readable_labels_without_changing_saved_records(
@@ -357,6 +405,7 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
         "net_pnl": 9.9,
         "fee": 0.1,
         "note": "<script>unsafe()</script>",
+        "custom_details": {"unrounded": 1.23456789012345, "flag": False},
     }
     _save(context, trades=[trade])
     if via_cli:
@@ -376,35 +425,32 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
     assert response["success"], response
     path = Path(response["path"])
     text = path.read_text()
-    table = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
-        "</table>", 1
-    )[0]
-    headers = re.findall(r"<th><button data-column='(\d+)'>(.*?)</button></th>", table)
-    assert headers == list(
-        zip(
-            map(str, range(13)),
-            [
-                "序號",
-                "進場時間（UTC）",
-                "平倉時間（UTC）",
-                "期末估值時間（UTC）",
-                "交易方向",
-                "持倉狀態",
-                "進場價格",
-                "平倉價格",
-                "期末估值價格",
-                "數量（標的單位）",
-                "手續費（報價貨幣）",
-                "淨損益（報價貨幣）",
-                "原始資料",
-            ],
-            strict=True,
-        )
-    )
-    cells = re.findall(r"<td(?: [^>]*)?>(.*?)</td>", table, flags=re.DOTALL)
+    headers, rows = _static_table(text, "trades-0-0")
+    assert headers == [
+        "序號",
+        "進場時間（UTC）",
+        "平倉時間（UTC）",
+        "期末估值時間（UTC）",
+        "交易方向",
+        "持倉狀態",
+        "進場價格（報價貨幣／標的單位）",
+        "平倉價格（報價貨幣／標的單位）",
+        "期末估值價格（報價貨幣／標的單位）",
+        "數量（標的單位）",
+        "進場手續費（報價貨幣）",
+        "平倉手續費（報價貨幣）",
+        "手續費合計（報價貨幣）",
+        "毛損益（報價貨幣）",
+        "淨損益（報價貨幣）",
+        "進場 K 線索引（從 0 起算）",
+        "平倉／期末估值 K 線索引（從 0 起算）",
+        "原始資料（JSON）",
+    ]
+    assert len(rows) == 1
+    cells = rows[0]
     final_time = "2024-01-03T00:00:00+00:00"
-    missing = "未知／未記錄"
-    assert cells[:12] == [
+    missing = "—"
+    assert cells[:-1] == [
         "1",
         "2024-01-01T00:00:00+00:00",
         final_time if status == "closed" else missing,
@@ -415,35 +461,37 @@ def test_trade_table_has_readable_labels_without_changing_saved_records(
         "45.00" if status == "closed" else missing,
         "45.00" if status == "open" else missing,
         "2.00",
+        missing,
+        missing,
         "0.10",
+        missing,
         "9.90",
+        "0",
+        "2",
     ]
-    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in cells[12]
-    assert "placeholder='狀態 / 方向 / 日期 / 文字'" in text
-    assert "每單位標的的報價貨幣金額" in text
-    assert _payload(path)["runs"][0]["scopes"][0]["observations"]["trades"] == [trade]
-    encoded = re.findall(r"data-csv='([^']*)'", text)
-    assert len(encoded) == 1
-    csv_rows = list(
-        csv.DictReader(io.StringIO(base64.b64decode(encoded[0]).decode("utf-8-sig")))
-    )
+    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in cells[-1]
+    assert json.loads(unescape(cells[-1])) == trade
+    saved_scope = _payload(path)["runs"][0]["scopes"][0]
+    assert saved_scope["observations"]["trades"] == [trade]
+    table = saved_scope["tables"]["trades"]
+    assert [column["title"] for column in table["columns"]] == headers
+    assert table["filter_field"] == "filter_status"
+    assert table["rows"][0]["filter_status"] == status
+    assert json.loads(table["rows"][0]["raw"]) == trade
+    assert "data-table-json='0:0:trades'" in text
+    csv_rows = _csv_rows(text, "trades-0-0")
     assert len(csv_rows) == 1
-    assert list(csv_rows[0]) == [
-        "進場 K 線索引（從 0 起算）",
-        "平倉／期末估值 K 線索引（從 0 起算）",
-        "交易方向",
-        "持倉狀態",
-        "進場價格（報價貨幣／標的單位）",
-        "平倉／期末估值價格（報價貨幣／標的單位）",
-        "數量（標的單位）",
-        "手續費合計（報價貨幣）",
-        "淨損益（報價貨幣）",
-        '未識別欄位（["note"]）',
-    ]
+    assert list(csv_rows[0]) == headers
     assert csv_rows[0]["淨損益（報價貨幣）"] == "9.9"
     assert csv_rows[0]["手續費合計（報價貨幣）"] == "0.1"
-    assert "<script>unsafe()</script>" in csv_rows[0].values()
-    assert "下載全部交易 CSV（中文欄名）" in text
+    assert csv_rows[0]["平倉價格（報價貨幣／標的單位）"] == (
+        "45.0" if status == "closed" else ""
+    )
+    assert csv_rows[0]["期末估值價格（報價貨幣／標的單位）"] == (
+        "45.0" if status == "open" else ""
+    )
+    assert json.loads(csv_rows[0]["原始資料（JSON）"]) == trade
+    assert "下載全部紀錄 CSV（中文欄名、完整精度）" in text
 
 
 @pytest.mark.parametrize(
@@ -484,16 +532,29 @@ def test_trade_table_rounds_display_but_preserves_numeric_precision(
     assert response["success"], response
     path = Path(response["path"])
     text = path.read_text()
-    table, after = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
-        "</table>", 1
-    )
-    numeric_cells = re.findall(r"<td data-sort-value='([^']*)'>(.*?)</td>", table)
-    assert numeric_cells == [(str(value), display)] * 10
-    assert "<td>1</td>" in table and "<td>2</td>" in table
-    assert "四捨五入至小數點後兩位" in after
-    assert "排序、原始資料與 CSV 保留完整精度" in after
-    assert _payload(path)["runs"][0]["scopes"][0]["observations"]["trades"] == trades
-    assert f"&quot;net_pnl&quot;: {value}" in table
+    headers, rows = _static_table(text, "trades-0-0")
+    assert len(rows) == 2
+    scope = _payload(path)["runs"][0]["scopes"][0]
+    spec = scope["tables"]["trades"]
+    csv_rows = _csv_rows(text, "trades-0-0")
+    for index, (cells, trade) in enumerate(zip(rows, trades, strict=True)):
+        assert cells[0] == str(index + 1)
+        for field in ("entry_price", "size", "fee", "net_pnl") + (
+            "exit_price" if trade["status"] == "closed" else "mark_price",
+        ):
+            column_index = next(
+                i
+                for i, column in enumerate(spec["columns"])
+                if column["field"] == field
+            )
+            assert cells[column_index] == display
+            assert spec["rows"][index][field] == value
+            assert csv_rows[index][headers[column_index]] == str(value)
+        assert json.loads(unescape(cells[-1])) == trade
+        assert json.loads(csv_rows[index]["原始資料（JSON）"]) == trade
+    assert "四捨五入至小數點後兩位" in text
+    assert "CSV／JSON 保留全部欄位、全部紀錄與完整精度" in text
+    assert scope["observations"]["trades"] == trades
 
 
 @pytest.mark.parametrize("volume", [False, True])
@@ -511,20 +572,30 @@ def test_trade_table_preserves_missing_values_and_empty_history(
     response = service.generate_report(["run"], sections=["trades"])
     assert response["success"], response
     text = Path(response["path"]).read_text()
-    table = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
-        "</table>", 1
-    )[0]
-    cells = re.findall(r"<td>(.*?)</td>", table, flags=re.DOTALL)
-    assert cells[:4] == ["1"] + ["未知／未記錄"] * 3
+    _, rows = _static_table(text, "trades-0-0")
+    assert len(rows) == 1
+    cells = rows[0]
+    assert cells[:4] == ["1"] + ["—"] * 3
     assert cells[4:6] == ["做空", "未平倉"]
-    assert cells[6:12] == ["未知／未記錄"] * 6
+    assert cells[6:-1] == ["—"] * 11
+    csv_rows = _csv_rows(text, "trades-0-0")
+    assert csv_rows[0]["進場時間（UTC）"] == ""
+    assert csv_rows[0]["淨損益（報價貨幣）"] == ""
 
     _save(context, "empty", trades=[])
     empty = service.generate_report(["empty"], sections=["trades"])
     assert empty["success"], empty
     text = Path(empty["path"]).read_text()
-    assert "本範圍沒有保存交易紀錄。" in text
-    assert "<table id='trades-" not in text
+    empty_headers, empty_rows = _static_table(text, "trades-0-0")
+    assert empty_headers and empty_rows == []
+    assert "共 0 筆；全部欄位與資料均保留。" in text
+    assert _csv_rows(text, "trades-0-0") == []
+    assert (
+        _payload(Path(empty["path"]))["runs"][0]["scopes"][0]["tables"]["trades"][
+            "rows"
+        ]
+        == []
+    )
 
 
 def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
@@ -544,13 +615,13 @@ def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
     assert response["success"], response
     path = Path(response["path"])
     downloads = re.findall(
-        r"data-download='([^']+)' data-dataset='trades' data-csv='([^']*)'",
+        r"data-table-csv='trades-(\d+)-(\d+)' data-csv='([^']*)'",
         path.read_text(),
     )
     payload = _payload(path)
-    assert {key for key, _ in downloads} == {"0:0", "1:0", "1:1"}
-    for key, encoded in downloads:
-        run_index, scope_index = map(int, key.split(":"))
+    assert {(ri, si) for ri, si, _ in downloads} == {("0", "0"), ("1", "0"), ("1", "1")}
+    for ri, si, encoded in downloads:
+        run_index, scope_index = int(ri), int(si)
         rows = list(
             csv.DictReader(io.StringIO(base64.b64decode(encoded).decode("utf-8-sig")))
         )
@@ -560,9 +631,29 @@ def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
         assert [row["淨損益（報價貨幣）"] for row in rows] == [
             str(trade["net_pnl"]) for trade in source
         ]
+        assert [json.loads(row["原始資料（JSON）"]) for row in rows] == source
+        assert f"data-table-json='{ri}:{si}:trades'" in path.read_text()
+    json_downloads = re.findall(
+        r"data-table-json='(\d+):(\d+):trades' data-json='([^']*)'", path.read_text()
+    )
+    assert {(ri, si) for ri, si, _ in json_downloads} == {
+        ("0", "0"),
+        ("1", "0"),
+        ("1", "1"),
+    }
+    for ri, si, encoded in json_downloads:
+        exported = json.loads(base64.b64decode(encoded))
+        scope = payload["runs"][int(ri)]["scopes"][int(si)]
+        assert exported == scope["tables"]["trades"]
+        assert [row["net_pnl"] for row in exported["rows"]] == [
+            trade["net_pnl"] for trade in scope["observations"]["trades"]
+        ]
+    # Downloading the prepared bytes avoids JavaScript parsing/re-serializing the
+    # integer 9007199254740993 as the neighboring representable value.
+    assert "atob(button.dataset.json)" in path.read_text()
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9", "10"])
+@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9", "10", "11", "12"])
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,
@@ -695,6 +786,88 @@ def test_builtin_metrics_have_readable_labels_and_units() -> None:
         assert not unit_label(definition.unit).startswith("未識別")
 
 
+def test_overview_keeps_historical_metric_units_in_separate_columns(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    current = MetricDefinitionSnapshot.model_validate(
+        asdict(METRIC_CATALOG["total_return"])
+    )
+    historical = current.model_copy(
+        update={"unit": "amount", "description": "Historical amount definition"}
+    )
+    _save(context, "fraction", scopes={"full": _scope(values={"total_return": 0.25})})
+    _save(
+        context,
+        "amount",
+        scopes={"full": _scope(values={"total_return": 0.25})},
+        definitions={"total_return": historical},
+    )
+    response = service.generate_report(["fraction", "amount"], sections=["overview"])
+    assert response["success"], response
+    payload = _payload(Path(response["path"]))
+    table = payload["comparison_table"]
+    columns = {column["field"]: column for column in table["columns"]}
+    assert columns["metric:total_return:fraction"]["kind"] == "percent"
+    assert columns["metric:total_return:amount"]["kind"] == "number"
+    fractional, amount = table["rows"]
+    assert fractional["metric:total_return:fraction"] == 0.25
+    assert fractional.get("metric:total_return:amount") is None
+    assert amount["metric:total_return:amount"] == 0.25
+    assert amount.get("metric:total_return:fraction") is None
+    assert payload["runs"][1]["scopes"][0]["definitions"]["total_return"] == (
+        historical.model_dump(mode="json")
+    )
+
+
+@pytest.mark.parametrize("saved_context", [None, "unknown", ["BTC/USDT"]])
+@pytest.mark.parametrize("sections", [[], ["overview", "settings"]])
+def test_legacy_nonobject_context_keeps_report_available(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    saved_context: Any,
+    sections: list[str],
+) -> None:
+    _, _, service = context
+    _save(
+        context, scopes={"full": _scope(metadata={"execution_context": saved_context})}
+    )
+    response = service.generate_report(["run"], sections=sections)
+    assert response["success"], response
+    payload = _payload(Path(response["path"]))
+    row = payload["comparison_table"]["rows"][0]
+    assert row["symbol"] is None and row["timeframe"] is None
+    assert (
+        payload["runs"][0]["scopes"][0]["metadata"]["execution_context"]
+        == saved_context
+    )
+
+
+def test_table_exports_preserve_nanosecond_times_after_utc_conversion(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    timestamps = (
+        "2024-01-01T08:00:00.123456789+08:00",
+        "2024-01-01T08:00:00.123456790+08:00",
+        "2024-01-01T08:00:00.123456791+08:00",
+    )
+    _save(context, timestamps=timestamps)
+    response = service.generate_report(["run"], sections=["overview", "trades"])
+    assert response["success"], response
+    path = Path(response["path"])
+    payload = _payload(path)
+    row = payload["comparison_table"]["rows"][0]
+    assert row["start"] == "2024-01-01T00:00:00.123456789+00:00"
+    assert row["end"] == "2024-01-01T00:00:00.123456791+00:00"
+    scope = payload["runs"][0]["scopes"][0]
+    assert scope["observations"]["timestamps"] == list(timestamps)
+    trade = scope["tables"]["trades"]["rows"][0]
+    assert trade["entry_time"] == row["start"] and trade["mark_time"] == row["end"]
+    csv_trade = _csv_rows(path.read_text(), "trades-0-0")[0]
+    assert csv_trade["進場時間（UTC）"] == row["start"]
+    assert csv_trade["期末估值時間（UTC）"] == row["end"]
+
+
 @pytest.mark.parametrize(
     "scope_id",
     [
@@ -763,8 +936,11 @@ def test_optional_sections_order_and_commentary_are_saved_and_escaped(
     assert manifest["sections"] == [] and manifest["commentary"] == notes
     assert manifest["available_scopes"] == {"run": ["full"]}
     assert service.generate_report(["run"], [], notes) == response
-    reordered = service.generate_report(["run"], ["trades", "metrics"])
+    reordered = service.generate_report(["run"], ["trades", "overview", "metrics"])
     rendered = Path(reordered["path"]).read_text()
+    assert rendered.index("data-section='overview'") < rendered.index(
+        "data-section='trades'"
+    )
     assert rendered.index("data-section='trades'") < rendered.index(
         "data-section='metrics'"
     )
@@ -792,7 +968,7 @@ def test_catalog_titles_and_recipes_match_the_rendered_document(
             )
             assert (heading in content) == (section["id"] in selected)
     catalog["sections"][0]["title"] = "呼叫端修改"
-    assert service.get_report_sections()["sections"][0]["title"] == "總覽"
+    assert service.get_report_sections()["sections"][0]["title"] == "參數與結果比較總覽"
 
 
 @pytest.mark.parametrize("sections", [["unknown"], ["metrics", "metrics"]])
@@ -881,6 +1057,42 @@ def test_all_walk_forward_and_optimization_scopes_preserved_with_summary_semanti
     assert "<th>指標是否可比較</th><td>否</td>" in text
     assert "的觀測日期重疊" in text
     assert "scope-1-2" in text and "trial/0/train" in text
+    comparison = payload["comparison_table"]
+    assert len(comparison["rows"]) == 6
+    assert [row["sequence"] for row in comparison["rows"]] == list(range(1, 7))
+    assert {row["detail"] for row in comparison["rows"]} == {
+        f"#result-{run_index}-{scope_index}"
+        for run_index in range(2)
+        for scope_index in range(3)
+    }
+    assert re.findall(r"id='(result-\d+-\d+)'", text) == [
+        row["detail"][1:] for row in comparison["rows"]
+    ]
+    assert "<div id='overview-view'>" in text
+    assert "<div id='result-view' hidden>" in text
+    assert "href='#overview'" in text
+    for row in comparison["rows"]:
+        assert f"href='{row['detail']}'" in text
+    optimization = [row for row in comparison["rows"] if row["run_id"] == "opt"]
+    assert [row["role"] for row in optimization].count("訓練區間") == 2
+    assert [row["role"] for row in optimization].count("測試區間") == 1
+    selected = next(row for row in optimization if row["selected"] == "選定訓練結果")
+    assert selected["parameter:slow"] == 26 and selected["role"] == "訓練區間"
+    assert selected["start"] == "2024-01-01T00:00:00+00:00"
+    assert selected["end"] == "2024-01-03T00:00:00+00:00"
+    assert selected["period"] == "2024-01-01 ～ 2024-01-03"
+    assert selected["metric:total_return:fraction"] == 0.25
+    visible = {c["field"] for c in comparison["columns"] if c["visible"]}
+    assert {
+        "sequence",
+        "period",
+        "parameter:slow",
+        "metric:total_return:fraction",
+    } <= visible
+    assert not {"start", "end", "run_id", "strategy", "symbol", "timeframe"} & visible
+    summary_row = next(row for row in comparison["rows"] if row["role"] == "各折摘要")
+    assert summary_row["metric:total_return:fraction"] is None
+    assert summary_row["start"] is None and summary_row["end"] is None
 
 
 @pytest.mark.parametrize(

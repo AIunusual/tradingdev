@@ -351,10 +351,25 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         catalog = ReportSectionCatalog.model_validate(
             await _call(server, "get_report_sections", {})
         )
-        assert {"trades", "settings", "equity"}.issubset(
+        assert [section.id for section in catalog.sections] == [
+            "overview",
+            "settings",
+            "metrics",
+            "equity",
+            "ledger",
+            "trades",
+            "limitations",
+            "provenance",
+        ]
+        assert catalog.templates["standard"] == [
             section.id for section in catalog.sections
-        )
-        assert "standard" in catalog.templates
+        ]
+        assert catalog.templates["trades"] == [
+            "overview",
+            "ledger",
+            "trades",
+            "provenance",
+        ]
         args = {
             "run_ids": ["run"],
             "sections": ["overview", "settings", "metrics", "trades"],
@@ -371,11 +386,13 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert path.is_file() and report.sha256 == sha256_file(path)
         assert "&lt;script&gt;unsafe()&lt;/script&gt;" in path.read_text()
         assert "<script>unsafe()</script>" not in path.read_text()
-        assert "<button data-column='1'>進場時間（UTC）</button>" in path.read_text()
+        assert "<th>進場時間（UTC）</th>" in path.read_text()
         assert "<th>單邊手續費率</th>" in path.read_text()
         assert "<th>總淨損益</th>" in path.read_text()
         assert "<th>執行識別碼</th>" in path.read_text()
-        encoded = re.findall(r"data-csv='([^']*)'", path.read_text())
+        encoded = re.findall(
+            r"data-table-csv='trades-0-0' data-csv='([^']*)'", path.read_text()
+        )
         assert len(encoded) == 1
         rows = list(
             csv.DictReader(
@@ -384,9 +401,16 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         )
         assert rows and "淨損益（報價貨幣）" in rows[0]
         assert "net_pnl" not in rows[0]
-        assert (
-            "<button data-column='11'>淨損益（報價貨幣）</button>" in path.read_text()
-        )
+        assert list(rows[0])[:4] == [
+            "序號",
+            "進場時間（UTC）",
+            "平倉時間（UTC）",
+            "期末估值時間（UTC）",
+        ]
+        assert "<th>淨損益（報價貨幣）</th>" in path.read_text()
+        assert "data-table-json='0:0:trades'" in path.read_text()
+        assert "href='#result-0-0'" in path.read_text()
+        assert "href='#overview'" in path.read_text()
         assert store.get_artifact(report.artifact_id) is not None
         assert store.get_artifact(report.manifest_artifact_id) is not None
         again = ReportResponse.model_validate(
@@ -440,6 +464,16 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         (
             "generate_report",
             {"run_ids": ["run"], "sections": ["missing"]},
+            "invalid_report_sections",
+        ),
+        (
+            "generate_report",
+            {"run_ids": ["run"], "sections": ["executions"]},
+            "invalid_report_sections",
+        ),
+        (
+            "generate_report",
+            {"run_ids": ["run"], "sections": ["account_history"]},
             "invalid_report_sections",
         ),
         (

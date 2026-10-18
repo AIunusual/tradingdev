@@ -1,4 +1,4 @@
-"""CSV bytes preserve saved evidence while presenting readable Chinese fields."""
+"""Readable exports share table order without losing precision or executing formulas."""
 
 from __future__ import annotations
 
@@ -6,333 +6,146 @@ import codecs
 import csv
 import io
 import json
-import math
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 import pytest
 
-from tradingdev.adapters.reporting.csv_export import render_records_csv
+from tradingdev.adapters.reporting.csv_export import table_csv
+from tradingdev.adapters.reporting.tables import column, ledger_table, trade_table
+from tradingdev.domain.presentation.ledger import LedgerProjection
 
-if TYPE_CHECKING:
-    from tradingdev.adapters.reporting.columns import RecordDataset
 
-
-def _read_csv(content: bytes) -> list[dict[str, str]]:
+def read_csv(content: bytes) -> list[list[str]]:
     assert content.startswith(codecs.BOM_UTF8)
-    text = content.decode("utf-8-sig")
-    return list(csv.DictReader(io.StringIO(text, newline="")))
+    return list(csv.reader(io.StringIO(content.decode("utf-8-sig"))))
 
 
-def test_trade_csv_localizes_all_fields_from_both_engines_without_rounding() -> None:
-    trade: dict[str, Any] = {
-        "direction": -1,
+def test_csv_uses_chosen_order_not_dictionary_or_alphabetical_order() -> None:
+    spec = {
+        "columns": [
+            column("timestamp", "時間"),
+            column("sequence", "序號", "integer"),
+            column("amount", "金額", "number"),
+            column("rate", "費率", "percent"),
+        ],
+        "rows": [
+            {
+                "amount": 12.3456789012345,
+                "sequence": 1,
+                "rate": 0.0004,
+                "timestamp": "2024-01-01T00:00:00+00:00",
+            }
+        ],
+    }
+    rows = read_csv(table_csv(spec))
+    assert rows[0] == ["時間", "序號", "金額", "費率（比例，1 = 100%）"]
+    assert rows[1] == ["2024-01-01T00:00:00+00:00", "1", "12.3456789012345", "0.0004"]
+
+
+def test_ledger_export_does_not_collapse_distinct_nanosecond_events() -> None:
+    from tradingdev.domain.presentation.ledger import LEDGER_COLUMNS
+
+    rows = []
+    for sequence, tail in enumerate(("123456789", "123456790"), 1):
+        row: dict[str, Any] = dict.fromkeys(c.key for c in LEDGER_COLUMNS)
+        row.update(
+            timestamp=f"2024-01-01T08:00:00.{tail}+08:00",
+            sequence=sequence,
+            event_type="bar_close",
+        )
+        rows.append(row)
+    spec = ledger_table(LedgerProjection(rows, "available", "available", ()))
+    exported = read_csv(table_csv(spec))
+    assert exported[1][0] == "2024-01-01T00:00:00.123456789+00:00"
+    assert exported[2][0] == "2024-01-01T00:00:00.123456790+00:00"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["=1+1", "+1", "-formula", "@SUM(A1)", "  =1", "\tplain", "\rplain", "\nplain"],
+)
+def test_formula_like_text_and_headers_are_escaped(text: str) -> None:
+    spec = {"columns": [column("text", text)], "rows": [{"text": text}]}
+    assert read_csv(table_csv(spec)) == [["'" + text], ["'" + text]]
+
+
+def test_quoted_unicode_newlines_null_and_numeric_negatives_survive() -> None:
+    values: list[Any] = ['中文,"引號"\n下一行', None, -1.23456789, 0.0, False, 2]
+    spec = {"columns": [column("value", "值")], "rows": [{"value": x} for x in values]}
+    assert read_csv(table_csv(spec))[1:] == [
+        ['中文,"引號"\n下一行'],
+        [""],
+        ["-1.23456789"],
+        ["0.0"],
+        ["否"],
+        ["2"],
+    ]
+
+
+def test_hidden_columns_and_every_row_are_exported() -> None:
+    spec = {
+        "columns": [
+            column("sequence", "序號", "integer"),
+            column("secret", "補充資料", visible=False),
+        ],
+        "rows": [{"sequence": n, "secret": n / 3} for n in range(1, 101)],
+    }
+    result = read_csv(table_csv(spec))
+    assert result[0] == ["序號", "補充資料"]
+    assert len(result) == 101 and result[-1] == ["100", str(100 / 3)]
+
+
+def test_empty_export_still_explains_its_schema() -> None:
+    assert read_csv(
+        table_csv({"columns": [column("sequence", "序號")], "rows": []})
+    ) == [["序號"]]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_numbers_fail_instead_of_exporting_ambiguous_values(
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        table_csv({"columns": [column("n", "值")], "rows": [{"n": value}]})
+
+
+def test_unsupported_values_fail() -> None:
+    with pytest.raises(TypeError, match="Unsupported"):
+        table_csv({"columns": [column("n", "值")], "rows": [{"n": object()}]})
+
+
+@pytest.mark.parametrize("status", ["open", "closed"])
+def test_paired_trade_exports_share_static_columns_and_keep_all_source_fields(
+    status: str,
+) -> None:
+    trade = {
         "entry_idx": 0,
-        "exit_idx": 42,
-        "entry_price": 123.45678901234567,
-        "exit_price": 100.00000000000001,
-        "size": 1e-12,
-        "size_quote": 123.45678901234567e-12,
-        "exit_notional": 0.0,
-        "entry_fees": 1e-15,
-        "exit_fees": 0.0,
-        "fee": 1e-15,
-        "gross_pnl": -0.000000123456789,
-        "net_pnl": -0.00000012345679,
-        "status": "open",
-        "entry_slippage": 0.00012345678901234567,
-        "exit_slippage": 0.0,
-        "slippage": 0.00012345678901234567,
+        "exit_idx": 1,
+        "direction": -1,
+        "status": status,
+        "entry_price": 101.23456789,
+        "exit_price": 100.12345678,
+        "net_pnl": 1.123456789,
+        "extra": {"unknown.key": "=value"},
     }
-    expected = {
-        "交易方向": "做空",
-        "進場 K 線索引（從 0 起算）": "0",
-        "平倉／期末估值 K 線索引（從 0 起算）": "42",
-        "進場價格（報價貨幣／標的單位）": str(trade["entry_price"]),
-        "平倉／期末估值價格（報價貨幣／標的單位）": str(trade["exit_price"]),
-        "數量（標的單位）": "1e-12",
-        "進場名目金額（報價貨幣）": str(trade["size_quote"]),
-        "平倉成交金額（報價貨幣）": "0.0",
-        "進場手續費（報價貨幣）": "1e-15",
-        "平倉手續費（報價貨幣）": "0.0",
-        "手續費合計（報價貨幣）": "1e-15",
-        "毛損益（報價貨幣）": str(trade["gross_pnl"]),
-        "淨損益（報價貨幣）": str(trade["net_pnl"]),
-        "持倉狀態": "未平倉",
-        "進場滑價成本（報價貨幣）": str(trade["entry_slippage"]),
-        "平倉滑價成本（報價貨幣）": "0.0",
-        "滑價成本合計（報價貨幣）": str(trade["slippage"]),
-    }
-    content = render_records_csv([trade], dataset="trades")
-    assert _read_csv(content) == [expected]
-    assert content.endswith(b"\r\n") and content.count(b"\r\n") == 2
-
-
-@pytest.mark.parametrize("reverse_fields", [False, True])
-@pytest.mark.parametrize(
-    ("dataset", "record", "headers"),
-    [
-        (
-            "trades",
-            {
-                "fee": 1,
-                "status": "closed",
-                "exit_idx": 2,
-                "entry_idx": 0,
-                "direction": 1,
-                "net_pnl": 9,
-                "entry_price": 100,
-                "size": 2,
-            },
-            [
-                "進場 K 線索引（從 0 起算）",
-                "平倉／期末估值 K 線索引（從 0 起算）",
-                "交易方向",
-                "持倉狀態",
-                "進場價格（報價貨幣／標的單位）",
-                "數量（標的單位）",
-                "手續費合計（報價貨幣）",
-                "淨損益（報價貨幣）",
-            ],
-        ),
-        (
-            "execution_records",
-            {
-                "after": {"cash": 90, "position": 1},
-                "fees": 1,
-                "before": {"cash": 100, "position": 0},
-                "execution_id": 7,
-                "side": "buy",
-                "timestamp": "2024-01-01T00:00:00Z",
-                "bar_index": 0,
-            },
-            [
-                "K 線時間（含保存時區）",
-                "K 線索引（從 0 起算）",
-                "執行紀錄編號",
-                "買賣方向",
-                "成交手續費（報價貨幣）",
-                "執行前總持倉（標的單位）",
-                "執行後總持倉（標的單位）",
-                "執行前現金（報價貨幣）",
-                "執行後現金（報價貨幣）",
-            ],
-        ),
-        (
-            "account_history",
-            {
-                "equity": 100,
-                "cash": 90,
-                "asset_value": 10,
-                "position": 1,
-                "mark_price": 10,
-                "bar_index": 0,
-                "timestamp": "2024-01-01T00:00:00Z",
-            },
-            [
-                "K 線時間（含保存時區）",
-                "K 線索引（從 0 起算）",
-                "收盤估值價格（報價貨幣／標的單位）",
-                "總持倉數量（標的單位）",
-                "持倉市值（報價貨幣）",
-                "現金（報價貨幣）",
-                "帳戶權益（報價貨幣）",
-            ],
-        ),
-    ],
-)
-def test_csv_orders_columns_by_reading_flow_independently_of_input_order(
-    dataset: RecordDataset,
-    record: dict[str, Any],
-    headers: list[str],
-    reverse_fields: bool,
-) -> None:
-    if reverse_fields:
-        record = dict(reversed(record.items()))
-    # An extension-only first row must not determine the order or hide later fields.
-    records = [{"z_extension": "first", "a_extension": "retained"}, record, {}]
-    rows = _read_csv(render_records_csv(records, dataset=dataset))
-    assert list(rows[0]) == headers + [
-        '未識別欄位（["a_extension"]）',
-        '未識別欄位（["z_extension"]）',
-    ]
-    assert rows[0][headers[0]] == rows[2][headers[0]] == ""
-    assert rows[1][headers[0]] == str(
-        record["entry_idx" if dataset == "trades" else "timestamp"]
-    )
-    assert rows[0]['未識別欄位（["z_extension"]）'] == "first"
-    assert len(rows) == 3
-
-
-@pytest.mark.parametrize("dataset", ["execution_records", "account_history"])
-def test_native_records_keep_all_rows_full_values_and_localized_units(
-    dataset: RecordDataset,
-) -> None:
-    before = {"cash": 999.1234567890123, "position": -0.12345678901234568}
-    records: list[dict[str, Any]] = [
-        {
-            "execution_id": 9007199254740993,
-            "bar_index": 0,
-            "timestamp": "2024-01-02T08:00:00.123456789+08:00",
-            "status": "filled",
-            "side": "buy",
-            "requested_size": 0.12345678901234568,
-            "requested_size_type": "percent",
-            "requested_size_kind": "finite",
-            "requested_direction": "both",
-            "requested_fee_rate": 0.00012345678901234567,
-            "requested_slippage": 1e-12,
-            "market": {"open": 100.123456789, "close": 101.987654321},
-            "before": before,
-            "after": {"cash": 988.1234567890123, "position": 0.012345678901234568},
-            "mark_price": 101.987654321,
-            "status_info": None,
-            "fees": 0.0,
-        },
-        {"status": "rejected", "status_info": "future_reason", "side": None},
-        {"status": "ignored", "requested_size_kind": "positive_infinity"},
-    ]
-    rows = _read_csv(render_records_csv(records, dataset=dataset))
-    assert len(rows) == len(records)
-    assert rows[0]["執行紀錄編號"] == "9007199254740993"
-    assert rows[0]["K 線時間（含保存時區）"] == "2024-01-02T08:00:00.123456789+08:00"
-    assert rows[0]["市場開盤價（報價貨幣／標的單位）"] == "100.123456789"
-    assert rows[0]["市場收盤價（報價貨幣／標的單位）"] == "101.987654321"
-    assert rows[0]["收盤估值價格（報價貨幣／標的單位）"] == "101.987654321"
-    assert rows[0]["執行前現金（報價貨幣）"] == str(before["cash"])
-    assert rows[0]["執行前總持倉（標的單位）"] == str(before["position"])
-    assert rows[0]["單邊手續費率（比例，1 = 100%）"] == "0.00012345678901234567"
-    assert rows[0]["滑價率（比例，1 = 100%）"] == "1e-12"
-    assert rows[0]["委託規模（單位依規模類型；比例以 1 = 100% 表示）"] == str(
-        records[0]["requested_size"]
-    )
-    assert rows[0]["委託規模類型"] == "可用資源比例"
-    assert rows[0]["委託規模數值類別"] == "有限數值"
-    assert rows[0]["允許的持倉方向"] == "允許做多與做空"
-    assert rows[0]["買賣方向"] == "買入"
-    assert rows[0]["狀態原因"] == ""
-    assert rows[0]["成交手續費（報價貨幣）"] == "0.0"
-    assert rows[1]["執行狀態"] == "已拒絕"
-    assert rows[1]["狀態原因"] == "未識別選項：future_reason"
-    assert rows[1]["買賣方向"] == rows[1]["執行紀錄編號"] == ""
-    assert rows[2]["執行狀態"] == "已忽略"
-    assert rows[2]["委託規模數值類別"] == "正無限數值"
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["=1+1", "+SUM(1,2)", "-12", "@SUM(A1)", "\ttext", "\rtext", "\ntext", "  =1"],
-)
-def test_csv_protects_formula_text_without_changing_numeric_negatives(
-    value: str,
-) -> None:
-    rows = _read_csv(
-        render_records_csv(
-            [{"note": value, "net_pnl": -12.345678901234567}], dataset="trades"
-        )
-    )
-    assert rows == [
-        {
-            '未識別欄位（["note"]）': "'" + value,
-            "淨損益（報價貨幣）": "-12.345678901234567",
+    scope = {
+        "observations": {
+            "timestamps": ["2024-01-01T08:00:00+08:00", "2024-01-02T08:00:00+08:00"],
+            "trades": [trade],
         }
-    ]
-
-
-def test_csv_round_trips_escaping_unicode_structures_and_sparse_unknown_fields() -> (
-    None
-):
-    unusual_key = '自訂,欄位"\r\n<script>🦊'
-    unusual_text = '原始,值"\r\n</script>🦊'
-    structure = {"a.b": [1, 9007199254740993, {"nested": unusual_text}]}
-    trades = [
-        {unusual_key: unusual_text, "extension": structure, "enabled": True},
-        {"other": [], "empty": {}, "enabled": False, "missing": None},
-    ]
-    rows = _read_csv(render_records_csv(trades, dataset="trades"))
-    key = f"未識別欄位（{json.dumps([unusual_key], ensure_ascii=False)}）"
-    assert rows[0][key] == unusual_text
-    assert json.loads(rows[0]['未識別欄位（["extension"]）']) == structure
-    assert rows[0]['未識別欄位（["enabled"]）'] == "是"
-    assert rows[1]['未識別欄位（["enabled"]）'] == "否"
-    assert rows[1]['未識別欄位（["other"]）'] == "[]"
-    assert rows[1]['未識別欄位（["empty"]）'] == "{}"
-    assert rows[1]['未識別欄位（["extension"]）'] == ""
-    assert rows[0]['未識別欄位（["missing"]）'] == ""
-
-
-def test_native_csv_distinguishes_literal_dot_keys_from_nested_field_paths() -> None:
-    records: list[dict[str, Any]] = [
-        {
-            "before": {"cash": 10.123456789, "a.b": 1},
-            "before.cash": "literal dotted field",
-            "before.a": {"b": 2},
-            "__proto__": "retained",
-            "extension": {},
-            "array": ["all", "values"],
-        },
-        {"before": 9},
-    ]
-    content = render_records_csv(records, dataset="execution_records")
-    parsed = list(csv.reader(io.StringIO(content.decode("utf-8-sig"), newline="")))
-    assert len(parsed[0]) == len(set(parsed[0])) == 8
-    assert all(len(row) == len(parsed[0]) for row in parsed)
-    first, second = _read_csv(content)
-    assert first["執行前現金（報價貨幣）"] == "10.123456789"
-    assert first['未識別欄位（["before.cash"]）'] == "literal dotted field"
-    assert first['未識別欄位（["before","a.b"]）'] == "1"
-    assert first['未識別欄位（["before.a","b"]）'] == "2"
-    assert first['未識別欄位（["__proto__"]）'] == "retained"
-    assert first['未識別欄位（["extension"]）'] == "{}"
-    assert first['未識別欄位（["array"]）'] == '["all","values"]'
-    assert second['未識別欄位（["before"]）'] == "9"
-
-
-def test_trade_known_and_unknown_enums_are_explicit() -> None:
-    rows = _read_csv(
-        render_records_csv(
-            [
-                {"status": "closed", "direction": 1},
-                {"status": "future_status", "direction": "future_direction"},
-                {"status": None, "direction": None},
-            ],
-            dataset="trades",
-        )
+    }
+    spec = trade_table(scope)
+    exported = read_csv(table_csv(spec))
+    assert exported[0] == [item["title"] for item in spec["columns"]]
+    row = dict(zip(exported[0], exported[1], strict=True))
+    assert exported[0][:2] == ["序號", "進場時間（UTC）"]
+    assert row["進場時間（UTC）"] == "2024-01-01T00:00:00+00:00"
+    assert row["淨損益（報價貨幣）"] == "1.123456789"
+    assert json.loads(row["原始資料（JSON）"]) == trade
+    assert row["平倉價格（報價貨幣／標的單位）"] == (
+        "100.12345678" if status == "closed" else ""
     )
-    assert rows == [
-        {"持倉狀態": "已平倉", "交易方向": "做多"},
-        {
-            "持倉狀態": "未識別選項：future_status",
-            "交易方向": "未識別選項：future_direction",
-        },
-        {"持倉狀態": "", "交易方向": ""},
-    ]
-
-
-@pytest.mark.parametrize("dataset", ["trades", "execution_records", "account_history"])
-def test_empty_csv_is_only_a_utf8_bom(dataset: RecordDataset) -> None:
-    assert render_records_csv([], dataset=dataset) == codecs.BOM_UTF8
-
-
-def test_empty_trade_objects_still_export_one_row_per_saved_record() -> None:
-    assert _read_csv(render_records_csv([{}, {}], dataset="trades")) == [
-        {"序號": "1"},
-        {"序號": "2"},
-    ]
-
-
-def test_unknown_dataset_fails_explicitly() -> None:
-    with pytest.raises(ValueError, match="Unknown CSV dataset"):
-        render_records_csv([], dataset=cast("RecordDataset", "unknown"))
-
-
-@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, {"nested": math.inf}])
-def test_nonfinite_values_fail_instead_of_exporting_invalid_saved_evidence(
-    value: Any,
-) -> None:
-    with pytest.raises(ValueError):
-        render_records_csv([{"unknown": value}], dataset="trades")
-
-
-def test_unsupported_values_fail_explicitly() -> None:
-    with pytest.raises(TypeError, match="Unsupported CSV value type"):
-        render_records_csv([{"unknown": object()}], dataset="trades")
+    assert row["期末估值價格（報價貨幣／標的單位）"] == (
+        "100.12345678" if status == "open" else ""
+    )
+    assert scope["observations"]["trades"] == [trade]

@@ -381,9 +381,11 @@ Signal 引擎同時保留 VectorBT 原生 order attempts 與帳戶序列，型�
 不將此資料描述為交易所錢包或保證金。
 
 `ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
-MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG renderer 與不可覆寫的
+MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG／Bokeh renderer 與不可覆寫的
 報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，
-後端呈現保存結果、表格、圖表與來源身分。選取 `metrics` 時，QuantStats adapter
+後端呈現保存結果、表格、圖表與來源身分。單一離線 HTML 提供兩層導覽：
+總覽列出全部 run／scope 的參數、期間、角色與主要績效，連到可返回總覽的單組詳情；
+不把最佳化所有訓練組合誤作獨立測試結果。選取 `metrics` 時，QuantStats adapter
 另以保存的報酬及設定生成原生完整 HTML，保留月報酬、回撤期間與滾動分析。
 這是可追溯的衍生分析，不覆寫歷史指標；保存值與原生報告的統計口徑各自標明。
 原生詳表直接輸出於主 HTML，純文字讀取不依賴 JavaScript；完整圖表透過隔離的
@@ -392,6 +394,14 @@ iframe 按選取範圍載入，也可下載含來源證據的獨立 HTML。
 不宣稱未選章節已呈現。章節選擇決定可見內容，不裁減載入或內嵌資料；
 即使清單為空，HTML 仍內嵌已載入 run 的完整 scope、觀察值與執行設定。
 LLM 評語標記並跳脫，不能注入 HTML 或替換數值。
+
+`ledger` 章節以保存的 execution records 與 account history 產生統一核對資料，
+按 K 線順序將委託事件置於收盤估值前，保留各自來源身分與估值基準。
+不推算缺失的原始委託或將收盤列當作成交；配對交易 `trades` 是附加損益檢視。
+同一核對欄位與資料供 Bokeh 狀態篩選／欄位勾選、無 JavaScript 靜態 HTML，
+以及全精度 CSV／JSON 下載使用。Bokeh 程式完整內嵌，不使用 CDN。
+原始觀測值與 MCP 的逐次執行／逐根帳戶查詢保持分離且不改寫。
+報告 schema 2 移除 `executions`、`account_history` 章節 ID，不保留轉接別名。
 
 報告章節、標題與建議範本集中於 domain/presentation；application service 與
 HTML renderer 使用同一份目錄。adapters/presentation 提供文件外殼、文字與 JSON
@@ -403,7 +413,8 @@ registered artifacts，重試時核對檔案及登錄完整性。報告是離線
 衍生分析的套件版本、設定、輸入雜湊及原生 HTML 也參與內容身分。
 QuantStats 繪圖以程序內鎖及局部樣式隔離，固定 SVG 身分並移除產生時間；
 暫存輸出與新增圖形在成功及例外路徑都清除，不關閉呼叫端原有圖形。
-選取交易章節時，完整交易資料供本機表格搜尋、排序及 CSV 匯出。
+選取核對章節時，完整事件資料供本機表格篩選、排序、欄位選擇及 CSV／JSON 匯出；
+畫面篩選與兩位小數顯示不裁減或捨入下載資料。
 完整性核對不代表封存全部外部執行環境。
 
 ### 設定與儲存一致性

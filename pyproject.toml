@@ -8,6 +8,7 @@ dependencies = [
     # NumPy and vectorbt dependencies together when refreshing the lock.
     "vectorbt>=1.0.0",
     "quantstats>=0.0.86",
+    "bokeh>=3.10.1",
     "pandas>=2.3.3",
     "numpy>=2.2.6",
     "TA-Lib>=0.8.1",

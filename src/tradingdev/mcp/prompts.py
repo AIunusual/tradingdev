@@ -81,11 +81,20 @@ Strategy development workflow
    They are separate from paired trades. Check availability; never reconstruct
    absent legacy records. VectorBT generic balances are not exchange margin wallets.
    For reports, discover get_report_sections and compose generate_report(run_ids,
-   sections, commentary). Backend sections render saved metrics/charts/trades;
+   sections, commentary) after inspecting completed or historical results.
+   The overview compares all run/scopes and links to individual result details
+   in the same offline HTML. metrics includes QuantStats performance analysis.
+   ledger joins saved order attempts and bar-close states in chronological order,
+   with Bokeh status filters and column checkboxes, static HTML and full-precision
+   CSV/JSON. trades is supplementary paired-trade PnL, not an order/account ledger.
+   The old executions and account_history section IDs are invalid; the
+   get_run_executions and get_run_account_history query tools remain available.
+   Backend sections render saved metrics/charts/records;
    write your interpretation as plain-text commentary in the user's language.
-   Common recipes are suggestions: choose the relevant sections, their order,
+   Common recipes are suggestions: choose the relevant sections, their detail order,
    or [] for commentary with source identity only. Omission uses the standard
-   recipe. Do not claim omitted information is included. The backend labels
+   recipe; overview, when selected, always belongs to the first navigation level.
+   Do not claim omitted information is included. The backend labels
    commentary separately from calculations and renders HTML without client code.
    Link the returned report file/artifact so users can inspect complete records.
 8. Optimization follows the same prepare/confirm flow. The approved search

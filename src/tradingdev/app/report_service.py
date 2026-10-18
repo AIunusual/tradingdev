@@ -8,6 +8,7 @@ import sqlite3
 from dataclasses import asdict
 from typing import Any
 
+from tradingdev.adapters.reporting.bokeh_tables import bokeh_provenance
 from tradingdev.adapters.reporting.html import render_report
 from tradingdev.adapters.reporting.quantstats_report import (
     QuantStatsReportError,
@@ -18,10 +19,16 @@ from tradingdev.adapters.reporting.storage import (
     publish_report,
     read_report_html,
 )
+from tradingdev.adapters.reporting.tables import (
+    comparison_table,
+    ledger_table,
+    trade_table,
+)
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_service import RunService
 from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
+from tradingdev.domain.presentation.ledger import build_ledger
 from tradingdev.domain.presentation.reports import (
     REPORT_RECIPES,
     REPORT_SCHEMA_VERSION,
@@ -136,6 +143,8 @@ class ReportService:
             payload = self._load(run_ids)
             payload["sections"] = list(selected)
             payload["commentary"] = [dict(note) for note in notes]
+            if set(selected) & {"overview", "ledger", "trades"}:
+                payload["renderers"] = {"bokeh": bokeh_provenance()}
             if "metrics" in selected:
                 for run in payload["runs"]:
                     for scope in run["scopes"]:
@@ -168,6 +177,7 @@ class ReportService:
                     if "metrics" in selected
                 },
                 "scope_count": scope_count,
+                "renderers": payload.get("renderers", {}),
                 "sections": list(selected),
                 "omitted_sections": [
                     key for key in REPORT_SECTIONS if key not in selected
@@ -242,6 +252,16 @@ class ReportService:
                         parameter_provenance=history.parameter_provenance,
                         parameters_complete=history.parameters_complete,
                     )
+                    entry["tables"] = {
+                        "ledger": ledger_table(
+                            build_ledger(
+                                history.observations.execution_records,
+                                history.observations.account_history,
+                                mode=scope.mode,
+                            )
+                        ),
+                        "trades": trade_table(entry),
+                    }
                     config = history.execution_config
                 else:
                     entry["observations"] = None
@@ -300,12 +320,14 @@ class ReportService:
                     str(comparison.get("code", "report_comparison_failed")),
                     str(comparison.get("error", "Cannot compare recorded results")),
                 )
-        return {
+        payload = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "template_version": REPORT_TEMPLATE_VERSION,
             "runs": runs,
             "default_scope_comparison": comparison,
         }
+        payload["comparison_table"] = comparison_table(payload)
+        return payload
 
 
 def _encode(value: dict[str, Any]) -> bytes:

@@ -191,3 +191,32 @@ def reason_label(reason: str) -> str:
 def enum_label(field: str, value: str) -> str:
     """Translate a known field's value, preserving unknown codes visibly."""
     return _ENUM_LABELS.get(field, {}).get(value, f"未識別選項：{value}")
+
+
+def scope_name(scope_id: str | None) -> str | None:
+    if scope_id is None:
+        return None
+    names = {
+        "full": "完整區間",
+        "train": "訓練區間",
+        "test": "測試區間",
+        "test_summary": "各折測試摘要",
+    }
+    if scope_id in names:
+        return names[scope_id]
+    parts = scope_id.split("/")
+    if (
+        len(parts) == 3
+        and parts[0] in ("fold", "trial")
+        and parts[1].isascii()
+        and parts[1].isdigit()
+        and parts[2] in names
+    ):
+        try:
+            index = str(int(parts[1]) + 1)
+        except ValueError:
+            pass  # Excessively long numeric identifiers remain custom scopes.
+        else:
+            group = "折" if parts[0] == "fold" else "次參數試驗"
+            return f"第 {index} {group} · {names[parts[2]]}（{scope_id}）"
+    return f"自訂結果範圍（{scope_id}）"

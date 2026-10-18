@@ -2,104 +2,135 @@
 
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from tradingdev.adapters.presentation.html import (
     details_html,
     escape,
     render_html_document,
-    value_html,
 )
-from tradingdev.adapters.reporting.columns import COLUMN_ORDER, RecordDataset
-from tradingdev.adapters.reporting.csv_export import render_records_csv
+from tradingdev.adapters.reporting.bokeh_tables import (
+    BOKEH_TABLE_SCRIPT,
+    bokeh_resources_html,
+)
 from tradingdev.adapters.reporting.labels import (
-    RECORD_LABELS,
     enum_label,
     metric_label,
     reason_label,
     unit_label,
 )
+from tradingdev.adapters.reporting.labels import (
+    scope_name as _scope_name,
+)
+from tradingdev.adapters.reporting.tables import render_table
 from tradingdev.domain.presentation.reports import REPORT_SECTIONS
 
 _STYLE = """
 .metric{font-variant-numeric:tabular-nums}
 svg{width:100%;height:auto;display:block}svg text{font-size:12px;fill:#52657a}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}.scope[hidden]{display:none}
+[hidden]{display:none!important}main{max-width:1600px}.bokeh-table{min-width:0}
+.report-nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+a{color:#2367cc}.bokeh-column-controls{border:1px solid #dce5ef;padding:12px}
 .quantstats-frame{width:100%;height:1050px;border:1px solid #dce5ef;background:white}
 @media(max-width:750px){.two{grid-template-columns:1fr}}
-@media print{.scope[hidden]{display:block}}
+@media print{.scope[hidden],#result-view[hidden],#overview-view[hidden]{
+display:block!important}
+.bokeh-table,.report-nav{display:none!important}.static-table{display:block!important}}
 """
-_SCRIPT = """
+_SCRIPT = r"""
 'use strict';
-const select=document.getElementById('scope-select');
 const reportData=JSON.parse(document.getElementById('report-data').textContent);
+const select=document.getElementById('scope-select');
+function materializeStatic(details){
+ const source=details.querySelector('noscript[data-static-table]');
+ if(!source||details.querySelector('table')){return;}
+ // Server-rendered, escaped markup; no user-authored HTML is accepted here.
+ const template=document.createElement('template');
+ template.innerHTML=source.textContent;
+ details.appendChild(template.content);
+}
+const staticTables=Array.from(document.querySelectorAll('.static-table'));
+staticTables.forEach(details=>{
+ details.open=false;
+ details.addEventListener('toggle',()=>{if(details.open){materializeStatic(details);}});
+});
+let printOpenTables=[];
+window.addEventListener('beforeprint',()=>{
+ printOpenTables=staticTables.filter(details=>details.open);
+ staticTables.forEach(details=>{materializeStatic(details);details.open=true;});
+});
+window.addEventListener('afterprint',()=>{
+ staticTables.forEach(details=>{details.open=printOpenTables.includes(details);});
+});
+function tableSpec(key){
+ if(key==='comparison'){return reportData.comparison_table;}
+ const [ri,si,kind]=key.split(':');
+ return reportData.runs[Number(ri)].scopes[Number(si)].tables[kind];
+}
+function downloadBlob(bytes,type,name){
+ const url=URL.createObjectURL(new Blob([bytes],{type}));
+ const link=document.createElement('a');link.href=url;link.download=name;link.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 function quantstatsDocument(key){
- const [runIndex,scopeIndex]=key.split(':').map(Number);
- return reportData.runs[runIndex].scopes[scopeIndex].quantstats.html;
+ const [ri,si]=key.split(':').map(Number);
+ return reportData.runs[ri].scopes[si].quantstats.html;
 }
 function loadQuantstats(){
  document.querySelectorAll('iframe[data-quantstats]').forEach(frame=>{
   if(frame.closest('.scope').hidden||frame.dataset.loaded){return;}
-  frame.srcdoc=quantstatsDocument(frame.dataset.quantstats);
-  frame.dataset.loaded='true';
+  frame.srcdoc=quantstatsDocument(frame.dataset.quantstats);frame.dataset.loaded='true';
  });
 }
-if(select){select.addEventListener('change',()=>{
- document.querySelectorAll('.scope').forEach(el=>{el.hidden=el.dataset.scope!==select.value;});
- loadQuantstats();
-});}
-loadQuantstats();
+async function loadTables(root){
+ for(const target of root.querySelectorAll('[data-table-key]')){
+  if(target.closest('.scope')?.hidden||target.dataset.loaded){continue;}
+  target.dataset.loaded='true';
+  try{
+   await TradingDevTables.mount(target,tableSpec(target.dataset.tableKey));
+  }catch(error){
+   target.textContent='互動表格無法載入；下方文字版與下載仍可使用。';
+   const fallback=target.parentElement.querySelector('.static-table');
+   materializeStatic(fallback);fallback.open=true;
+  }
+ }
+}
+function route(){
+ const match=location.hash.match(/^#result-(\d+)-(\d+)$/);
+ const scope=match&&reportData.runs[Number(match[1])]?.scopes[Number(match[2])];
+ const key=scope?'scope-'+match[1]+'-'+match[2]:null;
+ const overview=document.getElementById('overview-view');
+ const details=document.getElementById('result-view');
+ overview.hidden=Boolean(scope);details.hidden=!scope;
+ document.querySelectorAll('.scope').forEach(el=>{el.hidden=el.dataset.scope!==key;});
+ if(scope){
+  if(select){select.value='result-'+match[1]+'-'+match[2];}
+  document.getElementById('result-heading').textContent=
+   '單組結果 · '+reportData.runs[Number(match[1])].identity.run_id+' / '+scope.scope_id;
+  details.scrollIntoView({block:'start'});
+  loadQuantstats();loadTables(details);
+ }else{loadTables(overview);}
+}
+if(select){select.addEventListener('change',()=>{location.hash=select.value;});}
+window.addEventListener('hashchange',route);
 document.querySelectorAll('[data-quantstats-download]').forEach(button=>{
- button.addEventListener('click',()=>{
-  const key=button.dataset.quantstatsDownload;
-  const blob=new Blob([quantstatsDocument(key)],{type:'text/html;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const link=document.createElement('a');link.href=url;
-  link.download='quantstats_'+key.replace(':','_')+'.html';link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
- });
+ button.addEventListener('click',()=>downloadBlob(
+  quantstatsDocument(button.dataset.quantstatsDownload),'text/html;charset=utf-8',
+  'quantstats_'+button.dataset.quantstatsDownload.replace(':','_')+'.html'));
 });
-document.querySelectorAll('[data-filter]').forEach(input=>{
- input.addEventListener('input',()=>{
-  const table=document.getElementById(input.dataset.filter);
-  const query=input.value.toLowerCase();
-  table.querySelectorAll('tbody tr').forEach(row=>{
-   row.hidden=!row.textContent.toLowerCase().includes(query);
-  });
- });
+document.querySelectorAll('[data-table-csv]').forEach(button=>{
+ button.addEventListener('click',()=>downloadBlob(
+  Uint8Array.from(atob(button.dataset.csv),char=>char.charCodeAt(0)),
+  'text/csv;charset=utf-8',button.dataset.tableCsv+'.csv'));
 });
-document.querySelectorAll('table[data-sortable] th button').forEach(button=>{
- button.addEventListener('click',()=>{
-  const table=button.closest('table'),body=table.tBodies[0];
-  const index=Number(button.dataset.column);
-  const direction=button.dataset.direction==='asc'?-1:1;
-  const rows=Array.from(body.rows);
-  rows.sort((a,b)=>{
-   const x=a.cells[index].dataset.sortValue??a.cells[index].textContent.trim();
-   const y=b.cells[index].dataset.sortValue??b.cells[index].textContent.trim();
-   const nx=Number(x),ny=Number(y);
-   const diff=x!==''&&y!==''&&Number.isFinite(nx)&&Number.isFinite(ny)
-    ?nx-ny:x.localeCompare(y);
-   return diff*direction;
-  });
-  rows.forEach(row=>body.appendChild(row));
-  button.dataset.direction=direction===1?'asc':'desc';
- });
+document.querySelectorAll('[data-table-json]').forEach(button=>{
+ button.addEventListener('click',()=>downloadBlob(
+  Uint8Array.from(atob(button.dataset.json),char=>char.charCodeAt(0)),
+  'application/json;charset=utf-8',button.dataset.tableJson.replaceAll(':','-')+'.json'));
 });
-document.querySelectorAll('[data-download]').forEach(button=>{
- button.addEventListener('click',()=>{
-  const [runIndex,scopeIndex]=button.dataset.download.split(':').map(Number);
-  const dataset=button.dataset.dataset;
-  const bytes=Uint8Array.from(atob(button.dataset.csv),char=>char.charCodeAt(0));
-  const blob=new Blob([bytes],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const link=document.createElement('a');link.href=url;
-  link.download=dataset+'_'+runIndex+'_'+scopeIndex+'.csv';link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
- });
-});
+route();
 """
 
 
@@ -350,375 +381,51 @@ def _charts(scope: dict[str, Any]) -> str:
     )
 
 
-_TRADE_COLUMNS = (
-    ("#", "序號"),
-    ("entry UTC", "進場時間（UTC）"),
-    ("exit UTC", "平倉時間（UTC）"),
-    ("mark UTC", "期末估值時間（UTC）"),
-    ("direction", "交易方向"),
-    ("status", "持倉狀態"),
-    ("entry price", "進場價格"),
-    ("exit price", "平倉價格"),
-    ("mark price", "期末估值價格"),
-    ("size", "數量（標的單位）"),
-    ("fees", "手續費（報價貨幣）"),
-    ("net P&L", "淨損益（報價貨幣）"),
-    ("raw", "原始資料"),
-)
-
-
-def _trade_rows(scope: dict[str, Any]) -> list[dict[str, Any]]:
-    observations = scope["observations"]
-    timestamps = observations["timestamps"]
-    rows = []
-    for index, trade in enumerate(observations["trades"]):
-        status = trade.get("status", "unknown")
-        is_closed = status == "closed"
-
-        def timestamp(key: str, record: dict[str, Any] = trade) -> Any:
-            bar = record.get(key)
-            return (
-                _utc(timestamps[bar]).isoformat()
-                if timestamps and isinstance(bar, int)
-                else None
-            )
-
-        raw_direction = trade.get("direction")
-        direction = (
-            "做多" if raw_direction == 1 else "做空" if raw_direction == -1 else "未知"
-        )
-        rows.append(
-            {
-                "#": index + 1,
-                "status": "已平倉"
-                if is_closed
-                else "未平倉"
-                if status == "open"
-                else "未知",
-                "direction": direction,
-                "entry UTC": timestamp("entry_idx"),
-                "entry price": trade.get("entry_price"),
-                "exit UTC": timestamp("exit_idx") if is_closed else None,
-                "exit price": trade.get("exit_price") if is_closed else None,
-                "mark UTC": timestamp("exit_idx") if status == "open" else None,
-                "mark price": trade.get("exit_price") if status == "open" else None,
-                "size": trade.get("size"),
-                "net P&L": trade.get("net_pnl"),
-                "fees": trade.get("fee"),
-                "raw": trade,
-            }
-        )
-    return rows
-
-
-def _trade_cell(key: str, value: Any) -> str:
-    if key == "raw":
-        return "<td>" + details_html("原始欄位", value) + "</td>"
-    if key != "#" and isinstance(value, int | float) and not isinstance(value, bool):
-        return f"<td data-sort-value='{escape(value)}'>{value:z.2f}</td>"
-    return "<td>" + value_html(value) + "</td>"
-
-
-def _download_csv(
-    records: list[dict[str, Any]],
-    *,
-    dataset: RecordDataset,
-    run_index: int,
-    scope_index: int,
-) -> str:
-    """Embed the exact export bytes; the browser never rebuilds evidence values."""
-    encoded = base64.b64encode(render_records_csv(records, dataset=dataset)).decode(
-        "ascii"
-    )
-    title = {
-        "trades": "交易",
-        "execution_records": "執行紀錄",
-        "account_history": "帳戶狀態",
-    }[dataset]
-    return (
-        f"<button data-download='{run_index}:{scope_index}' data-dataset='{dataset}' "
-        f"data-csv='{encoded}'>下載全部{title} CSV（中文欄名）</button>"
-    )
-
-
 def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
-    rows = _trade_rows(scope)
-    identifier = f"trades-{run_index}-{scope_index}"
-    prefix = (
-        "<h3>完整交易紀錄</h3><p>包含全部已平倉與未平倉交易。"
-        "未平倉交易的期末估值不是實際平倉；估值不代表已支付平倉費。"
-        "價格為每單位標的的報價貨幣金額；數量以標的單位表示，"
-        "淨損益與手續費以報價貨幣表示。展開原始欄位可查看所有保存內容。</p>"
-    )
-    if not rows:
-        return prefix + "<p>本範圍沒有保存交易紀錄。</p>"
-    headers = "".join(
-        f"<th><button data-column='{i}'>{escape(label)}</button></th>"
-        for i, (_, label) in enumerate(_TRADE_COLUMNS)
-    )
-    body = "".join(
-        "<tr>"
-        + "".join(_trade_cell(key, row[key]) for key, _ in _TRADE_COLUMNS)
-        + "</tr>"
-        for row in rows
-    )
     return (
-        prefix + f"<p>共 {len(rows)} 筆，無分頁截斷。</p><div class='controls'>"
-        f"<label>篩選 <input data-filter='{identifier}' "
-        "placeholder='狀態 / 方向 / 日期 / 文字'>"
-        "</label>"
-        + _download_csv(
-            scope["observations"]["trades"],
-            dataset="trades",
-            run_index=run_index,
-            scope_index=scope_index,
+        "<p>此表按進出場配對呈現每筆交易的損益，供檢查獲利來源；"
+        "逐次委託與帳戶變動請見交易與帳戶核對表。"
+        "未平倉交易的期末估值不是實際平倉；期末指此結果範圍的最後觀測時點，"
+        "估值不代表已支付平倉費。</p>"
+        + render_table(
+            scope["tables"]["trades"],
+            identifier=f"trades-{run_index}-{scope_index}",
+            key=f"{run_index}:{scope_index}:trades",
         )
-        + "</div><p class='muted'>CSV 使用中文欄名、單位及已知狀態說明，"
-        "保留全部交易與完整數值精度，不受畫面篩選或排序影響。"
-        "欄位依進出場 K 線索引、方向與狀態、價格與數量、成本與損益排列。"
-        "未平倉交易的平倉／期末估值欄位表示估值；K 線索引從 0 起算。"
-        "以公式字元開頭的文字加單引號，避免試算表執行公式。</p>"
-        f"<div class='scroll'><table id='{identifier}' data-sortable>"
-        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
-        "<p class='muted'>價格、數量、淨損益與手續費僅在畫面四捨五入至小數點後兩位，"
-        "較小數值可能顯示為 0.00；排序、原始資料與 CSV 保留完整精度。</p>"
     )
 
 
-_LEDGER_SEMANTICS = (
-    "<p class='notice'>帳戶欄位採 VectorBT 一般資產帳本："
-    "現金、可用現金、空單負債、總持倉與帳戶權益都是引擎保存值，"
-    "不是 Binance 永續合約錢包、可用保證金或清算狀態。"
-    "時間為 K 線時間，不是精確盤中成交時間；K 線索引與識別編號從 0 起算。"
-    "價格以報價貨幣／標的單位表示。持倉數量為正代表多倉，為負代表空倉；"
-    "持倉市值保留相同正負號。空單負債為未回補空單的成本基礎金額。</p>"
-)
-
-_RECORD_ENUMS = {
-    "status",
-    "status_info",
-    "side",
-    "requested_size_kind",
-    "requested_size_type",
-    "requested_direction",
-}
-_RECORD_RATES = {"requested_fee_rate", "requested_slippage"}
-
-
-def _record_cell(key: str, value: Any, row: dict[str, Any]) -> str:
-    if key == "raw":
-        return "<td>" + details_html("原始欄位", value) + "</td>"
-    if key in _RECORD_ENUMS:
-        return "<td>" + _format_metric(_enum(key, value), "") + "</td>"
-    if key in {"execution_id", "order_id", "bar_index"}:
-        return "<td>" + _format_metric(value, "count") + "</td>"
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        rate = key in _RECORD_RATES or (
-            key == "requested_size"
-            and row["requested_size_type"] in ("percent", "targetpercent")
-        )
-        return (
-            f"<td data-sort-value='{escape(value)}'>"
-            + _format_metric(value, "fraction" if rate else "amount")
-            + "</td>"
-        )
-    return "<td>" + _format_metric(value, "") + "</td>"
-
-
-def _saved_table(
-    rows: list[dict[str, Any]],
-    *,
-    dataset: Literal["execution_records", "account_history"],
-    run_index: int,
-    scope_index: int,
-) -> str:
-    """Render every saved row with reusable search, sorting and dataset-bound CSV."""
-    identifier = f"{dataset}-{run_index}-{scope_index}"
-    columns = (*COLUMN_ORDER[dataset], "raw")
-    headers = "".join(
-        f"<th><button data-column='{index}'>{escape(RECORD_LABELS[key])}</button></th>"
-        for index, key in enumerate(columns)
-    )
-    body = "".join(
-        "<tr>" + "".join(_record_cell(key, row[key], row) for key in columns) + "</tr>"
-        for row in rows
-    )
-    return (
-        f"<p>已記錄 {len(rows)} 筆，全部顯示且無分頁截斷。</p>"
-        "<div class='controls'><label>篩選 "
-        f"<input data-filter='{identifier}' placeholder='狀態 / 日期 / 文字'></label>"
-        + _download_csv(
-            [row["raw"] for row in rows],
-            dataset=dataset,
-            run_index=run_index,
-            scope_index=scope_index,
-        )
-        + "</div><p class='muted'>點欄名排序，水平捲動查看完整欄位。"
-        "CSV 使用中文欄名、單位及已知狀態說明，保留全部紀錄與完整數值精度，"
-        "不受畫面篩選或排序影響；費率保留原始比例，1 表示 100%。"
-        "HTML 與 CSV 均以時間、索引或編號起頭，依相同欄位順序閱讀。"
-        "以公式字元開頭的文字加單引號避免試算表執行公式。</p>"
-        f"<div class='scroll'><table id='{identifier}' data-sortable>"
-        f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
-        "<p class='muted'>金額、數量與百分比顯示至小數點後兩位，"
-        "較小數值可能顯示為 0.00；"
-        "排序、原始資料與 CSV 保留完整精度。</p>"
-    )
-
-
-def _stream_unavailable(scope: dict[str, Any], dataset: str) -> str:
-    metadata = _object(scope["metadata"].get("observations"))
-    availability_key = (
-        "execution_records_availability"
-        if dataset == "execution_records"
-        else "account_history_availability"
-    )
-    reason = metadata.get(availability_key)
-    if scope["mode"] == "volume" or reason == "unsupported_volume_accounting":
-        reason = "unsupported_volume_accounting"
-        detail = "名目金額回測模式不提供這類資金帳戶／原生成交紀錄。"
-    else:
-        reason = "not_recorded" if reason in (None, "available") else reason
-        detail = "此保存結果未記錄這個資料流（舊產物亦可能缺少欄位），不能解讀為零筆。"
-    return (
-        "<p class='notice' data-availability='unavailable'>不可用："
-        + escape(reason_label(str(reason)))
-        + "。"
-        + detail
-        + "報告不重跑策略，也不由交易或權益曲線回推帳戶狀態。</p>"
-    )
-
-
-def _executions(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
-    records = scope["observations"].get("execution_records")
-    intro = (
-        _LEDGER_SEMANTICS + "<p>每列為一次委託嘗試，包含已成交、已忽略與已拒絕。"
-        "反手可能是同一筆委託同時平舊倉並開新倉；不拆成虛構成交。"
-        "市場開高低收價格取自原始 K 線；委託價格、成交價格與權益估值價格分開顯示。"
-        "執行前後權益使用保存的委託價格（滑價前）估值，不是當根收盤權益；"
-        "成交手續費為該次實際費用。未成交的成交欄位保持未知，不當成零費用成交。"
-        "委託規模需搭配規模類型與數值類別閱讀；正負無限值不代表已成交無限數量。</p>"
-    )
-    if records is None:
-        return intro + _stream_unavailable(scope, "execution_records")
-    if not records:
-        return intro + "<p data-availability='available'>已記錄：0 筆委託嘗試。</p>"
-    rows = []
-    for record in records:
-        row = {
-            key: record.get(key)
-            for key in (
-                "execution_id",
-                "order_id",
-                "bar_index",
-                "status",
-                "status_info",
-                "side",
-            )
-        }
-        row["timestamp"] = (
-            _utc(record["timestamp"]).isoformat() if record["timestamp"] else None
-        )
-        for key in ("open", "high", "low", "close"):
-            row[f"market.{key}"] = record["market"][key]
-        row.update(
-            {
-                key: record[key]
-                for key in (
-                    "requested_price",
-                    "filled_price",
-                    "filled_size",
-                    "fees",
-                    "valuation_price",
-                    "requested_size",
-                    "requested_size_kind",
-                    "requested_size_type",
-                    "requested_direction",
-                    "requested_fee_rate",
-                    "requested_fixed_fees",
-                    "requested_slippage",
-                )
-            }
-        )
-        for key in ("cash", "position", "equity", "free_cash", "debt"):
-            for phase in ("before", "after"):
-                row[f"{phase}.{key}"] = record[phase][key]
-        row["raw"] = record
-        rows.append(row)
-    return intro + _saved_table(
-        rows, dataset="execution_records", run_index=run_index, scope_index=scope_index
-    )
-
-
-def _account_history(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
-    records = scope["observations"].get("account_history")
-    intro = (
-        _LEDGER_SEMANTICS + "<p>每列保存一根 K 線結束後的帳戶狀態，"
-        "包括沒有委託的 K 線。收盤估值價格為當根收盤價；帳戶權益等於"
-        "現金加持倉市值，與執行紀錄採用的委託價格估值分開。"
-        "表內數值直接取自保存帳本，不由報告重建。</p>"
-    )
-    if records is None:
-        return intro + _stream_unavailable(scope, "account_history")
-    if not records:
-        return (
-            intro + "<p data-availability='available'>已記錄：0 根 K 線的帳戶狀態。</p>"
-        )
-    rows = []
-    for record in records:
-        row = {
-            "bar_index": record["bar_index"],
-            "timestamp": _utc(record["timestamp"]).isoformat()
-            if record["timestamp"]
-            else None,
-        }
-        row.update(
-            {
-                key: record[key]
-                for key in (
-                    "mark_price",
-                    "cash",
-                    "free_cash",
-                    "position",
-                    "asset_value",
-                    "equity",
-                )
-            }
-        )
-        row["raw"] = record
-        rows.append(row)
-    return intro + _saved_table(
-        rows, dataset="account_history", run_index=run_index, scope_index=scope_index
-    )
-
-
-def _scope_name(scope_id: str | None) -> str | None:
-    if scope_id is None:
-        return None
-    names = {
-        "full": "完整區間",
-        "train": "訓練區間",
-        "test": "測試區間",
-        "test_summary": "各折測試摘要",
-    }
-    if scope_id in names:
-        return names[scope_id]
-    parts = scope_id.split("/")
-    if (
-        len(parts) == 3
-        and parts[0] in ("fold", "trial")
-        and parts[1].isascii()
-        and parts[1].isdigit()
-        and parts[2] in names
+def _ledger(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
+    spec = scope["tables"]["ledger"]
+    availability = []
+    for key, label in (
+        ("execution_availability", "委託處理紀錄"),
+        ("account_availability", "收盤帳戶紀錄"),
     ):
-        try:
-            index = str(int(parts[1]) + 1)
-        except ValueError:
-            pass  # Excessively long numeric identifiers remain custom scopes.
-        else:
-            group = "折" if parts[0] == "fold" else "次參數試驗"
-            return f"第 {index} {group} · {names[parts[2]]}（{scope_id}）"
-    return f"自訂結果範圍（{scope_id}）"
+        value = spec[key]
+        availability.append(
+            f"<p data-availability='{escape(value)}'>{label}："
+            + ("已保存" if value == "available" else escape(reason_label(value)))
+            + "</p>"
+        )
+    return (
+        "<p>依時間核對：市場參考價 → 委託規模與單位 → 成交數量與價格 → 費用 → "
+        "現金與持倉變化。"
+        "使用事件篩選查看成交、未成交或收盤估值；展開「勾選顯示欄位」調整核對內容。</p>"
+        + "".join(availability)
+        + "<details><summary>欄位解釋、核對算式與資料限制</summary><ul>"
+        + "".join(f"<li>{escape(note)}</li>" for note in spec["notes"])
+        + "<li>預期現金變動＝−帶正負號成交量 × 成交價 − 手續費；"
+        "買入數量為正，賣出數量為負。預期持倉變動＝帶正負號成交量。</li>"
+        "<li>預期手續費＝成交數量 × 成交價格 × 單邊費率 ＋ 固定費用；"
+        "預期成交價格＝委託基準價 ×（1 ＋ 買賣方向 × 滑價率）。</li>"
+        "</ul></details>"
+        + render_table(
+            spec,
+            identifier=f"ledger-{run_index}-{scope_index}",
+            key=f"{run_index}:{scope_index}:ledger",
+        )
+    )
 
 
 def _parameters_html(parameters: dict[str, Any]) -> str:
@@ -863,8 +570,20 @@ _LIMITATIONS = (
 
 def _overview(payload: dict[str, Any]) -> str:
     comparison = payload["default_scope_comparison"]
-    result = "".join(
-        f"<p class='notice'>{escape(note)}</p>" for note in _overlap_warnings(payload)
+    result = (
+        "<p>每列是一個保存結果。先核對訓練／測試用途、日期與成本，再比較績效；"
+        "點選互動表格的資料列，或文字表格的結果序號，進入該組績效與交易核帳。</p>"
+        "<p class='muted'>下列績效採當次保存值，保留其定義；"
+        "不同日期或定義的數值不應直接排名。"
+        "各折摘要不是合併資金曲線，詳情保留其描述統計。</p>"
+        + render_table(
+            payload["comparison_table"], identifier="comparison", key="comparison"
+        )
+        + "".join(
+            f"<p class='notice'>{escape(note)}</p>"
+            for note in _overlap_warnings(payload)
+        )
+        + "<details><summary>執行與結果範圍清單</summary>"
     )
     for run in payload["runs"]:
         result += _pairs_html(
@@ -875,6 +594,7 @@ def _overview(payload: dict[str, Any]) -> str:
                 "可用結果範圍": [_scope_name(s["scope_id"]) for s in run["scopes"]],
             }
         )
+    result += "</details>"
     if comparison is not None:
         result += (
             "<h3>保存預設範圍比較</h3><p>保留每次執行的預設結果範圍，"
@@ -934,10 +654,16 @@ def _provenance(payload: dict[str, Any]) -> str:
 
 def _scoped_section(payload: dict[str, Any], section: str) -> str:
     result = ""
+    first = next(
+        key
+        for key in payload["sections"]
+        if key not in {"overview", "limitations", "provenance"}
+    )
     for ri, run in enumerate(payload["runs"]):
         for si, scope in enumerate(run["scopes"]):
+            anchor = f" id='result-{ri}-{si}'" if section == first else ""
             result += (
-                f"<div class='scope' data-scope='scope-{ri}-{si}'"
+                f"<div class='scope'{anchor} data-scope='scope-{ri}-{si}'"
                 f"{' hidden' if ri or si else ''}>"
                 f"<h3>{escape(run['identity']['run_id'])} · "
                 f"{escape(_scope_name(scope['scope_id']))}</h3>"
@@ -955,34 +681,26 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
                 result += _charts(scope)
             elif section == "trades":
                 result += _trades(scope, ri, si)
-            elif section == "executions":
-                result += _executions(scope, ri, si)
-            elif section == "account_history":
-                result += _account_history(scope, ri, si)
+            elif section == "ledger":
+                result += _ledger(scope, ri, si)
             result += "</div>"
     return result
 
 
 def render_report(payload: dict[str, Any], report_id: str) -> str:
-    """Render chosen built-ins and escaped commentary, with minimal fixed provenance."""
+    """Two navigable reading levels in one portable, fully inspectable artifact."""
     options = []
-    identities = []
+    links = []
     for ri, run in enumerate(payload["runs"]):
-        identity = run["identity"]
-        identities.append(
-            {
-                key: identity[key]
-                for key in ("run_id", "strategy_id", "revision_id", "manifest_hash")
-            }
-        )
         for si, scope in enumerate(run["scopes"]):
-            options.append(
-                f"<option value='scope-{ri}-{si}'>"
-                f"{escape(identity['run_id'])} / "
-                f"{escape(_scope_name(scope['scope_id']))} "
-                f"({escape(enum_label('kind', scope['kind']))})</option>"
+            label = (
+                f"{run['identity']['strategy_id']} · {_scope_name(scope['scope_id'])}"
             )
-    sections = []
+            target = f"result-{ri}-{si}"
+            options.append(f"<option value='{target}'>{escape(label)}</option>")
+            links.append(f"<li><a href='#{target}'>{escape(label)}</a></li>")
+    overview: list[str] = []
+    sections: list[str] = []
     for key in payload["sections"]:
         if key == "overview":
             content = _overview(payload)
@@ -992,10 +710,11 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             content = _LIMITATIONS
         else:
             content = _scoped_section(payload, key)
-        sections.append(
+        rendered = (
             f"<section data-section='{key}'>"
             f"<h2>{escape(REPORT_SECTIONS[key].title)}</h2>" + content + "</section>"
         )
+        (overview if key == "overview" else sections).append(rendered)
     commentary = ""
     if payload["commentary"]:
         commentary = (
@@ -1012,26 +731,21 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             )
             + "</section>"
         )
-    selector = ""
-    if set(payload["sections"]) & {
-        "settings",
-        "metrics",
-        "equity",
-        "trades",
-        "executions",
-        "account_history",
-    }:
-        selector = (
-            "<div class='panel' id='scope-controls'>"
-            "<label for='scope-select'>選擇執行／結果範圍</label>"
-            "<select id='scope-select'>" + "".join(options) + "</select>"
-            "<p class='muted'>切換選取章節的範圍；列印時展開全部範圍。</p></div>"
-        )
+    navigation = (
+        "<nav class='report-nav panel' id='scope-controls'>"
+        "<a href='#overview'>← 返回參數比較總覽</a>"
+        "<label for='scope-select'>切換結果</label><select id='scope-select'>"
+        + "".join(options)
+        + "</select></nav>"
+    )
     body = (
-        "<header><span class='badge'>"
-        "TRADINGDEV · SAVED EVIDENCE</span><h1>保存回測研究報告</h1>"
+        "<header><span class='badge'>TRADINGDEV · 回測研究</span>"
+        "<h1>回測結果與交易核帳</h1>"
+        "<p>第一層比較各組參數，第二層檢視單組績效、委託成交與帳戶變化。"
+        "所有內容保存在同一份離線 HTML；返回總覽與瀏覽器上一頁皆可切換。</p>"
+        "<details><summary>報告內容與來源</summary>"
         "<p>資料取自已驗證 JSON 產物；不重跑策略、不載入 pickle，"
-        "也不讀取目前策略設定。僅顯示呼叫端選取的章節；未選取章節不表示資料不存在。</p>"
+        "也不讀取目前策略設定。未選取章節不表示資料不存在。</p>"
         f"<p class='muted'>Report SHA-256 <code>{escape(report_id)}</code></p>"
         + _pairs_html(
             {
@@ -1045,25 +759,37 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
                 ],
             }
         )
-        + "<h3>來源執行</h3>"
-        + "".join(_identity_html(identity) for identity in identities)
-        + "</header>"
-        + "<noscript><style>.scope[hidden]{display:block}"
-        "#scope-controls,.quantstats-frame,[data-quantstats-download]{display:none}"
+        + "".join(_identity_html(run["identity"]) for run in payload["runs"])
+        + "</details></header>"
+        + "<noscript><style>.scope[hidden],#result-view[hidden],#overview-view[hidden]{"
+        "display:block!important}"
+        "#scope-controls,.bokeh-table,.quantstats-frame,[data-quantstats-download],.controls{display:none}"
         "</style><p>未啟用 JavaScript：以下展開全部結果範圍，"
-        "可直接閱讀各範圍的文字版績效詳表。</p></noscript>"
-        + selector
-        + "".join(sections)
+        "可直接閱讀完整文字表格與績效詳表；數值亦保存在內嵌 JSON。</p></noscript>"
+        + "<div id='overview-view'><span id='overview'></span>"
+        + "".join(overview)
+        + (
+            "<section><h2>選擇結果</h2><ul>" + "".join(links) + "</ul></section>"
+            if not overview
+            else ""
+        )
         + commentary
-        + "<footer><p class='muted'>獨立 reports 目錄的 JSON manifest "
-        "保存 HTML SHA-256、"
-        "章節與評語；原回測產物不改寫。原始資料保留於內嵌 JSON。</p></footer>"
+        + "</div>"
+        + "<div id='result-view' hidden>"
+        + navigation
+        + "<h2 id='result-heading'>單組結果</h2>"
+        + "".join(sections)
+        + "</div>"
+        + "<footer><p class='muted'>JSON manifest 保存 HTML SHA-256、章節與評語；"
+        "原回測產物不改寫。原始資料與表格資料保留於內嵌 JSON。</p></footer>"
     )
+    has_tables = bool(set(payload["sections"]) & {"overview", "ledger", "trades"})
+    resources = bokeh_resources_html() if has_tables else ""
     return render_html_document(
-        title="TradingDev · 保存回測報告",
-        body=body,
+        title="TradingDev · 回測比較與交易核帳",
+        body=body + resources,
         style=_STYLE,
-        script=_SCRIPT,
+        script=(BOKEH_TABLE_SCRIPT if has_tables else "") + _SCRIPT,
         data=payload,
         data_id="report-data",
         allow_embedded_frames=True,

@@ -666,12 +666,28 @@ aligned to their original bar indices after filtering and paging.
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs. Omitted/null sections select standard;
-an explicit ordered list chooses visible sections. With `[]`, no optional sections
+an explicit ordered list chooses visible sections and their order within the detail
+view. When selected, `overview` always belongs to the first navigation level.
+With `[]`, no optional sections
 are rendered; fixed report/source identity metadata and any supplied commentary
 remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
 (20000 characters total) are escaped and labelled LLM commentary. They cannot
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
+
+Report schema 2 / template 15 uses two navigation levels within one offline HTML
+file. The overview compares every loaded run/scope, including effective parameters,
+date coverage, train/test role and principal saved metrics. A result link opens
+the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
+the reader back to the overview. This keeps all optimization training trials and
+the selected parameter's test result distinct. A report is generated explicitly
+after completed or historical result inspection, not automatically by execution.
+The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
+`trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
+`provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.
+The old `executions` and `account_history` section IDs are invalid, with no alias
+or compatibility shim. Their MCP history query tools and saved observations are
+unchanged. Existing reports retain their original versions and remain untouched.
 
 Section selection determines the visible presentation without pruning the loaded
 or embedded data. Every HTML report embeds the complete loaded payload as JSON,
@@ -714,28 +730,60 @@ fixes SVG identifiers, removes generation dates and the external favicon, restor
 plot state, and removes temporary output/new figures on success or failure. It
 does not close pre-existing figures or silently substitute another HTML provider.
 
-The `executions` and `account_history` sections, also in `standard`, display these
-two saved ledgers separately from paired trades. Each has independent search,
-sorting and full CSV export, with nested market/before/after fields flattened for
-execution CSV. Missing streams show their reason; `[]` shows a recorded empty
-stream. The manifest records each stream's original count, preserving null versus
-zero. Old report files retain their original template version.
+The `ledger` section combines saved order attempts and end-of-bar account states
+into one chronological event table. Within a bar, original execution order comes
+before the closing valuation. Each row identifies its event type and original
+record; closing valuations never masquerade as orders or fills. Missing streams
+show their reason, while `[]` means a recorded empty stream. No missing ledger is
+reconstructed from paired trades. The manifest preserves each source stream's
+original count, including null versus zero.
+
+Bokeh widgets and tables provide filled/ignored/rejected/valuation filtering and
+column visibility checkboxes. The runtime is bundled in the HTML for offline use.
+The same ledger rows and column definitions produce the interactive view, a complete
+static HTML table and full-precision CSV/JSON downloads. Static content is readable
+without executing JavaScript; LLM consumers can instead use embedded JSON or the
+original MCP history queries. Filters, sorting and column visibility affect only
+the interactive presentation, never the exported records or columns.
+
+Ledger columns begin with time, event sequence, bar index, event type and execution
+status. They expose market OHLC, requested size and its unit/type, request reference
+price, filled asset quantity and price, requested fee/slippage rates, charged fees,
+and account before/change/after values. Cash flows and signed position changes are
+kept distinct from fees and notional size. A percentage or value request is not
+labelled as an asset quantity; an all-available request is not converted to an
+invented fixed size. Closing rows carry the saved close mark and account valuation,
+leaving unrecorded order/fill fields empty. Prices are saved bar references rather
+than bid/ask quotes or order-book data. Valuation basis remains explicit: execution
+snapshots use the request reference price, while closing states use the bar close.
+Before/change/after valuation rows identify whether their prior state is the last
+execution in the same bar or the preceding saved close. Without a prior state the
+change stays unavailable. Arithmetic checks use complete precision and documented
+tolerance to compare cash, position, fees, slippage and equity where the inputs are
+recorded. A matching check does not validate the strategy, market quotes or exchange
+accounting, and close records do not invent missing debt values.
+The `trades` section is supplementary paired-trade PnL rather than the reconciliation
+ledger; a reversal can close one paired trade and open another in a single fill.
 
 All saved scopes are validated, including sources of omitted sections. Scalar
 observations and aggregate fold statistics remain distinct. Missing or corrupt
 sources fail generation. The report names selected/omitted sections rather than
-claiming every suggested section is present. Included trade tables expose all
-records, sorting, text search and local CSV export; SVG equity and drawdown charts
+claiming every suggested section is present. Included record tables expose all
+records and local CSV export; SVG equity and drawdown charts
 and scripts are embedded for offline use. UTC times, units, unavailable reasons,
 provenance and known overlap/interpretation limits are supplied by the backend.
+Static record tables are embedded as semantic HTML inside `noscript` elements.
+With JavaScript enabled, their DOM is materialized only when expanded, printed or
+needed after a Bokeh loading failure. With JavaScript disabled they render directly.
+This retains complete source-readable tables without eagerly creating every scope's cells.
 Overview, settings, metrics, provenance and record tables use Traditional Chinese
 field names, known metric names, units and enum explanations. Saved metric definitions
 remain authoritative and are expandable in their original form; current display
 labels never replace saved units or descriptions. Unknown codes remain visible with
 an explicit fallback, and strategy-defined parameters retain their original names.
 Paired-trade tables keep distinct closing and end-of-period valuation fields.
-Execution tables identify before/after balances; account history identifies closing
-balances. These remain generic engine accounting, not exchange margin wallets.
+The unified ledger identifies before/change/after and closing balances explicitly.
+These remain generic engine accounting, not exchange margin wallets.
 Prices are quote currency
 per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
 Numeric displays use two decimal places; fractional rates and returns display as
@@ -745,22 +793,20 @@ notes accompany the tables; sorting uses original values even when displays are 
 CSV exports use Traditional Chinese headers with units and translated known enums.
 Record columns follow a defined reading order rather than code-name sorting or
 object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL
-and account balances. Execution and account HTML/CSV share the same column order;
-HTML adds expandable raw data last. Execution columns start with timestamp, bar index,
-execution ID and order ID; each before/after balance pair stays adjacent, ordered by
-position, cash, free cash, debt and equity. Account history starts with timestamp and
-bar index, followed by mark price, position, asset value, cash, free cash and equity.
-Trade CSV starts with entry and exit/valuation indices; trade HTML starts with a
-display sequence and separate entry, closing and valuation timestamps. Both then show
-direction/status, prices/quantities and costs before PnL. CSV extension columns follow
-the standard columns in deterministic field-path order, even when absent in earlier
-rows. Consumers relying on positional CSV columns must adjust to this order.
-All saved columns and rows remain present in original row order, independent of
-screen filtering or sorting; numeric values retain full precision. Rates remain
-fractions (1 = 100%), timestamps retain their saved timezone and precision, and
-missing values are empty cells. Execution/account nested fields are flattened with
-distinct headers; unknown columns and enum codes remain identifiable. Trade closing
-index/price columns explicitly include end-of-period valuation for open trades.
+and account balances. Ledger HTML/CSV share the same column definitions and preserve
+before/change/after balance groups. Machine-readable ledger JSON uses stable code
+keys and full numeric precision; raw observations remain separately embedded.
+Paired-trade HTML and CSV begin with a display sequence and separate entry, closing
+and valuation timestamps. Both then show direction/status, prices/quantities and
+costs before PnL; source indices and original record JSON remain available later in
+the same column order. Consumers relying on positional CSV columns must adjust.
+All rows and columns remain present in export order, independent of screen filtering,
+sorting or visibility; numeric values retain full precision. Rates remain
+fractions (1 = 100%), timestamp displays/exports are normalized to UTC, and
+missing values are empty cells. Ledger nested source fields are flattened with
+distinct headers; original records retain source fields and timestamps. Paired-trade
+closing time/price are empty for open trades, whose final mark uses separate valuation
+columns; the source exit index still identifies that final valuation bar.
 The renderer prepares UTF-8 BOM CSV bytes with CRLF records and quoted fields;
 formula-leading text is prefixed with an apostrophe. Browsers download these embedded
 bytes directly without parsing or rounding numeric values. Programs consuming old

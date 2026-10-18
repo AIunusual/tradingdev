@@ -47,8 +47,14 @@ def test_report_cli_preserves_service_result_and_exit_status(
     assert json.loads(capsys.readouterr().out) == response
 
 
+@pytest.mark.parametrize(
+    "sections", [[], ["overview", "ledger", "trades", "provenance"]]
+)
 def test_report_cli_custom_sections_and_commentary(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    sections: list[str],
 ) -> None:
     notes = [{"title": "評語", "text": "測試結果。"}]
     path = tmp_path / "notes.json"
@@ -58,7 +64,7 @@ def test_report_cli_custom_sections_and_commentary(
         _: ReportService, run_ids: list[str], **options: Any
     ) -> dict[str, Any]:
         assert run_ids == ["a"]
-        assert options == {"sections": [], "commentary": notes}
+        assert options == {"sections": sections, "commentary": notes}
         return {"success": True}
 
     monkeypatch.setattr(ReportService, "generate_report", generate)
@@ -69,6 +75,7 @@ def test_report_cli_custom_sections_and_commentary(
             "--run-id",
             "a",
             "--sections",
+            *sections,
             "--commentary-json",
             str(path),
         ]

@@ -11,6 +11,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import now_iso
+from tradingdev.domain.presentation.reports import REPORT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -114,7 +115,7 @@ def publish_report(
         {
             "report_id": report_id,
             "run_ids": run_ids,
-            "schema_version": 1,
+            "schema_version": REPORT_SCHEMA_VERSION,
             "scope_count": scope_count,
         },
         sort_keys=True,

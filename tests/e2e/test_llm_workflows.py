@@ -417,10 +417,10 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         )
         report = next(call for call in calls if call.name == "generate_report")
         assert report.arguments.get("sections") == [
+            "overview",
             "metrics",
+            "ledger",
             "trades",
-            "executions",
-            "account_history",
         ]
         for name, count in (("get_run_executions", 1), ("get_run_account_history", 2)):
             queried_history = next(call for call in calls if call.name == name)
