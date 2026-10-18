@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -54,6 +55,8 @@ def _cell(value: Any, kind: str) -> str:
     if value is None:
         return "—"
     if isinstance(value, float | int) and not isinstance(value, bool):
+        if type(value) is int and abs(value) > 2**53 - 1 and kind != "percent":
+            return str(value)
         if kind == "percent":
             return f"{value:z.2%}"
         if kind == "integer":
@@ -64,6 +67,31 @@ def _cell(value: Any, kind: str) -> str:
     return escape(value)
 
 
+def _precise_cell(value: Any, kind: str) -> str | None:
+    if not isinstance(value, float | int) or isinstance(value, bool):
+        return None
+    if kind == "percent":
+        # Shift decimal places without float multiplication or Decimal rounding.
+        parts = Decimal(str(value)).as_tuple()
+        assert isinstance(parts.exponent, int)
+        return str(Decimal((parts.sign, parts.digits, parts.exponent + 2))) + "%"
+    return str(value)
+
+
+def _with_precision(spec: dict[str, Any]) -> dict[str, Any]:
+    """Supply source decimal text before a browser parses numbers as float64."""
+    exact = {}
+    for item in spec["columns"]:
+        if item["kind"] not in {"number", "integer", "percent"}:
+            continue
+        values = [row.get(item["field"]) for row in spec["rows"]]
+        exact[item["field"]] = [_precise_cell(value, item["kind"]) for value in values]
+        if any(type(value) is int and abs(value) > 2**53 - 1 for value in values):
+            # Distinct source integers can collapse to the same JavaScript Number.
+            item["sortable"] = False
+    return {**spec, "full_precision_values": exact}
+
+
 def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
     """Keep full semantic HTML available even when JavaScript cannot execute."""
     columns, rows = spec["columns"], spec["rows"]
@@ -72,11 +100,18 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
     for row in rows:
         cells = []
         for item in columns:
-            cell = _cell(row.get(item["field"]), item["kind"])
+            value = row.get(item["field"])
+            cell = _cell(value, item["kind"])
+            exact = _precise_cell(value, item["kind"])
+            attributes = (
+                f" data-full='{escape(exact)}' title='{escape(exact)}'"
+                if exact is not None and item["kind"] in {"number", "percent"}
+                else ""
+            )
             if item["field"] == "sequence" and spec.get("navigate_field"):
                 # Only renderer-generated result hashes are ever used here.
                 cell = f"<a href='{escape(row[spec['navigate_field']])}'>{cell}</a>"
-            cells.append(f"<td>{cell}</td>")
+            cells.append(f"<td{attributes}>{cell}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     encoded = base64.b64encode(table_csv(spec)).decode("ascii")
     json_encoded = base64.b64encode(
@@ -95,6 +130,12 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
         f"<button data-table-json='{escape(key)}' data-json='{json_encoded}'>"
         "下載表格 JSON（完整精度）"
         "</button></div>"
+        "<p class='precision-controls'><label><input type='checkbox' "
+        "data-full-precision> 顯示完整精度</label>"
+        "（同步套用互動表與文字版；不影響下載資料）</p>"
+        "<p class='muted'>預設四捨五入至小數點後兩位；"
+        "請勾選完整精度後再核算數量 × 價格與費用。"
+        "例如顯示 0.10 的成交量不一定等於精確的 0.1。</p>"
         f"<div class='bokeh-table' data-table-key='{escape(key)}'></div>"
         "<details class='static-table' open><summary>"
         "文字版完整表格（不需 JavaScript）</summary>"
@@ -103,7 +144,10 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
         f"<div class='scroll'><table id='{identifier}-static'>"
         f"<thead><tr>{headers}</tr>"
         f"</thead><tbody>{''.join(body)}</tbody></table></div></noscript></details>"
-        "<p class='muted'>畫面數值四捨五入至小數點後兩位，較小數值可能顯示為 0.00；"
+        "<p class='muted'>兩位小數模式下，較小數值可能顯示為 0.00；"
+        "完整精度使用保存數值的十進位表示，可能包含浮點運算尾差；"
+        "若欄位過窄，可拖寬欄位或將滑鼠停在數值上閱讀完整值。"
+        "超出瀏覽器安全整數範圍的欄位保留精確文字並停用排序。"
         "空白資料以 — 表示，不代表零。CSV／JSON 保留全部欄位、全部紀錄與完整精度，"
         "不受篩選、排序或欄位勾選影響。CSV 的百分比保留原始比例，1 表示 100%；"
         "公式字元開頭的文字加單引號，避免試算表執行公式。</p></div>"
@@ -138,7 +182,7 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
             scope["parameters"][key]
             for run in payload["runs"]
             for scope in run["scopes"]
-            if key in scope["parameters"]
+            if key in scope["parameters"] and scope["parameters"][key] is not None
         ]
         kind = (
             "integer"
@@ -191,6 +235,11 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
                 )
             )
     rows: list[dict[str, Any]] = []
+    text_parameters = {
+        item["field"].removeprefix("parameter:")
+        for item in columns
+        if item["field"].startswith("parameter:") and item["kind"] == "text"
+    }
     for ri, run in enumerate(payload["runs"]):
         for si, scope in enumerate(run["scopes"]):
             obs = scope["observations"]
@@ -224,7 +273,9 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
             row.update(
                 {
                     "parameter:" + key: json.dumps(value, ensure_ascii=False)
-                    if isinstance(value, dict | list)
+                    if key in text_parameters
+                    and value is not None
+                    and not isinstance(value, str)
                     else value
                     for key, value in scope["parameters"].items()
                 }
@@ -236,7 +287,9 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
                         value if not isinstance(value, dict) else None
                     )
             rows.append(row)
-    return {"columns": columns, "rows": rows, "navigate_field": "detail"}
+    return _with_precision(
+        {"columns": columns, "rows": rows, "navigate_field": "detail"}
+    )
 
 
 def trade_table(scope: dict[str, Any]) -> dict[str, Any]:
@@ -298,15 +351,17 @@ def trade_table(scope: dict[str, Any]) -> dict[str, Any]:
                 ),
             }
         )
-    return {
-        "columns": columns,
-        "rows": rows,
-        "filter_field": "filter_status",
-        "event_options": [
-            {"value": "closed", "label": "已平倉"},
-            {"value": "open", "label": "未平倉"},
-        ],
-    }
+    return _with_precision(
+        {
+            "columns": columns,
+            "rows": rows,
+            "filter_field": "filter_status",
+            "event_options": [
+                {"value": "closed", "label": "已平倉"},
+                {"value": "open", "label": "未平倉"},
+            ],
+        }
+    )
 
 
 def ledger_table(projection: LedgerProjection) -> dict[str, Any]:
@@ -351,82 +406,85 @@ def ledger_table(projection: LedgerProjection) -> dict[str, Any]:
             "bar_close" if record["event_type"] == "bar_close" else record["status"]
         )
         rows.append(row)
-    return {
-        "columns": columns,
-        "rows": rows,
-        "filter_field": "filter_status",
-        "event_options": [
-            {"value": "filled", "label": "已成交"},
-            {"value": "ignored", "label": "未成交：忽略"},
-            {"value": "rejected", "label": "未成交：拒絕"},
-            {"value": "bar_close", "label": "收盤估值"},
-        ],
-        "column_presets": [
-            {
-                "label": "價格與費用",
-                "fields": [
-                    "timestamp",
-                    "sequence",
-                    "status",
-                    "side",
-                    "market.open",
-                    "market.close",
-                    "requested_size",
-                    "requested_size_kind",
-                    "requested_size_unit",
-                    "requested_size_type",
-                    "requested_price",
-                    "filled_size",
-                    "filled_price",
-                    "notional",
-                    "requested_fee_rate",
-                    "requested_fixed_fees",
-                    "requested_slippage",
-                    "fees",
-                    "expected_fees",
-                    "fees_residual",
-                    "fill_price_residual",
-                ],
-            },
-            {
-                "label": "現金與持倉",
-                "fields": [
-                    "timestamp",
-                    "sequence",
-                    "event_type",
-                    "status",
-                    "side",
-                    "filled_size",
-                    "filled_price",
-                    "fees",
-                    "before.cash",
-                    "delta.cash",
-                    "after.cash",
-                    "before.position",
-                    "delta.position",
-                    "after.position",
-                    "after.equity",
-                    "reconciliation",
-                ],
-            },
-            {
-                "label": "核對差額",
-                "fields": [
-                    "timestamp",
-                    "sequence",
-                    "event_type",
-                    "status",
-                    "reconciliation",
-                    "cash_residual",
-                    "position_residual",
-                    "fees_residual",
-                    "fill_price_residual",
-                    "equity_residual",
-                    "reconciliation_note",
-                ],
-            },
-        ],
-        "notes": list(projection.notes),
-        "execution_availability": projection.execution_availability,
-        "account_availability": projection.account_availability,
-    }
+    return _with_precision(
+        {
+            "columns": columns,
+            "rows": rows,
+            "filter_field": "filter_status",
+            "event_options": [
+                {"value": "filled", "label": "已成交"},
+                {"value": "ignored", "label": "未成交：忽略"},
+                {"value": "rejected", "label": "未成交：拒絕"},
+                {"value": "bar_close", "label": "收盤估值"},
+            ],
+            "column_presets": [
+                {
+                    "label": "價格與費用",
+                    "fields": [
+                        "timestamp",
+                        "sequence",
+                        "status",
+                        "side",
+                        "market.open",
+                        "market.close",
+                        "requested_size",
+                        "requested_size_kind",
+                        "requested_size_unit",
+                        "requested_size_type",
+                        "requested_price",
+                        "filled_size",
+                        "filled_price",
+                        "notional",
+                        "requested_fee_rate",
+                        "requested_fixed_fees",
+                        "requested_slippage",
+                        "fees",
+                        "expected_fees",
+                        "fees_residual",
+                        "fill_price_residual",
+                    ],
+                },
+                {
+                    "label": "現金與持倉",
+                    "fields": [
+                        "timestamp",
+                        "sequence",
+                        "event_type",
+                        "status",
+                        "side",
+                        "filled_size",
+                        "filled_price",
+                        "notional",
+                        "fees",
+                        "before.cash",
+                        "delta.cash",
+                        "after.cash",
+                        "before.position",
+                        "delta.position",
+                        "after.position",
+                        "after.equity",
+                        "reconciliation",
+                    ],
+                },
+                {
+                    "label": "核對差額",
+                    "fields": [
+                        "timestamp",
+                        "sequence",
+                        "event_type",
+                        "status",
+                        "reconciliation",
+                        "cash_residual",
+                        "position_residual",
+                        "fees_residual",
+                        "fill_price_residual",
+                        "equity_residual",
+                        "reconciliation_note",
+                    ],
+                },
+            ],
+            "notes": list(projection.notes),
+            "execution_availability": projection.execution_availability,
+            "account_availability": projection.account_availability,
+        }
+    )

@@ -38,7 +38,11 @@ def bokeh_provenance() -> dict[str, str]:
 # Public browser API: TradingDevTables.mount(targetElement, spec) -> Promise.
 # spec.rows holds unrounded values. spec.columns controls their ordered labels:
 # {field, title, kind?: "number"|"integer"|"percent"|"text", visible?: bool,
-#  group?: str, width?: int}. Optional filter_field/event_options ({value,label})
+#  group?: str, width?: int, sortable?: bool}. full_precision_values maps each
+# numeric field to backend-formatted strings indexed by original row position.
+# The returned setPrecision(bool) changes display without changing source values
+# or sorting; integer fields always retain the backend exact text.
+# Optional filter_field/event_options ({value,label})
 # filter the original rows. Optional navigate_field permits only result anchors.
 # Optional column_presets ({label,fields}) provides named column selections.
 # The caller owns lazy scope activation and the independently readable static HTML.
@@ -49,15 +53,34 @@ window.TradingDevTables=(()=>{
  const escapeText=value=>String(value).replaceAll('&','&amp;')
   .replaceAll('<','&lt;').replaceAll('>','&gt;')
   .replaceAll('"','&quot;').replaceAll("'",'&#39;');
- function makeFormatter(column){
+ function makeFormatter(column,fullValues,showFull){
   const formats={number:'0,0.00',integer:'0,0',percent:'0.00%'};
   const format=formats[column.kind];
-  return format?new Bokeh.Tables.NumberFormatter({
+  if(!format){
+   return new Bokeh.Tables.StringFormatter({null_format:'—',nan_format:'—'});
+  }
+  const rounded=new Bokeh.Tables.NumberFormatter({
    format,text_align:'right',null_format:'—',nan_format:'—'
-  }):new Bokeh.Tables.StringFormatter({null_format:'—',nan_format:'—'});
+  });
+  const text=new Bokeh.Tables.StringFormatter({
+   text_align:'right',null_format:'—',nan_format:'—'
+  });
+  const formatter=new Bokeh.Tables.StringFormatter();
+  formatter.doFormat=(row,cell,value,columnDef,dataContext)=>{
+   const full=fullValues?.[column.field]?.[dataContext.__report_row_index];
+   const unsafeInteger=typeof full==='string'&&/^-?\d+$/.test(full)
+    &&Number.isSafeInteger(value)===false;
+   const display=(showFull()||column.kind==='integer'||unsafeInteger)&&full!==undefined
+    ?text.doFormat(row,cell,full,columnDef,dataContext)
+    :rounded.doFormat(row,cell,value,columnDef,dataContext);
+   return `<span title="${escapeText(full??'—')}">${display}</span>`;
+  };
+  return formatter;
  }
  async function create(target,spec){
   const rows=spec.rows,columns=spec.columns;
+  const fullValues=spec.full_precision_values;
+  let fullPrecision=false;
   const defaults=columns.map((column,index)=>column.visible!==false?index:-1)
    .filter(index=>index>=0);
   let active=new Set(defaults);
@@ -73,9 +96,9 @@ window.TradingDevTables=(()=>{
    data:makeData(rows.map((_,index)=>index))
   });
   const tableColumns=columns.map(column=>new Bokeh.Tables.TableColumn({
-   field:column.field,title:column.title,
+   field:column.field,title:column.title,sortable:column.sortable!==false,
    width:column.width??Math.min(290,Math.max(150,column.title.length*12)),
-   formatter:makeFormatter(column)
+   formatter:makeFormatter(column,fullValues,()=>fullPrecision)
   }));
   const table=new Bokeh.Tables.DataTable({
    source,columns:tableColumns.filter((_,index)=>active.has(index)),
@@ -84,6 +107,12 @@ window.TradingDevTables=(()=>{
    selectable:true,scroll_to_selection:false,row_height:32,
    frozen_columns:Math.min(2,Math.max(0,defaults.length-1))||null
   });
+  const setPrecision=value=>{
+   const full=value===true;
+   if(fullPrecision===full){return;}
+   fullPrecision=full;
+   source.change.emit();
+  };
   const status=new Bokeh.Widgets.Select({title:'事件篩選',value:'all',width:185,
    options:[['all','全部事件'],...(spec.event_options??[])
     .map(option=>[option.value,option.label])],
@@ -98,8 +127,13 @@ window.TradingDevTables=(()=>{
    rows.forEach((record,index)=>{
     const statusMatches=!spec.filter_field||status.value==='all'
      ||String(record[spec.filter_field]??'')===status.value;
-    const queryMatches=!needle||columns.some(column=>
-     String(record[column.field]??'').toLocaleLowerCase().includes(needle));
+    const queryMatches=!needle||columns.some(column=>{
+     const exact=fullValues?.[column.field]?.[index];
+     const value=(column.kind==='integer'||column.kind==='number')&&exact!==undefined
+      ?exact:record[column.field];
+     return String(value??'').toLocaleLowerCase().includes(needle)
+      ||String(exact??'').toLocaleLowerCase().includes(needle);
+    });
     if(statusMatches&&queryMatches){indices.push(index);}
    });
    source.selected.indices=[];
@@ -200,7 +234,8 @@ window.TradingDevTables=(()=>{
    }
   });
   await Bokeh.Plotting.show(table,tableHost);
-  return {source,table,status,query,selectors,selectAll,selectDefault,presetButtons};
+  return {source,table,status,query,selectors,selectAll,selectDefault,
+   presetButtons,setPrecision};
  }
  return {mount(target,spec){
   if(!mounted.has(target)){

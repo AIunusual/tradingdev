@@ -32,17 +32,31 @@ svg{width:100%;height:auto;display:block}svg text{font-size:12px;fill:#52657a}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}.scope[hidden]{display:none}
 [hidden]{display:none!important}main{max-width:1600px}.bokeh-table{min-width:0}
 .report-nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.precision-controls label{font-weight:600;cursor:pointer}
 a{color:#2367cc}.bokeh-column-controls{border:1px solid #dce5ef;padding:12px}
 .quantstats-frame{width:100%;height:1050px;border:1px solid #dce5ef;background:white}
 @media(max-width:750px){.two{grid-template-columns:1fr}}
 @media print{.scope[hidden],#result-view[hidden],#overview-view[hidden]{
 display:block!important}
-.bokeh-table,.report-nav{display:none!important}.static-table{display:block!important}}
+.bokeh-table,.report-nav,.precision-controls{display:none!important}
+.static-table{display:block!important}}
 """
 _SCRIPT = r"""
 'use strict';
 const reportData=JSON.parse(document.getElementById('report-data').textContent);
 const select=document.getElementById('scope-select');
+const tableHandles=new WeakMap();
+function applyPrecision(container){
+ const full=container.querySelector('[data-full-precision]').checked;
+ container.querySelectorAll('td[data-full]').forEach(cell=>{
+  if(cell.dataset.rounded===undefined){cell.dataset.rounded=cell.textContent;}
+  cell.textContent=full?cell.dataset.full:cell.dataset.rounded;
+ });
+ tableHandles.get(container)?.setPrecision(full);
+}
+document.querySelectorAll('[data-full-precision]').forEach(checkbox=>{
+ checkbox.addEventListener('change',()=>applyPrecision(checkbox.closest('.report-table')));
+});
 function materializeStatic(details){
  const source=details.querySelector('noscript[data-static-table]');
  if(!source||details.querySelector('table')){return;}
@@ -50,6 +64,7 @@ function materializeStatic(details){
  const template=document.createElement('template');
  template.innerHTML=source.textContent;
  details.appendChild(template.content);
+ applyPrecision(details.closest('.report-table'));
 }
 const staticTables=Array.from(document.querySelectorAll('.static-table'));
 staticTables.forEach(details=>{
@@ -89,7 +104,11 @@ async function loadTables(root){
   if(target.closest('.scope')?.hidden||target.dataset.loaded){continue;}
   target.dataset.loaded='true';
   try{
-   await TradingDevTables.mount(target,tableSpec(target.dataset.tableKey));
+   const handle=await TradingDevTables.mount(target,tableSpec(target.dataset.tableKey));
+   const container=target.closest('.report-table');
+   tableHandles.set(container,handle);
+   // The checkbox may have changed while the lazy Bokeh mount was pending.
+   applyPrecision(container);
   }catch(error){
    target.textContent='互動表格無法載入；下方文字版與下載仍可使用。';
    const fallback=target.parentElement.querySelector('.static-table');
@@ -763,7 +782,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "</details></header>"
         + "<noscript><style>.scope[hidden],#result-view[hidden],#overview-view[hidden]{"
         "display:block!important}"
-        "#scope-controls,.bokeh-table,.quantstats-frame,[data-quantstats-download],.controls{display:none}"
+        "#scope-controls,.bokeh-table,.quantstats-frame,[data-quantstats-download],"
+        ".controls,.precision-controls{display:none}"
         "</style><p>未啟用 JavaScript：以下展開全部結果範圍，"
         "可直接閱讀完整文字表格與績效詳表；數值亦保存在內嵌 JSON。</p></noscript>"
         + "<div id='overview-view'><span id='overview'></span>"

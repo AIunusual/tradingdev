@@ -675,7 +675,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 15 uses two navigation levels within one offline HTML
+Report schema 2 / template 16 uses two navigation levels within one offline HTML
 file. The overview compares every loaded run/scope, including effective parameters,
 date coverage, train/test role and principal saved metrics. A result link opens
 the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
@@ -786,10 +786,22 @@ The unified ledger identifies before/change/after and closing balances explicitl
 These remain generic engine accounting, not exchange margin wallets.
 Prices are quote currency
 per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
-Numeric displays use two decimal places; fractional rates and returns display as
-percentages, while identifiers and integer counts retain integer form. Fold statistics show
+Numeric displays default to two decimal places; each overview, ledger and paired-trade
+table has one full-precision checkbox shared by its interactive and static views.
+The renderer supplies source decimal strings before browser number parsing; percent
+text shifts decimal places exactly rather than multiplying a browser float. The switch
+retains filters, sorting and column visibility, including lazy loading and printing.
+Notional value is visible by default and included in the cash/position preset.
+Readers must enable full precision before recalculating from quantities and prices.
+Fractional rates and returns display as percentages; identifiers and integer counts
+retain exact integer form. Columns containing integers outside the JavaScript safe
+range disable sorting to avoid ordering rounded values. Nullable numeric parameters
+keep numeric formatting; truly mixed-type parameter columns use backend text for
+all non-null values, preserving exact values in both interactive and static views. Fold statistics show
 labelled mean/std/min/max and valid-fold counts instead of a raw JSON cell. Precision
-notes accompany the tables; sorting uses original values even when displays are equal.
+notes accompany the tables; supported numeric sorting uses original values even when
+displays are equal. Precision controls require JavaScript; static numeric cells also
+carry full-value attributes and tooltips, and downloads always preserve original values.
 CSV exports use Traditional Chinese headers with units and translated known enums.
 Record columns follow a defined reading order rather than code-name sorting or
 object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL

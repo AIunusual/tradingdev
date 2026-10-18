@@ -75,7 +75,9 @@ LEDGER_COLUMNS = (
     ),
     LedgerColumn("signed_filled_size", "帶正負號成交數量（標的單位）", "成交結果"),
     LedgerColumn("filled_price", "實際成交價格", "成交結果", default_visible=True),
-    LedgerColumn("notional", "成交名目金額（報價貨幣）", "成交結果"),
+    LedgerColumn(
+        "notional", "成交名目金額（報價貨幣）", "成交結果", default_visible=True
+    ),
     LedgerColumn("fees", "實際手續費（報價貨幣）", "成交結果", default_visible=True),
     *(
         LedgerColumn(

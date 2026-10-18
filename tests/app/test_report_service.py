@@ -189,7 +189,7 @@ def _static_table(text: str, identifier: str) -> tuple[list[str], list[list[str]
     headers = re.findall(r"<th>(.*?)</th>", table)
     body = table.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
     rows = [
-        re.findall(r"<td>(.*?)</td>", row, flags=re.DOTALL)
+        re.findall(r"<td(?: [^>]*)?>(.*?)</td>", row, flags=re.DOTALL)
         for row in re.findall(r"<tr>(.*?)</tr>", body, flags=re.DOTALL)
     ]
     return headers, rows
@@ -549,6 +549,7 @@ def test_trade_table_rounds_display_but_preserves_numeric_precision(
             )
             assert cells[column_index] == display
             assert spec["rows"][index][field] == value
+            assert spec["full_precision_values"][field][index] == str(value)
             assert csv_rows[index][headers[column_index]] == str(value)
         assert json.loads(unescape(cells[-1])) == trade
         assert json.loads(csv_rows[index]["原始資料（JSON）"]) == trade
