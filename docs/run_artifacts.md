@@ -806,8 +806,12 @@ CSV exports use Traditional Chinese headers with units and translated known enum
 Record columns follow a defined reading order rather than code-name sorting or
 object insertion order: time/sequence, direction/status, prices/quantities, costs/PnL
 and account balances. Ledger HTML/CSV share the same column definitions and preserve
-before/change/after balance groups. Machine-readable ledger JSON uses stable code
-keys and full numeric precision; raw observations remain separately embedded.
+before/change/after balance groups. Overview comparison, ledger and paired-trade
+tables each provide CSV and JSON downloads. JSON contains the full table specification:
+`columns`, `rows`, `full_precision_values` and applicable navigation, filtering and
+presentation metadata. It uses stable code keys and full numeric precision, rather
+than exporting only an array of raw ledger records; raw observations remain
+separately embedded.
 Paired-trade HTML and CSV begin with a display sequence and separate entry, closing
 and valuation timestamps. Both then show direction/status, prices/quantities and
 costs before PnL; source indices and original record JSON remain available later in

@@ -821,6 +821,33 @@ def test_overview_keeps_historical_metric_units_in_separate_columns(
     )
 
 
+def test_every_report_table_json_download_contains_the_full_table_specification(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(context)
+    response = service.generate_report(
+        ["run"], sections=["overview", "ledger", "trades"]
+    )
+    assert response["success"], response
+    path = Path(response["path"])
+    payload = _payload(path)
+    tables = payload["runs"][0]["scopes"][0]["tables"]
+    expected = {
+        "comparison": payload["comparison_table"],
+        "0:0:ledger": tables["ledger"],
+        "0:0:trades": tables["trades"],
+    }
+    exports = re.findall(
+        r"data-table-json='([^']+)' data-json='([^']+)'", path.read_text()
+    )
+    assert {key for key, _ in exports} == set(expected)
+    for key, encoded in exports:
+        specification = json.loads(base64.b64decode(encoded))
+        assert specification == expected[key]
+        assert {"columns", "rows", "full_precision_values"} <= specification.keys()
+
+
 @pytest.mark.parametrize("saved_context", [None, "unknown", ["BTC/USDT"]])
 @pytest.mark.parametrize("sections", [[], ["overview", "settings"]])
 def test_legacy_nonobject_context_keeps_report_available(
