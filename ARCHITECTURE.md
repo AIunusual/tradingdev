@@ -84,7 +84,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 品質檢查與離線測試則使用候選 snapshot 內的入口與程式。
 `tooling/`、`research/` 不隨產品 wheel 發佈，也不屬於產品 application services。
 操作入口與檢查流程見[開發指南](docs/development.md)，研究原型用法見
-[README](README.md#mae-研究原型)。
+[開發指南的 MAE 研究原型](docs/development.md#mae-研究原型)。
 
 ## 核心概念與身分
 

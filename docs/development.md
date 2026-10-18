@@ -35,10 +35,28 @@ uv sync --locked --all-extras
 候選 snapshot 內的品質檢查與離線測試。
 
 `tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
-研究原型，用法見 [README](../README.md#mae-研究原型)。`tooling/` 與 `research/`
+研究原型，用法見 [MAE 研究原型](#mae-研究原型)。`tooling/` 與 `research/`
 不隨產品 wheel 發佈，Python 程式仍使用相同的 Ruff／strict Mypy 政策。
 原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
 直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
+
+## MAE 研究原型
+
+Repository 另附獨立的 MAE（最大不利變動）Streamlit 研究原型，
+可觀察固定持倉時間內 BTC/USDT 的逆向價格幅度。這個原型不屬於正式 Dashboard 功能。
+
+先自行準備 BTC/USDT 一分鐘行情，放在專案根目錄下固定的
+`data/processed/btcusdt_1m_2024_2025.parquet`。檔案至少須包含可轉換為 UTC
+時間的 `timestamp`，以及數值欄位 `high`、`low`、`close`；原型直接讀取這份檔案。
+在專案根目錄安裝圖表依賴並啟動：
+
+```bash
+uv sync --locked --extra dashboard
+uv run --locked --extra dashboard streamlit run research/mae_analysis.py
+```
+
+開啟終端機顯示的本機網址，選擇日期、持倉分鐘數與停損比例，查看 MAE 分布及統計。
+結束時按 `Ctrl+C`。
 
 ## 選擇性 LLM 測試
 
