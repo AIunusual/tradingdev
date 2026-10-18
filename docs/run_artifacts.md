@@ -680,6 +680,14 @@ claiming every suggested section is present. Included trade tables expose all
 records, sorting, text search and local CSV export; SVG equity and drawdown charts
 and scripts are embedded for offline use. UTC times, units, unavailable reasons,
 provenance and known overlap/interpretation limits are supplied by the backend.
+Paired-trade tables use Traditional Chinese column, status and direction labels,
+with distinct closing and end-of-period valuation fields. Prices are quote currency
+per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
+These numeric cells display two decimal places, with a precision note below the
+table; sorting uses the original values, including when displayed values are equal.
+Expandable raw records, embedded observations and CSV exports retain their original
+field names and values. Presentation changes create a new template version and report
+identity without modifying earlier reports or backtest results.
 
 The content digest includes source snapshots, template version, section order and
 commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as

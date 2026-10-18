@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tradingdev.adapters.cli.reports import main as report_cli_main
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -27,6 +29,7 @@ from tradingdev.domain.performance.artifacts import (
     ScopeObservations,
 )
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.presentation.reports import REPORT_TEMPLATE_VERSION
 from tradingdev.domain.strategies.execution import StrategyExecution
 
 
@@ -74,6 +77,7 @@ def _save(
         "2024-01-02T00:00:00Z",
         "2024-01-03T00:00:00Z",
     ),
+    trades: list[dict[str, Any]] | None = None,
 ) -> None:
     workspace, store, _ = context
     scopes = scopes or {"full": _scope()}
@@ -125,7 +129,9 @@ def _save(
         equity_curve=[100.0, 90.0, 125.0],
         returns=None if volume else [0.0, -0.1, 0.3888889],
         timestamps=list(timestamps) if timestamps is not None else None,
-        trades=[
+        trades=trades
+        if trades is not None
+        else [
             {
                 "entry_idx": 0,
                 "exit_idx": 2,
@@ -200,13 +206,226 @@ def test_report_uses_immutable_saved_evidence_and_deterministic_retry(
     assert scope["observations"]["trades"][0]["exit_price"] == 45.0
     text = path.read_text()
     assert "25.0000%" in text and "no_closed_trades" in text
-    assert "mark UTC" in text and "mark price" in text
+    assert "期末估值時間（UTC）" in text and "期末估值價格" in text
     assert "不是實際平倉" in text and "暖機" in text
     assert "&lt;/script&gt;&lt;img" in text
     assert "</script><img" not in text and "\\u003c/script\\u003e" in text
     assert "https://" not in text and "<svg" in text
     assert not list((workspace.root / "reports").rglob(".report-*"))
     assert not list((workspace.root / "reports").glob("*.publishing"))
+
+
+@pytest.mark.parametrize("via_cli", [False, True])
+@pytest.mark.parametrize(
+    ("status", "direction", "status_label", "direction_label"),
+    [
+        ("closed", 1, "已平倉", "做多"),
+        ("open", -1, "未平倉", "做空"),
+        (None, None, "未知", "未知"),
+        ("unrecognized", 0, "未知", "未知"),
+    ],
+)
+def test_trade_table_has_readable_labels_without_changing_saved_records(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    capsys: pytest.CaptureFixture[str],
+    via_cli: bool,
+    status: str | None,
+    direction: int | None,
+    status_label: str,
+    direction_label: str,
+) -> None:
+    workspace, _, service = context
+    trade = {
+        "status": status,
+        "direction": direction,
+        "entry_idx": 0,
+        "exit_idx": 2,
+        "entry_price": 50.0,
+        "exit_price": 45.0,
+        "size": 2.0,
+        "net_pnl": 9.9,
+        "fee": 0.1,
+        "note": "<script>unsafe()</script>",
+    }
+    _save(context, trades=[trade])
+    if via_cli:
+        report_cli_main(
+            [
+                "--workspace",
+                str(workspace.root),
+                "--run-id",
+                "run",
+                "--sections",
+                "trades",
+            ]
+        )
+        response = json.loads(capsys.readouterr().out)
+    else:
+        response = service.generate_report(["run"], sections=["trades"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    table = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
+        "</table>", 1
+    )[0]
+    headers = re.findall(r"<th><button data-column='(\d+)'>(.*?)</button></th>", table)
+    assert headers == list(
+        zip(
+            map(str, range(13)),
+            [
+                "序號",
+                "持倉狀態",
+                "交易方向",
+                "進場時間（UTC）",
+                "進場價格",
+                "平倉時間（UTC）",
+                "平倉價格",
+                "期末估值時間（UTC）",
+                "期末估值價格",
+                "數量（標的單位）",
+                "淨損益（報價貨幣）",
+                "手續費（報價貨幣）",
+                "原始資料",
+            ],
+            strict=True,
+        )
+    )
+    cells = re.findall(r"<td(?: [^>]*)?>(.*?)</td>", table, flags=re.DOTALL)
+    assert cells[:5] == [
+        "1",
+        status_label,
+        direction_label,
+        "2024-01-01T00:00:00+00:00",
+        "50.00",
+    ]
+    final_time = "2024-01-03T00:00:00+00:00"
+    missing = "未知／未記錄"
+    assert cells[5:7] == (
+        [final_time, "45.00"] if status == "closed" else [missing] * 2
+    )
+    assert cells[7:9] == ([final_time, "45.00"] if status == "open" else [missing] * 2)
+    assert cells[9:12] == ["2.00", "9.90", "0.10"]
+    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in cells[12]
+    assert "placeholder='狀態 / 方向 / 日期 / 文字'" in text
+    assert "每單位標的的報價貨幣金額" in text
+    assert _payload(path)["runs"][0]["scopes"][0]["observations"]["trades"] == [trade]
+    assert "const rows=dataset==='trades'?records:" in text
+    assert "下載全部原始交易 CSV" in text
+
+
+@pytest.mark.parametrize(
+    ("value", "display"),
+    [
+        (123.456, "123.46"),
+        (-123.456, "-123.46"),
+        (0.0, "0.00"),
+        (-0.0, "0.00"),
+        (0.0049, "0.00"),
+        (-0.0049, "0.00"),
+        (1e-8, "0.00"),
+        (12, "12.00"),
+        (12.3451, "12.35"),
+        (12.3452, "12.35"),
+    ],
+)
+def test_trade_table_rounds_display_but_preserves_numeric_precision(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    value: int | float,
+    display: str,
+) -> None:
+    _, _, service = context
+    trades = [
+        {
+            "status": status,
+            "direction": 1,
+            "entry_price": value,
+            "exit_price": value,
+            "size": value,
+            "net_pnl": value,
+            "fee": value,
+        }
+        for status in ("closed", "open")
+    ]
+    _save(context, trades=trades)
+    response = service.generate_report(["run"], sections=["trades"])
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    table, after = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
+        "</table>", 1
+    )
+    numeric_cells = re.findall(r"<td data-sort-value='([^']*)'>(.*?)</td>", table)
+    assert numeric_cells == [(str(value), display)] * 10
+    assert "<td>1</td>" in table and "<td>2</td>" in table
+    assert "四捨五入至小數點後兩位" in after
+    assert "排序、原始資料與 CSV 保留完整精度" in after
+    assert _payload(path)["runs"][0]["scopes"][0]["observations"]["trades"] == trades
+    assert f"&quot;net_pnl&quot;: {value}" in table
+
+
+@pytest.mark.parametrize("volume", [False, True])
+def test_trade_table_preserves_missing_values_and_empty_history(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], volume: bool
+) -> None:
+    _, _, service = context
+    _save(
+        context,
+        timestamps=None,
+        trades=[{"status": "open", "direction": -1}],
+        volume=volume,
+        scopes={"full": _scope(mode="volume" if volume else "signal")},
+    )
+    response = service.generate_report(["run"], sections=["trades"])
+    assert response["success"], response
+    text = Path(response["path"]).read_text()
+    table = text.split("<table id='trades-0-0' data-sortable>", 1)[1].split(
+        "</table>", 1
+    )[0]
+    cells = re.findall(r"<td>(.*?)</td>", table, flags=re.DOTALL)
+    assert cells[:3] == ["1", "未平倉", "做空"]
+    assert cells[3:12] == ["未知／未記錄"] * 9
+
+    _save(context, "empty", trades=[])
+    empty = service.generate_report(["empty"], sections=["trades"])
+    assert empty["success"], empty
+    text = Path(empty["path"]).read_text()
+    assert "本範圍沒有保存交易紀錄。" in text
+    assert "<table id='trades-" not in text
+
+
+@pytest.mark.parametrize("previous_version", ["6", "7"])
+def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+    previous_version: str,
+) -> None:
+    _, _, service = context
+    _save(context)
+    with monkeypatch.context() as previous:
+        previous.setattr(
+            "tradingdev.app.report_service.REPORT_TEMPLATE_VERSION", previous_version
+        )
+        old = service.generate_report(["run"], sections=["trades"])
+    assert old["success"], old
+    old_path = Path(old["path"])
+    old_content = old_path.read_bytes()
+    assert _payload(old_path)["template_version"] == previous_version
+
+    new = service.generate_report(["run"], sections=["trades"])
+    assert new["success"], new
+    assert new["report_id"] != old["report_id"]
+    new_path = Path(new["path"])
+    assert _payload(new_path)["template_version"] == REPORT_TEMPLATE_VERSION
+    manifest = json.loads((new_path.parent / "manifest.json").read_text())
+    assert manifest["template_version"] == REPORT_TEMPLATE_VERSION
+    assert old_path.read_bytes() == old_content
+    assert (
+        service.get_report_download(old["report_id"], expected_sha256=old["sha256"])[
+            "content"
+        ]
+        == old_content
+    )
+    assert service.generate_report(["run"], sections=["trades"]) == new
 
 
 def test_optional_sections_order_and_commentary_are_saved_and_escaped(

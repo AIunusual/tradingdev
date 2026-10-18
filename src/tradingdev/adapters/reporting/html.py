@@ -44,7 +44,8 @@ document.querySelectorAll('table[data-sortable] th button').forEach(button=>{
   const direction=button.dataset.direction==='asc'?-1:1;
   const rows=Array.from(body.rows);
   rows.sort((a,b)=>{
-   const x=a.cells[index].textContent.trim(),y=b.cells[index].textContent.trim();
+   const x=a.cells[index].dataset.sortValue??a.cells[index].textContent.trim();
+   const y=b.cells[index].dataset.sortValue??b.cells[index].textContent.trim();
    const nx=Number(x),ny=Number(y);
    const diff=x!==''&&y!==''&&Number.isFinite(nx)&&Number.isFinite(ny)
     ?nx-ny:x.localeCompare(y);
@@ -230,6 +231,23 @@ def _charts(scope: dict[str, Any]) -> str:
     )
 
 
+_TRADE_COLUMNS = (
+    ("#", "序號"),
+    ("status", "持倉狀態"),
+    ("direction", "交易方向"),
+    ("entry UTC", "進場時間（UTC）"),
+    ("entry price", "進場價格"),
+    ("exit UTC", "平倉時間（UTC）"),
+    ("exit price", "平倉價格"),
+    ("mark UTC", "期末估值時間（UTC）"),
+    ("mark price", "期末估值價格"),
+    ("size", "數量（標的單位）"),
+    ("net P&L", "淨損益（報價貨幣）"),
+    ("fees", "手續費（報價貨幣）"),
+    ("raw", "原始資料"),
+)
+
+
 def _trade_rows(scope: dict[str, Any]) -> list[dict[str, Any]]:
     observations = scope["observations"]
     timestamps = observations["timestamps"]
@@ -248,16 +266,16 @@ def _trade_rows(scope: dict[str, Any]) -> list[dict[str, Any]]:
 
         raw_direction = trade.get("direction")
         direction = (
-            "long"
-            if raw_direction == 1
-            else "short"
-            if raw_direction == -1
-            else "unknown"
+            "做多" if raw_direction == 1 else "做空" if raw_direction == -1 else "未知"
         )
         rows.append(
             {
                 "#": index + 1,
-                "status": status,
+                "status": "已平倉"
+                if is_closed
+                else "未平倉"
+                if status == "open"
+                else "未知",
                 "direction": direction,
                 "entry UTC": timestamp("entry_idx"),
                 "entry price": trade.get("entry_price"),
@@ -274,41 +292,47 @@ def _trade_rows(scope: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _trade_cell(key: str, value: Any) -> str:
+    if key == "raw":
+        return "<td>" + details_html("原始欄位", value) + "</td>"
+    if key != "#" and isinstance(value, int | float) and not isinstance(value, bool):
+        return f"<td data-sort-value='{escape(value)}'>{value:z.2f}</td>"
+    return "<td>" + value_html(value) + "</td>"
+
+
 def _trades(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     rows = _trade_rows(scope)
     identifier = f"trades-{run_index}-{scope_index}"
     prefix = (
         "<h3>完整交易紀錄</h3><p>包含全部已平倉與未平倉交易。"
-        "open 的 exit_idx/exit_price 為期末估值，不是實際平倉；"
-        "估值不代表已支付平倉費。展開原始欄位可查看所有保存內容。</p>"
+        "未平倉交易的期末估值不是實際平倉；估值不代表已支付平倉費。"
+        "價格為每單位標的的報價貨幣金額；數量以標的單位表示，"
+        "淨損益與手續費以報價貨幣表示。展開原始欄位可查看所有保存內容。</p>"
     )
     if not rows:
         return prefix + "<p>本範圍沒有保存交易紀錄。</p>"
     headers = "".join(
-        f"<th><button data-column='{i}'>{escape(key)}</button></th>"
-        for i, key in enumerate(rows[0])
+        f"<th><button data-column='{i}'>{escape(label)}</button></th>"
+        for i, (_, label) in enumerate(_TRADE_COLUMNS)
     )
     body = "".join(
         "<tr>"
-        + "".join(
-            "<td>"
-            + (details_html("原始欄位", value) if key == "raw" else value_html(value))
-            + "</td>"
-            for key, value in row.items()
-        )
+        + "".join(_trade_cell(key, row[key]) for key, _ in _TRADE_COLUMNS)
         + "</tr>"
         for row in rows
     )
     return (
         prefix + f"<p>共 {len(rows)} 筆，無分頁截斷。</p><div class='controls'>"
         f"<label>篩選 <input data-filter='{identifier}' "
-        "placeholder='open / 日期 / 文字'>"
+        "placeholder='狀態 / 方向 / 日期 / 文字'>"
         f"</label><button data-download='{run_index}:{scope_index}'>"
         "下載全部原始交易 CSV</button></div>"
         "<p class='muted'>CSV 保留全部原始欄位與交易，不受畫面篩選影響；"
         "以公式字元開頭的文字加單引號，避免試算表執行公式。</p>"
         f"<div class='scroll'><table id='{identifier}' data-sortable>"
         f"<thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
+        "<p class='muted'>價格、數量、淨損益與手續費僅在畫面四捨五入至小數點後兩位，"
+        "較小數值可能顯示為 0.00；排序、原始資料與 CSV 保留完整精度。</p>"
     )
 
 

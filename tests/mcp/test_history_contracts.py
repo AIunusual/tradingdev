@@ -367,6 +367,10 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         assert path.is_file() and report.sha256 == sha256_file(path)
         assert "&lt;script&gt;unsafe()&lt;/script&gt;" in path.read_text()
         assert "<script>unsafe()</script>" not in path.read_text()
+        assert "<button data-column='3'>進場時間（UTC）</button>" in path.read_text()
+        assert (
+            "<button data-column='10'>淨損益（報價貨幣）</button>" in path.read_text()
+        )
         assert store.get_artifact(report.artifact_id) is not None
         assert store.get_artifact(report.manifest_artifact_id) is not None
         again = ReportResponse.model_validate(
