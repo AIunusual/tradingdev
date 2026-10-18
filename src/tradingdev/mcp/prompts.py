@@ -82,8 +82,10 @@ Strategy development workflow
    absent legacy records. VectorBT generic balances are not exchange margin wallets.
    For reports, discover get_report_sections and compose generate_report(run_ids,
    sections, commentary) after inspecting completed or historical results.
-   The overview compares all run/scopes and links to individual result details
-   in the same offline HTML. metrics includes QuantStats performance analysis.
+   The overview compares all run/scopes. Detail links and result switching require
+   settings, metrics, equity, ledger or trades; otherwise selected provenance and
+   limitations appear in the main view.
+   metrics includes QuantStats performance analysis.
    ledger joins saved order attempts and bar-close states in chronological order,
    with Bokeh status filters and column checkboxes, static HTML and full-precision
    CSV/JSON. trades is supplementary paired-trade PnL, not an order/account ledger.

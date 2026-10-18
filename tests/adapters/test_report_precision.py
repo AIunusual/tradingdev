@@ -156,7 +156,7 @@ def comparison_spec(values: list[Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             }
         ]
     }
-    return comparison_table(payload), payload
+    return comparison_table(payload, navigate=True), payload
 
 
 def test_nullable_comparison_parameter_can_switch_numeric_precision() -> None:

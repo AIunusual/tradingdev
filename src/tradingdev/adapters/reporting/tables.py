@@ -154,7 +154,7 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
     )
 
 
-def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
+def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, Any]:
     """Compare every saved result without combining train/test or fold equity."""
     columns = [
         column("sequence", "結果序號", "integer", width=85),
@@ -268,7 +268,7 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
                 else "",
                 "symbol": context.get("symbol"),
                 "timeframe": context.get("timeframe"),
-                "detail": f"#result-{ri}-{si}",
+                "detail": f"#result-{ri}-{si}" if navigate else None,
             }
             row.update(
                 {
@@ -288,7 +288,11 @@ def comparison_table(payload: dict[str, Any]) -> dict[str, Any]:
                     )
             rows.append(row)
     return _with_precision(
-        {"columns": columns, "rows": rows, "navigate_field": "detail"}
+        {
+            "columns": columns,
+            "rows": rows,
+            "navigate_field": "detail" if navigate else None,
+        }
     )
 
 

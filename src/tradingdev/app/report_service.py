@@ -34,6 +34,7 @@ from tradingdev.domain.presentation.reports import (
     REPORT_SCHEMA_VERSION,
     REPORT_SECTIONS,
     REPORT_TEMPLATE_VERSION,
+    SCOPED_REPORT_SECTIONS,
 )
 
 
@@ -143,6 +144,9 @@ class ReportService:
             payload = self._load(run_ids)
             payload["sections"] = list(selected)
             payload["commentary"] = [dict(note) for note in notes]
+            payload["comparison_table"] = comparison_table(
+                payload, navigate=bool(SCOPED_REPORT_SECTIONS.intersection(selected))
+            )
             if set(selected) & {"overview", "ledger", "trades"}:
                 payload["renderers"] = {"bokeh": bokeh_provenance()}
             if "metrics" in selected:
@@ -326,7 +330,6 @@ class ReportService:
             "runs": runs,
             "default_scope_comparison": comparison,
         }
-        payload["comparison_table"] = comparison_table(payload)
         return payload
 
 

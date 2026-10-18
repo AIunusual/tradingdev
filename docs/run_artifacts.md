@@ -675,13 +675,20 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 16 uses two navigation levels within one offline HTML
-file. The overview compares every loaded run/scope, including effective parameters,
+Report schema 2 / template 17 uses two navigation levels within one offline HTML
+file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
+or `trades`) is selected. The overview compares every loaded run/scope, including
+effective parameters,
 date coverage, train/test role and principal saved metrics. A result link opens
 the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
 the reader back to the overview. This keeps all optimization training trials and
 the selected parameter's test result distinct. A report is generated explicitly
 after completed or historical result inspection, not automatically by execution.
+Without `overview`, a result chooser links to the selected detail sections.
+Without any detail sections, result links and result switching are absent;
+selected `provenance` and `limitations` sections appear directly in the main view.
+The overview, if selected, stays first; other sections keep their requested order.
+Unknown result hashes leave the main view visible rather than opening empty details.
 The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
 `trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
 `provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.

@@ -383,9 +383,10 @@ Signal 引擎同時保留 VectorBT 原生 order attempts 與帳戶序列，型�
 `ReportService` 共用此讀取路徑，提供章節目錄、建議範本與純文字評語介面。
 MCP、report CLI 與 dashboard 使用同一服務；HTML／SVG／Bokeh renderer 與不可覆寫的
 報告發佈位於 `adapters/reporting`。前端 LLM 選擇章節、順序並撰寫評價，
-後端呈現保存結果、表格、圖表與來源身分。單一離線 HTML 提供兩層導覽：
+後端呈現保存結果、表格、圖表與來源身分。選取單組詳情章節時，單一離線 HTML 提供兩層導覽：
 總覽列出全部 run／scope 的參數、期間、角色與主要績效，連到可返回總覽的單組詳情；
-不把最佳化所有訓練組合誤作獨立測試結果。選取 `metrics` 時，QuantStats adapter
+未選總覽時改用結果清單；未選任何單組詳情時，總覽、來源與限制直接在主畫面呈現，
+不產生空的詳情連結。不把最佳化所有訓練組合誤作獨立測試結果。選取 `metrics` 時，QuantStats adapter
 另以保存的報酬及設定生成原生完整 HTML，保留月報酬、回撤期間與滾動分析。
 這是可追溯的衍生分析，不覆寫歷史指標；保存值與原生報告的統計口徑各自標明。
 原生詳表直接輸出於主 HTML，純文字讀取不依賴 JavaScript；完整圖表透過隔離的

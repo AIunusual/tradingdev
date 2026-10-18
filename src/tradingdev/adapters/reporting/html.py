@@ -24,7 +24,10 @@ from tradingdev.adapters.reporting.labels import (
     scope_name as _scope_name,
 )
 from tradingdev.adapters.reporting.tables import render_table
-from tradingdev.domain.presentation.reports import REPORT_SECTIONS
+from tradingdev.domain.presentation.reports import (
+    REPORT_SECTIONS,
+    SCOPED_REPORT_SECTIONS,
+)
 
 _STYLE = """
 .metric{font-variant-numeric:tabular-nums}
@@ -118,11 +121,12 @@ async function loadTables(root){
 }
 function route(){
  const match=location.hash.match(/^#result-(\d+)-(\d+)$/);
- const scope=match&&reportData.runs[Number(match[1])]?.scopes[Number(match[2])];
+ const anchor=match&&document.getElementById('result-'+match[1]+'-'+match[2]);
+ const scope=anchor&&reportData.runs[Number(match[1])]?.scopes[Number(match[2])];
  const key=scope?'scope-'+match[1]+'-'+match[2]:null;
  const overview=document.getElementById('overview-view');
  const details=document.getElementById('result-view');
- overview.hidden=Boolean(scope);details.hidden=!scope;
+ overview.hidden=Boolean(scope);if(details){details.hidden=!scope;}
  document.querySelectorAll('.scope').forEach(el=>{el.hidden=el.dataset.scope!==key;});
  if(scope){
   if(select){select.value='result-'+match[1]+'-'+match[2];}
@@ -589,9 +593,15 @@ _LIMITATIONS = (
 
 def _overview(payload: dict[str, Any]) -> str:
     comparison = payload["default_scope_comparison"]
+    navigation = (
+        "點選互動表格的資料列，或文字表格的結果序號，進入已選取的單組詳情。"
+        if payload["comparison_table"]["navigate_field"]
+        else "本報告未選取單組詳情章節。"
+    )
     result = (
         "<p>每列是一個保存結果。先核對訓練／測試用途、日期與成本，再比較績效；"
-        "點選互動表格的資料列，或文字表格的結果序號，進入該組績效與交易核帳。</p>"
+        + navigation
+        + "</p>"
         "<p class='muted'>下列績效採當次保存值，保留其定義；"
         "不同日期或定義的數值不應直接排名。"
         "各折摘要不是合併資金曲線，詳情保留其描述統計。</p>"
@@ -673,11 +683,7 @@ def _provenance(payload: dict[str, Any]) -> str:
 
 def _scoped_section(payload: dict[str, Any], section: str) -> str:
     result = ""
-    first = next(
-        key
-        for key in payload["sections"]
-        if key not in {"overview", "limitations", "provenance"}
-    )
+    first = next(key for key in payload["sections"] if key in SCOPED_REPORT_SECTIONS)
     for ri, run in enumerate(payload["runs"]):
         for si, scope in enumerate(run["scopes"]):
             anchor = f" id='result-{ri}-{si}'" if section == first else ""
@@ -708,6 +714,7 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
 
 def render_report(payload: dict[str, Any], report_id: str) -> str:
     """Two navigable reading levels in one portable, fully inspectable artifact."""
+    has_details = bool(SCOPED_REPORT_SECTIONS.intersection(payload["sections"]))
     options = []
     links = []
     for ri, run in enumerate(payload["runs"]):
@@ -733,7 +740,10 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             f"<section data-section='{key}'>"
             f"<h2>{escape(REPORT_SECTIONS[key].title)}</h2>" + content + "</section>"
         )
-        (overview if key == "overview" else sections).append(rendered)
+        if key == "overview":
+            overview.insert(0, rendered)
+        else:
+            (sections if has_details else overview).append(rendered)
     commentary = ""
     if payload["commentary"]:
         commentary = (
@@ -752,16 +762,26 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         )
     navigation = (
         "<nav class='report-nav panel' id='scope-controls'>"
-        "<a href='#overview'>← 返回參數比較總覽</a>"
-        "<label for='scope-select'>切換結果</label><select id='scope-select'>"
+        + (
+            "<a href='#overview'>← 返回參數比較總覽</a>"
+            if "overview" in payload["sections"]
+            else "<a href='#overview'>← 返回結果清單</a>"
+        )
+        + "<label for='scope-select'>切換結果</label><select id='scope-select'>"
         + "".join(options)
         + "</select></nav>"
+    )
+    introduction = (
+        "從參數比較總覽或結果清單選擇單組結果，檢視已選取的詳情章節。"
+        "所有內容保存在同一份離線 HTML；返回首頁與瀏覽器上一頁皆可切換。"
+        if has_details
+        else "本報告僅呈現已選取的總覽或共用說明，未選取單組詳情章節。"
+        "所有內容保存在同一份離線 HTML。"
     )
     body = (
         "<header><span class='badge'>TRADINGDEV · 回測研究</span>"
         "<h1>回測結果與交易核帳</h1>"
-        "<p>第一層比較各組參數，第二層檢視單組績效、委託成交與帳戶變化。"
-        "所有內容保存在同一份離線 HTML；返回總覽與瀏覽器上一頁皆可切換。</p>"
+        f"<p>{introduction}</p>"
         "<details><summary>報告內容與來源</summary>"
         "<p>資料取自已驗證 JSON 產物；不重跑策略、不載入 pickle，"
         "也不讀取目前策略設定。未選取章節不表示資料不存在。</p>"
@@ -790,16 +810,20 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "".join(overview)
         + (
             "<section><h2>選擇結果</h2><ul>" + "".join(links) + "</ul></section>"
-            if not overview
+            if has_details and not overview
             else ""
         )
         + commentary
         + "</div>"
-        + "<div id='result-view' hidden>"
-        + navigation
-        + "<h2 id='result-heading'>單組結果</h2>"
-        + "".join(sections)
-        + "</div>"
+        + (
+            "<div id='result-view' hidden>"
+            + navigation
+            + "<h2 id='result-heading'>單組結果</h2>"
+            + "".join(sections)
+            + "</div>"
+            if has_details
+            else ""
+        )
         + "<footer><p class='muted'>JSON manifest 保存 HTML SHA-256、章節與評語；"
         "原回測產物不改寫。原始資料與表格資料保留於內嵌 JSON。</p></footer>"
     )

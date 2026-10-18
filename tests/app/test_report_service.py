@@ -821,6 +821,88 @@ def test_overview_keeps_historical_metric_units_in_separate_columns(
     )
 
 
+@pytest.mark.parametrize(
+    "sections",
+    [
+        [],
+        ["overview"],
+        ["provenance"],
+        ["limitations"],
+        ["overview", "provenance"],
+        ["overview", "limitations"],
+        ["provenance", "limitations"],
+        ["overview", "provenance", "limitations"],
+        ["provenance", "overview", "limitations"],
+        ["limitations", "provenance", "overview"],
+    ],
+)
+def test_reports_without_details_keep_selected_sections_in_main_view(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService], sections: list[str]
+) -> None:
+    _, _, service = context
+    _save(context, scopes={"full": _scope(), "other": _scope()})
+    response = service.generate_report(["run"], sections=sections)
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    payload = _payload(path)
+    comparison = payload["comparison_table"]
+    assert len(comparison["rows"]) == 2
+    assert comparison["navigate_field"] is None
+    assert all(row["detail"] is None for row in comparison["rows"])
+    assert not re.findall(r"href='#result-\d+-\d+'", text)
+    assert not re.findall(r"id='result-\d+-\d+'", text)
+    assert "id='scope-select'" not in text
+    assert "id='result-view'" not in text
+    assert "<h2>選擇結果</h2>" not in text
+    main = text.split("<div id='overview-view'>", 1)[1].split("<footer>", 1)[0]
+    expected = (["overview"] if "overview" in sections else []) + [
+        key for key in sections if key != "overview"
+    ]
+    assert re.findall(r"<section data-section='([^']+)'>", main) == expected
+    if "overview" in sections:
+        assert "本報告未選取單組詳情章節" in main
+        encoded = re.search(r"data-table-json='comparison' data-json='([^']+)'", main)
+        assert encoded is not None
+        assert json.loads(base64.b64decode(encoded[1])) == comparison
+
+
+@pytest.mark.parametrize(
+    "section", ["settings", "metrics", "equity", "ledger", "trades"]
+)
+@pytest.mark.parametrize("include_overview", [True, False])
+def test_selected_detail_sections_have_unique_destinations(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    section: str,
+    include_overview: bool,
+) -> None:
+    _, _, service = context
+    _save(context, scopes={"full": _scope(), "other": _scope()})
+    selected = ["provenance", section, "limitations"]
+    if include_overview:
+        selected.append("overview")
+    response = service.generate_report(["run"], sections=selected)
+    assert response["success"], response
+    path = Path(response["path"])
+    text = path.read_text()
+    comparison = _payload(path)["comparison_table"]
+    assert comparison["navigate_field"] == "detail"
+    targets = [row["detail"] for row in comparison["rows"]]
+    assert targets == ["#result-0-0", "#result-0-1"]
+    assert re.findall(r"id='(result-\d+-\d+)'", text) == [
+        target[1:] for target in targets
+    ]
+    assert set(re.findall(r"href='(#result-\d+-\d+)'", text)) == set(targets)
+    details = text.split("<div id='result-view' hidden>", 1)[1].split("<footer>", 1)[0]
+    assert re.findall(r"<section data-section='([^']+)'>", details) == [
+        "provenance",
+        section,
+        "limitations",
+    ]
+    assert ("<h2>選擇結果</h2>" in text) is not include_overview
+    assert ("← 返回結果清單" in details) is not include_overview
+
+
 def test_every_report_table_json_download_contains_the_full_table_specification(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:

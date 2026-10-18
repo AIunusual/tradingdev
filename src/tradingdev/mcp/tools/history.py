@@ -215,8 +215,10 @@ def register(
         Every report embeds the complete loaded data for all scopes of the runs,
         including saved trades, equity and execution configuration, even with [].
         Section selection does not remove underlying data from the HTML.
-        The overview compares all run/scopes and links to individual result
-        details in the same offline HTML. metrics includes native QuantStats
+        The overview compares all run/scopes. Detail links and result switching
+        require settings, metrics, equity, ledger or trades; without these,
+        selected provenance and limitations appear in the main view.
+        metrics includes native QuantStats
         performance analysis. ledger combines order attempts and bar-close
         valuations with Bokeh status filters and column checkboxes. Static tables
         remain readable without JavaScript; CSV/JSON download buttons require it
