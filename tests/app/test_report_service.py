@@ -17,6 +17,7 @@ import pytest
 
 from tradingdev.adapters.cli.reports import main as report_cli_main
 from tradingdev.adapters.reporting.labels import metric_label, unit_label
+from tradingdev.adapters.reporting.quantstats_report import QuantStatsReportError
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.performance import PerformanceStore
@@ -177,6 +178,111 @@ def _payload(path: Path) -> dict[str, Any]:
     content = text.split("<script id='report-data' type='application/json'>", 1)[1]
     parsed: dict[str, Any] = json.loads(content.split("</script>", 1)[0])
     return parsed
+
+
+def test_quantstats_analysis_is_scoped_derived_evidence_with_versioned_identity(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _, service = context
+    _save(context, scopes={"train": _scope(), "test": _scope()}, default_scope="test")
+    before = {p: p.read_bytes() for p in workspace.runs.rglob("*") if p.is_file()}
+    provider_version = "one"
+    calls = []
+
+    def analysis(scope: dict[str, Any]) -> dict[str, Any]:
+        calls.append(scope["scope_id"])
+        return {
+            "available": True,
+            "reason": None,
+            "html": f"<!doctype html><p>Native {scope['scope_id']}</p>",
+            "tables_html": "<table><tr><td>Native metric 12.34%</td></tr></table>",
+            "metadata": {"providers": {"quantstats": provider_version}},
+        }
+
+    monkeypatch.setattr(
+        "tradingdev.app.report_service.build_quantstats_report", analysis
+    )
+    first = service.generate_report(["run"], sections=["metrics"])
+    assert first["success"], first
+    assert set(calls) == {"train", "test"}
+    path = Path(first["path"])
+    content = path.read_text()
+    scopes = _payload(path)["runs"][0]["scopes"]
+    for scope in scopes:
+        assert scope["values"]["total_return"] == 0.25
+        assert scope["quantstats"]["html"].endswith(f"{scope['scope_id']}</p>")
+    assert "sandbox=''" in content and "frame-src 'self'" in content
+    assert "data-quantstats='0:0'" in content and "data-quantstats='0:1'" in content
+    assert "下載 QuantStats 完整績效 HTML" in content
+    assert "不是逐筆交易統計" in content
+    # Text readers can access native metrics without evaluating the iframe loader.
+    body = content.split("<script id='report-data'", 1)[0]
+    assert "<td>Native metric 12.34%</td>" in body
+    assert body.count("<td>Native metric 12.34%</td>") == 2
+    no_script = body.split("<noscript>", 1)[1].split("</noscript>", 1)[0]
+    assert ".scope[hidden]{display:block}" in no_script
+    assert "#scope-controls,.quantstats-frame,[data-quantstats-download]" in no_script
+    assert "以下展開全部結果範圍" in no_script
+    manifest = json.loads(path.with_name("manifest.json").read_text())
+    assert set(manifest["derived_analytics"]["run"]) == {"train", "test"}
+    assert "html" not in manifest["derived_analytics"]["run"]["train"]
+    assert "tables_html" not in manifest["derived_analytics"]["run"]["train"]
+    assert service.generate_report(["run"], sections=["metrics"]) == first
+
+    provider_version = "two"
+    second = service.generate_report(["run"], sections=["metrics"])
+    assert second["success"] and second["report_id"] != first["report_id"]
+    assert path.read_text() == content
+    assert {
+        p: p.read_bytes() for p in workspace.runs.rglob("*") if p.is_file()
+    } == before
+
+
+def test_omitted_metrics_do_not_generate_quantstats_analysis(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, service = context
+    _save(context)
+    monkeypatch.setattr(
+        "tradingdev.app.report_service.build_quantstats_report",
+        lambda _scope: pytest.fail("omitted analytics must not run"),
+    )
+    response = service.generate_report(["run"], sections=["trades", "equity"])
+    assert response["success"], response
+    scope = _payload(Path(response["path"]))["runs"][0]["scopes"][0]
+    assert "quantstats" not in scope and scope["observations"]["returns"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ValueError("invalid native output"), QuantStatsReportError("provider failure")],
+)
+def test_quantstats_generation_failure_does_not_publish_or_change_sources(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+) -> None:
+    workspace, _, service = context
+    _save(context)
+    before = {p: p.read_bytes() for p in workspace.runs.rglob("*") if p.is_file()}
+
+    def fail(_scope: dict[str, Any]) -> dict[str, Any]:
+        raise failure
+
+    monkeypatch.setattr("tradingdev.app.report_service.build_quantstats_report", fail)
+    response = service.generate_report(["run"])
+    assert response["code"] == "report_generation_failed"
+    with pytest.raises(SystemExit) as error:
+        report_cli_main(["--workspace", str(workspace.root), "--run-id", "run"])
+    assert error.value.code == 1
+    assert json.loads(capsys.readouterr().out) == response
+    assert not (workspace.root / "reports").exists()
+    assert {
+        p: p.read_bytes() for p in workspace.runs.rglob("*") if p.is_file()
+    } == before
 
 
 def test_report_uses_immutable_saved_evidence_and_deterministic_retry(

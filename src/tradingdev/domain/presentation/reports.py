@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 REPORT_SCHEMA_VERSION = 1
-REPORT_TEMPLATE_VERSION = "11"
+REPORT_TEMPLATE_VERSION = "12"
 
 
 @dataclass(frozen=True)
@@ -34,8 +34,9 @@ REPORT_SECTIONS = MappingProxyType(
             ),
             ReportSectionDefinition(
                 "metrics",
-                "保存績效指標",
-                "Original values, units, definitions and unavailable reasons.",
+                "績效分析與保存指標",
+                "QuantStats HTML analysis derived from saved returns, plus original "
+                "values, definitions and explicit unavailable reasons.",
             ),
             ReportSectionDefinition(
                 "equity",

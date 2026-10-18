@@ -27,15 +27,40 @@ _STYLE = """
 .metric{font-variant-numeric:tabular-nums}
 svg{width:100%;height:auto;display:block}svg text{font-size:12px;fill:#52657a}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}.scope[hidden]{display:none}
+.quantstats-frame{width:100%;height:1050px;border:1px solid #dce5ef;background:white}
 @media(max-width:750px){.two{grid-template-columns:1fr}}
 @media print{.scope[hidden]{display:block}}
 """
 _SCRIPT = """
 'use strict';
 const select=document.getElementById('scope-select');
+const reportData=JSON.parse(document.getElementById('report-data').textContent);
+function quantstatsDocument(key){
+ const [runIndex,scopeIndex]=key.split(':').map(Number);
+ return reportData.runs[runIndex].scopes[scopeIndex].quantstats.html;
+}
+function loadQuantstats(){
+ document.querySelectorAll('iframe[data-quantstats]').forEach(frame=>{
+  if(frame.closest('.scope').hidden||frame.dataset.loaded){return;}
+  frame.srcdoc=quantstatsDocument(frame.dataset.quantstats);
+  frame.dataset.loaded='true';
+ });
+}
 if(select){select.addEventListener('change',()=>{
  document.querySelectorAll('.scope').forEach(el=>{el.hidden=el.dataset.scope!==select.value;});
+ loadQuantstats();
 });}
+loadQuantstats();
+document.querySelectorAll('[data-quantstats-download]').forEach(button=>{
+ button.addEventListener('click',()=>{
+  const key=button.dataset.quantstatsDownload;
+  const blob=new Blob([quantstatsDocument(key)],{type:'text/html;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement('a');link.href=url;
+  link.download='quantstats_'+key.replace(':','_')+'.html';link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+ });
+});
 document.querySelectorAll('[data-filter]').forEach(input=>{
  input.addEventListener('input',()=>{
   const table=document.getElementById(input.dataset.filter);
@@ -140,7 +165,7 @@ def _enum(field: str, value: Any) -> Any:
     return enum_label(field, value) if isinstance(value, str) else value
 
 
-def _metrics(scope: dict[str, Any]) -> str:
+def _saved_metrics(scope: dict[str, Any]) -> str:
     unavailable = _object(scope["metadata"].get("unavailable"))
     rows = []
     for key, value in scope["values"].items():
@@ -173,6 +198,56 @@ def _metrics(scope: dict[str, Any]) -> str:
         + "".join(rows)
         + "</tbody></table></div><p class='muted'>小數與百分比顯示至小數點後兩位；"
         "原始值及保存定義保留完整精度與原文。</p>"
+    )
+
+
+def _metrics(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
+    saved = _saved_metrics(scope)
+    analysis = _object(scope.get("quantstats"))
+    if not analysis:
+        return saved
+    evidence = details_html(
+        "QuantStats 分析來源與計算設定", analysis.get("metadata", {})
+    )
+    if not analysis.get("available"):
+        return (
+            "<p class='notice'>此範圍無法產生 QuantStats 完整分析："
+            + escape(analysis.get("message", analysis.get("reason", "資料不足")))
+            + "。以下仍顯示當次保存的績效結果。</p>"
+            + evidence
+            + saved
+        )
+    settings = _object(scope.get("metadata", {}).get("settings"))
+    rates = (
+        "QuantStats 原生表格的 Sharpe 與 Sortino 均採無風險利率 "
+        + _format_metric(settings.get("risk_free_rate"), "fraction")
+        + "；本專案保存的 Sortino 採目標報酬率 "
+        + _format_metric(settings.get("required_return"), "fraction")
+        + "。原生滾動 Sharpe／Sortino 圖使用零利率。"
+    )
+    return (
+        "<h3>QuantStats 完整績效分析</h3>"
+        "<p>由保存的報酬觀測值產生，包含績效詳表、月報酬、回撤期間、"
+        "報酬分布與滾動分析；不重跑策略、不改寫原回測結果。</p>"
+        "<p class='notice'>原生報告的勝率、連勝與盈虧比依報酬期間計算，"
+        "不是逐筆交易統計。圖表與表格保留 QuantStats 原生名稱；"
+        "已平倉交易統計請見下方保存指標。</p>"
+        f"<p>{rates}</p>"
+        f"<div class='controls'><button data-quantstats-download='{run_index}:"
+        f"{scope_index}'>下載 QuantStats 完整績效 HTML</button></div>"
+        "<p class='muted'>下方可捲動閱讀；完整列印請使用下載的績效 HTML。</p>"
+        f"<iframe class='quantstats-frame' title='QuantStats 完整績效分析' "
+        f"sandbox='' data-quantstats='{run_index}:{scope_index}'></iframe>"
+        "<details><summary>QuantStats 績效詳表（文字版）</summary>"
+        "<p>EOY 表的 Return 是當年度日報酬率加總；Cumulative 是當年度複利報酬率，"
+        "不是跨年累積報酬率。Return、Cumulative 與 Drawdown 欄名標示百分比單位。</p>"
+        "<div class='scroll'>"
+        + (analysis.get("tables_html") or "")
+        + "</div></details>"
+        + evidence
+        + "<details><summary>當次保存的績效與交易統計（含定義及不可用原因）</summary>"
+        + saved
+        + "</details>"
     )
 
 
@@ -870,7 +945,7 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
             if section == "settings":
                 result += _scope_settings(run, scope)
             elif section == "metrics":
-                result += _metrics(scope)
+                result += _metrics(scope, ri, si)
             elif scope["observations"] is None:
                 result += (
                     "<p>折疊摘要沒有單一交易帳本或權益曲線；"
@@ -947,7 +1022,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "account_history",
     }:
         selector = (
-            "<div class='panel'><label for='scope-select'>選擇執行／結果範圍</label>"
+            "<div class='panel' id='scope-controls'>"
+            "<label for='scope-select'>選擇執行／結果範圍</label>"
             "<select id='scope-select'>" + "".join(options) + "</select>"
             "<p class='muted'>切換選取章節的範圍；列印時展開全部範圍。</p></div>"
         )
@@ -972,6 +1048,10 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "<h3>來源執行</h3>"
         + "".join(_identity_html(identity) for identity in identities)
         + "</header>"
+        + "<noscript><style>.scope[hidden]{display:block}"
+        "#scope-controls,.quantstats-frame,[data-quantstats-download]{display:none}"
+        "</style><p>未啟用 JavaScript：以下展開全部結果範圍，"
+        "可直接閱讀各範圍的文字版績效詳表。</p></noscript>"
         + selector
         + "".join(sections)
         + commentary
@@ -986,4 +1066,5 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         script=_SCRIPT,
         data=payload,
         data_id="report-data",
+        allow_embedded_frames=True,
     )

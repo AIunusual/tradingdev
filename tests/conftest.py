@@ -13,6 +13,15 @@ import pytest
 pytest_plugins = ["tests.llm_plugin"]
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Isolate plotting caches before QuantStats is imported during collection."""
+    directory = TemporaryDirectory(prefix="tradingdev-plot-cache-")
+    config.add_cleanup(directory.cleanup)
+    environment = pytest.MonkeyPatch()
+    config.add_cleanup(environment.undo)
+    environment.setenv("MPLCONFIGDIR", directory.name)
+
+
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
     """Remove each test's files during teardown, including failed tests.

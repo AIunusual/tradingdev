@@ -680,6 +680,40 @@ execution configuration, even for `sections=[]`.
 Omitting a section does not remove its underlying data from the HTML; recipients
 of the file can still read that embedded data.
 
+Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
+eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
+preserves the first return, does not fill missing dates and does not fetch market
+or benchmark data. Each scope remains independent. The adapter records its
+version, calculation/rendering package versions, saved settings, source artifact
+hashes, input/daily-return digests and native calculation conventions. The native
+HTML and metadata participate in report identity; `manifest.derived_analytics`
+contains the metadata and explicit unavailable reasons, without duplicating HTML.
+Original `performance.json` values and definitions are never replaced.
+
+Native performance tables are rendered directly in the main HTML for text readers
+without JavaScript, with percentage units written in headers instead of relying
+on native CSS pseudo-elements. All scopes are expanded when JavaScript is disabled.
+The full chart report is loaded from embedded JSON into a
+sandboxed iframe when its scope is selected. A local download preserves the native
+report together with a source banner and escaped JSON evidence. QuantStats' native
+metric/chart names remain English; the surrounding explanation and saved metrics
+are Traditional Chinese. Period win rates and profit factors are distinct from
+closed-trade statistics. Native table Sharpe/Sortino use the saved risk-free rate;
+native rolling Sharpe/Sortino charts use zero, while the saved Sortino metric uses
+the separate configured required return. The native EOY table's `Return` sums daily
+returns within each year; `Cumulative` compounds within each year, not across years.
+Both columns use percentage units. These differences are disclosed.
+
+Known unsupported data (including volume, fold summaries, missing dates/settings,
+nonpositive capital, ambiguous large daily returns and negative risk-free rates
+ignored by the native provider) produce explicit unavailable messages while saved
+metrics remain readable. Unknown provider exceptions become `QuantStatsReportError`
+and fail generation with `report_generation_failed`; process interrupts propagate.
+The renderer
+fixes SVG identifiers, removes generation dates and the external favicon, restores
+plot state, and removes temporary output/new figures on success or failure. It
+does not close pre-existing figures or silently substitute another HTML provider.
+
 The `executions` and `account_history` sections, also in `standard`, display these
 two saved ledgers separately from paired trades. Each has independent search,
 sorting and full CSV export, with nested market/before/after fields flattened for

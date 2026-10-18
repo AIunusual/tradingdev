@@ -9,6 +9,10 @@ from dataclasses import asdict
 from typing import Any
 
 from tradingdev.adapters.reporting.html import render_report
+from tradingdev.adapters.reporting.quantstats_report import (
+    QuantStatsReportError,
+    build_quantstats_report,
+)
 from tradingdev.adapters.reporting.storage import (
     ReportPublicationError,
     publish_report,
@@ -132,6 +136,12 @@ class ReportService:
             payload = self._load(run_ids)
             payload["sections"] = list(selected)
             payload["commentary"] = [dict(note) for note in notes]
+            if "metrics" in selected:
+                for run in payload["runs"]:
+                    for scope in run["scopes"]:
+                        scope["quantstats"] = build_quantstats_report(
+                            {**scope, "report_source": run["provenance"]}
+                        )
             encoded = _encode(payload)
             report_id = hashlib.sha256(encoded).hexdigest()
             report_html = render_report(payload, report_id).encode("utf-8")
@@ -144,6 +154,19 @@ class ReportService:
                 "content_sha256": report_id,
                 "html_sha256": hashlib.sha256(report_html).hexdigest(),
                 "sources": [run["provenance"] for run in payload["runs"]],
+                "derived_analytics": {
+                    run["identity"]["run_id"]: {
+                        scope["scope_id"]: {
+                            key: value
+                            for key, value in scope["quantstats"].items()
+                            if key not in {"html", "tables_html"}
+                        }
+                        for scope in run["scopes"]
+                        if "quantstats" in scope
+                    }
+                    for run in payload["runs"]
+                    if "metrics" in selected
+                },
                 "scope_count": scope_count,
                 "sections": list(selected),
                 "omitted_sections": [
@@ -194,7 +217,7 @@ class ReportService:
             ReportPublicationError,
         ) as exc:
             return _error(exc.code, str(exc))
-        except (OSError, ValueError, sqlite3.Error) as exc:
+        except (OSError, ValueError, sqlite3.Error, QuantStatsReportError) as exc:
             return _error("report_generation_failed", str(exc))
 
     def _load(self, run_ids: list[str]) -> dict[str, Any]:
