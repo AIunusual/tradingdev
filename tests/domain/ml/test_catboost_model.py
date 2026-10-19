@@ -1,11 +1,73 @@
 """Tests for the CatBoost direction model."""
 
+import pickle
+from typing import Any
+
+import numpy as np
 import pandas as pd
 import pytest
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.models.catboost_model import CatBoostDirectionModel
+from tradingdev.domain.ml.registry.model_registry import (
+    compute_model_id,
+    content_sha256,
+)
 from tradingdev.domain.ml.schemas import CatBoostModelConfig
+
+
+def test_repeat_training_has_identical_artifact_bytes_and_predictions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from catboost import CatBoostClassifier
+
+    frame = pd.DataFrame(
+        {"feature": np.arange(60, dtype=float), "target": [-1, 0, 1] * 20}
+    )
+    original_fit = CatBoostClassifier.fit
+    original_probabilities: list[np.ndarray[Any, Any]] = []
+
+    def fit_with_distinct_metadata(
+        estimator: CatBoostClassifier, *args: Any, **kwargs: Any
+    ) -> CatBoostClassifier:
+        original_fit(estimator, *args, **kwargs)
+        original_probabilities.append(estimator.predict_proba(frame[["feature"]]))
+        metadata = estimator.get_metadata()
+        metadata["model_guid"] = f"random-{len(original_probabilities)}"
+        metadata["train_finish_time"] = f"2024-01-0{len(original_probabilities)}"
+        return estimator
+
+    monkeypatch.setattr(CatBoostClassifier, "fit", fit_with_distinct_metadata)
+    config = CatBoostModelConfig(n_estimators=5, max_depth=2, n_jobs=1)
+    models = [CatBoostDirectionModel(config) for _ in range(2)]
+    blobs: list[bytes] = []
+    for index, model in enumerate(models):
+        model.train(frame)
+        blob = pickle.dumps(model)
+        blobs.append(blob)
+        restored = pickle.loads(blob)
+        assert isinstance(restored, CatBoostDirectionModel)
+        np.testing.assert_array_equal(
+            model.predict_proba(frame).to_numpy(), original_probabilities[index]
+        )
+        pd.testing.assert_frame_equal(
+            restored.predict_proba(frame), model.predict_proba(frame)
+        )
+    assert blobs[0] == blobs[1]
+    identifiers = [
+        compute_model_id(
+            model_name="catboost_direction",
+            parameters=config.model_dump(),
+            feature_names=("feature",),
+            content_hash=content_sha256(blob),
+        )
+        for blob in blobs
+    ]
+    assert identifiers[0] == identifiers[1]
+
+    changed = CatBoostDirectionModel(config)
+    changed.train(frame.assign(target=[1, 0, -1] * 20))
+    assert pickle.dumps(changed) != blobs[0]
 
 
 class TestCatBoostDirectionModel:

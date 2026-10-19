@@ -89,6 +89,15 @@ class CatBoostDirectionModel(BaseModel):
             fit_kwargs["eval_set"] = [(x_val, y_val)]
 
         clf.fit(x_train, y_train, **fit_kwargs)
+        # CatBoost embeds a random GUID and wall-clock completion time in its
+        # native blob. Neither affects inference, but both would turn identical
+        # seeded training into a distinct artifact and leaderboard candidate.
+        # Normalize before serialization; the registry still hashes and verifies
+        # every byte of the persisted model, including all prediction state.
+        metadata = clf.get_metadata()
+        for key in ("model_guid", "train_finish_time"):
+            if key in metadata:
+                del metadata[key]
         self._model = clf
 
         logger.info(
