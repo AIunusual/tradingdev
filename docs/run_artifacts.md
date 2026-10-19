@@ -209,10 +209,21 @@ used at build time, so later evaluation does not substitute the currently
 installed feature code's identity.
 
 A cache hit requires matching computation metadata and feature columns, a
-matching Parquet hash, and matching stored columns and row count. Missing or
-unusable entries are reported as cache misses and recomputed. The default
-retention limits are 256 entries and 512 MiB, counting matrices and sidecars.
-Successful reads update recency; writes sweep incomplete pairs and evict least
+matching Parquet hash, and matching stored columns and row count. Sidecars must
+contain a JSON object with string identity fields and SHA-256 hash, a nonnegative
+integer row count, and distinct string lists for stored and feature columns;
+feature columns must be present in the stored columns. A present last-use time
+must be finite and numeric. Malformed metadata, missing files, hash or shape
+mismatches and invalid Parquet content are cache misses, allowing the service
+to recompute and replace the disposable cache entry. The matrix is parsed from
+the same bytes whose hash was verified. Recomputing does not replace source
+market files or immutable dataset versions.
+
+Verification reads and cache publication propagate permission and other storage
+I/O failures; these are not reported as misses. Updating recency is best effort
+and logs a warning if it fails, as does an unsuccessful eviction deletion.
+The default retention limits are 256 entries and 512 MiB, counting matrices and
+sidecars. Successful reads update recency; writes sweep incomplete pairs and evict least
 recently used entries. The just-written entry is protected, so a matrix larger
 than the byte budget remains stored and logs a warning. Failed deletions may
 also leave the cache above its limits. These are retention targets, not a hard

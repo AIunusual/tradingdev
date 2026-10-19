@@ -14,10 +14,10 @@ against what the caller asked for *and* against what was written.
 * the **shape** must still match the sidecar, which catches a frame that was
   replaced by one of a different length.
 
-Every failed check means the same thing: recompute. That is the safe direction
-to fail in - a miss costs time, a wrong hit costs the correctness of every
-dataset, model and leaderboard row built on top of it - so a rejection is
-logged and reported as a miss, never raised.
+Invalid metadata, missing files and corrupt matrix content are logged as misses
+so the caller can recompute. File-access failures such as denied permissions
+propagate: treating an inaccessible cache as invalid could hide a storage problem
+and trigger writes that cannot succeed either.
 
 A cache that only ever grows is the same class of bug as a cache that serves
 stale data: it fills the disk with matrices nobody will ask for again, because
@@ -31,8 +31,11 @@ matrix is verified by the same checks as any other.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -186,6 +189,9 @@ class FeatureCacheStore:
             The stored frame, or ``None`` when there is nothing stored, when
             the stored entry describes a different computation, or when the
             files no longer match their recorded content.
+
+        Raises:
+            OSError: If files cannot be accessed for a reason other than absence.
         """
         key = identity.key
         record = self._read_meta(self.meta_path_for(key))
@@ -194,17 +200,24 @@ class FeatureCacheStore:
         if not self._describes(record, identity, feature_columns):
             return self._miss(key, "sidecar describes a different computation")
         parquet = self.path_for(key)
-        if not parquet.exists():
+        try:
+            blob = parquet.read_bytes()
+        except FileNotFoundError:
             return self._miss(key, "matrix file is missing")
-        if sha256_file(parquet) != record["content_hash"]:
+        if hashlib.sha256(blob).hexdigest() != record["content_hash"]:
             return self._miss(key, "matrix content no longer matches its record")
         try:
-            frame = pd.read_parquet(parquet)
-        except (OSError, ValueError) as error:
+            # Decode the bytes already verified. OS failures from reading the
+            # file above propagate; errors in this in-memory parse mean corrupt
+            # cache content, not a filesystem permission or device failure.
+            # Missing or invalid embedded pandas metadata can raise KeyError,
+            # TypeError or AttributeError while Arrow reconstructs the frame.
+            frame = pd.read_parquet(io.BytesIO(blob))
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
             return self._miss(key, f"matrix is unreadable ({error})")
-        if len(frame) != int(record["rows"]):
+        if len(frame) != record["rows"]:
             return self._miss(key, "matrix row count changed")
-        if list(frame.columns) != list(record["columns"]):
+        if list(frame.columns) != record["columns"]:
             return self._miss(key, "matrix columns changed")
         # A hit makes an entry the newest one. Without this the cache would
         # evict by age rather than by use, and a matrix read on every run
@@ -452,27 +465,64 @@ class FeatureCacheStore:
     ) -> bool:
         """Whether a sidecar describes exactly the requested computation."""
         return (
-            record.get("symbol") == identity.symbol
+            record.get("cache_key") == identity.key
+            and record.get("symbol") == identity.symbol
             and record.get("timeframe") == identity.timeframe
             and record.get("data_fingerprint") == identity.data_fingerprint
             and record.get("feature_set") == identity.feature_set
             and record.get("code_fingerprint") == identity.code_fingerprint
-            and list(record.get("feature_columns", ()))
-            == [str(column) for column in feature_columns]
+            and record["feature_columns"] == [str(column) for column in feature_columns]
         )
 
     @staticmethod
     def _read_meta(path: Path) -> dict[str, Any] | None:
-        """Read a sidecar, treating an unreadable or incomplete one as a miss."""
+        """Reject malformed cache metadata without hiding file-access failures."""
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (FileNotFoundError, ValueError):
             return None
         if not isinstance(record, dict):
             return None
-        # A sidecar without these cannot verify anything, so it is a miss.
-        required = ("content_hash", "rows", "columns", "feature_columns")
-        return record if all(key in record for key in required) else None
+        for field in (
+            "cache_key",
+            "symbol",
+            "timeframe",
+            "data_fingerprint",
+            "feature_set",
+            "code_fingerprint",
+            "content_hash",
+        ):
+            if not isinstance(record.get(field), str):
+                return None
+        content_hash = record["content_hash"]
+        if len(content_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in content_hash
+        ):
+            return None
+        # Do not coerce JSON strings, floats or booleans into a row count.
+        rows = record.get("rows")
+        if type(rows) is not int or rows < 0:
+            return None
+        for field in ("columns", "feature_columns"):
+            columns = record.get(field)
+            if (
+                not isinstance(columns, list)
+                or not all(isinstance(column, str) for column in columns)
+                or len(set(columns)) != len(columns)
+            ):
+                return None
+        if not set(record["feature_columns"]) <= set(record["columns"]):
+            return None
+        if "used_at" in record:
+            used_at = record["used_at"]
+            if type(used_at) not in (int, float):
+                return None
+            try:
+                if not math.isfinite(used_at):
+                    return None
+            except OverflowError:
+                return None
+        return record
 
     @staticmethod
     def _write_meta(path: Path, record: dict[str, Any]) -> None:

@@ -16,11 +16,14 @@ between a bug fix and a stale answer.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import pytest
+from pyarrow import parquet as pq
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -140,6 +143,80 @@ class TestReuse:
 
 
 class TestStaleBars:
+    @pytest.mark.parametrize(
+        "columns", [None, [None], pytest.param("missing", id="missing-columns")]
+    )
+    def test_invalid_pandas_metadata_rebuilds_without_replacing_sources_or_datasets(
+        self, workspace: WorkspacePaths, columns: object
+    ) -> None:
+        service = _service(workspace)
+        first = _build(service)
+        dataset_id = first["dataset"]["dataset_id"]
+        dataset_root = workspace.ml_datasets / dataset_id
+        retained = {
+            path: path.read_bytes()
+            for path in (
+                *workspace.processed_data.glob("*.parquet"),
+                *dataset_root.iterdir(),
+            )
+            if path.is_file()
+        }
+        store = FeatureCacheStore(workspace.ml_feature_cache)
+        (key,) = store.keys()
+        matrix = store.path_for(key)
+        table = pq.read_table(matrix)
+        metadata = dict(table.schema.metadata)
+        pandas_metadata = json.loads(metadata[b"pandas"])
+        if columns == "missing":
+            del pandas_metadata["columns"]
+        else:
+            pandas_metadata["columns"] = columns
+        metadata[b"pandas"] = json.dumps(pandas_metadata).encode("utf-8")
+        pq.write_table(table.replace_schema_metadata(metadata), matrix)
+        sidecar = store.meta_path_for(key)
+        record = json.loads(sidecar.read_text("utf-8"))
+        record["content_hash"] = hashlib.sha256(matrix.read_bytes()).hexdigest()
+        sidecar.write_text(json.dumps(record), "utf-8")
+
+        rebuilt = _build(service)
+
+        assert rebuilt["dataset"]["features_from_cache"] is False
+        assert rebuilt["dataset"]["dataset_id"] == dataset_id
+        assert rebuilt["dataset"]["content_hash"] == first["dataset"]["content_hash"]
+        assert {path: path.read_bytes() for path in retained} == retained
+        assert _build(service)["dataset"]["features_from_cache"] is True
+
+    @pytest.mark.parametrize("field", ["rows", "columns", "feature_columns"])
+    def test_malformed_sidecars_rebuild_without_replacing_sources_or_datasets(
+        self, workspace: WorkspacePaths, field: str
+    ) -> None:
+        service = _service(workspace)
+        first = _build(service)
+        dataset_id = first["dataset"]["dataset_id"]
+        dataset_root = workspace.ml_datasets / dataset_id
+        retained = {
+            path: path.read_bytes()
+            for path in (
+                *workspace.processed_data.glob("*.parquet"),
+                *dataset_root.iterdir(),
+            )
+            if path.is_file()
+        }
+        store = FeatureCacheStore(workspace.ml_feature_cache)
+        (key,) = store.keys()
+        sidecar = store.meta_path_for(key)
+        record = json.loads(sidecar.read_text("utf-8"))
+        record[field] = "invalid" if field == "rows" else None
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+
+        rebuilt = _build(service)
+
+        assert rebuilt["dataset"]["features_from_cache"] is False
+        assert rebuilt["dataset"]["dataset_id"] == dataset_id
+        assert rebuilt["dataset"]["content_hash"] == first["dataset"]["content_hash"]
+        assert {path: path.read_bytes() for path in retained} == retained
+        assert _build(service)["dataset"]["features_from_cache"] is True
+
     def test_edited_bars_force_a_recompute(self, workspace: WorkspacePaths) -> None:
         service = _service(workspace)
         before = _rows(workspace, _build(service))
