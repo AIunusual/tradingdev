@@ -30,7 +30,6 @@ def _frame() -> pd.DataFrame:
 
 
 def test_zscore_uses_training_statistics_only() -> None:
-    """The headline guarantee: the test bars never touch the fitted scalars."""
     frame = _frame()
     train = frame.iloc[:5]
     pipeline = ProcessorPipeline([ZScoreNorm(fields=("x",))]).fit(train)
@@ -41,7 +40,6 @@ def test_zscore_uses_training_statistics_only() -> None:
 
 
 def test_fitting_on_the_full_frame_would_give_a_different_answer() -> None:
-    """Documents the leak: a full-frame fit compresses the test bars."""
     frame = _frame()
     honest = ProcessorPipeline([ZScoreNorm(fields=("x",))]).fit(frame.iloc[:5])
     leaky = ProcessorPipeline([ZScoreNorm(fields=("x",))]).fit(frame)
@@ -71,7 +69,6 @@ def test_fit_returns_the_pipeline_for_chaining() -> None:
 
 
 def test_refitting_on_a_wider_segment_changes_the_output() -> None:
-    """The fingerprint proves what the last fit actually saw."""
     frame = _frame()
     pipeline = ProcessorPipeline([ZScoreNorm(fields=("x",))])
 
@@ -230,7 +227,6 @@ def test_fit_transform_split_scales_the_test_side_with_training_statistics() -> 
 
 
 def test_pipeline_is_reusable_across_walk_forward_folds() -> None:
-    """Every fold refits, and the row counts agree with the split itself."""
     frame = pd.DataFrame({"x": [float(index) for index in range(200)]})
     pipeline = ProcessorPipeline([ZScoreNorm(fields=("x",))])
 

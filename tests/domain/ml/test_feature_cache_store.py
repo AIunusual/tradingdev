@@ -1,10 +1,4 @@
-"""What a feature cache store may hand back, and what it must refuse.
-
-Every test here is a rejection. That is deliberate: the store's only failure
-mode that matters is serving a matrix that is not the one that was asked for,
-and the only way to be sure of that is to check, on the way out, that the files
-still say what they said when they were written.
-"""
+"""Feature cache reads verify identity, declared columns, content and shape."""
 
 from __future__ import annotations
 
@@ -267,7 +261,7 @@ class TestRejections:
     def test_a_different_declared_contract_misses(
         self, store: FeatureCacheStore
     ) -> None:
-        """Same set name, different columns: the matrix is not this one."""
+        """The feature-set name alone cannot verify its columns."""
         store.save(_identity(), _frame(), feature_columns=_COLUMNS)
         assert store.load(_identity(), feature_columns=("feat_a",)) is None
 
@@ -340,7 +334,6 @@ class TestRejections:
     def test_a_rejection_leaves_the_entry_recomputable(
         self, store: FeatureCacheStore
     ) -> None:
-        """A miss must be a miss, not a broken store: saving again must work."""
         identity = _identity()
         store.save(identity, _frame(), feature_columns=_COLUMNS)
         store.meta_path_for(identity.key).write_text("garbage", "utf-8")

@@ -1,10 +1,4 @@
-"""Tests for MLService.predict against a cached parquet fixture.
-
-``predict`` is what closes the loop: a stored model is scored against a stored
-dataset so the resulting signal can be judged by ``evaluate_signal``. These
-tests cover that hand-off plus the two safety gates the artifact registry was
-designed for (tamper detection and the feature-contract check).
-"""
+"""Saved-model predictions, evaluation hand-off and artifact integrity checks."""
 
 from __future__ import annotations
 
@@ -67,8 +61,7 @@ def _build(service: MLService, **overrides: object) -> dict[str, Any]:
 
 
 def _train(service: MLService, dataset_id: str, **overrides: object) -> dict[str, Any]:
-    # Deep enough to actually separate the classes: an underfit model predicts
-    # a single class, which would make the signal a constant series.
+    # Avoid underfitting to a constant signal, which cannot be evaluated.
     kwargs: dict[str, object] = {
         "dataset_id": dataset_id,
         "model_kind": "xgboost_direction",
@@ -124,7 +117,6 @@ class TestPredict:
     def test_feeds_straight_into_evaluate_signal(
         self, service: MLService, trained: tuple[str, str]
     ) -> None:
-        """The whole point of predict: its output is evaluate_signal's input."""
         model_id, dataset_id = trained
         prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
             "prediction"
@@ -188,12 +180,7 @@ class TestPredictRejectsBadInput:
     def test_feature_contract_mismatch_is_rejected(
         self, service: MLService, trained: tuple[str, str]
     ) -> None:
-        """A model trained on one feature set must not score another.
-
-        This is the payoff of folding the feature contract into the model
-        fingerprint: the columns are compared before any prediction is made,
-        so a silently wrong-column score cannot happen.
-        """
+        """Reject mismatched feature columns before prediction."""
         model_id, _ = trained
         other_dataset = str(
             _build(service, feature_set="technical")["dataset"]["dataset_id"]

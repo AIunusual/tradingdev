@@ -1,12 +1,4 @@
-"""The key that decides whether a feature matrix may be reused.
-
-A cache key is a claim that two computations are the same computation, so every
-test here is one way that claim could be wrong: bars that were edited without
-changing size, two instruments carrying identical bars, a feature set renamed,
-a bug fixed in the feature code. Each has to produce a different key, because
-the alternative is a dataset - and every model and leaderboard row built on it -
-silently computed from the wrong inputs.
-"""
+"""Cache keys distinguish bars, instruments, feature sets and feature code."""
 
 from __future__ import annotations
 
@@ -78,7 +70,6 @@ class TestDataFingerprint:
         )
 
     def test_a_copy_with_a_new_mtime_agrees(self, tmp_path: Path) -> None:
-        """A refreshed cache file is the same data, not new data."""
         path = tmp_path / "bars.parquet"
         _BARS.to_parquet(path, index=False)
         before = data_fingerprint(pd.read_parquet(path))
@@ -117,7 +108,6 @@ class TestFeatureCacheKey:
         assert _key(**{field: "something-else"}) != _key()
 
     def test_two_instruments_with_identical_bars_do_not_share_a_key(self) -> None:
-        """A synthetic feed can hand two symbols byte-identical bars."""
         assert _key(symbol="BTC/USDT") != _key(symbol="ETH/USDT")
 
     def test_the_same_bars_at_two_timeframes_do_not_share_a_key(self) -> None:
@@ -167,7 +157,6 @@ class TestFeatureCodeFingerprint:
     def test_does_not_depend_on_the_working_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A key that moved with the cwd could not be shared between runs."""
         outside = feature_code_fingerprint()
         monkeypatch.chdir(tmp_path)
         assert feature_code_fingerprint() == outside
@@ -178,7 +167,7 @@ class TestFeatureCodeFingerprint:
         """A fix inside a helper must invalidate, not just a fix in a builder."""
         real = feature_code_fingerprint()
         original = feature_cache._package_sources()
-        assert original  # the real sources were read, not an empty package
+        assert original
         tampered = [(name, source + b"\n# patched\n") for name, source in original[:1]]
         monkeypatch.setattr(
             feature_cache, "_package_sources", lambda: tampered + list(original[1:])
@@ -199,8 +188,7 @@ class TestFeatureCodeFingerprint:
     def test_an_unreadable_source_is_an_error_not_a_guess(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Silently falling back to 'unchanged' would serve features built by
-        a version that is no longer there to be read."""
+        """Unknown source must fail rather than reuse potentially stale features."""
         from tradingdev.domain.ml import features as features_package
 
         monkeypatch.setattr(features_package, "__path__", [])

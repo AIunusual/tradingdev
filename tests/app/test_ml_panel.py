@@ -1,10 +1,4 @@
-"""Tests for build_panel against cached parquet fixtures for two symbols.
-
-The fixtures are what ``ensure_data`` leaves behind. ``ETH/USDT`` is written
-with a 24-bar hole in the middle, which is exactly the situation the calendar
-exists for: a naive concat would hand the panel 24 half-empty rows, or
-silently reweight the sample towards ``BTC/USDT``.
-"""
+"""Panel alignment with a 24-bar ETH gap that would bias naive concatenation."""
 
 from __future__ import annotations
 
@@ -186,11 +180,7 @@ class TestBuildPanel:
     def test_missing_policy_is_inert_under_intersection(
         self, service: MLService
     ) -> None:
-        """Every intersection date is traded by every symbol: nothing to fill.
-
-        So those options must not fork the identity, or the same panel would be
-        stored twice under two ids.
-        """
+        """No dates need filling, so missing policies must not fork dataset identity."""
         assert (
             _build(service, missing_policy="forward_fill", max_staleness=3)["panel"][
                 "dataset_id"

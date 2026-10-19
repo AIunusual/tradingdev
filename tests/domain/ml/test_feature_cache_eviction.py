@@ -1,16 +1,6 @@
-"""A bounded cache, and the proof that bounding it cannot change an answer.
+"""Bounded cache eviction preserves surviving values and permits recomputation.
 
-Eviction is the one place where a cache deletes something on purpose, so these
-tests ask two questions of every removal:
-
-1. **was the right thing removed** - the entry nobody has used, not the one
-   that is about to be read again, and never anything still loadable;
-2. **is what is left still correct** - an entry that survives eviction must
-   load with exactly the values it was written with, and one that was evicted
-   must be recomputed rather than served from somewhere else.
-
-The clock is injected everywhere. Recency decided by wall time would make
-these tests race against however fast the machine happened to be.
+An injected clock makes LRU order independent of execution speed.
 """
 
 from __future__ import annotations
@@ -87,8 +77,6 @@ def root(tmp_path: Path) -> Path:
 
 
 class TestBounds:
-    """The bounds themselves."""
-
     def test_an_unbounded_cache_keeps_everything(self, root: Path) -> None:
         clock = _Clock()
         store = _store(root, clock=clock)
@@ -121,7 +109,6 @@ class TestBounds:
     def test_a_bound_of_zero_is_rejected(
         self, root: Path, field: str, bad: int
     ) -> None:
-        """A bound that keeps nothing is a different thing, said by accident."""
         with pytest.raises(ValueError, match="must be at least 1"):
             _store(root, **{field: bad})  # type: ignore[arg-type]
 
@@ -136,8 +123,7 @@ class TestBounds:
         assert stats.over_limit is False
 
     def test_stats_sees_a_cache_that_grew_past_its_bound(self, root: Path) -> None:
-        """The bound can be tightened after the fact; stats is how a caller
-        finds out the cache is now over it."""
+        """Reopening with a tighter bound can leave existing entries over budget."""
         clock = _Clock()
         _store(root, max_entries=8, clock=clock).save(
             _identity(), _frame(1.0), feature_columns=_COLUMNS
@@ -156,8 +142,6 @@ class TestBounds:
 
 
 class TestLeastRecentlyUsed:
-    """Which entry goes when the cache is full."""
-
     def test_the_oldest_entry_goes_first(self, root: Path) -> None:
         clock = _Clock()
         store = _store(root, max_entries=1, clock=clock)
@@ -169,11 +153,7 @@ class TestLeastRecentlyUsed:
         assert store.keys() == (_identity(data_fingerprint="bars-3").key,)
 
     def test_reading_an_entry_makes_it_new(self, root: Path) -> None:
-        """The point of LRU: what is read again is not what gets thrown away.
-
-        Without recording reads, this cache would evict by age and discard the
-        one matrix that is used on every single run.
-        """
+        """LRU tracks reads, not just publication age."""
         clock = _Clock()
         store = _store(root, max_entries=2, clock=clock)
         older = _identity(data_fingerprint="bars-1")
@@ -195,9 +175,7 @@ class TestLeastRecentlyUsed:
         assert newer.key not in remaining
 
     def test_keep_protects_an_entry_even_when_it_is_oldest(self, root: Path) -> None:
-        """``keep`` is what lets a caller sweep right after writing: the entry
-        that was just computed is the one that must survive, even though it is
-        competing with everything already there."""
+        """Explicit keep overrides recency during a post-write sweep."""
         clock = _Clock()
         keeper = _identity(data_fingerprint="bars-1")
         victim = _identity(data_fingerprint="bars-2")
@@ -207,8 +185,7 @@ class TestLeastRecentlyUsed:
         clock.advance()
         roomy.save(victim, _frame(2.0), feature_columns=_COLUMNS)
 
-        # Room for one, and the oldest of the two is the one being kept: left
-        # to itself, eviction would take the keeper.
+        # Without keep, the tighter bound would evict the oldest entry.
         bounded = _store(root, max_entries=1, clock=clock)
         report = bounded.evict(keep=keeper.key)
 
@@ -216,8 +193,6 @@ class TestLeastRecentlyUsed:
         assert bounded.keys() == (keeper.key,)
 
     def test_writing_protects_what_was_just_written(self, root: Path) -> None:
-        """A bounded cache that could discard the entry it was asked to keep
-        would not be a cache - it would be a queue."""
         clock = _Clock()
         store = _store(root, max_entries=1, clock=clock)
         first = _identity(symbol="BTC/USDT")
@@ -239,8 +214,7 @@ class TestLeastRecentlyUsed:
             _identity(data_fingerprint="bars-1"), _frame(1.0), feature_columns=_COLUMNS
         )
         size_of_one = store.stats().total_bytes
-        # Room for one, whatever one happens to cost: the bound is a budget,
-        # and this test must not depend on how parquet compressed today.
+        # Derive the byte budget from actual Parquet compression.
         bounded = _store(root, max_bytes=size_of_one, clock=clock)
         clock.advance()
         bounded.save(
@@ -263,8 +237,6 @@ class TestLeastRecentlyUsed:
     def test_an_entry_without_a_recorded_use_is_not_treated_as_new(
         self, root: Path
     ) -> None:
-        """Entries written before recency was recorded must not outlive
-        everything else just because their timestamp is missing."""
         store = _store(root, max_entries=1)
         older = _identity(data_fingerprint="bars-1")
         store.save(older, _frame(1.0), feature_columns=_COLUMNS)
@@ -280,8 +252,6 @@ class TestLeastRecentlyUsed:
 
 
 class TestSweep:
-    """Removing what could never have been loaded again."""
-
     def test_a_matrix_without_its_sidecar_is_garbage(self, root: Path) -> None:
         store = _store(root, clock=_Clock())
         store.save(_identity(), _frame(1.0), feature_columns=_COLUMNS)
@@ -306,8 +276,6 @@ class TestSweep:
         assert lonely.exists() is False
 
     def test_a_write_sweeps_the_garbage_too(self, root: Path) -> None:
-        """Eviction is not a maintenance command somebody has to remember to
-        run: the cache tidies itself every time it grows."""
         store = _store(root, clock=_Clock())
         store.save(_identity(), _frame(1.0), feature_columns=_COLUMNS)
         orphan = root / "orphan.parquet"
@@ -326,8 +294,7 @@ class TestSweep:
         store = _store(root, clock=_Clock())
         identity = _identity()
         store.save(identity, _frame(1.0), feature_columns=_COLUMNS)
-        # A sidecar missing what a load checks is one that can never let an
-        # entry through, so the matrix it guards is dead weight.
+        # Missing verification fields make the matrix unusable.
         store.meta_path_for(identity.key).write_text(
             json.dumps({"cache_key": identity.key}), encoding="utf-8"
         )
@@ -361,9 +328,7 @@ class TestSweep:
         pd.testing.assert_frame_equal(loaded, _frame(1.0))
 
     def test_a_half_written_file_is_left_alone(self, root: Path) -> None:
-        """Deleting another writer's staging file would fail its write, so a
-        sweep ignores it: an interrupted write costs disk, and a failed one
-        costs an answer."""
+        """A sweep must not delete another writer's staging file."""
         store = _store(root, clock=_Clock())
         store.save(_identity(), _frame(1.0), feature_columns=_COLUMNS)
         staging = root / "in-flight.parquet.tmp"
@@ -394,8 +359,6 @@ class TestSweep:
 
 
 class TestEvictionCannotChangeAnAnswer:
-    """What survives, and what comes back after being evicted."""
-
     def test_a_surviving_entry_still_loads_its_own_values(self, root: Path) -> None:
         clock = _Clock()
         store = _store(root, max_entries=1, clock=clock)
@@ -413,8 +376,6 @@ class TestEvictionCannotChangeAnAnswer:
     def test_an_evicted_entry_misses_instead_of_serving_another(
         self, root: Path
     ) -> None:
-        """The dangerous outcome is not a missing entry, it is a cache that
-        answers with something close enough."""
         clock = _Clock()
         store = _store(root, max_entries=1, clock=clock)
         first = _identity(data_fingerprint="bars-1")
@@ -447,8 +408,6 @@ class TestEvictionCannotChangeAnAnswer:
         assert store.keys() == (first.key,)
 
     def test_evicting_does_not_disturb_the_other_entry(self, root: Path) -> None:
-        """Two entries with different bar versions, different symbols and
-        different feature code: evicting one must leave the others exactly."""
         clock = _Clock()
         store = _store(root, max_entries=3, clock=clock)
         identities = [

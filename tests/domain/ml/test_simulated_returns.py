@@ -17,7 +17,6 @@ def _seeded_returns(count: int) -> tuple[pd.Series, pd.Series]:
 
 
 def test_perfect_signal_yields_a_positive_long_short_book() -> None:
-    """The headline: a signal that equals the return must trade profitably."""
     signal, forward = _seeded_returns(300)
     result = simulate_strategy_returns(signal, forward, n_quantiles=5)
 
@@ -36,7 +35,6 @@ def test_inverse_signal_yields_a_negative_long_short_book() -> None:
 
 
 def test_uninformative_signal_is_roughly_zero() -> None:
-    """A signal unrelated to returns must not pretend to be profitable."""
     rng = np.random.default_rng(2)
     signal = pd.Series(rng.normal(size=400))
     forward = pd.Series(rng.normal(size=400))
@@ -110,13 +108,7 @@ def test_collapsed_signal_is_rejected() -> None:
 
 
 def test_discrete_signal_yields_one_stratum_per_value() -> None:
-    """A direction model emits -1/0/1; every quantile edge would be a tie.
-
-    Before this was handled, ``duplicates="drop"`` collapsed such a signal
-    into a single bin, so no direction model could ever be simulated. Now each
-    distinct value is its own stratum, which is exactly the short/flat/long
-    split a long-short book needs.
-    """
+    """Tied quantile edges must preserve the -1/0/1 short/flat/long strata."""
     signal = pd.Series([-1.0, 0.0, 1.0] * 20)
     forward = pd.Series([-0.02, 0.0, 0.02] * 20)
     result = simulate_strategy_returns(signal, forward, n_quantiles=5)
@@ -154,11 +146,10 @@ def test_deterministic_across_calls() -> None:
 
 
 def test_simulated_returns_on_walk_forward_folds() -> None:
-    """Compose with the purged splits: evaluate the book out-of-sample."""
     rng = np.random.default_rng(3)
     n = 400
     forward = pd.Series(rng.normal(size=n))
-    signal = forward  # a perfectly predictive signal
+    signal = forward
 
     for split in purged_walk_forward_splits(n, horizon=5, n_splits=4):
         test_start, test_end = split.test

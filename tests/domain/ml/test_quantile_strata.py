@@ -1,9 +1,5 @@
-"""Quantile stratification of a signal, including discrete signals.
-
-A direction model emits only ``-1``/``0``/``1``. Every quantile edge on such a
-signal is a tie, so the stratification used to collapse to a single bin and the
-strata analysis silently became meaningless. These tests pin the rule: one
-stratum per distinct value when the signal is coarser than the requested bins.
+"""Discrete signals need one stratum per distinct value when coarser than
+requested quantiles; tied edges must not collapse direction predictions.
 """
 
 from __future__ import annotations

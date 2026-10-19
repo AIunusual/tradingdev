@@ -105,7 +105,6 @@ def test_build_dataset_then_train_model_through_mcp(service: MLService) -> None:
 
 
 def test_build_train_predict_through_mcp(service: MLService) -> None:
-    """The closed loop: build a dataset, train on it, score it, judge it."""
     mcp = FastMCP("ml-loop-test")
     ml.register(mcp, service)
 
@@ -166,7 +165,6 @@ def test_build_train_predict_through_mcp(service: MLService) -> None:
 
 
 def test_predict_rejects_a_mismatched_dataset(service: MLService) -> None:
-    """A model must not score a dataset built from another feature set."""
     mcp = FastMCP("ml-mismatch-test")
     ml.register(mcp, service)
 
@@ -307,7 +305,6 @@ def _build(
 
 
 def test_train_model_returns_a_purged_validation_block(service: MLService) -> None:
-    """Asking for a scheme must actually produce out-of-sample numbers."""
     mcp = FastMCP("ml-validation-test")
     ml.register(mcp, service)
     dataset_id = _build(mcp).dataset.dataset_id
@@ -344,7 +341,6 @@ def test_train_model_without_a_scheme_reports_no_validation(
 
 
 def test_every_scheme_the_contract_offers_is_accepted(service: MLService) -> None:
-    """The menu and the tool must not drift: each advertised name must work."""
     mcp = FastMCP("ml-scheme-menu-test")
     ml.register(mcp, service)
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
@@ -395,7 +391,6 @@ def test_train_model_rejects_a_zero_fold_count(service: MLService) -> None:
 
 
 def test_build_dataset_reports_feature_reuse(service: MLService) -> None:
-    """Reuse is exposed, not silent: the caller can see the work was saved."""
     mcp = FastMCP("ml-cache-test")
     ml.register(mcp, service)
     arguments = {

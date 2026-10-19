@@ -1,18 +1,4 @@
-"""Feature reuse through the service, and everything that must defeat it.
-
-The service only has to answer one question correctly - "may I reuse this
-matrix?" - and getting it wrong is invisible: the dataset it returns still looks
-like a dataset. So each test here changes exactly one thing that the answer
-depends on (the bars, the symbol, the timeframe, the feature set, the feature
-code) and then checks both halves of the contract: the reuse flag says
-``False``, *and* the rows are the rows the changed input actually produces.
-
-The test that matters most is the one where the code changes but the
-fingerprint does not: that is the only situation in which a cache can serve a
-matrix no longer produced by the code in the repository, and it is here to show
-that the fingerprint - not the bars, not the feature set - is what stands
-between a bug fix and a stale answer.
-"""
+"""Feature-cache hits, invalidation and eviction preserve computed datasets."""
 
 from __future__ import annotations
 
@@ -107,12 +93,10 @@ class TestReuse:
     def test_a_reused_matrix_is_identical_to_a_recomputed_one(
         self, workspace: WorkspacePaths
     ) -> None:
-        """A hit must save work, never change an answer."""
         service = _service(workspace)
         computed = _rows(workspace, _build(service))
         reused = _rows(workspace, _build(service))
-        # A service whose cache is empty cannot hit, so whatever it returns is
-        # what a recompute from these bars has to produce.
+        # An empty cache forces an independent recomputation.
         empty = FeatureCacheStore(workspace.root / "elsewhere")
         assert empty.keys() == ()
         forced = _rows(
@@ -231,15 +215,12 @@ class TestStaleBars:
     def test_an_edit_that_keeps_the_file_size_is_still_seen(
         self, workspace: WorkspacePaths
     ) -> None:
-        """Size and mtime would both have called this 'unchanged'."""
         service = _service(workspace)
         before = _rows(workspace, _build(service))
         path = workspace.processed_data / "btcusdt_1h_2024.parquet"
         size_before = path.stat().st_size
         bars = pd.read_parquet(path)
-        # Swapped, not overwritten: the file keeps its exact byte length, so a
-        # size-based check would call this "unchanged". The swap sits well past
-        # the warm-up rows, where a change is actually visible in the output.
+        # Preserve file size but change observable values after warmup.
         bars.loc[100, "close"], bars.loc[101, "close"] = (
             bars.loc[101, "close"],
             bars.loc[100, "close"],
@@ -272,7 +253,6 @@ class TestIdentity:
     def test_identical_bars_under_another_symbol_are_not_reused(
         self, workspace: WorkspacePaths
     ) -> None:
-        """Two instruments can carry the same bars; they are not one series."""
         service = _service(workspace)
         assert _build(service, symbol="BTC/USDT")["dataset"]["features_from_cache"] is (
             False
@@ -321,8 +301,7 @@ class TestIdentity:
         assert second["dataset"]["dataset_id"] != first["dataset"]["dataset_id"]
         one = _rows(workspace, first)
         five = _rows(workspace, second)
-        # Compared on the shared prefix: a longer horizon drops a longer
-        # unlabelled tail, which is itself proof the label was rebuilt.
+        # Longer horizons drop more unlabelled tail rows; compare the shared prefix.
         assert len(five) < len(one)
         assert not np.allclose(
             five["forward_return"].to_numpy()[: len(five)],
@@ -350,9 +329,7 @@ class TestStaleCode:
         workspace: WorkspacePaths,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Fix the feature code, keep the fingerprint, and you get the old
-        matrix back - which is exactly why the fingerprint has to change when
-        the code does."""
+        """Code edits reuse stale features when fingerprints stay unchanged."""
         from tradingdev.domain.ml.features import registry as feature_registry
         from tradingdev.domain.ml.features.registry import FeatureSet
 
@@ -423,8 +400,7 @@ class TestPanel:
     def test_a_panel_reuses_the_work_a_single_symbol_dataset_already_did(
         self, workspace: WorkspacePaths
     ) -> None:
-        """A panel is the same per-symbol computation, so its first build is a
-        hit once each symbol has been built on its own."""
+        """Panels reuse the same per-symbol feature computation."""
         service = _service(workspace)
         assert (
             _build(service, symbol="BTC/USDT")["dataset"]["features_from_cache"]
@@ -439,12 +415,7 @@ class TestPanel:
 
 
 class TestEviction:
-    """A cache that is too small holds less work, never different work.
-
-    Eviction is allowed to cost time. It is not allowed to cost correctness,
-    so every test here ends by comparing what the bounded cache produced
-    against what an unbounded one produces from the same bars.
-    """
+    """Bounded caches must produce the same datasets as recomputation."""
 
     @staticmethod
     def _bounded(workspace: WorkspacePaths, max_entries: int) -> MLService:
@@ -478,8 +449,6 @@ class TestEviction:
     def test_an_evicted_matrix_is_recomputed_not_substituted(
         self, workspace: WorkspacePaths
     ) -> None:
-        """After BTC is pushed out, building it again must recompute it - and
-        the recomputation has to agree with the first one exactly."""
         service = self._bounded(workspace, 1)
         first = _rows(workspace, _build(service))
         _build(service, symbol="ETH/USDT")
@@ -503,8 +472,7 @@ class TestEviction:
     def test_a_panel_survives_a_cache_too_small_to_hold_it(
         self, workspace: WorkspacePaths, tmp_path: Path
     ) -> None:
-        """With room for one symbol's matrix, a two-symbol panel can reuse
-        nothing - it must still be the same panel, not a cheaper one."""
+        """A one-entry cache must still produce the complete two-symbol panel."""
         roomy = WorkspacePaths(tmp_path / "unbounded-panel")
         roomy.ensure()
         _write_bars(roomy, "BTC/USDT")

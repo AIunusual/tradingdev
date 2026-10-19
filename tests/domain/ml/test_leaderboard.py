@@ -88,7 +88,6 @@ class TestRanking:
         assert [item.rank for item in result.ranked] == [1, 2, 3]
 
     def test_minimize_metric_puts_the_smallest_first(self) -> None:
-        """Turnover is a cost: the leader must be the quietest signal."""
         result = rank_entries(
             [
                 _entry("a", signal_turnover=0.9),
@@ -110,7 +109,6 @@ class TestRanking:
         assert result.ranked[1].tied == 2
 
     def test_ties_are_broken_deterministically(self) -> None:
-        """Input order must not decide the order of equal scores."""
         entries = [_entry("c", icir=0.5), _entry("a", icir=0.5), _entry("b", icir=0.5)]
         first = _ranked_ids(rank_entries(entries, "icir"))
         second = _ranked_ids(rank_entries(list(reversed(entries)), "icir"))
@@ -141,7 +139,6 @@ class TestRanking:
         assert _ranked_ids(result) == ["a"]
 
     def test_unrankable_entries_do_not_inflate_the_comparison(self) -> None:
-        """Two skipped entries must not make the winner look more tested."""
         one = rank_entries([_entry("a", icir=0.4)], "icir")
         with_skips = rank_entries(
             [_entry("a", icir=0.4), _entry("b"), _entry("c")],
@@ -150,7 +147,6 @@ class TestRanking:
         assert len(one.ranked) == len(with_skips.ranked) == 1
         assert len(with_skips.skipped) == 2
         assert "2 of 3" in with_skips.caveats[0]
-        # One rankable candidate is still one comparison, not three.
         assert any("only one candidate" in caveat for caveat in with_skips.caveats)
 
     def test_top_k_truncates_the_ranking(self) -> None:
@@ -192,7 +188,6 @@ class TestComparability:
         assert "ETH/USDT" in error and "BTC/USDT" in error
 
     def test_evaluation_settings_are_part_of_the_context(self) -> None:
-        """The same data scored with a different window is a different test."""
         base = _CONTEXT
         assert (
             base.key
@@ -296,7 +291,6 @@ class TestEntryIdentity:
         assert len(first) == 16
 
     def test_an_unmodelled_signal_is_identified_by_its_values(self) -> None:
-        """Two hand-supplied signals must not collapse into one candidate."""
         first = build_entry_id(
             model_id="",
             dataset_id="d",
@@ -360,14 +354,7 @@ class TestEntryIdentity:
 
 
 class TestFeatureIdentity:
-    """What produced the numbers is part of what the numbers mean.
-
-    Without the feature set and the feature code in the identity, a bug fix in
-    the feature code would leave the dataset id - and therefore the entry id -
-    unchanged, so the corrected evaluation would overwrite the old row and the
-    leaderboard would present the new evidence as the same candidate it ranked
-    before the fix.
-    """
+    """Feature set and code changes must create distinct, incomparable evidence."""
 
     @staticmethod
     def _context(**overrides: object) -> EvaluationContext:
@@ -476,7 +463,6 @@ class TestFeatureIdentity:
         assert restored == entry
 
     def test_an_older_record_reads_as_unknown(self) -> None:
-        """Records written before the fields existed must not be guessed at."""
         payload = _entry("a", icir=0.5).to_record()
         del payload["context"]["feature_set"]
         del payload["context"]["code_fingerprint"]

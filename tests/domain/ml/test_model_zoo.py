@@ -60,7 +60,6 @@ def test_register_rejects_duplicates() -> None:
 
 
 def test_zoo_model_trains_and_predicts(large_ohlcv_df: pd.DataFrame) -> None:
-    """End-to-end: a model built from the zoo trains and predicts in-process."""
     feat = _features(large_ohlcv_df)
     model = create_direction_model("lightgbm_direction", n_estimators=10, max_depth=3)
     model.train(feat)

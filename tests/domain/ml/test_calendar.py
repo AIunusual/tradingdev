@@ -1,11 +1,4 @@
-"""Unit tests for the multi-symbol calendar and panel alignment.
-
-Everything here is index arithmetic over hand-written timestamps: no market
-data, no workspace, no I/O. That is the point of keeping the calendar policy
-in the domain --- the failure modes it guards against (silent NaN rows,
-unbounded stale carries, sample reweighting) are invisible in an end-to-end
-test but obvious here.
-"""
+"""Calendar and panel alignment over explicit timestamps, without market data or IO."""
 
 from __future__ import annotations
 

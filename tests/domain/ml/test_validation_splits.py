@@ -101,7 +101,6 @@ def test_walk_forward_test_windows_are_ordered_and_disjoint() -> None:
 
 
 def test_audit_flags_a_naive_unpurged_split() -> None:
-    """The gate must actually catch leakage, not just report success."""
     naive = [
         Split(name="fold/0", train=((0, 10),), test=(10, 20)),
         Split(name="fold/1", train=((0, 20),), test=(20, 30)),
@@ -197,7 +196,6 @@ def test_min_train_bars_is_enforced() -> None:
 
 
 def test_purge_cost_grows_with_the_label_horizon() -> None:
-    """Documents the real cost: a longer label throws away more training bars."""
     short = purged_walk_forward_splits(469, horizon=1, n_splits=3)
     long = purged_walk_forward_splits(469, horizon=20, n_splits=3)
     assert [split.purged_bars for split in short] == [1, 1, 1]

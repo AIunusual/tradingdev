@@ -1,7 +1,5 @@
-"""Persistence rules for the leaderboard store.
-
-The count of stored candidates is what decides how significant a winner has to
-be, so the store must never silently drop a record or quietly duplicate one.
+"""Leaderboard persistence must not drop or duplicate candidates:
+their count determines the significance threshold.
 """
 
 from __future__ import annotations
@@ -65,7 +63,6 @@ def test_recording_twice_updates_one_row(store: LeaderboardStore) -> None:
 
 
 def test_records_are_stored_in_a_stable_order(store: LeaderboardStore) -> None:
-    """Insertion order must not change the file, so runs stay reproducible."""
     store.record(_entry("b", 0.2))
     first = store.path.read_text("utf-8")
     fresh = LeaderboardStore(store.root)
@@ -107,7 +104,6 @@ def test_dataset_filter_keeps_all_models_for_exact_identity(
 
 
 def test_a_corrupt_record_is_refused_not_skipped(store: LeaderboardStore) -> None:
-    """A record that vanished would shrink the comparison and flatter the win."""
     store.record(_entry("a", 0.5))
     store.path.write_text(store.path.read_text("utf-8") + "{not json}\n", "utf-8")
     with pytest.raises(ValueError, match="unreadable leaderboard record on line 2"):

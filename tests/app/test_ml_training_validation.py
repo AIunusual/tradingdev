@@ -1,12 +1,4 @@
-"""train_model's validation wiring: the out-of-sample estimate it hands back.
-
-A model's in-sample accuracy says nothing about how it will do on bars it has
-not seen. These tests cover the gap that used to exist: asking ``train_model``
-for a named scheme must actually produce purged folds, score them out of
-sample, and report what the purge cost - and the result has to be checked, not
-assumed, so several tests rebuild the splits independently and audit them
-rather than trusting ``leakage_audit_clean``.
-"""
+"""Independently verify purged fold geometry, scores and saved-model behavior."""
 
 from __future__ import annotations
 
@@ -105,7 +97,6 @@ class TestContractMatchesTheRegistry:
     def test_the_advertised_schemes_are_the_buildable_ones(
         self, service: MLService
     ) -> None:
-        """A name on the menu that train_model cannot resolve is a broken promise."""
         advertised = [
             item["name"] for item in service.get_contract()["validation_schemes"]
         ]
@@ -129,7 +120,6 @@ class TestNoSchemeMeansNoValidation:
     def test_validation_is_absent_when_none_is_asked_for(
         self, service: MLService
     ) -> None:
-        """The default path must not start doing extra work unasked."""
         model = _train(service, _build(service)["dataset_id"])
         assert model["validation"] is None
 
@@ -149,7 +139,6 @@ class TestWalkForward:
         assert [fold["fold"] for fold in validation["folds"]] == [0, 1, 2, 3]
 
     def test_folds_are_anchored_so_history_grows(self, service: MLService) -> None:
-        """Each fold trains on everything before it: the windows must widen."""
         validation = _validation(
             service,
             _build(service)["dataset_id"],
@@ -161,7 +150,6 @@ class TestWalkForward:
         assert len(set(train_bars)) == len(train_bars)
 
     def test_folds_never_train_on_the_whole_dataset(self, service: MLService) -> None:
-        """Out-of-sample means the fold saw less than the artifact did."""
         dataset = _build(service)
         model = _train(
             service,
@@ -176,7 +164,6 @@ class TestWalkForward:
     def test_the_purge_is_the_datasets_own_label_horizon(
         self, service: MLService
     ) -> None:
-        """The horizon is a fact about the dataset, not a caller setting."""
         for horizon in (1, 5):
             dataset_id = _build(service, horizon=horizon)["dataset_id"]
             validation = _validation(
@@ -295,7 +282,6 @@ class TestTheAuditIsVerifiedNotAssumed:
     def test_the_reported_fold_geometry_is_the_real_geometry(
         self, service: MLService, scheme: str
     ) -> None:
-        """What is reported is what was used, not a plausible-looking story."""
         dataset = _build(service)
         n_folds = 3
         validation = _validation(
@@ -348,7 +334,6 @@ class TestFoldScores:
             assert validation["aggregate"][key] == pytest.approx(expected)
 
     def test_scores_are_finite_or_explicitly_none(self, service: MLService) -> None:
-        """A NaN must not be reported as a number that looks like a result."""
         validation = _validation(
             service,
             _build(service)["dataset_id"],
@@ -365,7 +350,7 @@ class TestTheArtifactIsUnaffected:
     def test_the_stored_model_is_still_fit_on_every_bar(
         self, service: MLService
     ) -> None:
-        """The folds estimate the procedure; the artifact is the one to deploy."""
+        """Folds assess the procedure; the saved model fits all dataset rows."""
         dataset = _build(service)
         model = _train(
             service,
@@ -379,7 +364,6 @@ class TestTheArtifactIsUnaffected:
     def test_asking_for_validation_does_not_change_the_model_identity(
         self, service: MLService
     ) -> None:
-        """The folds are extra information, not a different model."""
         dataset_id = _build(service)["dataset_id"]
         assert (
             _train(service, dataset_id)["model_id"]
@@ -443,7 +427,6 @@ class TestRejections:
     def test_a_rejected_validation_leaves_no_artifact(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
-        """Refusing must not half-write: the model is stored or it is not."""
         dataset_id = _build(service)["dataset_id"]
         with pytest.raises(ValueError):
             _train(service, dataset_id, validation="not_a_scheme")
@@ -452,7 +435,6 @@ class TestRejections:
     def test_rejections_do_not_depend_on_the_model_kind(
         self, service: MLService
     ) -> None:
-        """The request is resolved against the registry, not per estimator."""
         dataset_id = _build(service)["dataset_id"]
         with pytest.raises(ValueError, match="unknown validation scheme"):
             _train(
@@ -465,7 +447,6 @@ class TestRejections:
     def test_an_unusable_request_is_refused_before_anything_is_fitted(
         self, service: MLService, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fitting a model only to refuse it afterwards would be pure waste."""
         from tradingdev.app import ml_service as module
 
         fitted: list[str] = []

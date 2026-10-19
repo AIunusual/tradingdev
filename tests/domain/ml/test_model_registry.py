@@ -40,9 +40,6 @@ def _sample_artifact(
     )
 
 
-# --- deterministic model_id -------------------------------------------------
-
-
 def test_model_id_is_deterministic_for_same_inputs() -> None:
     params = {"max_depth": 3}
     features = ("a", "b", "c")
@@ -105,9 +102,6 @@ def test_model_id_changes_with_content_hash() -> None:
     assert base != different
 
 
-# --- metadata round-trip ----------------------------------------------------
-
-
 def test_metadata_round_trip_preserves_fields() -> None:
     artifact = _sample_artifact("a" * 64)
     restored = ModelArtifact.from_metadata(artifact.to_metadata())
@@ -125,9 +119,6 @@ def test_from_metadata_rejects_unknown_schema() -> None:
         ModelArtifact.from_metadata(payload)
 
 
-# --- feature importance -----------------------------------------------------
-
-
 def test_feature_importance_from_gain_sorts_descending() -> None:
     features = ["a", "b", "c"]
     raw = [0.1, 0.5, 0.3]
@@ -140,16 +131,10 @@ def test_feature_importance_from_gain_handles_float_coercion() -> None:
     assert result == (("x", 0.25),)
 
 
-# --- content hash -----------------------------------------------------------
-
-
 def test_content_sha256_is_stable() -> None:
     blob = _sample_blob({"weights": [1, 2, 3]})
     assert content_sha256(blob) == content_sha256(blob)
     assert len(content_sha256(blob)) == 64
-
-
-# --- store save / load round-trip -------------------------------------------
 
 
 def test_store_save_and_load_round_trip(tmp_path: Path) -> None:
@@ -183,7 +168,6 @@ def test_store_detects_tampered_blob(tmp_path: Path) -> None:
     store = ModelArtifactStore(root=tmp_path)
     store.save(model_bytes=blob, artifact=artifact)
 
-    # Corrupt the on-disk blob.
     store.path_for(artifact.model_id).write_bytes(b"tampered")
     with pytest.raises(ValueError, match="model blob tampered"):
         store.load(artifact.model_id)

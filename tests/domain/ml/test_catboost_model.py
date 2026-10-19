@@ -101,7 +101,6 @@ class TestCatBoostDirectionModel:
         assert (abs(row_sums - 1.0) < 0.01).all()
 
     def test_early_stopping_with_eval(self, large_ohlcv_df: pd.DataFrame) -> None:
-        """Training with eval_df for early stopping should not error."""
         feat = self._make_feature_df(large_ohlcv_df)
         split = int(len(feat) * 0.8)
         train_feat = feat.iloc[:split]

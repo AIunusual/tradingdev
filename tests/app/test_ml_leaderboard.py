@@ -1,10 +1,4 @@
-"""Recording evaluations and ranking them, against real built datasets.
-
-The two signals used here are deliberately extreme: one is the realised
-forward return itself (a perfect signal) and one is its negation (a perfectly
-wrong signal). A leaderboard that cannot separate those two is not ranking
-anything.
-"""
+"""Rank real dataset evaluations using forward returns and their negation."""
 
 from __future__ import annotations
 
@@ -126,7 +120,6 @@ class TestRecording:
     def test_re_recording_replaces_instead_of_inflating(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
-        """The same candidate twice must not become two comparisons."""
         dataset_id = _build(service)
         _record(
             service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
@@ -176,7 +169,7 @@ class TestRecording:
     def test_two_different_ad_hoc_signals_stay_two_candidates(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
-        """With no model to identify them, the signal itself must tell them apart."""
+        """Without a model ID, signal content distinguishes candidates."""
         dataset_id = _build(service)
         realized = _returns(workspace, dataset_id)
         for quality in (1.0, -1.0):
@@ -288,7 +281,6 @@ class TestRanking:
     def test_quantile_metrics_are_ranked_too(
         self, service: MLService, two_candidates: str
     ) -> None:
-        """The contract advertises them, so recording has to carry them."""
         board = service.leaderboard("long_short_spread")
         assert len(board["ranked"]) == 2
         assert board["ranked"][0]["model_id"] == _GOOD_MODEL
@@ -457,13 +449,7 @@ class TestContract:
 
 
 class TestFeatureIdentity:
-    """Which feature code produced the numbers is part of the record.
-
-    The dataset id does not depend on the feature code, so without the code in
-    the entry identity a fixed indicator would simply overwrite the row written
-    before the fix - and the leaderboard would present post-fix evidence as the
-    same candidate it had already ranked.
-    """
+    """Feature-code changes preserve distinct evaluation evidence."""
 
     @staticmethod
     def _service(

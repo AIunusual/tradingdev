@@ -25,7 +25,6 @@ def empty_registry(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_every_registered_set_emits_its_contract_columns(
     large_ohlcv_df: pd.DataFrame,
 ) -> None:
-    """The field contract: build output is exactly the declared columns."""
     for feature_set in list_feature_sets():
         result = feature_set.build(large_ohlcv_df)
         assert isinstance(result, pd.DataFrame)

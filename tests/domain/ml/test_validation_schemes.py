@@ -1,10 +1,5 @@
-"""The validation registry: what is advertised is what can be built.
-
-``get_contract`` reads this registry to tell an LLM which scheme names exist,
-and ``train_model`` reads the same registry to turn the name it is handed into
-splits. These tests exist so the two cannot drift apart: a name that is
-offered but cannot be built, or a builder whose keyword changed without the
-registry noticing, fails here rather than in a suspicious backtest.
+"""The validation registry shared by get_contract and train_model must map
+advertised names and parameters to buildable splits.
 """
 
 from __future__ import annotations
@@ -43,7 +38,6 @@ class TestRegistry:
             assert get_validation_scheme(name).name == name
 
     def test_the_dictionary_is_keyed_by_the_scheme_name(self) -> None:
-        """A key that disagrees with its value would hide one of the two."""
         assert set(VALIDATION_SCHEMES) == set(validation_scheme_names())
         for key, scheme in VALIDATION_SCHEMES.items():
             assert scheme.name == key
@@ -52,8 +46,7 @@ class TestRegistry:
         for name in validation_scheme_names():
             scheme = get_validation_scheme(name)
             assert scheme.description.strip()
-            # The description is shown verbatim as the reason to pick a
-            # scheme, so it must not be a bare restatement of the name.
+            # The model needs a selection reason beyond the name.
             assert scheme.description != name
 
     def test_unknown_name_is_rejected_and_names_the_alternatives(self) -> None:
@@ -66,13 +59,12 @@ class TestRegistry:
             assert name in message
 
     def test_case_is_not_folded(self) -> None:
-        """An LLM guessing "Purged_KFold" must be told, not silently served."""
         with pytest.raises(ValueError, match="unknown validation scheme"):
             get_validation_scheme("PURGED_KFOLD")
 
 
 class TestFoldParameterMapping:
-    """The two builders disagree on the keyword; the registry absorbs that."""
+    """The registry maps differing builder keywords."""
 
     @pytest.mark.parametrize("name", _EXPECTED_NAMES)
     def test_the_declared_keyword_is_the_one_the_builder_takes(self, name: str) -> None:
@@ -92,7 +84,6 @@ class TestFoldParameterMapping:
 
     @pytest.mark.parametrize("n_folds", [2, 3, 4])
     def test_kfold_honours_the_fold_count(self, n_folds: int) -> None:
-        """If the mapping were wrong the builder would fall back to five folds."""
         splits = build_validation_splits(
             "purged_kfold", n_bars=240, horizon=5, n_folds=n_folds, embargo=2
         )
@@ -132,7 +123,6 @@ class TestBuilding:
         assert audit_validation_splits(splits, horizon=horizon) == ()
 
     def test_walk_forward_never_trains_after_the_test_window(self) -> None:
-        """Anchored: every fold only ever sees bars before it."""
         for split in build_validation_splits(
             "purged_walk_forward", n_bars=200, horizon=5, n_folds=4, embargo=2
         ):
@@ -140,7 +130,6 @@ class TestBuilding:
                 assert end <= split.test[0]
 
     def test_kfold_trains_on_both_sides_of_the_test_window(self) -> None:
-        """Every bar is tested once, so the middle folds train on both sides."""
         splits = build_validation_splits(
             "purged_kfold", n_bars=200, horizon=5, n_folds=4, embargo=2
         )
@@ -160,7 +149,6 @@ class TestBuilding:
         assert sorted(covered) == list(range(n_bars))
 
     def test_walk_forward_leaves_the_first_block_untested(self) -> None:
-        """Anchoring costs one block: it is training-only, never judged."""
         splits = build_validation_splits(
             "purged_walk_forward", n_bars=200, horizon=5, n_folds=4
         )
@@ -169,7 +157,6 @@ class TestBuilding:
         assert not tested & set(range(first_block_end))
 
     def test_the_two_schemes_do_not_produce_the_same_geometry(self) -> None:
-        """Asking for the same fold count must not quietly give the same cut."""
         walk = build_validation_splits(
             "purged_walk_forward", n_bars=200, horizon=5, n_folds=4
         )
@@ -206,7 +193,6 @@ class TestBuilding:
             assert after.test == before.test
 
     def test_the_horizon_alone_decides_the_purge_width(self) -> None:
-        """Documented cost: a longer label throws away more training bars."""
         short = build_validation_splits(
             "purged_walk_forward", n_bars=469, horizon=1, n_folds=3
         )
@@ -264,7 +250,6 @@ class TestAudit:
         assert audit_validation_splits(splits, horizon=5) == ()
 
     def test_a_naive_split_is_caught(self) -> None:
-        """The audit is a gate, not a rubber stamp."""
         naive: Sequence[Split] = (
             Split(name="fold/0", train=((0, 10),), test=(10, 20)),
             Split(name="fold/1", train=((0, 20),), test=(20, 30)),
@@ -275,11 +260,7 @@ class TestAudit:
         assert "fold/1" in violations[1]
 
     def test_the_horizon_used_is_the_one_given(self) -> None:
-        """Auditing at the wrong horizon would rubber-stamp a leaky split.
-
-        This split stops one bar short of the test window, which is exactly
-        right for a horizon of 1 and three bars too late for a horizon of 3.
-        """
+        """A one-bar gap is sufficient for horizon 1 but leaks labels at horizon 3."""
         tight: Sequence[Split] = (Split(name="fold/0", train=((0, 9),), test=(10, 20)),)
         assert audit_validation_splits(tight, horizon=1) == ()
         assert len(audit_validation_splits(tight, horizon=3)) == 1

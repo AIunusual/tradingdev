@@ -1,9 +1,4 @@
-"""Tests for build_dataset and train_model against a cached parquet fixture.
-
-The fixture writes a yearly OHLCV parquet into an isolated workspace, which is
-exactly what ``ensure_data`` would leave behind, so ``build_dataset`` takes its
-cache-hit path and never touches the network.
-"""
+"""Dataset building and training against isolated cached market fixtures."""
 
 from __future__ import annotations
 
