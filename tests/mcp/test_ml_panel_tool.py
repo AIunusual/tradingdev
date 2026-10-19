@@ -51,6 +51,7 @@ def _dispatch(
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
+        assert isinstance(result, tuple)
         payload = result[1]
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
@@ -118,6 +119,7 @@ def test_build_panel_rejects_a_gap_under_the_error_policy(service: MLService) ->
     )
     assert response["success"] is False
     assert response["code"] == "invalid_panel_request"
+    assert isinstance(response["error"], str)
     assert "no bar on" in response["error"]
 
 
@@ -126,6 +128,7 @@ def test_build_panel_rejects_a_single_symbol(service: MLService) -> None:
     ml.register(mcp, service)
     response = _dispatch(mcp, "build_panel", _arguments(symbols=["BTC/USDT"]))
     assert response["success"] is False
+    assert isinstance(response["error"], str)
     assert "at least two distinct symbols" in response["error"]
 
 

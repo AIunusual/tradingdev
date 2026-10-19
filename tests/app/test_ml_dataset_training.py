@@ -8,7 +8,7 @@ cache-hit path and never touches the network.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -55,7 +55,7 @@ def service(workspace: WorkspacePaths) -> MLService:
     return MLService(workspace=workspace)
 
 
-def _build(service: MLService, **overrides: object) -> dict[str, object]:
+def _build(service: MLService, **overrides: object) -> dict[str, Any]:
     kwargs: dict[str, object] = {
         "symbol": "BTC/USDT",
         "timeframe": "1h",
@@ -125,7 +125,9 @@ class TestBuildDataset:
 
 class TestTrainModel:
     @staticmethod
-    def _train(service: MLService, dataset_id: str, **overrides: object) -> dict:
+    def _train(
+        service: MLService, dataset_id: str, **overrides: object
+    ) -> dict[str, Any]:
         kwargs: dict[str, object] = {
             "dataset_id": dataset_id,
             "model_kind": "xgboost_direction",

@@ -8,7 +8,7 @@ designed for (tamper detection and the feature-contract check).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -53,7 +53,7 @@ def service(workspace: WorkspacePaths) -> MLService:
     return MLService(workspace=workspace)
 
 
-def _build(service: MLService, **overrides: object) -> dict[str, object]:
+def _build(service: MLService, **overrides: object) -> dict[str, Any]:
     kwargs: dict[str, object] = {
         "symbol": "BTC/USDT",
         "timeframe": "1h",
@@ -66,7 +66,7 @@ def _build(service: MLService, **overrides: object) -> dict[str, object]:
     return service.build_dataset(**kwargs)  # type: ignore[arg-type]
 
 
-def _train(service: MLService, dataset_id: str, **overrides: object) -> dict:
+def _train(service: MLService, dataset_id: str, **overrides: object) -> dict[str, Any]:
     # Deep enough to actually separate the classes: an underfit model predicts
     # a single class, which would make the signal a constant series.
     kwargs: dict[str, object] = {

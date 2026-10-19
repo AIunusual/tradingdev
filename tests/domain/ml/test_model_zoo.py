@@ -51,7 +51,7 @@ def test_register_rejects_duplicates() -> None:
     duplicate = ModelKind(
         name="lightgbm_direction",
         description="collision",
-        config_cls=LightGBMDirectionModel,  # type: ignore[arg-type]
+        config_cls=LightGBMDirectionModel,
         model_cls=LightGBMDirectionModel,
         framework="lightgbm",
     )

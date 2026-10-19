@@ -19,6 +19,7 @@ def _dispatch(
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
+        assert isinstance(result, tuple)
         payload = result[1]
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
@@ -62,7 +63,8 @@ def test_evaluate_signal_runs_the_signal_suite() -> None:
         )
     )
     assert response.n_observations == 120
-    assert response.metrics["rank_ic_mean"] > 0.9
+    rank_ic_mean = response.metrics["rank_ic_mean"]
+    assert rank_ic_mean is not None and rank_ic_mean > 0.9
     assert (
         response.strata_monotonicity is not None and response.strata_monotonicity > 0.9
     )

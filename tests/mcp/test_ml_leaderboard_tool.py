@@ -61,6 +61,7 @@ def mcp(workspace: WorkspacePaths) -> FastMCP:
 def _dispatch(mcp: FastMCP, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     async def call() -> dict[str, Any]:
         result = await mcp.call_tool(name, arguments)
+        assert isinstance(result, tuple)
         payload = result[1]
         assert isinstance(payload, dict)
         response = payload.get("result", payload)

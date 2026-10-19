@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,8 +17,11 @@ from tradingdev.domain.ml.registry import (
     save_model_artifact,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def _sample_blob(payload: dict) -> bytes:
+
+def _sample_blob(payload: dict[str, object]) -> bytes:
     return pickle.dumps(payload)
 
 
@@ -148,7 +152,7 @@ def test_content_sha256_is_stable() -> None:
 # --- store save / load round-trip -------------------------------------------
 
 
-def test_store_save_and_load_round_trip(tmp_path) -> None:
+def test_store_save_and_load_round_trip(tmp_path: Path) -> None:
     blob = _sample_blob({"model": "weights"})
     digest = content_sha256(blob)
     artifact = _sample_artifact(digest)
@@ -163,7 +167,7 @@ def test_store_save_and_load_round_trip(tmp_path) -> None:
     assert store.path_for(artifact.model_id).read_bytes() == blob
 
 
-def test_store_rejects_mismatched_blob_hash(tmp_path) -> None:
+def test_store_rejects_mismatched_blob_hash(tmp_path: Path) -> None:
     blob = _sample_blob({"model": "weights"})
     wrong_digest = content_sha256(_sample_blob({"different": True}))
     artifact = _sample_artifact(wrong_digest)
@@ -172,7 +176,7 @@ def test_store_rejects_mismatched_blob_hash(tmp_path) -> None:
         store.save(model_bytes=blob, artifact=artifact)
 
 
-def test_store_detects_tampered_blob(tmp_path) -> None:
+def test_store_detects_tampered_blob(tmp_path: Path) -> None:
     blob = _sample_blob({"model": "weights"})
     digest = content_sha256(blob)
     artifact = _sample_artifact(digest)
@@ -185,13 +189,13 @@ def test_store_detects_tampered_blob(tmp_path) -> None:
         store.load(artifact.model_id)
 
 
-def test_store_load_missing_blob_raises(tmp_path) -> None:
+def test_store_load_missing_blob_raises(tmp_path: Path) -> None:
     store = ModelArtifactStore(root=tmp_path)
     with pytest.raises(FileNotFoundError):
         store.load("does-not-exist")
 
 
-def test_store_list_returns_all_metadata(tmp_path) -> None:
+def test_store_list_returns_all_metadata(tmp_path: Path) -> None:
     store = ModelArtifactStore(root=tmp_path)
     seen = []
     for idx in range(3):

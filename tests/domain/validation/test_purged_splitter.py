@@ -27,17 +27,19 @@ from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 if TYPE_CHECKING:
     import pandas as pd
 
+    from tradingdev.domain.validation.leakage_gate import FoldWindow
+
 
 def _purged_windows(
     df: pd.DataFrame, *, horizon: int, embargo: int = 0, n_splits: int = 3
-):
+) -> list[FoldWindow]:
     config = WalkForwardConfig(
         n_splits=n_splits, label_horizon=horizon, embargo_bars=embargo
     )
     return PurgedDataSplitter(config).split_windows(df)
 
 
-def _plain_windows(df: pd.DataFrame, *, n_splits: int = 3):
+def _plain_windows(df: pd.DataFrame, *, n_splits: int = 3) -> list[FoldWindow]:
     config = WalkForwardConfig(n_splits=n_splits, train_ratio=0.7)
     return DataSplitter(config).split_windows(df)
 

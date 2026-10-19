@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
+    MlContractResponse,
     PredictionResponse,
     TrainModelResponse,
 )
@@ -46,6 +47,7 @@ def _dispatch(
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
+        assert isinstance(result, tuple)
         payload = result[1]
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
@@ -215,6 +217,7 @@ def test_predict_rejects_a_mismatched_dataset(service: MLService) -> None:
     )
     assert payload["success"] is False
     assert payload["code"] == "invalid_prediction_request"
+    assert isinstance(payload["error"], str)
     assert "feature contract mismatch" in payload["error"]
 
 
@@ -344,10 +347,8 @@ def test_every_scheme_the_contract_offers_is_accepted(service: MLService) -> Non
     """The menu and the tool must not drift: each advertised name must work."""
     mcp = FastMCP("ml-scheme-menu-test")
     ml.register(mcp, service)
-    advertised = [
-        item["name"]
-        for item in _dispatch(mcp, "get_ml_contract", {})["validation_schemes"]
-    ]
+    contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
+    advertised = [item.name for item in contract.validation_schemes]
     assert advertised
     dataset_id = _build(mcp).dataset.dataset_id
     for name in advertised:
@@ -370,6 +371,7 @@ def test_train_model_rejects_an_unknown_scheme(service: MLService) -> None:
     )
     assert payload["success"] is False
     assert payload["code"] == "invalid_training_request"
+    assert isinstance(payload["error"], str)
     assert "unknown validation scheme" in payload["error"]
 
 
@@ -388,6 +390,7 @@ def test_train_model_rejects_a_zero_fold_count(service: MLService) -> None:
     )
     assert payload["success"] is False
     assert payload["code"] == "invalid_training_request"
+    assert isinstance(payload["error"], str)
     assert "n_folds" in payload["error"]
 
 

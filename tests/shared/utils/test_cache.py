@@ -48,7 +48,7 @@ class TestComputeCacheKey:
     def _key(data: Path, **overrides: str) -> str:
         values = {"manifest_hash": "1" * 64, "code_fingerprint": "code-v1"}
         values.update(overrides)
-        return compute_cache_key(processed_path=data, **values)  # type: ignore[arg-type]
+        return compute_cache_key(processed_path=data, **values)
 
     def test_same_inputs_same_key(self, tmp_path: Path) -> None:
         data = tmp_path / "data.parquet"

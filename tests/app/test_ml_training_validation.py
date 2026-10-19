@@ -19,6 +19,7 @@ import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.models import create_direction_model
 from tradingdev.domain.ml.validation import (
     audit_validation_splits,
     build_validation_splits,
@@ -74,7 +75,9 @@ def _build(service: MLService, **overrides: Any) -> dict[str, Any]:
         "horizon": 5,
     }
     kwargs.update(overrides)
-    return service.build_dataset(**kwargs)["dataset"]
+    dataset = service.build_dataset(**kwargs)["dataset"]
+    assert isinstance(dataset, dict)
+    return dataset
 
 
 def _train(service: MLService, dataset_id: str, **overrides: Any) -> dict[str, Any]:
@@ -84,13 +87,17 @@ def _train(service: MLService, dataset_id: str, **overrides: Any) -> dict[str, A
         "parameters": {"n_estimators": 5, "max_depth": 2},
     }
     kwargs.update(overrides)
-    return service.train_model(**kwargs)["model"]
+    model = service.train_model(**kwargs)["model"]
+    assert isinstance(model, dict)
+    return model
 
 
-def _validation(service: MLService, dataset_id: str, **overrides: Any) -> dict:
+def _validation(
+    service: MLService, dataset_id: str, **overrides: Any
+) -> dict[str, Any]:
     model = _train(service, dataset_id, **overrides)
     validation = model["validation"]
-    assert validation is not None
+    assert isinstance(validation, dict)
     return validation
 
 
@@ -462,11 +469,10 @@ class TestRejections:
         from tradingdev.app import ml_service as module
 
         fitted: list[str] = []
-        create = module.create_direction_model
 
         def spy(kind: str, **kwargs: Any) -> Any:
             fitted.append(kind)
-            return create(kind, **kwargs)
+            return create_direction_model(kind, **kwargs)
 
         monkeypatch.setattr(module, "create_direction_model", spy)
         with pytest.raises(ValueError, match="unknown validation scheme"):
