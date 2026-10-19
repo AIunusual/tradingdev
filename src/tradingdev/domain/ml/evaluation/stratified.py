@@ -1,10 +1,4 @@
-"""Quantile (stratified) analysis of a signal against realised returns.
-
-A single average IC can hide a signal that only works in the tails. Splitting
-bars into prediction quantiles exposes whether the realised return actually
-rises monotonically across them, which is the property a long/short rule
-depends on.
-"""
+"""Descriptive prediction strata and their realised forward returns."""
 
 from __future__ import annotations
 
@@ -23,21 +17,11 @@ logger = setup_logger(__name__)
 
 
 def quantile_bins(prediction: pd.Series, n_bins: int) -> pd.Series:
-    """Assign every bar a 0-based stratum, ascending by signal.
+    """Assign ascending, zero-based strata while preserving the input index.
 
-    A continuous signal is cut at quantile edges. A discrete signal - a
-    direction model emits only ``-1``/``0``/``1`` - has at most as many distinct
-    values as the requested bins, so quantile edges can land on ties and
-    ``duplicates="drop"`` would collapse the entire series into one bin. Such
-    signals are grouped by distinct value instead, so ``-1``/``0``/``1`` still
-    yields the short / flat / long strata a long-short book needs.
-
-    Args:
-        prediction: Signal values, already aligned and free of nulls.
-        n_bins: Requested number of strata; the upper bound on what is formed.
-
-    Returns:
-        Integer Series of stratum numbers sharing ``prediction``'s index.
+    ``n_bins`` is an upper bound. With no more distinct values than bins,
+    group by value so tied direction signals retain separate -1/0/1 strata;
+    otherwise cut at quantile edges. Input must be aligned and non-null.
     """
     distinct = int(prediction.nunique())
     if distinct <= n_bins:
@@ -52,18 +36,10 @@ def quantile_strata(
     *,
     n_bins: int = 5,
 ) -> pd.DataFrame:
-    """Group aligned bars into prediction quantiles.
+    """Summarize aligned bars in ascending, one-based prediction strata.
 
-    Args:
-        prediction: Signal values, one per bar.
-        forward_return: Realised return over the label horizon.
-    n_bins: Requested number of quantiles; the upper bound on what is
-        formed. A discrete signal yields one stratum per distinct value.
-
-    Returns:
-        DataFrame indexed by 1-based quantile number with columns
-        ``count``, ``mean_prediction``, ``mean_forward_return`` and
-        ``std_forward_return``.
+    ``n_bins`` bounds the count; discrete signals group by distinct value.
+    Return count, mean_prediction, mean_forward_return and std_forward_return.
     """
     if n_bins < 2:
         raise ValueError("n_bins must be at least 2")
@@ -87,13 +63,7 @@ def quantile_strata(
 
 
 def strata_statistics(strata: pd.DataFrame) -> dict[str, MetricScalar]:
-    """Reduce a quantile table to monotonicity and spread.
-
-    Returns:
-        ``strata_monotonicity`` (Spearman correlation between quantile rank
-        and that quantile's mean forward return) and ``long_short_spread``
-        (top quantile mean return minus bottom quantile mean return).
-    """
+    """Return Spearman rank/mean-return monotonicity and top-minus-bottom spread."""
     if strata.empty:
         return {"strata_monotonicity": None, "long_short_spread": None}
     means = strata["mean_forward_return"]

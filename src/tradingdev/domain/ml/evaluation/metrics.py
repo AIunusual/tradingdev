@@ -1,17 +1,8 @@
-"""Signal quality metrics computed from a prediction and realised returns.
+"""Signal quality measured against realised returns, without a portfolio.
 
-The functions here never touch a portfolio. They answer a single question:
-*does this prediction carry information about the next move?* That question
-can be answered before, and independently of, any backtest.
-
-Single-asset note
------------------
-qlib computes IC cross-sectionally (one value per trading date, across many
-instruments). With one instrument there is no cross-section, so the IC is
-computed inside a **rolling window of bars**. The windows overlap, which
-inflates a naive t-statistic; :func:`ic_statistics` therefore divides the bar
-count by the window length to obtain an effective, non-overlapping sample
-before scaling.
+Single-asset IC uses rolling time windows, not cross-sectional correlations.
+``ic_statistics`` approximates effective samples by dividing the observation
+count by window length to account for overlap.
 """
 
 from __future__ import annotations
@@ -43,12 +34,7 @@ def _aligned_frame(
     *,
     price: pd.Series | Sequence[float] | None = None,
 ) -> pd.DataFrame:
-    """Stack equal-length series into a finite, row-aligned frame.
-
-    Every column participates in the same ``dropna``, so the returned frame
-    keeps positional alignment between the signal, its realised return and
-    the price used for horizon decay.
-    """
+    """Stack equal-length series, dropping non-finite rows jointly for alignment."""
     pred_values = np.asarray(prediction, dtype=float)
     if pred_values.ndim != 1:
         raise ValueError("prediction must be one-dimensional")
@@ -129,17 +115,10 @@ def rolling_ic(
     window: int = 60,
     method: str = "spearman",
 ) -> pd.Series:
-    """Correlate prediction and forward return inside a rolling window.
+    """Rolling Pearson IC or Spearman Rank IC over aligned bars.
 
-    Args:
-        prediction: Signal values, one per bar.
-        forward_return: Realised return over the label horizon, one per bar.
-        window: Number of bars per correlation window.
-        method: ``"spearman"`` (Rank IC) or ``"pearson"`` (IC).
-
-    Returns:
-        Series of per-window correlation coefficients with one entry per
-        aligned bar; the first ``window - 1`` entries are NaN.
+    Return one coefficient per aligned bar, with the first ``window - 1``
+    entries unavailable.
     """
     if window < 2:
         raise ValueError("window must be at least 2")
@@ -166,12 +145,7 @@ def rolling_ic(
 
 
 def ic_statistics(ic: pd.Series, *, window: int) -> dict[str, MetricScalar]:
-    """Summarise a rolling IC series, correcting for window overlap.
-
-    The t-statistic uses the *effective* sample size ``bars // window``
-    instead of the number of windows, because overlapping windows are not
-    independent observations.
-    """
+    """Use effective sample size ``bars // window`` for the IC t-statistic."""
     series = pd.Series(ic).replace([np.inf, -np.inf], np.nan)
     n_bars = len(series)
     n_effective = max(1, n_bars // window)
@@ -249,11 +223,7 @@ def ic_decay(
     *,
     method: str = "spearman",
 ) -> dict[str, MetricScalar]:
-    """Full-sample correlation of the prediction at increasing horizons.
-
-    A signal that decays slowly keeps a usable correlation at larger
-    horizons, which widens the range of executable holding periods.
-    """
+    """Full-sample prediction correlation at increasing forward-return horizons."""
     if method not in IC_METHODS:
         raise ValueError(f"method must be one of {IC_METHODS}, got {method!r}")
     frame = _aligned_frame(prediction, price=price)
@@ -282,12 +252,7 @@ def signal_metrics(
     price: pd.Series | Sequence[float] | None = None,
     horizons: Sequence[int] = (1, 3, 5, 10),
 ) -> dict[str, MetricScalar]:
-    """Compute the full signal-evaluation metric set in one call.
-
-    Both the Pearson (IC) and Spearman (Rank IC) families are always
-    produced; they answer slightly different questions and cost one extra
-    rolling pass.
-    """
+    """Compute Pearson IC, Spearman Rank IC and the remaining signal metrics."""
     frame = _aligned_frame(prediction, forward_return, price=price)
     pred = frame["prediction"]
     fwd = frame["forward_return"]

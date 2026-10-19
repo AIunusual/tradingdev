@@ -1,12 +1,6 @@
-"""Leak-free validation splits for interval-based labels.
+"""Purged/embargoed index splits and label-overlap audits.
 
-Purging and embargoing are index arithmetic, not heuristics applied inside a
-model, so they can be unit tested without market data and audited after the
-fact by :func:`leakage_audit`.
-
-:mod:`schemes` names the cuts and is the single source both the advertised
-contract and ``train_model`` read, so what is offered and what can be built
-cannot drift apart.
+The schemes registry supplies both advertised names and training resolution.
 """
 
 from __future__ import annotations

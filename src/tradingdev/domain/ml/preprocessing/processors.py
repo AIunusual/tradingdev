@@ -1,23 +1,8 @@
-"""Feature processors with an explicit, auditable fit/transform boundary.
+"""Feature processors with separate learning and transformation phases.
 
-A feature frame is rarely usable straight out of the feature generator: the
-columns live on different scales, carry missing values and hold outliers.
-Normalising them is easy; normalising them *without leaking* is the hard part,
-because the obvious ``(frame - frame.mean()) / frame.std()`` silently reads
-the test bars.
-
-Every transformation is therefore modelled as a :class:`Processor` with two
-distinct phases:
-
-* **Learn processors** (:attr:`Processor.requires_fit` is ``True``) capture
-  their parameters in :meth:`Processor.fit`, which is only ever called on the
-  training segment. They remember nothing else.
-* **Infer processors** (:attr:`Processor.requires_fit` is ``False``) are pure
-  row-wise or column-wise functions. They may run anywhere.
-
-:meth:`Processor.transform` must never learn. That single rule is what makes
-a pipeline reusable across folds and safe to apply to unseen bars, and it is
-enforced by :class:`ProcessorNotFittedError` rather than by convention.
+Learn processors retain only fitted statistics; infer processors are
+stateless. Transform never learns and raises ProcessorNotFittedError when
+required statistics are missing. Callers must fit on training data only.
 """
 
 from __future__ import annotations
@@ -60,12 +45,7 @@ def _safe_scale(scale: float, eps: float) -> float:
 
 
 class Processor(ABC):
-    """One transformation of a feature frame.
-
-    Subclasses implement :meth:`transform`. Only subclasses that need
-    parameters override :meth:`fit`; the default is a no-op, which is what
-    makes a processor safe to run at inference time.
-    """
+    """Feature transformation with optional fitting; default fit is a no-op."""
 
     name: str = "processor"
     requires_fit: bool = False
@@ -89,11 +69,7 @@ class Processor(ABC):
 
 
 class _StatsProcessor(Processor, ABC):
-    """A processor that learns two scalars per field and applies them.
-
-    The two scalars are reported under :attr:`_stat_names`, so an audit can
-    say exactly which numbers came out of the training segment.
-    """
+    """Learn two scalars per field, exposed under _stat_names for inspection."""
 
     requires_fit = True
     _stat_names: tuple[str, str] = ("center", "scale")
@@ -170,11 +146,7 @@ class ZScoreNorm(_StatsProcessor):
 
 
 class RobustZScoreNorm(_StatsProcessor):
-    """Centre on the training median and scale by the training IQR.
-
-    Preferred over :class:`ZScoreNorm` when the training segment itself
-    contains outliers that would otherwise dominate the standard deviation.
-    """
+    """Centre on the training median and scale by IQR to limit outlier influence."""
 
     name = "robust_zscore_norm"
     _stat_names = ("median", "iqr")
@@ -212,12 +184,7 @@ class MinMaxNorm(_StatsProcessor):
 
 
 class ClipOutliers(_StatsProcessor):
-    """Clip to a number of training standard deviations around the training mean.
-
-    Clipping is a *learn* step: the bounds come from the training segment, so
-    an inference bar is clipped by training-scale limits rather than by its
-    own distribution.
-    """
+    """Clip using training mean/std bounds, never the inference distribution."""
 
     name = "clip_outliers"
     _stat_names = ("center", "scale")
@@ -242,11 +209,9 @@ class ClipOutliers(_StatsProcessor):
 
 
 class Fillna(Processor):
-    """Replace missing values with a constant.
+    """Fill missing values with a caller-supplied constant, without fitting.
 
-    Stateless by construction: the fill value is supplied by the caller, so
-    nothing about the training segment can reach the test bars through it.
-    Pass ``fields`` explicitly when a label column is present.
+    Specify fields when the frame also contains labels.
     """
 
     name = "fillna"
@@ -276,11 +241,9 @@ class Fillna(Processor):
 
 
 class DropnaRows(Processor):
-    """Drop rows that still hold missing values in the requested fields.
+    """Drop missing rows in selected fields before row-count-sensitive fitting.
 
-    Stateless, but it changes the row count. Apply it before any processor
-    whose fit depends on the number of rows, and expect the training and
-    inference frames to shrink by different amounts.
+    Training and inference frames may shrink by different amounts.
     """
 
     name = "dropna_rows"

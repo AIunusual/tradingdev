@@ -1,13 +1,8 @@
-"""Causal long/short and long-only simulations over label holding intervals.
+"""Causal simulations on non-overlapping label holding intervals.
 
-At a decision bar, position thresholds use only earlier signal observations.
-After a warmup, positions are opened on a fixed ``horizon``-bar grid, so their
-forward-return intervals never overlap. Each realised holding-interval return
-is stored at its decision bar; intervening rows contain zero. These are not
-mark-to-market bar returns, and their means are not annualised performance.
-
-The quantile table is a separate full-sample descriptive statistic. It does
-not choose positions and must not be used as evidence of a causal trade rule.
+Returns are indexed at decisions, with zero on inactive rows; they are not
+mark-to-market returns or annualised performance. Full-sample quantile means
+are descriptive and never choose trading positions.
 """
 
 from __future__ import annotations
@@ -73,32 +68,22 @@ def simulate_strategy_returns(
     n_quantiles: int = 5,
     horizon: int = 1,
 ) -> SimulatedReturns:
-    """Build causal, non-overlapping long/short and long-only return streams.
+    """Simulate long/short and long-only returns for consecutive bars of one asset.
 
-    Args:
-        signal: Chronologically ordered predictions with a unique bar index.
-            Thresholds use only earlier finite signals. The first
-            ``n_quantiles`` observations are warmup, and at least two historical
-            signal values are needed. With at most ``n_quantiles`` known values,
-            the historical minimum/maximum select the short/long tails;
-            otherwise expanding lower/upper quantiles select them. A signal
-            exactly on coincident quantile cutoffs is neutral.
-        forward_returns: Realised holding-interval return at each decision bar,
-            sharing exactly the signal index. Non-finite pairs are omitted from
-            the output, but never compress the grid or the signal history.
-        n_quantiles: Requested number of quantiles, at least two. The returned
-            quantile means describe the full sample and do not drive positions.
-            Tied quantile edges can collapse this descriptive table to one bin
-            even when the signal has multiple distinct values.
-        horizon: Holding-interval length in bars, at least one. Only original
-            positions ``0, horizon, 2 * horizon, ...`` may open a trade; other
-            rows return zero. Warmup and missing values do not shift this grid.
+    Signal and returns must share a unique chronological index. Thresholds use
+    only prior finite signals after ``n_quantiles`` warm-up observations and
+    require two distinct historical values. Up to ``n_quantiles`` distinct
+    values use historical extrema; otherwise use expanding quantiles. Values
+    on coincident cutoffs are neutral.
 
-    Returns:
-        Interval returns indexed by their decision bars and full-sample
-        quantile means. Compounding is valid for the non-overlapping intervals;
-        the indexed series is not a mark-to-market equity curve and excludes
-        transaction costs. Inputs must represent consecutive bars of one asset.
+    Only original positions ``0, horizon, 2*horizon, ...`` open trades.
+    Warm-up and missing values never shift that grid; non-finite pairs are
+    omitted without compressing history. Inactive rows return zero.
+    ``horizon >= 1`` and ``n_quantiles >= 2`` are required.
+
+    Return decision-indexed interval returns and descriptive full-sample
+    quantile means (ties can collapse bins). Non-overlapping returns can be
+    compounded, but exclude costs and are not a mark-to-market equity curve.
     """
     if n_quantiles < 2:
         raise ValueError("n_quantiles must be at least 2 for a long/short book")

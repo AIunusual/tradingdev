@@ -1,27 +1,8 @@
-"""An opt-in walk-forward splitter that purges and embargoes by construction.
+"""Opt-in anchored strategy folds using the ML purge/embargo arithmetic.
 
-:class:`DataSplitter` cuts a price series into train/test windows that are
-disjoint in time, which is correct when a strategy only looks backwards. It is
-not correct once training targets are interval-based labels: the label of the
-bar at ``t`` is decided by prices up to ``t + horizon``, so the last bars of a
-training window carry answers computed from test-window prices.
-
-This splitter removes those bars instead of merely detecting them, reusing the
-audited index arithmetic in
-:mod:`tradingdev.domain.ml.validation.splits`. Folds produced here satisfy the
-:mod:`leakage gate <tradingdev.domain.validation.leakage_gate>` by
-construction, so a run is not blocked and its out-of-sample score is not
-inflated.
-
-It is deliberately a **separate, opt-in class** rather than a modification of
-:class:`DataSplitter`:
-
-* The purge width is a function of the label horizon, which
-  :class:`DataSplitter` has no concept of.
-* Purging is anchored --- block 0 is always training-only and every later
-  block is tested once --- so there is no ``train_ratio`` and no ``expanding``
-  window to configure. Replacing the existing splitter would silently change
-  fold semantics for every current caller.
+The first block is training-only; later blocks test against previous data
+minus label horizon and embargo. Unlike DataSplitter, explicit dates,
+train_ratio and expanding do not control this split.
 """
 
 from __future__ import annotations
@@ -38,11 +19,7 @@ if TYPE_CHECKING:
 
 
 class PurgedDataSplitter:
-    """Generate leak-free (train, test) DataFrame pairs for validation.
-
-    Same surface as :class:`~tradingdev.domain.validation.splitter.DataSplitter`
-    (``split`` and ``split_windows``) so the validator can swap between them.
-    """
+    """Purged strategy folds with the DataSplitter split/split_windows interface."""
 
     def __init__(
         self,
@@ -70,12 +47,7 @@ class PurgedDataSplitter:
         ]
 
     def split_windows(self, df: pd.DataFrame) -> list[FoldWindow]:
-        """Positional ``[start, end)`` train/test windows, one per fold.
-
-        Every window leaves a gap of at least ``label_horizon + embargo_bars``
-        bars before its test window, which is exactly what the leakage gate
-        checks.
-        """
+        """Return half-open windows with label_horizon + embargo_bars before tests."""
         splits = purged_walk_forward_splits(
             len(df),
             horizon=self._config.label_horizon,

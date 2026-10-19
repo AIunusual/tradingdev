@@ -44,13 +44,10 @@ def temporal_folds(
     embargo: int,
     min_train_dates: int,
 ) -> list[TemporalFold]:
-    """Group every symbol on common dates and purge overlapping label information.
+    """Split shared dates and purge overlapping original label intervals.
 
-    Label start/end timestamps are retained from the original bars, before
-    dropping features or aligning a panel. A carried observation therefore
-    cannot hide an overlap behind a newer calendar date. Carried observations
-    are rejected for validation. Shared dates are kept or removed as a whole,
-    even if only one symbol has an overlapping label.
+    Intervals precede feature drops and calendar alignment. Reject carried
+    observations; exclude a whole date if any symbol's label overlaps.
     """
     required = {"timestamp", "label_start", "label_end"}
     if min_train_dates < 1:

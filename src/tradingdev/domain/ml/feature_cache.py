@@ -1,25 +1,7 @@
-"""Reusing a computed feature matrix, and proving the reuse is safe.
+"""Feature cache identities bind bar values, symbol, timeframe, set and code.
 
-Turning bars into features is deterministic: the same bars through the same
-builder produce the same columns. So the work only has to be done once per
-(symbol, timeframe, bars, feature set, feature code) - which matters because
-the same features are recomputed for every label horizon and re-stored in full
-inside every dataset built from them.
-
-Reuse is only safe if the key cannot collide with a different computation, so
-every ingredient is here on purpose:
-
-* **bar content**, hashed from the values rather than from file size and
-  mtime: an edit that happens to keep the size, or a copy that keeps the
-  mtime, would otherwise look unchanged and hand back stale features.
-* **symbol and timeframe**, because two instruments can carry byte-identical
-  bars in a test or in a synthetic feed, and those are different series.
-* **feature set**, because a different set emits different columns.
-* **feature code**, because a fixed indicator must invalidate features that
-  were computed by the broken version. This is derived from the builders'
-  source, and can be injected by a caller that knows better.
-
-Nothing here touches the workspace or the clock; the store owns the files.
+Content hashing detects changes even when file size/mtime is unchanged.
+Feature matrices can be reused across label horizons; the store owns I/O.
 """
 
 from __future__ import annotations
@@ -65,12 +47,7 @@ class FeatureCacheIdentity:
 
 
 def data_fingerprint(frame: pd.DataFrame) -> str:
-    """Hash the *values* of a bar frame.
-
-    Size and mtime are not used: a bar can be edited without changing its
-    length, and a copied file can keep an old mtime. Hashing the values is
-    the only way to know the inputs to the builder are the same inputs.
-    """
+    """Hash bar values; file size and mtime cannot establish identical inputs."""
     digest = hashlib.sha256()
     digest.update(",".join(str(column) for column in frame.columns).encode("utf-8"))
     digest.update(f"rows={len(frame)}".encode())
@@ -98,12 +75,10 @@ def feature_cache_key(
 
 
 def _package_sources() -> list[tuple[str, bytes]]:
-    """Every Python file of the feature package, as ``(relative path, bytes)``.
+    """Read relative paths and bytes for every Python file in the feature package.
 
-    The whole package counts, not just the file a builder happens to live in:
-    builders delegate to helpers (a change inside ``technical_features`` moves
-    the RSI column just as much as a change in the builder itself), and the
-    package is small enough that hashing it costs a few reads.
+    Include helpers as well as builders so either kind of change invalidates
+    cached matrices.
     """
     from tradingdev.domain.ml import features as features_package  # local: circular
 
@@ -135,26 +110,11 @@ def _package_sources() -> list[tuple[str, bytes]]:
 def feature_code_fingerprint(
     feature_sets: Sequence[object] | None = None,
 ) -> str:
-    """Fingerprint the code that turns bars into features.
+    """Hash feature-package source and declared columns into 16 hexadecimal digits.
 
-    Derived from the feature package's source and from each set's declared
-    columns, rather than from a version constant or a git call, so it changes
-    exactly when the code that produces the columns changes - and it can be
-    computed anywhere, with no subprocess and no dependency on the working
-    directory. A cache key built from it is therefore reproducible on another
-    machine, which a ``git rev-parse`` of the local checkout is not.
-
-    Args:
-        feature_sets: Sets whose declarations to include; defaults to every
-            registered set.
-
-    Returns:
-        A 16-char hex digest.
-
-    Raises:
-        ValueError: If the feature source cannot be read. A missing
-            fingerprint must not silently become "unchanged": that would let
-            a fixed indicator keep serving features computed by the bug.
+    Use all registered sets unless supplied. Relative source paths make the
+    identity independent of install location and Git. Unreadable source raises
+    ``ValueError`` rather than allowing stale cache reuse.
     """
     sets: Sequence[object] = (
         list_feature_sets() if feature_sets is None else feature_sets

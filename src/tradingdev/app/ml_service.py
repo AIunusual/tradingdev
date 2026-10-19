@@ -1,8 +1,4 @@
-"""Application service backing the ML MCP tools.
-
-Orchestrates named feature and model registries, immutable datasets, training,
-signal evaluation and recorded comparisons. Storage adapters own dataset IO.
-"""
+"""Application orchestration for ML discovery, datasets, models and evaluations."""
 
 from __future__ import annotations
 
@@ -128,24 +124,19 @@ _PROCESSOR_TYPES = [
 ]
 
 
-# model_id is a 16-hex sha256 prefix produced by the artifact registry. Both
-# ids reach the filesystem, so they are locked to a literal shape rather than
-# trusted: an LLM-supplied value must never be able to walk out of the store.
+# Filesystem IDs must match literal shapes to prevent path traversal.
 _MODEL_ID = re.compile(r"^[0-9a-f]{16}$")
 _OHLCV_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
-# A symbol that never traded on the calendar can report one missing date per
-# bar; the count is always exact, the listing is capped for the tool response.
+# Keep exact missing-date counts, but cap the response listing.
 _MAX_REPORTED_DATES = 50
-# Rolling IC window for a fold score. It is capped at the fold's own length,
-# because a window longer than the test window measures nothing.
+# Cap rolling IC windows at the fold length.
 _FOLD_IC_WINDOW = 60
 
 
 class MLService:
-    """The enumerable ML vocabulary, signal evaluation, datasets and training.
+    """ML research over immutable datasets and disposable feature caches.
 
-    Dataset versions are immutable. Feature caches are disposable; recording
-    an evaluation replaces only that same candidate and measurement context.
+    Recording replaces only the same candidate and measurement context.
     """
 
     def __init__(
@@ -161,10 +152,7 @@ class MLService:
         self._feature_cache = feature_cache or FeatureCacheStore(
             self._workspace.ml_feature_cache
         )
-        # Deriving the code fingerprint from source (rather than from git, or
-        # from the clock) keeps it reproducible, and injection keeps it
-        # overridable: a caller that tracks feature versions some other way can
-        # say so instead of being handed a guess.
+        # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
 
     def _code_fingerprint(self) -> str:
@@ -183,8 +171,7 @@ class MLService:
             self._model_kind_summary(get_model_kind(name))
             for name in list_model_kinds()
         ]
-        # Read the same registry train_model resolves names against: a scheme
-        # that is advertised but cannot be built is a promise the tool breaks.
+        # Discovery and training share the scheme registry.
         validation_schemes = [
             {"name": scheme.name, "description": scheme.description}
             for scheme in (
@@ -217,32 +204,16 @@ class MLService:
         model_id: str | None = None,
         dataset_id: str | None = None,
     ) -> dict[str, Any]:
-        """Judge a prediction against realised forward returns.
+        """Evaluate one asset's chronological predictions against forward returns.
 
-        Args:
-            signal: Chronologically ordered predictions for one asset.
-            forward_returns: Realised return over the label horizon, one per bar.
-            horizon: Holding interval in original bars for the simulation.
-                When dataset_id is given, it must agree with the stored horizon;
-                omission adopts that value. Without a dataset it defaults to one.
-            window: Rolling IC window in bars.
-            n_quantiles: Quantile count for strata and simulated books.
-            record: Store the result so it can be ranked by ``leaderboard``.
-                Requires ``dataset_id``: without knowing what the signal was
-                measured on, the record could later be compared against
-                numbers that mean something else.
-            model_id: Model that produced the signal, when there is one.
-            dataset_id: Single-symbol dataset the signal was computed on. When
-                supplied, verifies exact saved returns even without recording.
+        Inputs must be equal-length finite arrays sufficient for the IC window
+        and quantile count. A supplied dataset ID verifies every saved return,
+        row order and horizon, even without recording; omission of the horizon
+        adopts the saved value, or one bar without a dataset. Recording requires
+        a dataset ID. ``model_id`` is a caller label, not proof of signal origin.
 
-        Returns:
-            A success dict suitable for ``SignalEvaluationResponse``.
-
-        Raises:
-            ValueError: On length mismatch, non-finite inputs, too few finite
-                observations for the requested window/quantiles, a record
-                request without a dataset, or a recording whose signal length
-                or horizon contradicts the dataset it names.
+        Returns a ``SignalEvaluationResponse`` payload; invalid inputs raise
+        ``ValueError``.
         """
         if len(signal) != len(forward_returns):
             raise ValueError(
@@ -343,14 +314,7 @@ class MLService:
         n_observations: int,
         forward_returns: list[float],
     ) -> int:
-        """The horizon a recorded evaluation may claim.
-
-        The dataset's own horizon is authoritative: it is the horizon the
-        forward-return labels were built at. A caller may omit the horizon (it
-        is adopted from the dataset) or state one that agrees, but never
-        silently overrule it - a record labelled with the wrong horizon would
-        be ranked against numbers measured over a different span.
-        """
+        """Adopt the saved label horizon, rejecting an explicit mismatch."""
         if not dataset_id:
             raise ValueError(
                 "recording an evaluation requires dataset_id, so the record "
@@ -433,16 +397,13 @@ class MLService:
             code_fingerprint=str(manifest["code_fingerprint"]),
             data_fingerprint=str(manifest["content_hash"]),
         )
-        # Non-finite metrics are dropped rather than stored: a NaN has no
-        # business in a ranking, and storing it would only create a row that
-        # can never be placed.
+        # Persist only rankable finite metrics.
         finite_metrics = {
             key: float(value)
             for key, value in metrics.items()
             if isinstance(value, (int, float)) and math.isfinite(float(value))
         }
-        # Without a model to identify the candidate, the signal values are the
-        # only thing that tells two hand-supplied entries apart.
+        # Distinguish ad-hoc signals when no model ID identifies the candidate.
         fingerprint = "" if model_id else signal_fingerprint(signal)
         entry = LeaderboardEntry(
             entry_id=build_entry_id(
@@ -500,28 +461,13 @@ class MLService:
         top_k: int | None = None,
         allow_mixed: bool = False,
     ) -> dict[str, Any]:
-        """Rank recorded evaluations on one metric.
+        """Rank recorded evaluations using the metric's declared direction.
 
-        Args:
-            metric: A signal metric with a declared optimisation direction.
-            dataset_id: Keep only candidates for this verified dataset version.
-                Their saved data context must match its immutable manifest.
-            symbol: Keep only candidates measured on this instrument.
-            timeframe: Keep only candidates measured on this bar size.
-            horizon: Keep only candidates measured at this label horizon.
-            feature_set: Keep only candidates whose features came from this
-                named set.
-            top_k: Return only the first ``top_k`` ranks.
-            allow_mixed: Rank across different measurement conditions anyway.
-                Off by default: the numbers would not be comparable.
-
-        Returns:
-            A success dict suitable for ``LeaderboardResponse``.
-
-        Raises:
-            ValueError: If the dataset is invalid, its saved context disagrees,
-                nothing is recorded, the metric cannot rank, or the remaining
-                entries were measured under different conditions.
+        Filters narrow candidates by dataset or measurement conditions. A
+        supplied dataset is verified against its records. Mixed contexts raise
+        ``ValueError`` unless ``allow_mixed`` is enabled; that opt-in does not
+        make their measurements comparable. Invalid metrics, datasets or empty
+        results also fail. Returns a ``LeaderboardResponse`` payload.
         """
         manifest = self._load_dataset(dataset_id)[1] if dataset_id is not None else None
         store = LeaderboardStore(self._workspace.ml_leaderboard)
@@ -614,16 +560,11 @@ class MLService:
         horizon: int = 1,
         source: str = "binance_vision",
     ) -> dict[str, Any]:
-        """Build a labelled feature dataset from cached OHLCV bars.
+        """Build immutable labelled features from existing cached OHLCV bars.
 
-        The named feature set supplies the columns, and the label is the sign
-        of the realised forward return over ``horizon`` bars. Incomplete rows
-        (indicator warm-up and the unlabelled tail) are dropped here rather
-        than inside the builders, which stay row-preserving.
-
-        Raises:
-            ValueError: On an unknown feature set, a non-positive horizon, or
-                missing cached market data.
+        Targets are signs of forward returns over ``horizon`` source bars.
+        Drop incomplete feature/label rows here; feature builders preserve rows.
+        Unknown features, non-positive horizons and missing market data fail.
         """
         if horizon < 1:
             raise ValueError("horizon must be at least 1")
@@ -678,10 +619,7 @@ class MLService:
                 "label_column": "target",
                 "content_hash": content_hash,
                 "path": str(parquet_path),
-                # Deliberately not part of the manifest: the dataset's content
-                # does not depend on whether the features were recomputed, and
-                # a manifest that changed between two builds of the same id
-                # would be a worse audit trail than one that does not.
+                # Cache-hit status must not change dataset identity.
                 "features_from_cache": labelled.features_from_cache,
             },
         }
@@ -700,31 +638,15 @@ class MLService:
         missing_policy: str = "drop",
         max_staleness: int | None = None,
     ) -> dict[str, Any]:
-        """Build a labelled multi-symbol panel on one shared calendar.
+        """Build a shared-calendar panel from at least two distinct symbols.
 
-        Each symbol is featurised and labelled on its own bars first --- the
-        label is that symbol's own forward return, so alignment can never
-        borrow another instrument's outcome --- and only then are the frames
-        put on a common calendar. A date enters the panel only when every
-        symbol can supply it, so the panel has no half-populated row.
+        Compute each symbol's features and labels before alignment. Intersection
+        keeps common dates; union applies drop, error or forward-fill handling.
+        Forward fill carries original values and label intervals for at most
+        ``max_staleness`` calendar positions (``None`` is unbounded). Retain only
+        dates every symbol supplies. Symbol order does not affect identity.
 
-        Args:
-            symbols: Two or more symbols; order does not affect the result.
-            calendar_mode: ``intersection`` keeps the dates every symbol
-                traded; ``union`` keeps every date any symbol traded and then
-                applies ``missing_policy`` to the holes.
-            missing_policy: ``drop`` removes dates a symbol cannot supply,
-                ``forward_fill`` carries its last bar (bounded by
-                ``max_staleness``), ``error`` refuses the panel.
-            max_staleness: Largest number of dates one bar may be carried
-                across under ``forward_fill``; ``None`` is unbounded.
-
-        Returns:
-            A success dict suitable for ``BuildPanelResponse``.
-
-        Raises:
-            ValueError: On fewer than two symbols, duplicates, an unknown
-                feature set or calendar option, or missing cached data.
+        Invalid symbols, features, calendar options or cached data fail.
         """
         if horizon < 1:
             raise ValueError("horizon must be at least 1")
@@ -747,9 +669,7 @@ class MLService:
                 source=source,
             )
             dropped_rows += labelled.dropped_rows
-            # Reported as one flag: a panel that mixed a recomputed symbol with
-            # a cached one is not "cached", and saying so per symbol would
-            # invite reading the flag as a statement about the whole panel.
+            # A panel is cached only when every symbol is a hit.
             features_from_cache = features_from_cache and labelled.features_from_cache
             frames[symbol] = labelled.frame.set_index("timestamp")
 
@@ -828,37 +748,19 @@ class MLService:
         embargo: int = 0,
         min_train_bars: int | None = None,
     ) -> dict[str, Any]:
-        """Train a registered direction model on a built dataset.
+        """Fit a registered direction model and persist its pickled artifact.
 
-        The trained estimator is pickled and stored through the model-artifact
-        registry, so the returned ``model_id`` is a stable fingerprint of the
-        hyper-parameters, the feature contract and the blob itself.
+        The final artifact fits all dataset rows; its training-data predictions
+        are in-sample. Optional validation fits separate fold models and returns
+        scores, not out-of-fold predictions. Walk-forward trains on the past;
+        K-fold is retrospective. ``None`` skips validation.
 
-        Args:
-            dataset_id: Dataset to train on.
-            model_kind: Registered model kind.
-            parameters: Hyper-parameter overrides.
-            validation: Named scheme from the advertised
-                ``validation_schemes``; ``None`` skips it. When given, the
-                model is also fitted once per fold on purged training bars and
-                scored on that fold's test window, so the response carries an
-                held-out fold scores alongside the artifact. K-fold is
-                retrospective; only walk-forward restricts training to the past.
-            n_folds: How many test windows the scheme should produce.
-            embargo: Extra bars removed around every test window, on top of
-                the purge. Guards against serial correlation, which a purge
-                sized exactly to the label horizon does not.
-            min_train_bars: Smallest number of distinct training dates per fold;
-                defaults to half a block's worth. A whole block cannot be
-                asked for under walk-forward, because the first fold's
-                training window is one block before the purge is carved out
-                of it.
+        Purging uses saved label intervals and horizon; ``embargo`` adds a gap.
+        ``min_train_bars`` counts distinct dates and defaults to half a block,
+        leaving room for the first walk-forward fold's purge. Artifact identity
+        binds effective parameters, ordered features and model bytes.
 
-        Raises:
-            ValueError: On a malformed or unknown ``dataset_id``, an unknown
-                ``model_kind``, parameters the model does not accept, an
-                unknown ``validation`` scheme, or fold geometry the dataset is
-                too small for.
+        Invalid IDs, model kinds, parameters or fold geometry raise ``ValueError``.
         """
         frame, manifest = self._load_dataset(dataset_id)
         try:
@@ -867,9 +769,7 @@ class MLService:
             raise ValueError(f"unknown model kind: {model_kind}") from exc
 
         params = self._validated_parameters(kind, parameters or {})
-        # Resolve the whole validation request before fitting anything: an
-        # unusable request should cost nothing, and a model fitted only to be
-        # refused afterwards would be pure waste.
+        # Reject unusable validation geometry before fitting.
         request = self._validation_request(
             scheme=validation,
             n_folds=n_folds,
@@ -895,9 +795,7 @@ class MLService:
         # Explicit feature selection excludes labels and their observation times.
         model.train(frame[feature_columns + ["target"]])
 
-        # Record the effective settings (declared defaults plus overrides)
-        # rather than asking the estimator, so the fingerprint cannot depend
-        # on a subclass choosing to report its config.
+        # Fingerprint declared defaults plus overrides, not estimator reporting.
         effective_parameters = kind.config_cls(**params).model_dump()
         blob = pickle.dumps(model)
         artifact = build_model_artifact(
@@ -946,12 +844,7 @@ class MLService:
         n_bars: int,
         label_horizon: int,
     ) -> _ValidationRequest | None:
-        """Resolve a validation request, or ``None`` when none was asked for.
-
-        Every check that can refuse a request happens here, before any
-        estimator is fitted, and the name is resolved against the registry the
-        contract advertises so the menu and the parser cannot drift apart.
-        """
+        """Resolve the advertised scheme and validate geometry before any fitting."""
         if scheme is None:
             return None
         get_validation_scheme(scheme)
@@ -966,10 +859,7 @@ class MLService:
             )
         floor = min_train_bars
         if floor is None:
-            # Half a fold's worth of bars. A whole block is unreachable: the
-            # first fold's training window *is* one block, and the purge and
-            # embargo are carved out of it, so asking for a full block would
-            # reject every walk-forward request that purges anything at all.
+            # Reserve room for purge/embargo inside the first training block.
             floor = max(1, n_bars // max(1, 2 * (n_folds + 1)))
         return _ValidationRequest(
             scheme=scheme,
@@ -988,17 +878,11 @@ class MLService:
         frame: pd.DataFrame,
         feature_columns: list[str],
     ) -> dict[str, Any]:
-        """Fit the model once per purged fold and score it on that fold's test bars.
+        """Fit and score separate fold models using the saved label horizon.
 
-        The purge width is the dataset's own label horizon, read from its
-        manifest rather than asked for: the labels already exist, so how far
-        their information reaches is a fact about the dataset, not a setting
-        the caller should be free to get wrong.
-
-        Every symbol on a date stays in the same fold. Actual label intervals
-        are checked after geometric purging. The saved artifact is subsequently
-        fit on every row; the fold scores do not describe that fitted object's
-        predictions on its training rows.
+        Keep all symbols on a date together and check actual label intervals
+        after geometric purging. These scores do not describe the final model,
+        which is subsequently fitted on every row.
         """
         splits = temporal_folds(
             frame,
@@ -1068,12 +952,7 @@ class MLService:
         forward_returns: npt.NDArray[Any],
         targets: npt.NDArray[Any],
     ) -> dict[str, Any]:
-        """Score one fold's predictions against its own test bars.
-
-        Metrics that need a rolling window are computed on a window no longer
-        than the fold itself, and anything that comes back non-finite is
-        reported as ``None`` rather than as a number that looks like a result.
-        """
+        """Score with a fold-bounded IC window; map non-finite scores to None."""
         accuracy = float((predictions == targets).mean())
         scores: dict[str, Any] = {"accuracy": self._finite(accuracy)}
         if len(predictions) < 2:
@@ -1093,12 +972,7 @@ class MLService:
 
     @staticmethod
     def _aggregated_scores(folds: list[dict[str, Any]]) -> dict[str, Any]:
-        """Mean of each fold score over the folds that produced one.
-
-        A metric every fold failed to produce stays ``None`` rather than
-        becoming zero: "not measured" and "measured as nothing" are different
-        answers, and only one of them is honest.
-        """
+        """Average available fold scores; leave unmeasured metrics as None."""
         aggregate: dict[str, Any] = {}
         for key in ("accuracy", "ic_mean", "rank_ic_mean", "hit_rate"):
             present = [
@@ -1110,17 +984,12 @@ class MLService:
         return aggregate
 
     def predict(self, *, model_id: str, dataset_id: str) -> dict[str, Any]:
-        """Score a stored model against a stored dataset.
+        """Predict with a verified stored model and dataset in saved row order.
 
-        Loads the artifact (re-verifying its blob hash), unpickles the
-        estimator and returns the predicted signal together with the realised
-        forward returns, so the pair can be passed straight to
-        :meth:`evaluate_signal`.
-
-        Raises:
-            ValueError: On a malformed or unknown id, a tampered blob, or a
-                dataset whose feature contract differs from the one the model
-                was trained on.
+        Verify blob integrity and exact ordered features before unpickling.
+        Workspace model files must be trusted: hashing is not a sandbox.
+        Return signals and saved forward returns; prediction does not establish
+        out-of-sample provenance. Invalid IDs, blobs or feature contracts fail.
         """
         if not _MODEL_ID.match(model_id):
             raise ValueError(f"malformed model_id: {model_id}")
@@ -1204,15 +1073,9 @@ class MLService:
         entry: FeatureSet,
         source: str,
     ) -> tuple[pd.DataFrame, bool]:
-        """Bars plus the feature set's columns, reusing a verified matrix.
+        """Return bars plus features and a cache-hit flag.
 
-        Only the features are cached. The label is built afterwards, because it
-        depends on the horizon: a matrix is reused across every horizon and
-        every dataset built from the same bars, which is the whole reason the
-        work is worth saving.
-
-        Returns:
-            The featurised frame, and whether it came from the cache.
+        Cache features before labelling so the same matrix serves all horizons.
         """
         bars = self._cached_bars(
             symbol=symbol,
@@ -1224,9 +1087,7 @@ class MLService:
         identity = FeatureCacheIdentity(
             symbol=symbol,
             timeframe=timeframe,
-            # Hashed from the bar values in a fixed column order, so the
-            # fingerprint is a statement about the data and not about how the
-            # file happened to be written.
+            # Hash bar values in fixed column order, independent of file encoding.
             data_fingerprint=data_fingerprint(bars.loc[:, list(_OHLCV_COLUMNS)]),
             feature_set=entry.name,
             code_fingerprint=self._code_fingerprint(),
@@ -1253,11 +1114,7 @@ class MLService:
         horizon: int,
         source: str,
     ) -> LabelledFrame:
-        """Featurise and label one symbol's cached bars.
-
-        Rows are dropped here, before any alignment, so one symbol's warm-up
-        cannot shrink another symbol's calendar.
-        """
+        """Label one symbol before panel alignment, dropping incomplete rows."""
         frame, features_from_cache = self._feature_frame(
             symbol=symbol,
             timeframe=timeframe,
@@ -1268,9 +1125,7 @@ class MLService:
         )
         dataset = frame.copy()
         forward = forward_returns(dataset["close"], horizon)
-        # Kept so predict can hand realised returns to evaluate_signal. It is
-        # never a training column: train_model selects the declared features
-        # only, so this cannot leak into a model.
+        # Keep returns for evaluation; training selects declared features only.
         dataset["forward_return"] = forward
         dataset["target"] = np.sign(forward).astype(float)
         dataset["label_start"] = dataset["timestamp"]
@@ -1352,12 +1207,7 @@ class MLService:
     def _validated_parameters(
         kind: ModelKind, parameters: dict[str, Any]
     ) -> dict[str, Any]:
-        """Reject parameters the model does not declare.
-
-        Pydantic ignores unknown fields by default, which would let a typo
-        silently train with defaults; on an LLM-facing surface that has to be
-        an error instead.
-        """
+        """Reject undeclared parameters rather than silently training with defaults."""
         allowed = set(kind.config_cls.model_fields)
         unknown = sorted(set(parameters) - allowed)
         if unknown:

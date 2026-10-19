@@ -24,14 +24,9 @@ _EXCLUDE_COLS = frozenset(
 
 
 class CatBoostDirectionModel(BaseModel):
-    """CatBoost-based direction prediction model.
+    """CatBoost direction classifier with the shared -1/0/1 model interface.
 
-    Wraps :class:`catboost.CatBoostClassifier` to predict price direction
-    (``-1``, ``0``, ``1``). The interface mirrors :class:`XGBoostDirectionModel`
-    so all three boosters share one contract in the model zoo.
-
-    ``allow_writing_files=False`` keeps training pure in-memory, so a test run
-    never writes a snapshot or log to disk.
+    ``allow_writing_files=False`` prevents training snapshots and logs.
     """
 
     def __init__(self, config: CatBoostModelConfig) -> None:
@@ -45,12 +40,7 @@ class CatBoostDirectionModel(BaseModel):
         df: pd.DataFrame,
         eval_df: pd.DataFrame | None = None,
     ) -> None:
-        """Train the CatBoost classifier.
-
-        Args:
-            df: Training DataFrame with feature columns and a ``target`` column.
-            eval_df: Optional validation DataFrame for early stopping.
-        """
+        """Fit features against target; optionally use eval_df for early stopping."""
         from catboost import CatBoostClassifier
 
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
@@ -107,14 +97,7 @@ class CatBoostDirectionModel(BaseModel):
         )
 
     def predict(self, df: pd.DataFrame) -> pd.Series[float]:
-        """Predict direction class for each row.
-
-        Returns:
-            Series of predicted classes (``-1``, ``0``, ``1``).
-
-        Raises:
-            RuntimeError: If the model has not been trained yet.
-        """
+        """Return -1/0/1 classes; raise RuntimeError before training."""
         if self._model is None:
             msg = "Model has not been trained. Call train() first."
             raise RuntimeError(msg)
@@ -125,11 +108,7 @@ class CatBoostDirectionModel(BaseModel):
         return pd.Series(preds, index=df.index, dtype=float)
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Return class probabilities for each row.
-
-        Raises:
-            RuntimeError: If the model has not been trained yet.
-        """
+        """Return class probabilities; raise RuntimeError before training."""
         if self._model is None:
             msg = "Model has not been trained. Call train() first."
             raise RuntimeError(msg)

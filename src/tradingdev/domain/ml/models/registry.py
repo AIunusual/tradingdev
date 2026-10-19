@@ -1,10 +1,4 @@
-"""Model zoo: an enumerable, audited set of direction-model implementations.
-
-Mirrors the feature-set registry. An LLM-facing surface should pick a named,
-reviewed estimator from this registry rather than construct arbitrary model
-classes. Each entry binds a stable ``kind`` name to its config class and model
-class, so a tool can list the options and build one from a uniform schema.
-"""
+"""Named direction-model implementations and their configuration classes."""
 
 from __future__ import annotations
 

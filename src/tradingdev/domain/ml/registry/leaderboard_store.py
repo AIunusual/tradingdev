@@ -1,14 +1,7 @@
-"""Filesystem persistence for signal-evaluation leaderboards.
+"""Persist one JSON-lines record per candidate, ordered by entry_id.
 
-The store is one JSON-lines file, one record per evaluated candidate, kept in
-``entry_id`` order so the file is byte-stable no matter what order the
-evaluations happened in.
-
-Records are keyed by :func:`build_entry_id`, so re-evaluating the same model on
-the same dataset under the same settings rewrites one row instead of adding a
-second. That matters beyond tidiness: the number of candidates is what decides
-how significant the winner has to be, and a duplicated candidate would make the
-leaderboard quietly claim more evidence than it has.
+Re-evaluation replaces that candidate instead of inflating comparison counts.
+Writers lock the complete read/update/publish operation.
 """
 
 from __future__ import annotations
@@ -50,12 +43,10 @@ class LeaderboardStore:
         horizon: int | None = None,
         feature_set: str | None = None,
     ) -> tuple[LeaderboardEntry, ...]:
-        """Stored candidates, narrowed by dataset identity and measurement conditions.
+        """Filter stored candidates by dataset and measurement conditions.
 
-        Raises:
-            ValueError: If a stored line cannot be read back. A record that
-                silently vanishes would shrink the comparison and make the
-                winner look stronger, so corruption is never skipped.
+        Corrupt records raise ValueError; skipping them would distort candidate
+        counts and the reported significance threshold.
         """
         return tuple(
             entry
@@ -70,12 +61,7 @@ class LeaderboardStore:
         )
 
     def record(self, entry: LeaderboardEntry) -> bool:
-        """Store a candidate, replacing any earlier row for the same id.
-
-        Returns:
-            ``True`` if an existing record was replaced, ``False`` if this is
-            the first record for the id.
-        """
+        """Store a candidate; return whether it replaced an existing entry_id."""
         # The lock covers the complete read-modify-write, not only publication.
         # Its inode is retained so a waiting writer cannot acquire a new lock
         # file while another process still owns the old inode.

@@ -1,23 +1,8 @@
-"""Ranking of evaluated signals, and the mistakes a leaderboard invites.
+"""Pure signal ranking by catalog direction and measurement context.
 
-Sorting a column of scores looks harmless and is not:
-
-* every extra candidate raises the winning score by luck alone, so the top of
-  a long list is the most optimistic number in it;
-* a metric is not "better when bigger" by default - ``signal_turnover`` and
-  ``ic_std`` improve when they shrink, and a metric like ``n_periods`` has no
-  direction at all;
-* two numbers measured on different things cannot be compared, however tidy
-  they look side by side: a Rank IC earned on BTC in 2024 says nothing about
-  one earned on ETH in 2025.
-
-This module makes all three explicit instead of leaving them to the caller.
-Direction always comes from the signal metric catalog, entries that were not
-measured on the same context are refused unless the caller insists, and the
-size of the comparison is reported back with the critical value the winner
-would have to clear.
-
-Everything here is pure: no IO, no workspace, no clock.
+Reject incomparable contexts unless explicitly allowed. Report candidate
+counts and a multiple-comparison caveat rather than treating the selected
+winner as unqualified evidence.
 """
 
 from __future__ import annotations
@@ -58,20 +43,11 @@ _T_STAT_COMPANION = {
 
 @dataclass(frozen=True)
 class EvaluationContext:
-    """What a signal was measured on.
+    """Measurement identity for comparable signal scores.
 
-    Two entries are comparable only when their contexts are equal: the same
-    instrument, bar size, date range, label horizon, evaluation settings *and*
-    the feature code that produced the numbers. A difference in any of them
-    changes what the metrics mean.
-
-    ``feature_set`` and ``code_fingerprint`` are part of the identity for the
-    same reason as the rest, and for one extra one: without them a bug fix in
-    the feature code would leave the dataset id - and therefore the entry id -
-    unchanged, so the new number would silently *overwrite* the old row and the
-    leaderboard would present post-fix evidence as if it were the same
-    candidate measured before the fix. With them, the two get different ids and
-    the mismatch is reported instead of absorbed.
+    Includes instrument, timeframe, dates, horizon, evaluation settings,
+    feature set, build-time code and dataset content. Different identities
+    must not silently replace or compare each other's evidence.
     """
 
     symbol: str
@@ -145,11 +121,7 @@ class LeaderboardEntry:
     dataset_id: str = ""
 
     def metric(self, name: str) -> float | None:
-        """The metric value, or ``None`` when missing or not finite.
-
-        A NaN would otherwise sort above every real number in one direction and
-        below it in the other, so it is never a rankable value.
-        """
+        """Return a finite metric value, or None when missing/non-finite."""
         value = self.metrics.get(name)
         if value is None:
             return None
@@ -220,22 +192,11 @@ def build_entry_id(
     context: EvaluationContext,
     signal_fingerprint: str = "",
 ) -> str:
-    """Fingerprint a candidate in one context.
+    """Identify one candidate within a dataset and measurement context.
 
-    Re-evaluating the same model on the same data under the same settings
-    produces the same id, so the store updates that row instead of adding a
-    second one. Counting the same candidate twice would inflate the size of
-    the comparison and quietly make the winner look more significant.
-
-    Args:
-        model_id: Model that produced the signal. Empty for a hand-supplied
-            signal, which is why ``signal_fingerprint`` exists: without a
-            model to identify it, two different ad-hoc signals would collide
-            into one row.
-        dataset_id: Dataset the signal was computed on.
-        context: What the signal was measured on.
-        signal_fingerprint: Hash of the signal values; set it when there is no
-            model id, so distinct ad-hoc signals stay distinct candidates.
+    Repeated evaluation replaces that row without inflating candidate count.
+    Use ``signal_fingerprint`` when model_id is absent so distinct ad-hoc
+    signals remain distinct. A supplied model ID is a caller-declared label.
     """
     payload = "|".join((model_id, dataset_id, context.key, signal_fingerprint))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -286,13 +247,7 @@ class LeaderboardResult:
 
 
 def metric_direction(metric: str) -> Direction:
-    """The catalog's optimisation direction for ``metric``.
-
-    Raises:
-        ValueError: If the metric is unknown, or is declared without a
-            direction. A directionless metric (``n_periods``) cannot order
-            candidates: larger is not better, it is just larger.
-    """
+    """Return catalog direction; reject unknown or directionless metrics."""
     definition = SIGNAL_METRIC_CATALOG.get(metric)
     if definition is None:
         raise ValueError(f"unknown signal metric: {metric}")
@@ -315,24 +270,10 @@ def rankable_metrics() -> tuple[str, ...]:
 
 
 def required_t_stat(n_candidates: int, *, alpha: float = 0.05) -> float:
-    """Critical two-sided t-value after a Bonferroni correction.
+    """Two-sided Bonferroni threshold for ``n_candidates`` at family-wise alpha.
 
-    Picking the best of ``n_candidates`` is ``n_candidates`` comparisons, so
-    the usual 5% bar is far too lenient for the winner. This returns the value
-    a winner's t-statistic must exceed before the ranking says anything.
-
-    The threshold is a normal approximation rather than a t quantile, which is
-    slightly anti-conservative when the IC series is short; callers that rank
-    on few effective periods should read the winner as even weaker than this
-    says.
-
-    Args:
-        n_candidates: How many candidates were compared.
-        alpha: Family-wise error rate to control.
-
-    Raises:
-        ValueError: If ``n_candidates`` is below 1 or ``alpha`` is not in
-            ``(0, 1)``.
+    Uses a normal approximation, which is anti-conservative for short IC
+    series. Require at least one candidate and ``0 < alpha < 1``.
     """
     if n_candidates < 1:
         raise ValueError("n_candidates must be at least 1")
@@ -402,21 +343,11 @@ def rank_entries(
     top_k: int | None = None,
     alpha: float = 0.05,
 ) -> LeaderboardResult:
-    """Rank evaluated candidates on one catalog-declared metric.
+    """Rank by catalog direction, returning skipped entries and selection caveats.
 
-    Args:
-        entries: Candidates to rank. They must share an
-            :class:`EvaluationContext`; use :func:`comparability_error` first.
-        metric: A signal metric id with a declared direction.
-        top_k: Keep only the first ``top_k`` ranks.
-        alpha: Family-wise error rate used for the selection caveat.
-
-    Returns:
-        The ranking, the entries that could not be placed, and the caveats a
-        reader needs in order to discount the winner.
-
-    Raises:
-        ValueError: On an unknown or directionless metric, or ``top_k`` below 1.
+    Call ``comparability_error`` first to verify shared measurement context.
+    ``alpha`` controls the family-wise caveat; ``top_k`` limits output.
+    Reject unknown/directionless metrics and non-positive ``top_k``.
     """
     direction = metric_direction(metric)
     if top_k is not None and top_k < 1:

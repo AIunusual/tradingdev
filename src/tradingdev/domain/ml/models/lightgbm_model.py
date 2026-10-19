@@ -23,13 +23,7 @@ _EXCLUDE_COLS = frozenset(
 
 
 class LightGBMDirectionModel(BaseModel):
-    """LightGBM-based direction prediction model.
-
-    Wraps :class:`lightgbm.LGBMClassifier` to predict price direction
-    (``-1``, ``0``, ``1``). The interface and column handling mirror
-    :class:`XGBoostDirectionModel` so the two boosters are interchangeable
-    inside the model zoo.
-    """
+    """LightGBM direction classifier with the shared -1/0/1 model interface."""
 
     def __init__(self, config: LightGBMModelConfig) -> None:
         self._config: LightGBMModelConfig = config
@@ -42,12 +36,7 @@ class LightGBMDirectionModel(BaseModel):
         df: pd.DataFrame,
         eval_df: pd.DataFrame | None = None,
     ) -> None:
-        """Train the LightGBM classifier.
-
-        Args:
-            df: Training DataFrame with feature columns and a ``target`` column.
-            eval_df: Optional validation DataFrame for early stopping.
-        """
+        """Fit features against target; optionally use eval_df for early stopping."""
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
         self._feature_names = feature_cols
 
@@ -91,14 +80,7 @@ class LightGBMDirectionModel(BaseModel):
         )
 
     def predict(self, df: pd.DataFrame) -> pd.Series[float]:
-        """Predict direction class for each row.
-
-        Returns:
-            Series of predicted classes (``-1``, ``0``, ``1``).
-
-        Raises:
-            RuntimeError: If the model has not been trained yet.
-        """
+        """Return -1/0/1 classes; raise RuntimeError before training."""
         if self._model is None:
             msg = "Model has not been trained. Call train() first."
             raise RuntimeError(msg)
@@ -109,11 +91,7 @@ class LightGBMDirectionModel(BaseModel):
         return pd.Series(preds, index=df.index, dtype=float)
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Return class probabilities for each row.
-
-        Raises:
-            RuntimeError: If the model has not been trained yet.
-        """
+        """Return class probabilities; raise RuntimeError before training."""
         if self._model is None:
             msg = "Model has not been trained. Call train() first."
             raise RuntimeError(msg)

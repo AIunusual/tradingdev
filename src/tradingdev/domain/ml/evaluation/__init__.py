@@ -1,9 +1,4 @@
-"""Signal (factor) evaluation: does a prediction carry information?
-
-Separate from backtesting on purpose. These metrics judge a prediction
-against realised forward returns before any capital is at risk, so a weak
-signal can be rejected without paying for a full portfolio run.
-"""
+"""Prediction-quality metrics against forward returns, separate from backtests."""
 
 from __future__ import annotations
 

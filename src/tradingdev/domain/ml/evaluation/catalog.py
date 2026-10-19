@@ -1,11 +1,6 @@
-"""Semantic catalog for signal (factor) evaluation metrics.
+"""Signal metric definitions, separate from portfolio-performance metrics.
 
-This catalog is deliberately separate from
-:mod:`tradingdev.domain.performance.catalog`. Backtest metrics describe an
-executed portfolio and require equity and trade observations; signal metrics
-describe the relationship between a prediction and a realised forward return
-and require neither. Keeping the two catalogs apart lets a prediction be
-judged *before* any capital is committed.
+Inputs are predictions and forward returns, not equity or executed trades.
 """
 
 from __future__ import annotations

@@ -1,16 +1,7 @@
-"""Model artifact registry: a stable, auditable identity for trained models.
+"""Model identities bind name, parameters, ordered features and blob content.
 
-A trained model is more than a blob on disk: it is bound to the feature
-contract it was trained on, to the hyper-parameters that produced it, and to
-the data it saw. Without recording that binding a later run can silently
-load a model against the wrong columns and invent results.
-
-The registry captures this as a small, deterministic record. ``model_id`` is
-derived from the model name, its hyper-parameters, the feature contract and a
-content hash, so identical training produces an identical id and a tampered or
-substituted blob no longer matches. ``feature_importance`` is extracted where
-the underlying estimator exposes it; for estimators that cannot (AutoGluon's
-ensemble), it is simply absent rather than faked.
+Metadata preserves available native feature importance. Content hashes check
+integrity; they do not establish training-data provenance or pickle safety.
 """
 
 from __future__ import annotations
@@ -102,12 +93,7 @@ def compute_model_id(
     feature_names: tuple[str, ...],
     content_hash: str,
 ) -> str:
-    """Derive a deterministic model id from the training identity.
-
-    The id folds in the hyper-parameters, the feature contract and the blob
-    hash, so a model trained on different columns, with different settings,
-    or from a different file yields a different id.
-    """
+    """Hash model name, parameters, ordered features and blob content into an ID."""
     digest = hashlib.sha256()
     digest.update(
         _stable_json(
@@ -168,10 +154,9 @@ def feature_importance_from_gain(
     feature_names: list[str],
     importance: list[float] | Any,
 ) -> tuple[tuple[str, float], ...]:
-    """Project raw gain importance into a sorted ``(feature, value)`` tuple.
+    """Sort native feature_importances_ values alongside feature names.
 
-    Used by tree estimators (XGBoost, LightGBM, CatBoost) whose
-    ``feature_importances_`` is a parallel array to ``feature_names``.
+    Despite the helper name, each estimator defines its importance scale.
     """
     paired = sorted(
         zip(feature_names, [float(value) for value in importance], strict=False),

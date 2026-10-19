@@ -1,20 +1,7 @@
-"""Ordered processor pipelines that learn from a training segment only.
+"""Ordered fit/transform pipelines with row-count and content provenance.
 
-A single processor is easy to misuse: calling ``fit`` on the full frame looks
-identical to calling it on the training bars. :class:`ProcessorPipeline` makes
-the boundary structural:
-
-* :meth:`ProcessorPipeline.fit` is the only entry point that may learn, and it
-  records how many rows it saw plus a fingerprint of those rows.
-* :meth:`ProcessorPipeline.transform` refuses to run before a ``fit``, so an
-  unfitted pipeline fails loudly instead of silently computing statistics from
-  whatever frame it is handed.
-* :meth:`ProcessorPipeline.describe` reports what each processor learned,
-  which is the surface an MCP tool can show to a user who wants to know
-  whether the pipeline touched the test data.
-
-:func:`fit_transform_split` wires this to :class:`~tradingdev.domain.ml.
-validation.Split`: fit on the training bars, transform both sides, never refit.
+``fit_transform_split`` fits on training rows and transforms both partitions
+without refitting. ``describe`` exposes each processor's learned statistics.
 """
 
 from __future__ import annotations
@@ -52,12 +39,9 @@ def _frame_signature(frame: pd.DataFrame) -> str:
 
 
 class ProcessorPipeline:
-    """An ordered sequence of processors fitted once per fold.
+    """Ordered processors; refitting replaces statistics and fitting provenance.
 
-    The pipeline is reusable: calling :meth:`fit` again replaces the learned
-    parameters, which is what a walk-forward loop needs. It deliberately does
-    not remember the frame it was fitted on, only its shape and fingerprint,
-    so a fitted pipeline stays cheap to pass around.
+    Retain row count and fingerprint, not the original training frame.
     """
 
     def __init__(self, processors: Sequence[Processor]) -> None:
@@ -86,19 +70,10 @@ class ProcessorPipeline:
         return self._fit_signature
 
     def fit(self, frame: pd.DataFrame) -> ProcessorPipeline:
-        """Learn every processor's parameters from ``frame``.
+        """Fit and apply each processor in order on the training frame; return self.
 
-        Fitting runs in pipeline order: each processor fits on the frame as it
-        currently stands and is then applied, so a later processor sees the
-        data the earlier ones already transformed. That is what makes a
-        ``Fillna`` followed by a ``ZScoreNorm`` fit the scaler on the filled
-        column rather than on the raw, NaN-bearing one.
-
-        Args:
-            frame: The training segment. Nothing outside it is observable.
-
-        Returns:
-            The pipeline itself, so ``fit(...)`` chains into ``transform(...)``.
+        Later processors learn from earlier transformations, so a scaler after
+        Fillna fits filled values rather than the original missing values.
         """
         if len(frame) == 0:
             raise ValueError("cannot fit a pipeline on an empty frame")
@@ -153,19 +128,9 @@ def fit_transform_split(
     split: Split,
     pipeline: ProcessorPipeline,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit the pipeline on one split's training bars and transform both sides.
+    """Refit on one split's training rows and return transformed train/test frames.
 
-    The test bars are transformed by parameters that were computed before they
-    were ever looked at, which is the whole point of purging and embargoing
-    in the first place.
-
-    Args:
-        frame: Feature frame ordered by bar, one row per bar.
-        split: The leak-free partition to honour.
-        pipeline: A pipeline, refitted here for this split.
-
-    Returns:
-        The transformed training rows and the transformed test rows.
+    ``frame`` is ordered by bar. Test rows use the training-fitted parameters.
     """
     parts = [frame.iloc[start:end] for start, end in split.train]
     train = pd.concat(parts) if parts else frame.iloc[0:0]

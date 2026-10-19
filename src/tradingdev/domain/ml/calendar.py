@@ -1,24 +1,7 @@
-"""Multi-symbol trading calendars and panel alignment.
+"""Pure calendar and panel alignment with explicit missing-date policies.
 
-A single-instrument dataset has one obvious index: the bars the venue reported.
-A *panel* of several instruments does not, because real markets do not agree
-on when they traded:
-
-* crypto trades continuously, equities do not;
-* a symbol that listed late has no bars before its first trade;
-* halts, maintenance windows and provider gaps punch holes in an index.
-
-Joining such frames naively is where panel datasets go wrong. Reindexing on
-the union fills the holes with ``NaN`` and leaves the model to guess; dropping
-them silently reweights the sample towards whichever symbols traded most; and
-an unbounded forward fill lets a week-old price pose as today's observation,
-which is survivorship bias with a friendly face.
-
-This module makes the choice explicit and auditable. :func:`build_calendar`
-decides *which dates* the panel has, :func:`align_index` decides *where each
-symbol's row comes from* on those dates, and both are pure index arithmetic:
-no market data, no I/O, and no hidden state, so the whole policy can be unit
-tested and reported back to the caller as :class:`SymbolCoverage`.
+Calendar construction selects dates; alignment maps them to original rows
+and reports coverage and forward-fill staleness. Neither performs data I/O.
 """
 
 from __future__ import annotations
@@ -60,12 +43,7 @@ class MissingPolicy(StrEnum):
 
 
 def _normalize(index: object, *, label: str) -> pd.DatetimeIndex:
-    """Coerce one symbol's timestamps into a sorted, unique, tz-aware-free index.
-
-    Duplicates and ``NaT`` are rejected rather than silently collapsed: both
-    mean the upstream bar source is broken, and every downstream position
-    computed from a duplicated timestamp would be ambiguous.
-    """
+    """Return sorted unique timestamps; reject duplicates and NaT as ambiguous."""
     try:
         # The caller may hand over a list, an Index or a Series; the shape is
         # validated at runtime, so the element type is only asserted here.
@@ -91,11 +69,7 @@ def _to_utc(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
 def _match_timezone(
     index: pd.DatetimeIndex, reference: pd.DatetimeIndex, *, label: str
 ) -> pd.DatetimeIndex:
-    """Align a symbol's index to the calendar's tz-awareness.
-
-    Naive and aware timestamps are not comparable, so mixing them is refused
-    instead of silently producing an index where nothing ever matches.
-    """
+    """Match timezone awareness; reject mixed naive/aware timestamps."""
     reference_tz = reference.tz
     if (index.tz is None) != (reference_tz is None):
         expected = "timezone-aware" if reference_tz is not None else "naive"
@@ -172,15 +146,7 @@ class TradingCalendar:
         return pd.DatetimeIndex(list(self.dates))
 
     def coverage(self, index: Iterable[object], *, symbol: str) -> SymbolCoverage:
-        """Report which calendar dates one symbol can supply.
-
-        Args:
-            index: The symbol's own timestamps.
-            symbol: Name recorded in the report.
-
-        Raises:
-            ValueError: On an unusable index or a timezone mismatch.
-        """
+        """Report a symbol's available dates; reject unusable or mismatched indices."""
         source = _match_timezone(
             _normalize(index, label=symbol), self.index(), label=symbol
         )
@@ -196,13 +162,10 @@ class TradingCalendar:
 
 @dataclass(frozen=True)
 class CalendarAlignment:
-    """Where each calendar date's row comes from for one symbol.
+    """Source positions and carry age for each calendar date.
 
-    ``positions[i]`` is the positional index of the source bar supplying
-    calendar date ``i``, or :data:`UNAVAILABLE` when the policy leaves it
-    unsupplied. ``staleness[i]`` counts how many calendar dates that bar was
-    carried across: ``0`` means the symbol traded on that very date, ``-1``
-    means there is no usable bar at all.
+    ``positions`` uses ``UNAVAILABLE`` for unsupplied dates. ``staleness``
+    counts carried calendar positions: zero is original, -1 is unavailable.
     """
 
     symbol: str
@@ -247,20 +210,9 @@ def build_calendar(
     *,
     mode: CalendarMode | str = CalendarMode.INTERSECTION,
 ) -> TradingCalendar:
-    """Derive the panel calendar from each symbol's own timestamps.
+    """Build a sorted unique intersection or union of symbol timestamps.
 
-    Args:
-        indices: One timestamp sequence per symbol.
-        mode: :attr:`CalendarMode.INTERSECTION` keeps the dates every symbol
-            traded, :attr:`CalendarMode.UNION` keeps every date any symbol
-            traded.
-
-    Returns:
-        A sorted, unique :class:`TradingCalendar`.
-
-    Raises:
-        ValueError: On no symbols, an unusable index, a mixed-timezone input,
-            an unknown mode, or an empty result.
+    Reject empty inputs/results, invalid modes and mixed timezone awareness.
     """
     if not indices:
         raise ValueError("at least one symbol is required")
@@ -304,24 +256,11 @@ def align_index(
     policy: MissingPolicy | str = MissingPolicy.DROP,
     max_staleness: int | None = None,
 ) -> CalendarAlignment:
-    """Map each calendar date to a row of one symbol's own index.
+    """Map calendar dates to source positions and staleness for one symbol.
 
-    Args:
-        index: The symbol's own timestamps.
-        calendar: The panel calendar to align onto.
-        symbol: Name recorded in the result and in error messages.
-        policy: How to treat calendar dates the symbol did not trade on.
-        max_staleness: With :attr:`MissingPolicy.FORWARD_FILL`, the largest
-            number of calendar dates one bar may be carried across. ``None``
-            allows unbounded carry; ``0`` forbids carry (equivalent to
-            :attr:`MissingPolicy.DROP`).
-
-    Returns:
-        Positions and staleness, one entry per calendar date.
-
-    Raises:
-        ValueError: On an unusable index, a timezone mismatch, a negative
-            ``max_staleness``, or a gap under :attr:`MissingPolicy.ERROR`.
+    Under forward fill, ``max_staleness`` limits carried calendar positions:
+    ``None`` is unbounded, zero forbids carry. Reject invalid indices,
+    timezone mismatches, negative bounds and gaps under the error policy.
     """
     resolved = MissingPolicy(policy)
     if max_staleness is not None and max_staleness < 0:
@@ -365,12 +304,7 @@ def align_index(
 
 @dataclass(frozen=True)
 class PanelAlignment:
-    """Several symbol frames reindexed onto one calendar.
-
-    ``coverage`` is measured against the *requested* calendar (before the
-    unusable dates were removed), so it explains what ``dropped_dates``
-    removed instead of trivially reporting full coverage.
-    """
+    """Aligned frames and coverage against the requested, pre-drop calendar."""
 
     calendar: TradingCalendar
     frames: dict[str, pd.DataFrame]
@@ -391,30 +325,13 @@ def align_frames(
     policy: MissingPolicy | str = MissingPolicy.DROP,
     max_staleness: int | None = None,
 ) -> PanelAlignment:
-    """Reindex per-symbol frames onto one shared calendar.
+    """Align ascending per-symbol frames, keeping dates all symbols can supply.
 
-    Each frame is indexed by its own timestamps; the returned frames carry the
-    aligned calendar as their index, so a carried row keeps the *older* bar's
-    column values while its index reports the calendar date it stands for.
-
-    A date enters the panel only when every symbol can supply it, so the panel
-    never contains a half-populated row. Dates no symbol combination can fill
-    are reported through ``dropped_dates``.
-
-    Args:
-        frames: One timestamp-indexed frame per symbol, in ascending date order.
-        mode: Calendar derivation, see :func:`build_calendar`.
-        policy: Missing-date treatment, see :func:`align_index`.
-        max_staleness: Carry bound for :attr:`MissingPolicy.FORWARD_FILL`.
-
-    Returns:
-        The aligned frames and the audit trail behind them.
-
-    Raises:
-        ValueError: On no frames, unusable or unsorted indices, or an empty
-            result. An unsorted index is refused rather than sorted here,
-            because positions are computed against the sorted order and every
-            row would otherwise be attached to the wrong date.
+    Carried rows retain older column values under the new calendar index.
+    Report removed dates and coverage. Reject empty results and unsorted
+    indices: positional mapping otherwise attaches rows to the wrong dates.
+    Calendar mode and missing-date policy follow ``build_calendar`` and
+    ``align_index``.
     """
     if not frames:
         raise ValueError("at least one symbol frame is required")

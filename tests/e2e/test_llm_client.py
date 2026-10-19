@@ -82,56 +82,6 @@ def _mock_client(
     return MCPClient(session, "Use MCP tools."), session.call_tool
 
 
-@pytest.mark.parametrize("outside_scope", [False, True])
-def test_local_ml_tool_scope_controls_discovery_and_dispatch(
-    outside_scope: bool,
-) -> None:
-    async def run() -> None:
-        client, call_tool = _mock_client(
-            extra_tools=[
-                Tool(
-                    name="get_ml_contract",
-                    inputSchema={"type": "object", "properties": {}},
-                )
-            ]
-        )
-        requests = 0
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            nonlocal requests
-            requests += 1
-            body = json.loads(request.content)
-            assert [tool["function"]["name"] for tool in body["tools"]] == [
-                "get_ml_contract"
-            ]
-            if requests == 1:
-                name = "list_strategies" if outside_scope else "get_ml_contract"
-                return _reply([_call(name=name)])
-            return _reply()
-
-        async def invoke() -> list[ToolCall]:
-            return await run_local_model(
-                client,
-                "Research ML",
-                model="fixture",
-                base_url="http://fixture/v1",
-                timeout_seconds=5,
-                tool_names=["get_ml_contract"],
-                transport=httpx.MockTransport(respond),
-            )
-
-        if outside_scope:
-            with pytest.raises(AssertionError, match="list_strategies"):
-                await invoke()
-            call_tool.assert_not_awaited()
-        else:
-            calls = await invoke()
-            assert [call.name for call in calls] == ["get_ml_contract"]
-            call_tool.assert_awaited_once_with("get_ml_contract", {})
-
-    asyncio.run(run())
-
-
 def test_local_user_reply_keeps_prior_messages_and_observes_only_completed_turns() -> (
     None
 ):

@@ -1,11 +1,6 @@
-"""Filesystem persistence for model artifacts.
+"""Filesystem model metadata (.json) and blobs (.bin), verified by content hash.
 
-Reuses the project's :class:`WorkspacePaths` and hashing helpers so a stored
-model lives alongside runs and datasets, and its on-disk blob is
-integrity-checked against the content hash recorded in its metadata. The store
-is a plain directory of ``<model_id>.json`` (metadata) and ``<model_id>.bin``
-(blob) files, so a test can point it at an isolated ``tmp_path`` with no SQLite
-or workspace side effects.
+Integrity checks do not authenticate model authors or make pickle safe.
 """
 
 from __future__ import annotations
@@ -54,12 +49,7 @@ class ModelArtifactStore:
         artifact: ModelArtifact,
         model_id: str | None = None,
     ) -> ModelArtifact:
-        """Persist the blob and its metadata; verify the content hash.
-
-        Raises ``ValueError`` if the blob's computed hash differs from the one
-        recorded on the artifact, so a corrupted or mismatched blob cannot be
-        silently stored.
-        """
+        """Save metadata/blob; reject a blob whose hash differs from its artifact."""
         if model_id is None:
             model_id = artifact.model_id
         if content_sha256(model_bytes) != artifact.content_hash:
@@ -71,11 +61,9 @@ class ModelArtifactStore:
         return artifact
 
     def load(self, model_id: str) -> ModelArtifact:
-        """Load metadata and verify the on-disk blob still matches.
+        """Load metadata and verify its blob hash.
 
-        Raises ``FileNotFoundError`` if the record or blob is missing, and
-        ``ValueError`` if the blob's current hash differs from the one recorded
-        at save time (tamper detection).
+        Missing files raise FileNotFoundError; a mismatched hash raises ValueError.
         """
         meta_path = self._meta_path(model_id)
         if not meta_path.exists():

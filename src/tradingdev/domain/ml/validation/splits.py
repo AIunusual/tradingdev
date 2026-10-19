@@ -1,22 +1,8 @@
-"""Leak-free train/test splits for interval-based labels.
+"""Index splits for labels spanning ``[t, t + horizon]``.
 
-Financial labels are not points in time: the label of the bar at index ``t``
-is decided by prices up to index ``t + horizon``. A naive time-series split
-therefore hands the model training samples whose answer is computed from
-prices inside the test window.
-
-Two gaps keep a split honest:
-
-* **Purge** removes training bars whose label intervals overlap test label
-  intervals, on either side of the test window. Its width is determined by
-  ``horizon``.
-* **Embargo** removes an extra buffer on both sides of the test window. Its
-  width is a conservative choice, not a derivable quantity: financial
-  features are serially correlated, so purge alone does not remove every
-  path by which test information reaches the model.
-
-Both are applied here as pure index arithmetic, so the result can be checked
-by :func:`leakage_audit` without touching any market data.
+Purge excludes training labels overlapping test labels on either side.
+Embargo adds a caller-chosen buffer for serial correlation; it does not prove
+independence. ``leakage_audit`` checks label overlap, not embargo adequacy.
 """
 
 from __future__ import annotations
@@ -30,10 +16,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Split:
-    """One partition of a bar index range into training and test windows.
+    """Train/test partition using half-open positional ranges.
 
-    ``train`` holds one or more half-open ``[start, end)`` ranges because a
-    K-fold split leaves training bars on both sides of the test window.
+    Training may contain ranges on both sides of a K-fold test window.
     """
 
     name: str
@@ -176,21 +161,11 @@ def purged_walk_forward_splits(
     embargo: int = 0,
     min_train_bars: int = 1,
 ) -> list[Split]:
-    """Anchored walk-forward folds, each purged and embargoed.
+    """Return anchored purged folds in test-window order.
 
-    The series is cut into ``n_splits + 1`` blocks; block 0 is always
-    training-only and every later block becomes one test window trained on
-    all preceding blocks.
-
-    Args:
-        n_bars: Total number of bars available.
-        horizon: Label horizon in bars; sets the purge width.
-        n_splits: Number of test folds to emit.
-        embargo: Extra bars removed on each side of every test window.
-        min_train_bars: Smallest training window accepted per fold.
-
-    Returns:
-        One :class:`Split` per fold, ordered by test window position.
+    Divide into ``n_splits + 1`` blocks: the first is training-only, each later
+    block tests against preceding blocks. Remove horizon plus embargo before
+    testing and require ``min_train_bars`` retained training rows.
     """
     _validate(n_bars, horizon, n_splits, embargo, min_train_bars)
     blocks = _blocks(n_bars, n_splits + 1)
@@ -218,13 +193,10 @@ def purged_kfold_splits(
     embargo: int = 0,
     min_train_bars: int = 1,
 ) -> list[Split]:
-    """Contiguous K-fold splits, each purged and embargoed.
+    """Test each contiguous block once, training on both sides after exclusions.
 
-    Every bar appears in exactly one test window. Training bars on both
-    sides of the window are kept, except for the label-overlap purge and
-    additional embargo buffer on either side. This is a retrospective
-    validation scheme: later training windows are not available in a live
-    walk-forward simulation, even when their labels do not overlap the test.
+    Remove horizon and embargo buffers around each test window. This is
+    retrospective validation: later training data was unavailable at test time.
     """
     _validate(n_bars, horizon, n_folds, embargo, min_train_bars)
     blocks = _blocks(n_bars, n_folds)
@@ -249,11 +221,10 @@ def purged_kfold_splits(
 
 
 def leakage_audit(splits: Sequence[Split], *, horizon: int) -> list[str]:
-    """Report overlapping training and test label intervals on either side.
+    """Report overlapping train/test label intervals on either side.
 
-    An empty list means every split is free of *label* leakage. Embargo
-    widths cannot be audited this way because they guard against serial
-    correlation rather than a provable overlap.
+    An empty result establishes only no label overlap; it does not audit
+    serial correlation or embargo adequacy.
     """
     if horizon < 1:
         raise ValueError("horizon must be at least 1")

@@ -1,16 +1,7 @@
-"""An enumerated catalog of named feature sets for an LLM to choose from.
+"""Named feature sets with declared columns and OHLCV builders.
 
-The whole point of the "ML as tools" design is that the model never writes
-feature code: it picks a named, audited set from this registry. A feature set
-is a small declarative contract --- a stable name, a human description, the
-columns it promises to emit, and a builder that turns OHLCV into those
-columns --- and the contract is checked by tests, so a set that drifts from
-its column list fails loudly instead of silently breaking a downstream model.
-
-Builders are deliberately row-preserving: they return every input row, with
-``NaN`` where an indicator has not warmed up. Dropping incomplete rows is the
-*caller's* decision (typically an explicit :class:`DropnaRows`), because that
-is also where the row alignment with the label must be preserved.
+Builders preserve input rows, including NaN during indicator warm-up. The
+caller drops incomplete rows while maintaining feature/label alignment.
 """
 
 from __future__ import annotations

@@ -1,9 +1,4 @@
-"""Immutable, JSON-native signal evaluation artifacts.
-
-Mirrors the discipline of :mod:`tradingdev.domain.performance.artifacts` but
-for prediction quality: metrics are stored together with the exact definition
-that produced them, so a stored number can never drift away from its meaning.
-"""
+"""Immutable JSON signal evaluations preserving their metric definitions."""
 
 from __future__ import annotations
 

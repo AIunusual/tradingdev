@@ -1,11 +1,7 @@
-"""Leak-aware preprocessing: processors that declare where they may learn.
+"""Fit/transform processors with a training-only split helper.
 
-The processors here mirror qlib's ``learn_processors`` / ``infer_processors``
-distinction. Learn processors capture their parameters in ``fit`` and are only
-ever fitted on training bars; infer processors are pure functions and may run
-anywhere. :class:`ProcessorPipeline` enforces the boundary structurally, and
-:func:`fit_transform_split` ties it to a purged
-:class:`~tradingdev.domain.ml.validation.Split`.
+Learn processors retain fitted statistics; infer processors are stateless.
+The pipeline records fitting provenance and rejects transforms before fitting.
 """
 
 from __future__ import annotations
