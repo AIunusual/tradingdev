@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -26,6 +27,7 @@ from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.execution_fixtures import execution_options
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
@@ -37,6 +39,18 @@ _KINDS: tuple[PlanKind, ...] = ("optimization", "walk_forward")
 _WF_STRATEGY = "llm_walk_forward_sma"
 _MARKET = {"symbol": "BTC/USDT", "timeframe": "1h"}
 _COSTS = {"init_cash": 10000, "fees": 0, "slippage": 0, "periods_per_year": 365}
+_WF_VALIDATION = {
+    "n_splits": 2,
+    "label_horizon": 5,
+    "embargo_bars": 2,
+    "purged_split": True,
+    "train_start": "2024-01-02",
+    "train_end": "2024-01-03",
+    "test_start": "2024-01-05",
+    "test_end": "2024-01-06",
+    "train_ratio": 0.6,
+    "expanding": False,
+}
 
 
 def _strategy_id(kind: PlanKind) -> str:
@@ -72,7 +86,7 @@ async def _seed_walk_forward(client: MCPClient) -> str:
     config["backtest"].update(
         **_MARKET, **_COSTS, start_date="2024-01-01", end_date="2024-01-08"
     )
-    config["validation"] = {"n_splits": 2, "train_ratio": 0.6}
+    config["validation"] = _WF_VALIDATION.copy()
     config["random_seed"] = 42
     saved = await client.call(
         "save_strategy",
@@ -102,7 +116,9 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
         "樣本外測試 2024-01-04 至 2024-01-08。"
         if kind == "optimization"
         else "已完成驗證與 dry-run 的生成 SMA 策略，執行 walk-forward。"
-        "保持現有 validation（n_splits=2、train_ratio=0.6）與策略參數，"
+        "保持現有 validation：purged_split=true、n_splits=2、label_horizon=5、"
+        "embargo_bars=2，以及不生效的指定日期、train_ratio、expanding 設定；"
+        "策略參數與 random_seed=42 也保持原值，"
         "整體期間 2024-01-01 至 2024-01-08。"
     )
     queries = (
@@ -262,7 +278,33 @@ def _assert_evidence(
     else:
         assert plan.preflight.tested_fold_count == 1
         assert plan.preflight.total_fold_count == 2
+        assert "single_fold_only" in plan.preflight.warnings
         assert "fit" in plan.preflight.checked_paths
+        assert manifest.config_copy()["random_seed"] == 42
+        assert manifest.config_copy()["validation"] == WalkForwardConfig.model_validate(
+            _WF_VALIDATION
+        ).model_dump(mode="json")
+        for _, read in _successful(calls, "get_strategy"):
+            source_config = yaml.safe_load(read.result["yaml_config"])
+            assert source_config["validation"] == _WF_VALIDATION
+            assert source_config["random_seed"] == 42
+        confirmation = (
+            Path(prepare_call.result["html_path"])
+            .with_name("confirmation.txt")
+            .read_text()
+        )
+        assert "已試跑的驗證分段：1 / 2" in confirmation
+        assert "固定起點、逐次擴大訓練區間" in confirmation
+        assert "淨化分段不使用指定日期" in confirmation
+        assert "淨化分段不使用此比例" in confirmation
+        assert "此欄設定值（否）不使用" in confirmation
+        origin = pd.Timestamp("2024-01-01", tz="UTC")
+        for window, (start, end) in zip(
+            plan.preflight.windows, ((0, 36), (43, 86)), strict=True
+        ):
+            assert window.rows == end - start
+            assert pd.Timestamp(window.start) == origin + pd.Timedelta(hours=start)
+            assert pd.Timestamp(window.end) == origin + pd.Timedelta(hours=end - 1)
         assert set(run["available_scopes"]) == {
             "fold/0/train",
             "fold/0/test",
@@ -280,6 +322,22 @@ def _assert_evidence(
     assert set(details) >= scopes
     run_directory = approval.workspace.workspace / "runs" / run_id
     saved_performance = json.loads((run_directory / "performance.json").read_text())
+    if kind == "walk_forward":
+        # The inclusive Jan 1--Jan 8 bounds contain 169 hourly bars. Anchored
+        # thirds start tests at 57 and 113; each excludes a 5+2 bar gap.
+        origin = pd.Timestamp("2024-01-01", tz="UTC")
+        for index, windows in enumerate((((0, 50), (57, 113)), ((0, 106), (113, 169)))):
+            for role, (start, end) in zip(("train", "test"), windows, strict=True):
+                observations = saved_performance["scopes"][f"fold/{index}/{role}"][
+                    "metadata"
+                ]["observations"]
+                assert observations["bar_count"] == end - start
+                assert pd.Timestamp(
+                    observations["start_date"]
+                ) == origin + pd.Timedelta(hours=start)
+                assert pd.Timestamp(observations["end_date"]) == origin + pd.Timedelta(
+                    hours=end - 1
+                )
     for scope in scopes:
         assert details[scope]["scope"] == scope
         assert details[scope]["metrics"]

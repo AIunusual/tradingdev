@@ -91,8 +91,8 @@ class WalkForwardValidator:
     def _check_leakage(self, df: pd.DataFrame) -> None:
         """Block the run when training bars can see their own test window.
 
-        Only active when ``label_horizon`` is set: with the default of ``0``
-        there is no forward-looking label, so no fold geometry is rejected.
+        Non-positive ``label_horizon`` disables this audit; it does not
+        establish that the strategy has no forward-looking labels.
         """
         horizon = self._config.label_horizon
         if horizon < 1:

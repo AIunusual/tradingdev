@@ -299,12 +299,20 @@ that a strategy's labels are safe. Declare the actual forward horizon when the
 strategy uses such labels. This gate audits row-window geometry, not arbitrary
 feature code or a strategy's independently constructed labels.
 
-The MCP confirmation preflight selects a sample using explicit dates or plain
-windows and runs it through `run_fold`; it does not preview the purged splitter's
-boundaries, execute the complete validator's pre-fold audit or establish that
-every formal fold can run. The full strategy walk-forward execution applies that gate before
-running its folds. This differs from the ML tool's timestamp/label-interval
-validation described below.
+The MCP confirmation preflight uses the selected splitter on a bounded sample
+and runs only its first fold through `run_fold`. Purged mode ignores explicit
+dates, `train_ratio` and `expanding` here as in formal execution; it reports
+one tested fold out of `n_splits`, with a `single_fold_only` warning when more
+than one is configured. Plain explicit-date mode samples one train/test pair;
+plain automatic mode retains its ratio and expanding-window settings.
+The confirmation shows the effective mode and identifies inactive settings.
+
+Sample boundaries depend on the sampled history and need not equal full-run
+boundaries. Preflight does not execute the complete validator's pre-fold audit
+or establish that every formal fold can run. The full strategy walk-forward
+execution applies that gate before running its folds. A nonpositive horizon
+means the audit is disabled, not that labels are safe. This differs from the
+ML tool's timestamp/label-interval validation described below.
 
 ## ML Research Contract
 
