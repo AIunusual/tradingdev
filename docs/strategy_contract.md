@@ -438,9 +438,10 @@ validation. Such panels can still be fitted without validation and passed to
 `predict`; this is not evidence of an out-of-sample test.
 
 - `purged_walk_forward` expands training through dates before each test window.
-- `purged_kfold` tests each fold using training data from both sides of that
-  window. Its results describe retrospective held-out cross-validation, not
-  predictions that could have been made at the test date.
+- `purged_kfold` trains on retained data outside each test window: later data for
+  the first fold, earlier data for the last, and available data on either side
+  for interior folds. This is retrospective cross-validation, not predictions
+  that could have been made at the test date.
 
 The response reports each fold's retained training/test rows, purged and
 embargoed rows, accuracy, IC, Rank IC and hit rate, plus the mean of available

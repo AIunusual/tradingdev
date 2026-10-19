@@ -244,29 +244,27 @@ already contain the computed features.
 
 ### Trained Models
 
-`models/<model_id>.json` stores schema version 1 model metadata, and the matching
-`.bin` stores the pickled Python model wrapper. Metadata includes the model name,
-framework, kind, effective parameters, ordered feature names, training-row count,
-available feature importance and the full model-blob SHA-256. The model ID is a
-16-character SHA-256 prefix derived from model name, effective parameters,
-ordered features and blob hash. It is a model-content identity, not a unique
-training execution ID or a saved validation result.
+`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
+pickled model wrapper. Metadata records model name, framework, kind, effective
+parameters, ordered features, training-row count, available feature importance
+and full blob SHA-256. At build time, the ID is computed as a 16-character
+SHA-256 prefix over name, parameters, ordered features and blob hash. It
+identifies model content, not a training execution or saved validation result.
 
-The store verifies the blob hash on save and load. Prediction also requires the
-dataset's ordered feature columns to match those in the artifact before
-unpickling. CatBoost removes its random `model_guid` and wall-clock
-`train_finish_time` metadata before serialization, so those incidental values do
-not create distinct identities for otherwise identical fitted state. The full
-serialized model, including prediction state, still participates in the hash.
-This does not guarantee identical model bytes across dependency versions or
-execution environments.
+Save and load verify the blob hash. Loads do not recompute the ID or compare
+metadata with the filename or serialized estimator. JSON is trusted workspace
+state: metadata-only edits may go undetected. The ID neither authenticates
+publishers nor proves metadata unchanged. Prediction additionally checks exact
+ordered dataset features before unpickling.
 
-Prediction loads Python pickle and therefore requires trusted workspace files.
-The content hash is an integrity check, not authentication or a sandbox; a writer
-that can replace metadata and the blob can supply executable pickle content.
-The artifact is trained on all dataset rows, even when training also returns
-fold-validation scores. Neither possession of its ID nor prediction on the
-training dataset establishes out-of-sample evidence.
+CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
+before serialization, avoiding identities driven by those incidental values.
+This does not guarantee identical blobs across dependency versions or environments.
+
+Pickle requires trusted workspace files. Hashing is not authentication or a
+sandbox; a writer able to replace metadata and blob can supply executable code.
+The final artifact fits all dataset rows even when training returns fold scores;
+its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
@@ -287,13 +285,12 @@ timeframe, requested period, horizon, IC window, quantile count, feature set,
 build-time code fingerprint and dataset content hash. Comparison uses the saved
 context; changed data or feature code does not silently inherit an old context.
 
-`leaderboard(dataset_id=...)` selects one immutable dataset version, allowing
-old and rebuilt datasets to be queried separately while still comparing multiple
-models on the selected version. The dataset is integrity-checked, and selected
-records must match its manifest's data context and row count. Unknown or invalid
-dataset IDs are errors. Other filters combine with this selector. Different IC
-windows or quantile counts remain incomparable by default; `allow_mixed=True`
-permits mixed evaluation conditions but never bypasses dataset verification.
+`leaderboard(dataset_id=...)` verifies and selects one immutable dataset
+version, so models on it can be compared separately from rebuilt versions.
+Records must match its manifest's data context and row count; unknown or invalid
+IDs fail. Other filters combine with this selector. Different IC windows or
+quantile counts require `allow_mixed=True`, which never bypasses dataset
+verification.
 
 The entry ID includes the dataset, evaluation context and caller-supplied model
 ID. With no model ID, it also includes a signal fingerprint computed from a
@@ -304,10 +301,10 @@ the signal was generated out of sample. Repeating a model/dataset/context entry
 replaces its earlier metrics, including when the caller supplies different
 signal values. Distinct unlabelled signals remain separate candidates.
 
-`LeaderboardStore` holds `.leaderboard.lock` across the complete read, update and
-write. It writes a unique temporary file beside the destination, flushes it to
-disk and atomically replaces the JSON-lines file; readers see a complete old or
-new file. Temporary files are removed after successful and failed writes, and
+`LeaderboardStore.record` holds `.leaderboard.lock` across its read, update and
+write. It flushes a unique temporary file beside the destination and atomically
+replaces the JSON-lines file. `entries` reads without locking and sees a complete
+old or new file. Temporary files are removed after successful and failed writes, and
 the lock file is retained. Re-recording an entry returns `replaced=True` rather
 than increasing the candidate count. Unreadable records fail the read instead
 of being skipped and silently reducing that count.

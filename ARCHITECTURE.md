@@ -346,11 +346,9 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 並回報缺值、丟棄與向前補值情形。標籤始終來自各商品原本的行情。
 
 `MLService.train_model` 委派 `app/ml_training.py` 的 `MLTrainingService`，
-由它協調驗證請求、分折評分、最終模型訓練及 artifact 發佈。
-`train_model` 解析模型種類與有效參數，只將資料集宣告的特徵欄位及 target
-交給 estimator。最終 artifact 使用全部資料列訓練；選填 validation 另外建立
-每折的模型，保存模型與回傳驗證摘要是不同責任。Walk-forward 的訓練資料早於測試，
-purged K-fold 則允許測試期前後的訓練資料，提供回顧交叉驗證而非因果時間預測。
+解析有效參數、分折評分並發佈最終 artifact；estimator 只接收宣告特徵與 target。
+最終模型訓練全部列，選填 validation 另建折模型。Walk-forward 依過去訓練；
+purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有兩側，是回顧交叉驗證。
 `domain/ml/validation/temporal.py` 以共享 timestamp 分折，保持同日期各商品的
 訓練／測試角色一致，再以來源行情保留的 label start/end 排除跨邊界的標籤資訊。
 含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
@@ -360,14 +358,13 @@ purged K-fold 則允許測試期前後的訓練資料，提供回顧交叉驗證
 pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
 單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
 時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
-leaderboard store 保存。簡化報酬的門檻只使用先前訊號，依 horizon 間隔交易，
-全樣本分層統計不參與部位決策。這不是含成本與逐根估值的交易引擎。
+leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
 並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
-特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 的跨程序鎖
-涵蓋讀取、更新與原子發佈，避免並行記錄覆蓋其他候選。模型 pickle 需要可信的
-工作區；hash 只檢查內容一致性，不是 sandbox。格式、身分與重記語意集中在
+特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
+讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
+模型 pickle 需要可信的工作區；hash 只檢查內容一致性，不是 sandbox。格式、身分與重記語意集中在
 [ML 研究產物](docs/run_artifacts.md#ml-research-artifacts)。
 
 ## 績效計算與對話摘要
