@@ -1,7 +1,8 @@
 """Feature engineering for multi-minute direction prediction.
 
-Produces a feature matrix suitable for AutoGluon or other ML models
-to predict the direction of price movement over configurable horizons
+Produces a feature matrix suitable for tabular learners (FLAML AutoML,
+LightGBM, XGBoost, CatBoost) to predict the direction of price movement
+over configurable horizons
 (e.g. 5, 15, 30 minutes).
 """
 

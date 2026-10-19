@@ -4,8 +4,6 @@ version = "0.1.0"
 description = "MCP-first quantitative strategy development server"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    # AutoGluon constrains the shared scientific stack; update its pandas,
-    # NumPy and vectorbt dependencies together when refreshing the lock.
     "vectorbt>=1.0.0",
     "quantstats>=0.0.86",
     "bokeh>=3.10.1",
@@ -20,15 +18,28 @@ dependencies = [
     "pyarrow>=20.0.0",
     "scikit-learn>=1.7.2",
     # Architecture decision: ML packages needed to inspect/execute bundled
-    # strategies (xgboost, autogluon-tabular) stay in runtime dependencies so
-    # MCP and CLI paths can validate/dry-run any bundled strategy without
-    # installing extras. Dashboard packages (streamlit, plotly) are viewer-only
-    # and no MCP tool ever imports them, so they live in the `dashboard` extra
-    # below instead. AutoGluon does not officially support Python 3.14;
-    # moving it to an extra would not make its bundled strategy supported.
+    # strategies stay in runtime dependencies so MCP and CLI paths can
+    # validate/dry-run any bundled strategy without installing extras.
+    # Dashboard packages (streamlit, plotly) are viewer-only and no MCP tool
+    # ever imports them, so they live in the `dashboard` extra below instead.
+    #
+    # AutoML used to come from autogluon-tabular[all]. Every AutoGluon release
+    # declares `Requires-Python: <3.14`, so it was the one dependency pip
+    # hard-refuses on Python 3.14, and it dragged in torch, ray and spaCy
+    # (~5.5 GB of wheels) for a tabular tree search. FLAML covers the same
+    # search with no Python upper bound and no deep-learning stack, which
+    # clears the way for `requires-python` to reach 3.14 once the remaining
+    # pins are refreshed: this lock still carries numba 0.61, numpy 2.2.6 and
+    # pyarrow 20, none of which ship 3.14 wheels, so widening the bound needs
+    # a `uv lock --upgrade` of its own (pandas 2 -> 3) rather than a change
+    # here. lightgbm and catboost are listed explicitly because they used to
+    # arrive only transitively through AutoGluon, yet the model zoo imports
+    # them directly.
     "xgboost>=3.1.3",
+    "lightgbm>=4.5.0",
+    "catboost>=1.2.7",
+    "flaml>=2.7.0",
     "psutil>=7.1.3",
-    "autogluon-tabular[all]>=1.5.0",
     "mcp[cli]>=1.28.1",
     "mypy>=2.1.0",
     "pandas-stubs>=3.0.3.260530",
@@ -94,9 +105,16 @@ module = [
     "streamlit.*",
     "psutil.*",
     "joblib.*",
-    "autogluon.*",
     "mcp.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# flaml ships a py.typed marker but re-exports AutoML from inside a try block
+# and leaves most of its API unannotated, so mypy reports missing exports and
+# untyped calls rather than anything actionable. Treat it as untyped instead.
+module = ["flaml.*"]
+follow_imports = "skip"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

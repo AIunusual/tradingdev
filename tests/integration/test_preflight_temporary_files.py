@@ -84,23 +84,32 @@ if outcome == "timeout":
     time.sleep(60)
 if outcome == "ml_failure":
     import pandas as pd
-    from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
+    from tradingdev.domain.ml.models.flaml_model import FLAMLAutoMLDirectionModel
 
-    class FailingPredictor:
-        def __init__(self, *, path, **kwargs):
-            self.path = Path(path)
+    class FailingAutoML:
+        # Mimics a learner that spills a ``catboost_<ts>`` log tree into the
+        # temp tree before dying. The wrapper removes the scratch directory
+        # it runs the search in, so this spill is placed the way a library
+        # that writes to TMPDIR would: it outlives the failed search and is
+        # left for the supervisor to clean up, which is what this outcome
+        # exists to cover.
+        classes_ = (0, 1)
+        model = None
 
-        def fit(self, frame, **kwargs):
-            (self.path / "partial-model.bin").write_bytes(b"unfinished model")
-            record["paths"].append(str(self.path))
-            record["training_rows"] = len(frame)
+        def fit(self, X_train, y_train, **kwargs):
+            scratch = Path(tempfile.mkdtemp(prefix="flaml_direction_"))
+            spill = scratch / "catboost_1700000000.0" / "learn"
+            spill.mkdir(parents=True)
+            (spill / "partial-model.bin").write_bytes(b"unfinished model")
+            record["paths"].append(str(spill.parent))
+            record["training_rows"] = len(X_train)
             write_record("worker.json", record)
-            raise RuntimeError("substitute model training failed")
+            raise RuntimeError("substitute AutoML search failed")
 
-    tabular = types.ModuleType("autogluon.tabular")
-    tabular.TabularPredictor = FailingPredictor
-    sys.modules["autogluon.tabular"] = tabular
-    AutoGluonDirectionModel(random_seed=None).train(
+    flaml = types.ModuleType("flaml")
+    flaml.AutoML = FailingAutoML
+    sys.modules["flaml"] = flaml
+    FLAMLAutoMLDirectionModel(random_seed=None).train(
         pd.DataFrame({"feature": [0.0, 1.0, 2.0], "target": [0, 1, 0]})
     )
 module = sys.argv.pop(1)
@@ -249,7 +258,14 @@ def _check_preflight_cleanup(
     }
     if outcome == "ml_failure":
         assert record["training_rows"] == 3
-        assert any(path.name.startswith("autogluon_direction_") for path in artifacts)
+        # The CatBoost-style spill must have happened inside the search's
+        # scratch directory, so it sits under the supervised temp tree.
+        assert any(path.name.startswith("catboost_") for path in artifacts)
+        assert any(
+            part.startswith("flaml_direction_")
+            for path in artifacts
+            for part in path.parts
+        )
 
 
 def _live_probe_identities(root: Path) -> list[ProcessIdentity]:

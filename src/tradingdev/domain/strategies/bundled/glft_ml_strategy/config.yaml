@@ -3,13 +3,14 @@ strategy:
   version: "1.0.0"
   class_name: "GLFTMLStrategy"
   source_path: "src/tradingdev/domain/strategies/bundled/glft_ml_strategy/strategy.py"
-  description: "GLFT + AutoGluon ML direction prediction — limit-order market making"
+  description: "GLFT + FLAML AutoML direction prediction — limit-order market making"
   parameters:
     # --- ML parameters ---
     prediction_horizon: 5  # Predict direction N minutes ahead
     feature_lookback: 60   # Feature lookback window (bars)
-    ml_time_limit: 300     # AutoGluon training time limit (seconds)
-    ml_presets: "medium_quality"
+    ml_time_limit: 300     # AutoML search time budget (seconds)
+    ml_estimator_list: ["lgbm", "xgboost", "catboost", "rf", "extra_tree"]
+    ml_metric: "accuracy"
     random_seed: 42
     confidence_threshold: 0.55
     confidence_threshold_candidates: [0.52, 0.55, 0.60]

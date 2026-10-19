@@ -2,7 +2,7 @@
 
 ## 策略概述
 
-結合 GLFT（Gueant-Lehalle-Fernandez-Tapia）解析型做市模型與 AutoGluon ML
+結合 GLFT（Gueant-Lehalle-Fernandez-Tapia）解析型做市模型與 FLAML AutoML
 方向預測器。ML 模型預測短期（5-15 分鐘）方向，用於提前掛 limit order，
 以 maker fee（0.02%/side）取代 taker fee（0.06%/side）。
 
@@ -14,7 +14,7 @@
 
 ## 信號邏輯
 
-1. **ML 方向預測**：AutoGluon TabularPredictor 預測 N 分鐘後的價格方向
+1. **ML 方向預測**：FLAML AutoML 在時間預算內搜尋 learner 與超參數，預測 N 分鐘後的價格方向
    - ML=1（看漲）：只允許做多
    - ML=-1（看跌）：只允許做空
    - ML=0（信心不足）：不開倉
@@ -37,8 +37,9 @@
 |------|--------|------|
 | prediction_horizon | 5 | ML 預測方向的未來 N 分鐘 |
 | feature_lookback | 60 | 特徵工程回看窗口（bars） |
-| ml_time_limit | 300 | AutoGluon 訓練時間限制（秒） |
-| ml_presets | "medium_quality" | AutoGluon 預設品質級別 |
+| ml_time_limit | 300 | AutoML 搜尋時間預算（秒） |
+| ml_estimator_list | ["lgbm", "xgboost", "catboost", "rf", "extra_tree"] | FLAML 搜尋的 learner 清單 |
+| ml_metric | "accuracy" | AutoML 搜尋的評分指標 |
 | confidence_threshold | 0.55 | ML 預測信心門檻 |
 
 ### GLFT 核心參數
@@ -138,7 +139,7 @@ ML 方向預測在 OOS 等同隨機（50% 勝率），顯示 BTC 短期方向在
 |------|------|-----------|
 | 方向決定 | 均值回歸（價格偏離 EMA） | ML 預測 + GLFT 偏離 |
 | 手續費 | taker (0.06%/side) | maker (0.02%/side) |
-| ML 依賴 | 無 | AutoGluon TabularPredictor |
+| ML 依賴 | 無 | FLAML AutoML（lgbm / xgboost / catboost / rf / extra_tree） |
 | OOS 邊際 | 穩定（train/test 一致） | ML 過擬合風險高 |
 | 適用場景 | 低費率環境 | 需要有效 ML alpha |
 
