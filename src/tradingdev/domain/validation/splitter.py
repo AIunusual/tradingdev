@@ -10,7 +10,13 @@ import pandas as pd
 if TYPE_CHECKING:
     from datetime import datetime
 
+    import numpy.typing as npt
+
     from tradingdev.domain.backtest.schemas import WalkForwardConfig
+
+
+class WalkForwardSplitError(ValueError):
+    """Raised when explicit walk-forward dates do not describe usable folds."""
 
 
 class DataSplitter:
@@ -46,8 +52,9 @@ class DataSplitter:
 
         Mirrors :meth:`split` but reports integer geometry instead of frames,
         so callers can audit fold boundaries (purge/embargo) without
-        re-deriving positions from the returned DataFrames. The two are kept
-        consistent by a contract test rather than by construction.
+        re-deriving positions from the returned DataFrames. Both derive from
+        :meth:`_explicit_masks` or the same auto geometry, so the audited
+        windows cannot drift from the executed frames.
         """
         cfg = self._config
 
@@ -61,28 +68,69 @@ class DataSplitter:
 
         return self._auto_windows(df)
 
+    def _explicit_masks(
+        self, df: pd.DataFrame
+    ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+        """Boolean train/test masks for the explicit date window.
+
+        Re-checks the series that actually reaches ``fit()`` rather than
+        trusting the config alone: the frame must be ordered, both windows
+        must select rows, and the last train timestamp must precede the first
+        test timestamp.
+        """
+        cfg = self._config
+        if (
+            cfg.train_start is None
+            or cfg.train_end is None
+            or cfg.test_start is None
+            or cfg.test_end is None
+        ):
+            msg = "Explicit split requires all four dates"
+            raise WalkForwardSplitError(msg)
+
+        ts = df["timestamp"]
+        if not ts.is_monotonic_increasing:
+            msg = (
+                "Walk-forward requires timestamps sorted ascending; "
+                "positional fold windows cannot describe this frame"
+            )
+            raise WalkForwardSplitError(msg)
+        train_lo, train_hi = inclusive_day_window(cfg.train_start, cfg.train_end)
+        test_lo, test_hi = inclusive_day_window(cfg.test_start, cfg.test_end)
+        train_mask = ((ts >= train_lo) & (ts < train_hi)).to_numpy()
+        test_mask = ((ts >= test_lo) & (ts < test_hi)).to_numpy()
+
+        train_pos = np.flatnonzero(train_mask)
+        test_pos = np.flatnonzero(test_mask)
+        if train_pos.size == 0 or test_pos.size == 0:
+            empty = "train" if train_pos.size == 0 else "test"
+            span = "empty frame" if ts.empty else f"data {ts.iloc[0]}..{ts.iloc[-1]}"
+            msg = (
+                f"Explicit walk-forward dates select no {empty} rows: "
+                f"train {cfg.train_start}..{cfg.train_end}, "
+                f"test {cfg.test_start}..{cfg.test_end}, {span}"
+            )
+            raise WalkForwardSplitError(msg)
+        if ts.iloc[train_pos[-1]] >= ts.iloc[test_pos[0]]:
+            msg = (
+                "Train and test windows overlap: "
+                f"train ends {ts.iloc[train_pos[-1]]}, "
+                f"test starts {ts.iloc[test_pos[0]]}"
+            )
+            raise WalkForwardSplitError(msg)
+        return train_mask, test_mask
+
     def _explicit_windows(
         self, df: pd.DataFrame
     ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """Single window pair derived from the explicit date masks."""
-        cfg = self._config
-        ts = df["timestamp"]
-        train_mask = (
-            (ts >= _to_utc_ts(cfg.train_start))  # type: ignore[arg-type]
-            & (ts < _to_utc_ts(cfg.train_end) + pd.Timedelta(days=1))  # type: ignore[arg-type]
-        ).to_numpy()
-        test_mask = (
-            (ts >= _to_utc_ts(cfg.test_start))  # type: ignore[arg-type]
-            & (ts < _to_utc_ts(cfg.test_end) + pd.Timedelta(days=1))  # type: ignore[arg-type]
-        ).to_numpy()
+        train_mask, test_mask = self._explicit_masks(df)
         train_pos = np.flatnonzero(train_mask)
         test_pos = np.flatnonzero(test_mask)
-        if train_pos.size == 0 or test_pos.size == 0:
-            return []
         return [
             (
-                (int(train_pos.min()), int(train_pos.max()) + 1),
-                (int(test_pos.min()), int(test_pos.max()) + 1),
+                (int(train_pos[0]), int(train_pos[-1]) + 1),
+                (int(test_pos[0]), int(test_pos[-1]) + 1),
             )
         ]
 
@@ -120,15 +168,7 @@ class DataSplitter:
         self, df: pd.DataFrame
     ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
         """Single split using explicit date boundaries."""
-        cfg = self._config
-        ts = df["timestamp"]
-
-        train_mask = (ts >= _to_utc_ts(cfg.train_start)) & (  # type: ignore[arg-type]
-            ts < _to_utc_ts(cfg.train_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
-        )
-        test_mask = (ts >= _to_utc_ts(cfg.test_start)) & (  # type: ignore[arg-type]
-            ts < _to_utc_ts(cfg.test_end) + pd.Timedelta(days=1)  # type: ignore[arg-type]
-        )
+        train_mask, test_mask = self._explicit_masks(df)
         return [(df[train_mask].copy(), df[test_mask].copy())]
 
     def _auto_split(self, df: pd.DataFrame) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
@@ -160,6 +200,28 @@ class DataSplitter:
             splits.append((train_df, test_df))
 
         return splits
+
+
+def inclusive_day_window(
+    begin: datetime, end: datetime
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Half-open UTC range covering every calendar day from ``begin`` to ``end``.
+
+    Boundaries are inclusive UTC days, so the window closes at midnight after
+    ``end``'s day. Truncating to the day (instead of adding 24 hours to
+    ``end``) keeps the window independent of the time of day in the config.
+    """
+    lower = _day_floor(begin)
+    upper = _day_floor(end)
+    if upper < lower:
+        msg = f"Window end {end} precedes its start {begin}"
+        raise WalkForwardSplitError(msg)
+    return lower, upper + pd.Timedelta(days=1)
+
+
+def _day_floor(value: datetime) -> pd.Timestamp:
+    """Midnight UTC of ``value``'s calendar day."""
+    return _to_utc_ts(value).tz_convert("UTC").normalize()
 
 
 def _to_utc_ts(dt: datetime) -> pd.Timestamp:

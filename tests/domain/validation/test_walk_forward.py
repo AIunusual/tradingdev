@@ -17,33 +17,35 @@ from tradingdev.domain.validation.walk_forward import (
 )
 
 
+def _explicit_config(df: pd.DataFrame) -> WalkForwardConfig:
+    """Split ``df`` at its midpoint, leaving the boundary days disjoint.
+
+    Boundaries are inclusive UTC days, so the test window starts the day
+    after the train window ends instead of sharing the midpoint's day.
+    """
+    ts = df["timestamp"]
+    boundary = ts.iloc[len(ts) // 2]
+    return WalkForwardConfig(
+        train_start=ts.iloc[0].to_pydatetime(),
+        train_end=boundary.to_pydatetime(),
+        test_start=(boundary + pd.Timedelta(days=1)).to_pydatetime(),
+        test_end=ts.iloc[-1].to_pydatetime(),
+    )
+
+
 class TestWalkForwardValidator:
     def setup_method(self) -> None:
         self.engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
 
     def test_single_explicit_split(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
-        ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig(
-            train_start=ts.iloc[0].to_pydatetime(),
-            train_end=mid.to_pydatetime(),
-            test_start=mid.to_pydatetime(),
-            test_end=ts.iloc[-1].to_pydatetime(),
-        )
+        config = _explicit_config(walk_forward_ohlcv_df)
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
         assert len(results) == 1
 
     def test_result_contains_metrics(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
-        ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig(
-            train_start=ts.iloc[0].to_pydatetime(),
-            train_end=mid.to_pydatetime(),
-            test_start=mid.to_pydatetime(),
-            test_end=ts.iloc[-1].to_pydatetime(),
-        )
+        config = _explicit_config(walk_forward_ohlcv_df)
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
@@ -55,14 +57,7 @@ class TestWalkForwardValidator:
     def test_strategy_params_recorded(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig(
-            train_start=ts.iloc[0].to_pydatetime(),
-            train_end=mid.to_pydatetime(),
-            test_start=mid.to_pydatetime(),
-            test_end=ts.iloc[-1].to_pydatetime(),
-        )
+        config = _explicit_config(walk_forward_ohlcv_df)
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
@@ -88,14 +83,7 @@ class TestWalkForwardValidator:
     def test_result_contains_full_backtest(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig(
-            train_start=ts.iloc[0].to_pydatetime(),
-            train_end=mid.to_pydatetime(),
-            test_start=mid.to_pydatetime(),
-            test_end=ts.iloc[-1].to_pydatetime(),
-        )
+        config = _explicit_config(walk_forward_ohlcv_df)
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
@@ -108,14 +96,7 @@ class TestWalkForwardValidator:
         assert len(r.test_backtest.equity_curve) > 0
 
     def test_format_report(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
-        ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig(
-            train_start=ts.iloc[0].to_pydatetime(),
-            train_end=mid.to_pydatetime(),
-            test_start=mid.to_pydatetime(),
-            test_end=ts.iloc[-1].to_pydatetime(),
-        )
+        config = _explicit_config(walk_forward_ohlcv_df)
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)

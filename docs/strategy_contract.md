@@ -259,7 +259,14 @@ scheme by name or infer a label horizon from an ML dataset.
 With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
 and `test_end` values select one explicit date split. Otherwise the plain
 splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
-by default; a partial set of date fields does not select an explicit split.
+by default. Each boundary is an inclusive UTC calendar day, so the four dates
+must satisfy `train_start <= train_end < test_start <= test_end`: a train
+window ending on the day the test window starts would train on bars the test
+set also scores, so it is rejected. Supplying only some of the four fields is
+rejected as well, instead of silently falling back to automatic windows. The
+splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
+timestamps are not ascending, a window selects no rows, or the selected train
+and test rows share a bar.
 A positive `label_horizon` checks the selected windows before any fold's
 strategy fitting or backtest runs. If training labels reach the test window,
 the full validation raises `WalkForwardLeakageError`; this audit detects the

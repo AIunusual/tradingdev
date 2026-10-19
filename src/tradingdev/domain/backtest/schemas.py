@@ -94,6 +94,66 @@ class WalkForwardConfig(BaseModel):
     construction, so the leakage gate passes instead of blocking the run.
     """
 
+    @model_validator(mode="after")
+    def explicit_dates_ordered(self) -> Self:
+        """Require all four explicit dates, ordered and disjoint by UTC day.
+
+        Every boundary is an inclusive UTC calendar day, so a train window
+        ending on the day the test window starts shares that day's bars with
+        the test set. ``train_end`` and ``test_start`` must therefore name
+        different days; reversed or partially specified periods are rejected
+        instead of silently falling back to the automatic split.
+        """
+        train_start, train_end = self.train_start, self.train_end
+        test_start, test_end = self.test_start, self.test_end
+        if (
+            train_start is None
+            or train_end is None
+            or test_start is None
+            or test_end is None
+        ):
+            missing = [
+                name
+                for name, value in (
+                    ("train_start", train_start),
+                    ("train_end", train_end),
+                    ("test_start", test_start),
+                    ("test_end", test_end),
+                )
+                if value is None
+            ]
+            if len(missing) == 4:
+                return self
+            raise ValueError(
+                "Explicit walk-forward dates must be given all together; "
+                f"missing: {', '.join(missing)}"
+            )
+
+        days = tuple(
+            _utc_calendar_day(value)
+            for value in (train_start, train_end, test_start, test_end)
+        )
+        if not (days[0] <= days[1] < days[2] <= days[3]):
+            raise ValueError(
+                "Explicit walk-forward dates must satisfy "
+                "train_start <= train_end < test_start <= test_end as inclusive "
+                f"UTC calendar days (got train {days[0]}..{days[1]}, "
+                f"test {days[2]}..{days[3]}); the train window's last day must "
+                "precede the test window's first day"
+            )
+        return self
+
+
+def _utc_calendar_day(value: dt.datetime) -> dt.date:
+    """Calendar day of ``value`` in UTC, matching the splitter's day boundaries.
+
+    Naive values are read as UTC, the same convention ``DataSplitter`` uses
+    when it localizes them.
+    """
+    if value.tzinfo is None:
+        return value.date()
+    return value.astimezone(dt.UTC).date()
+
 
 class ParallelConfig(BaseModel):
     """Parallel execution configuration."""
