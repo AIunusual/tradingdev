@@ -242,6 +242,70 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
+### Strategy Walk-Forward Settings
+
+The top-level YAML `validation` mapping configures strategy backtests through
+`WalkForwardConfig` and `WalkForwardValidator`. It is separate from the ML
+`train_model(validation=...)` tool described below: it does not select an ML
+scheme by name or infer a label horizon from an ML dataset.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `label_horizon` | `0` | A positive value declares how many source rows a training label looks ahead and enables the pre-fold label-overlap audit. Values below 1 leave that audit disabled with the plain splitter. |
+| `purged_split` | `false` | Selects the opt-in anchored purged splitter when true; it requires `label_horizon >= 1`. |
+| `embargo_bars` | `0` | Extra rows removed before each test window in addition to the label-horizon purge; used only when `purged_split` is true. |
+| `n_splits` | `1` | Number of automatic test folds; use a positive integer and enough data for nonempty windows. |
+
+With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
+and `test_end` values select one explicit date split. Otherwise the plain
+splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
+by default; a partial set of date fields does not select an explicit split.
+A positive `label_horizon` checks the selected windows before any fold's
+strategy fitting or backtest runs. If training labels reach the test window,
+the full validation raises `WalkForwardLeakageError`; this audit detects the
+problem without changing the windows. Thus setting only a positive horizon on
+adjacent plain train/test windows will block them rather than purge them.
+`embargo_bars` has no effect in this plain mode, including with explicit dates.
+
+To remove overlapping training labels automatically, add this mapping at the
+root of a strategy YAML whose loaded history is long enough for all folds:
+
+```yaml
+validation:
+  n_splits: 3
+  label_horizon: 5
+  embargo_bars: 2
+  purged_split: true
+  target_metric: "sharpe_ratio"
+```
+
+The purged splitter divides the loaded rows into `n_splits + 1` contiguous,
+near-equal blocks. The first is training-only; each later block is tested once,
+using all preceding blocks as anchored training history after removing the
+`label_horizon + embargo_bars` gap immediately before its test window. In this
+full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
+folds, even if present in the YAML. Omit those inactive settings to keep the
+request clear. The backtest's data bounds still determine the history supplied
+to the splitter.
+
+`purged_split: true` with a missing, zero or negative horizon fails when the
+validator constructs its splitter. Purged splitting also rejects a nonpositive
+fold count, a negative embargo, a horizon at least as long as the input, too
+many blocks, or a gap that leaves no training rows. The YAML schema rejects
+unknown field names but does not enforce every numerical range or fold geometry;
+successful YAML parsing alone does not establish a usable validation run.
+The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
+that a strategy's labels are safe. Declare the actual forward horizon when the
+strategy uses such labels. This gate audits row-window geometry, not arbitrary
+feature code or a strategy's independently constructed labels.
+
+The MCP confirmation preflight selects a sample using explicit dates or plain
+windows and runs it through `run_fold`; it does not preview the purged splitter's
+boundaries, execute the complete validator's pre-fold audit or establish that
+every formal fold can run. The full strategy walk-forward execution applies that gate before
+running its folds. This differs from the ML tool's timestamp/label-interval
+validation described below.
+
 ## ML Research Contract
 
 The ML MCP tools are a separate synchronous research interface. They select
@@ -274,6 +338,35 @@ close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
 or label rows and reports their count. `horizon` is a positive number of source
 bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
 the model's declared feature list.
+
+Both `build_dataset` and `build_panel` pass their date bounds to
+`DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
+bounds with an offset are converted to UTC. Rows are selected with
+`start_date <= timestamp <= end_date`, including both endpoints. A date-only
+`end_date: "2024-01-31"` therefore stops at `2024-01-31T00:00:00Z`, not at the
+end of January 31. For all hourly bars dated within January, use explicit bounds,
+for example these `build_dataset` arguments:
+
+```json
+{
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "start_date": "2024-01-01T00:00:00Z",
+  "end_date": "2024-01-31T23:59:59.999999Z",
+  "feature_set": "returns",
+  "horizon": 1
+}
+```
+
+The selected end bounds the source bars, so trailing rows whose forward label
+needs later prices are still dropped. Reversed bounds fail; the loader does not
+extend them to obtain missing labels. This timestamp contract differs from a
+strategy walk-forward's explicit date split, whose end filter is
+`timestamp < configured_end + 1 day`, and from optimization's inclusive UTC
+calendar-day bounds. For whole-day strategy split endpoints, use date-only
+values; an intraday explicit walk-forward end is also extended by one day.
+Do not copy the ML timestamp example into optimization, which accepts only
+`YYYY-MM-DD` boundaries.
 
 `build_panel` requires at least two distinct symbols. It sorts symbol identity,
 builds each symbol's features and labels independently, then aligns the labelled
