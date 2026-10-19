@@ -187,7 +187,7 @@ def test_panel_folds_use_shared_dates_and_actual_nonoverlapping_label_intervals(
 def test_panel_training_floor_counts_dates_instead_of_symbol_rows(
     workspace: WorkspacePaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tradingdev.app import ml_service as module
+    from tradingdev.app import ml_training as module
 
     service = MLService(workspace)
     panel = service.build_panel(symbols=SYMBOLS, **DATA_ARGUMENTS)["panel"]

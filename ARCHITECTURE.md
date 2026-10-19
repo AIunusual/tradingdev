@@ -345,6 +345,8 @@ Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料
 `build_panel` 先逐商品計算特徵及標籤，再由 `domain/ml/calendar.py` 對齊共同日期，
 並回報缺值、丟棄與向前補值情形。標籤始終來自各商品原本的行情。
 
+`MLService.train_model` 委派 `app/ml_training.py` 的 `MLTrainingService`，
+由它協調驗證請求、分折評分、最終模型訓練及 artifact 發佈。
 `train_model` 解析模型種類與有效參數，只將資料集宣告的特徵欄位及 target
 交給 estimator。最終 artifact 使用全部資料列訓練；選填 validation 另外建立
 每折的模型，保存模型與回傳驗證摘要是不同責任。Walk-forward 的訓練資料早於測試，

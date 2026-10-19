@@ -447,7 +447,7 @@ class TestRejections:
     def test_an_unusable_request_is_refused_before_anything_is_fitted(
         self, service: MLService, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tradingdev.app import ml_service as module
+        from tradingdev.app import ml_training as module
 
         fitted: list[str] = []
 
