@@ -546,22 +546,44 @@ def _validation_section(value: object) -> ConfirmationSection:
             "train_ratio",
             "expanding",
             "target_metric",
+            "label_horizon",
+            "embargo_bars",
+            "purged_split",
         },
         "validation",
     )
     dates = ("train_start", "train_end", "test_start", "test_end")
-    explicit = all(values[key] is not None for key in dates)
+    purged = values["purged_split"] is True
+    explicit = not purged and all(values[key] is not None for key in dates)
+    horizon = values["label_horizon"]
+    if not isinstance(horizon, int) or (purged and horizon < 1):
+        raise ValueError("Purged validation requires a positive label horizon")
+    if purged:
+        mode = "淨化分段：固定起點、逐次擴大訓練區間"
+        date_description = "淨化分段不使用指定日期；區間由資料筆數與分段組數決定。"
+        ratio_description = (
+            "淨化分段不使用此比例；訓練使用測試段之前的資料並扣除隔離區間。"
+        )
+        expanding_description = (
+            f"淨化分段固定逐次擴大；此欄設定值（{_text(values['expanding'])}）不使用。"
+        )
+    else:
+        mode = "使用指定日期的一組訓練／測試區間" if explicit else "依資料筆數自動分段"
+        date_description = "所有日期齊全時才使用指定日期切分；結束日包含當日。"
+        ratio_description = (
+            "指定日期模式不使用此設定。" if explicit else "每組資料中用於訓練的比例。"
+        )
+        expanding_description = (
+            "指定日期模式不使用此設定。" if explicit else "啟用時保留更早的訓練資料。"
+        )
     fields = [
-        _field(
-            "分段方式",
-            "使用指定日期的一組訓練／測試區間" if explicit else "依資料筆數自動分段",
-        ),
+        _field("分段方式", mode),
         *[
             _field(
                 label,
                 values[key],
-                "所有日期齊全時才使用指定日期切分；結束日包含當日。",
-                missing="由自動分段決定",
+                date_description,
+                missing="不使用" if purged else "由自動分段決定",
             )
             for key, label in zip(
                 dates, ("訓練開始", "訓練結束", "測試開始", "測試結束"), strict=True
@@ -569,25 +591,50 @@ def _validation_section(value: object) -> ConfirmationSection:
         ],
         _field(
             "預定分段組數",
-            values["n_splits"],
-            "指定日期模式固定為一組，此設定不使用。"
+            1 if explicit else values["n_splits"],
+            f"指定日期模式固定為一組，此設定不使用（設定值：{values['n_splits']}）。"
             if explicit
-            else "實際可完成組數取決於資料量。",
+            else (
+                "額外保留第一段作為訓練；後續每段依序測試，資料不足時會拒絕執行。"
+                if purged
+                else "實際可完成組數取決於資料量。"
+            ),
         ),
         _field(
             "自動分段的訓練比例",
             _percentage(values["train_ratio"]),
-            "指定日期模式不使用此設定。" if explicit else "每組資料中用於訓練的比例。",
+            ratio_description,
         ),
         _field(
             "訓練區間逐次擴大",
-            values["expanding"],
-            "指定日期模式不使用此設定。" if explicit else "啟用時保留更早的訓練資料。",
+            True if purged else values["expanding"],
+            expanding_description,
         ),
         _field(
             "驗證紀錄重點指標",
             _metric(values["target_metric"]),
             "用於驗證紀錄；策略如何訓練另依其策略設定。",
+        ),
+        _field(
+            "標籤前視根數",
+            horizon if horizon > 0 else f"未啟用檢查（設定值：{horizon}）",
+            "大於 0 時正式執行會先檢查標籤區間重疊；未啟用不代表標籤安全，"
+            "也不代表策略沒有使用未來資料。",
+            unit="根 K 線" if horizon > 0 else None,
+            detail=True,
+        ),
+        _field(
+            "淨化分段",
+            values["purged_split"],
+            "啟用時每組訓練區間會先移除與測試區間重疊的資料；需要前視根數大於 0。",
+            detail=True,
+        ),
+        _field(
+            "額外隔離根數",
+            values["embargo_bars"],
+            "淨化之外再多移除的 K 線；只有啟用淨化分段時才會生效。",
+            unit="根 K 線",
+            detail=True,
         ),
     ]
     return _section("validation", fields)
@@ -727,7 +774,7 @@ def _preflight_sections(
         raise ValueError("Non-optimization preflight cannot claim candidate coverage")
     if manifest.kind == "walk_forward":
         validation = config["validation"]
-        explicit = all(
+        explicit = not validation["purged_split"] and all(
             validation[key] is not None
             for key in ("train_start", "train_end", "test_start", "test_end")
         )

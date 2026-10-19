@@ -114,9 +114,13 @@ def _receipt(manifest: ExecutionManifest, **changes: Any) -> PreflightReceipt:
     if manifest.kind == "optimization":
         checks.append("candidate_binding")
     validation = manifest.config_copy().get("validation")
-    explicit = validation is not None and all(
-        validation[key] is not None
-        for key in ("train_start", "train_end", "test_start", "test_end")
+    explicit = (
+        validation is not None
+        and not validation["purged_split"]
+        and all(
+            validation[key] is not None
+            for key in ("train_start", "train_end", "test_start", "test_end")
+        )
     )
     return PreflightReceipt.model_validate(
         {
@@ -497,6 +501,104 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     assert "使用指定日期的一組" in text
     assert "指定日期模式固定為一組，此設定不使用" in text
     assert "訓練開始：2024-01-01" in text
+    assert "預定分段組數：1" in text
+    assert "已試跑的驗證分段：1 / 1" in text
+
+
+@pytest.mark.parametrize("expanding", [False, True])
+def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
+    expanding: bool,
+) -> None:
+    text = render_confirmation_text(
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={"n_splits": 2, "train_ratio": 0.6, "expanding": expanding},
+            )
+        )
+    )
+    assert "分段方式：依資料筆數自動分段" in text
+    assert "自動分段的訓練比例：60%" in text
+    assert f"訓練區間逐次擴大：{'是' if expanding else '否'}" in text
+    assert "已試跑的驗證分段：1 / 2" in text
+
+
+@pytest.mark.parametrize("dates", [False, True])
+def test_purged_validation_shows_effective_mode_and_ignored_controls(
+    dates: bool,
+) -> None:
+    validation: dict[str, Any] = {
+        "n_splits": 2,
+        "label_horizon": 5,
+        "embargo_bars": 2,
+        "purged_split": True,
+        "train_ratio": 0.6,
+        "expanding": False,
+    }
+    if dates:
+        validation.update(
+            train_start="2024-01-01",
+            train_end="2024-06-30",
+            test_start="2024-07-01",
+            test_end="2024-12-31",
+        )
+    manifest = _manifest("walk_forward", validation=validation)
+    text = render_confirmation_text(_document(manifest))
+    assert "分段方式：淨化分段：固定起點、逐次擴大訓練區間" in text
+    assert "淨化分段不使用指定日期" in text
+    assert "淨化分段不使用此比例" in text
+    assert "訓練區間逐次擴大：是" in text
+    assert "此欄設定值（否）不使用" in text
+    assert "預定分段組數：2" in text
+    assert "已試跑的驗證分段：1 / 2" in text
+    assert "未涵蓋所有驗證分段" in text
+    assert "使用指定日期的一組" not in text
+    if dates:
+        assert "訓練開始：2024-01-01" in text
+    with pytest.raises(ValueError, match="fold coverage"):
+        build_confirmation_document(
+            manifest, _presentation(manifest), _receipt(manifest, total_fold_count=1)
+        )
+
+
+def test_leakage_controls_are_rendered_instead_of_being_swallowed() -> None:
+    """Purge settings change what a fold may see, so they need a human view."""
+    enabled = render_confirmation_text(
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={
+                    "label_horizon": 5,
+                    "embargo_bars": 2,
+                    "purged_split": True,
+                },
+            )
+        )
+    )
+    assert "標籤前視根數：5 根 K 線" in enabled
+    assert "淨化分段：是" in enabled
+    assert "額外隔離根數：2 根 K 線" in enabled
+
+    defaults = render_confirmation_text(_document(_manifest("walk_forward")))
+    assert "標籤前視根數：未啟用檢查" in defaults
+    assert "淨化分段：否" in defaults
+
+
+@pytest.mark.parametrize("horizon", [0, -1])
+def test_disabled_label_audit_is_not_presented_as_safe_labels(horizon: int) -> None:
+    text = render_confirmation_text(
+        _document(_manifest("walk_forward", validation={"label_horizon": horizon}))
+    )
+    assert f"未啟用檢查（設定值：{horizon}）" in text
+    assert "未啟用不代表標籤安全" in text
+    assert "標籤不取自未來資料" not in text
+    with pytest.raises(ValueError, match="positive label horizon"):
+        _document(
+            _manifest(
+                "walk_forward",
+                validation={"purged_split": True, "label_horizon": horizon},
+            )
+        )
 
 
 @pytest.mark.parametrize(

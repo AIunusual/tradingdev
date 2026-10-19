@@ -134,6 +134,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
             *,
             manifest_hash: str,
             processed_path: Path,
+            code_fingerprint: str,
         ) -> str:
             return "metric-contract"
 

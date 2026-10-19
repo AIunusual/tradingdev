@@ -6,6 +6,11 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.domain.validation.leakage_gate import (
+    WalkForwardLeakageError,
+    audit_fold_windows,
+)
+from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
 from tradingdev.domain.validation.splitter import DataSplitter
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -50,7 +55,9 @@ class WalkForwardValidator:
     ) -> None:
         self._config = config
         self._engine = engine
-        self._splitter = DataSplitter(config)
+        self._splitter: DataSplitter | PurgedDataSplitter = (
+            PurgedDataSplitter(config) if config.purged_split else DataSplitter(config)
+        )
 
     def validate(
         self,
@@ -65,8 +72,14 @@ class WalkForwardValidator:
 
         Returns:
             List of WalkForwardResult, one per fold.
+
+        Raises:
+            WalkForwardLeakageError: If ``config.label_horizon`` is set and the
+                folds leak label information into training.
         """
         splits = self._splitter.split(df)
+        self._check_leakage(df)
+
         results: list[WalkForwardResult] = []
 
         for i, (train_df, test_df) in enumerate(splits):
@@ -74,6 +87,30 @@ class WalkForwardValidator:
             results.append(result)
 
         return results
+
+    def _check_leakage(self, df: pd.DataFrame) -> None:
+        """Block the run when training bars can see their own test window.
+
+        Non-positive ``label_horizon`` disables this audit; it does not
+        establish that the strategy has no forward-looking labels.
+        """
+        horizon = self._config.label_horizon
+        if horizon < 1:
+            return
+        windows = self._splitter.split_windows(df)
+        violations = audit_fold_windows(windows, horizon=horizon)
+        if violations:
+            logger.error(
+                "Walk-forward leakage gate blocked %d folds: %s",
+                len(windows),
+                "; ".join(violations),
+            )
+            raise WalkForwardLeakageError(violations)
+        logger.info(
+            "Walk-forward leakage gate passed: %d folds, horizon=%d",
+            len(windows),
+            horizon,
+        )
 
     def run_fold(
         self,

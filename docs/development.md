@@ -78,7 +78,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
 證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
 的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
-Local 與 Codex harness 使用真實模型、stdio MCP、受監督的試跑與正式 worker。
+Local 與 Codex harness 使用真實模型與 stdio MCP；回測情境另啟動受監督的試跑與正式 worker。
 測試使用者在模型結束回合後才回覆；Local 沿用相同 messages，Codex app-server
 沿用相同 thread 再啟動下一個 turn，不以兩次獨立對話冒充多回合流程。
 第一回合核對已呈現短摘要與 HTML 連結、計畫 ready、尚無正式工作或結果，
@@ -91,6 +91,9 @@ Codex 測試停用其他 MCP server、外掛與 hooks，在臨時工作區啟動
 流程不再依賴 MCP elicitation；拒絕、修改、無效決策、來源異動與過期另有回歸測試。
 另有內建 KD 最佳化與自建策略 walk-forward 情境，核對巢狀參數說明、搜尋或折數、
 確認前狀態及執行產物，不能用模型聲稱完成取代保存的證據。
+Walk-forward 情境使用兩折 purged 分段、前視 5 根及額外隔離 2 根，保留不生效的
+日期／比例／擴展設定；驗證確認單的 `1 / 2` 試跑覆蓋、正式兩折的隔離區間及
+原 revision／隨機種子未變。純離線版本執行相同 MCP／worker 與證據檢查，但不呼叫模型。
 離線 HTTP 回歸測試啟動 localhost Streamable HTTP 端點，以正式 server 組裝及真實
 MCP client 驗證準備、讀取確認單與決策提交；行情試跑及 worker 使用替代實作隔離。
 此測試不代表已驗證桌面客戶端的檔案呈現或對話按鈕。
@@ -103,6 +106,28 @@ MCP client 驗證準備、讀取確認單與決策提交；行情試跑及 worke
 歷史可執行版本及回測產物仍保留；可用 `-k cleanup` 單獨執行。
 入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
 `--maxfail=0`。
+
+兩個入口也涵蓋 `test_llm_ml_pipeline`，可用 `-k ml_pipeline` 單獨驗證模型驅動的
+ML 研究流程。例如指定本地 provider：
+
+```bash
+./scripts/check-llm.sh local --llm-model qwen3.8:27b \
+  --llm-reasoning-effort none --llm-temperature 0.7 --llm-timeout 900 \
+  -k ml_pipeline
+```
+
+此情境在獨立臨時工作區預放固定種子的行情，要求模型依序探索 ML 契約、建置完整
+資料集、訓練含 purged walk-forward 驗證的 LightGBM、預測、原值轉交全部訊號與
+報酬、記錄評估並查詢排行榜。它不下載行情，也不建立策略或啟動回測 worker。
+Harness 串接實際回覆中的 dataset／model／entry ID、參數與驗證摘要，另外讀取
+Parquet、模型及排行榜檔案，重算標籤與命中率，並確認模型回覆區分訓練集預測與
+fold 驗證。模型聲稱完成、截短陣列或只有工具呼叫名稱都不足以通過。
+檔案與 MCP 程序沿用共用臨時工作區的清理流程。
+
+離線 ML domain／service／MCP 測試檢查數學、身分、儲存及回覆契約；離線的
+workflow evidence 回歸測試檢查上述證據判定本身，不會呼叫 LLM。
+只有明確執行此真實 LLM 情境，才涵蓋所選 provider 對 ML 工具的理解與串接；
+它不驗證真實行情下載、所有模型種類或實際交易獲利。PR 文件審查也不能取代此情境。
 
 Codex 與 local 入口都涵蓋完整情境，不需排除執行計畫測試：
 

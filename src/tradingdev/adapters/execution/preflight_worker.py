@@ -44,6 +44,7 @@ from tradingdev.domain.preflight import (
 )
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.splitter import DataSplitter
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -312,7 +313,7 @@ def execute_preflight(
             warnings.append("single_candidate_only")
     else:
         wf = WalkForwardConfig.model_validate(config["validation"])
-        explicit = all(
+        explicit = not wf.purged_split and all(
             value is not None
             for value in (wf.train_start, wf.train_end, wf.test_start, wf.test_end)
         )
@@ -340,7 +341,8 @@ def execute_preflight(
             total_folds = 1
         else:
             dataset = load("fold", bt.start_date, bt.end_date, request.sample_bars)
-            splits = DataSplitter(wf).split(dataset.frame)
+            splitter = PurgedDataSplitter(wf) if wf.purged_split else DataSplitter(wf)
+            splits = splitter.split(dataset.frame)
             if not splits:
                 raise PreflightError(
                     "insufficient_sample_history",

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pytest
 from tests.preflight_fixtures import make_preflight_fixture
 
@@ -17,6 +18,7 @@ from tradingdev.adapters.execution.process_runner import (
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.preflight_service import PreflightError, PreflightService
 from tradingdev.domain.preflight import PreflightRequest
+from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
@@ -106,6 +108,106 @@ def test_preflight_zero_trades_does_not_claim_trading_coverage(
     assert result.receipt.trade_count == 0
     assert result.receipt.trading_path_exercised is False
     assert "no_trades_observed" in result.receipt.warnings
+
+
+@pytest.mark.parametrize(
+    ("purged", "dates", "expected_windows", "total_folds"),
+    [
+        (False, False, ((0, 32), (32, 64)), 2),
+        (False, True, ((168, 232), (456, 520)), 1),
+        (True, False, ((0, 36), (43, 86)), 2),
+        (True, True, ((0, 36), (43, 86)), 2),
+    ],
+)
+def test_walk_forward_preflight_uses_selected_splitter_on_bounded_sample(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    purged: bool,
+    dates: bool,
+    expected_windows: tuple[tuple[int, int], tuple[int, int]],
+    total_folds: int,
+) -> None:
+    validation: dict[str, Any] = {
+        "n_splits": 2,
+        "train_ratio": 0.5,
+        "expanding": False,
+        "label_horizon": 5,
+        "embargo_bars": 2,
+        "purged_split": purged,
+    }
+    if dates:
+        validation.update(
+            train_start="2024-01-08",
+            train_end="2024-01-10",
+            test_start="2024-01-20",
+            test_end="2024-01-22",
+        )
+    workspace, request = make_preflight_fixture(
+        tmp_path, monkeypatch, kind="walk_forward", validation=validation
+    )
+
+    def reject_full_validation(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Preflight must remain a first-fold sample")
+
+    monkeypatch.setattr(WalkForwardValidator, "validate", reject_full_validation)
+    output = tmp_path / "preflight"
+    output.mkdir()
+    result = execute_preflight(request, source_workspace=workspace, directory=output)
+    receipt = result.receipt
+    assert receipt.tested_fold_count == 1
+    assert receipt.total_fold_count == total_folds
+    assert ("single_fold_only" in receipt.warnings) is (total_folds > 1)
+    assert "partial_historical_sample" in receipt.warnings
+    assert receipt.sample_bars_used == sum(
+        end - start for start, end in expected_windows
+    )
+    origin = pd.Timestamp("2024-01-01", tz="UTC")
+    for window, (start, end) in zip(receipt.windows, expected_windows, strict=True):
+        assert pd.Timestamp(window.start) == origin + pd.Timedelta(hours=start)
+        assert pd.Timestamp(window.end) == origin + pd.Timedelta(hours=end - 1)
+        assert window.rows == end - start
+    saved = json.loads((output / "sample/performance-0.json").read_text())
+    for window in receipt.windows:
+        observations = saved["performance"]["scopes"][f"fold/0/{window.role}"][
+            "metadata"
+        ]["observations"]
+        assert pd.Timestamp(observations["start_date"]) == pd.Timestamp(window.start)
+        assert pd.Timestamp(observations["end_date"]) == pd.Timestamp(window.end)
+        assert observations["bar_count"] == window.rows
+    for key, value in validation.items():
+        configured = result.manifest.config_copy()["validation"][key]
+        if key.endswith(("start", "end")):
+            assert configured.startswith(value)
+        else:
+            assert configured == value
+
+
+@pytest.mark.parametrize(
+    "invalid", [{"label_horizon": 0}, {"label_horizon": -1}, {"embargo_bars": -1}]
+)
+def test_invalid_purged_preflight_cannot_fall_back_to_explicit_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: dict[str, int]
+) -> None:
+    workspace, request = make_preflight_fixture(
+        tmp_path,
+        monkeypatch,
+        kind="walk_forward",
+        validation={
+            "purged_split": True,
+            "label_horizon": 5,
+            "n_splits": 2,
+            "train_start": "2024-01-08",
+            "train_end": "2024-01-10",
+            "test_start": "2024-01-20",
+            "test_end": "2024-01-22",
+            **invalid,
+        },
+    )
+    output = tmp_path / "preflight"
+    output.mkdir()
+    with pytest.raises(ValueError, match="label horizon|embargo"):
+        execute_preflight(request, source_workspace=workspace, directory=output)
+    assert not list((output / "sample").glob("performance-*.json"))
 
 
 def test_preflight_rejects_insufficient_warmup(

@@ -90,7 +90,7 @@ def _command(root: Path, model: str | None = None) -> list[str]:
     return command
 
 
-def _mcp_config(root: Path) -> dict[str, Any]:
+def _mcp_config(root: Path, tool_names: list[str]) -> dict[str, Any]:
     return {
         "command": sys.executable,
         "args": ["-m", "tradingdev.mcp.server", "--workspace", str(root / "workspace")],
@@ -100,7 +100,7 @@ def _mcp_config(root: Path) -> dict[str, Any]:
         "required": True,
         "startup_timeout_sec": 30,
         "tool_timeout_sec": 60,
-        "enabled_tools": LIFECYCLE_TOOLS,
+        "enabled_tools": tool_names,
         "default_tools_approval_mode": "approve",
     }
 
@@ -115,11 +115,13 @@ async def run_codex(
     elicitation_callback: ElicitationCallback | None = None,
     user_reply: UserReply | None = None,
     max_turns: int = 8,
+    tool_names: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Run an MCP-only conversation with one thread and reap its process tree."""
     from tests.e2e.conversation import ModelTurn
     from tests.e2e.llm_client import codex_calls
 
+    enabled_tools = LIFECYCLE_TOOLS if tool_names is None else tool_names
     turn_number = 0
 
     async def respond_to_turn(events: list[dict[str, Any]]) -> str | None:
@@ -156,7 +158,7 @@ async def run_codex(
         client = CodexAppServer(
             process.stdout,
             process.stdin,
-            tools=LIFECYCLE_TOOLS,
+            tools=enabled_tools,
             max_tool_calls=max_tool_calls,
             elicitation_callback=elicitation_callback,
             observe_processes=observe_processes,
@@ -188,7 +190,7 @@ async def run_codex(
                             "explicitly in a later turn of this conversation."
                         ),
                     },
-                    mcp_config=_mcp_config(root),
+                    mcp_config=_mcp_config(root, enabled_tools),
                     user_reply=respond_to_turn if user_reply is not None else None,
                     max_turns=max_turns,
                 )

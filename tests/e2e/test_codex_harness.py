@@ -103,8 +103,12 @@ def model_environment(
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "timeout"])
+@pytest.mark.parametrize("tool_names", [None, ["get_ml_contract", "build_dataset"]])
 def test_codex_stops_client_and_detached_child(
-    monkeypatch: MonkeyPatch, status: str, model_environment: str | None
+    monkeypatch: MonkeyPatch,
+    status: str,
+    model_environment: str | None,
+    tool_names: list[str] | None,
 ) -> None:
     monkeypatch.setattr(
         codex_harness,
@@ -114,14 +118,25 @@ def test_codex_stops_client_and_detached_child(
     with TemporaryDirectory(prefix="tradingdev-codex-lifecycle-") as temporary:
         root = Path(temporary)
         if status == "completed":
-            events = asyncio.run(codex_harness.run_codex(root, "prompt"))
+            events = asyncio.run(
+                codex_harness.run_codex(root, "prompt", tool_names=tool_names)
+            )
             assert events[-1]["method"] == "turn/completed"
         else:
             expected = "Codex turn failed" if status == "failed" else "Codex exceeded"
             with pytest.raises(AssertionError, match=expected):
-                asyncio.run(codex_harness.run_codex(root, "prompt", timeout_seconds=1))
+                asyncio.run(
+                    codex_harness.run_codex(
+                        root, "prompt", timeout_seconds=1, tool_names=tool_names
+                    )
+                )
         requested = json.loads((root / "thread_request.json").read_text())
         assert requested["model"] == model_environment
+        servers = requested["config"]["mcp_servers"]
+        assert len(servers) == 1
+        assert next(iter(servers.values()))["enabled_tools"] == (
+            codex_harness.LIFECYCLE_TOOLS if tool_names is None else tool_names
+        )
         pids = json.loads((root / "client_pids.json").read_text())
         for pid in pids:
             try:

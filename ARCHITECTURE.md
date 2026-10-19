@@ -42,7 +42,7 @@ flowchart LR
 | ---- | -------- |
 | `mcp/server.py`、`mcp/tools/` | 組裝 services、註冊工具、驗證協定輸入與輸出 |
 | `mcp/workers/` | 背景工作入口、狀態更新及流程協調；最佳化 worker 直接協調搜尋與樣本外測試 |
-| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、結果保存與查詢；`contracts/` 定義回覆 DTO |
+| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義回覆 DTO |
 | `domain/strategies/` | 策略介面、來源探索與載入、參數解析、訊號契約及 bundled strategies |
 | `domain/execution.py`、`domain/randomness.py` | 執行規格與完整性檢查、每次執行的亂數 context |
 | `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時試跑請求及覆蓋證據 |
@@ -57,7 +57,9 @@ flowchart LR
 這是目前實作的責任分組，尚未形成全面的依賴反轉。
 Application services 直接使用具體的儲存與程序 adapters；`domain/data` 內的
 crawlers、loader 與 DataManager 仍執行網路及檔案 I/O，StrategyLoader 也會
-讀取、載入策略檔案。最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
+讀取、載入策略檔案。`domain/ml/registry` 的模型、特徵快取與排行榜 stores
+也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
+最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
 修改這些模組時，不能假設 domain 全部都是無副作用的純計算。
 
 `mcp.server.create_server()` 是 MCP 的組裝入口，讓 services 共用 workspace
@@ -96,6 +98,8 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | Job | 背景工作的進度、程序身分與控制紀錄，由 JobService／OptimizationService 提交，透過 JobStore 保存 |
 | Run | 一次已保存的執行結果，記錄策略、設定與資料來源資訊，由 RunService 查詢 |
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
+| ML dataset | 已保存的特徵與標籤版本，身分包含建置資訊、特徵程式與資料內容 |
+| Model artifact | 已訓練模型的序列化內容、特徵契約及有效參數，由獨立模型 store 保存 |
 
 一個 revision 可以提交多次工作；工作開始或結束不會把策略狀態改成 running 或 done。
 參數實驗屬於工作設定：MCP 的 `parameters` 覆寫與 CLI 執行設定共用
@@ -322,6 +326,47 @@ RunService 提供 run 與指標查詢，ArtifactService 提供檔案探索與讀
 Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料表與保存位置見
 [執行產物契約](docs/run_artifacts.md)。
 
+## ML 訊號研究
+
+`mcp/tools/ml.py` 將工具請求交給 `MLService`，回覆由 `app/contracts/ml.py`
+驗證。這是同步研究流程，沒有 execution plan、背景 worker 或 backtest run；
+資料集、模型及排行榜使用自己的 stores，未登錄於 SQLite 的 run／artifact 索引。
+既有回測 CLI 與 dashboard 沒有對應的 ML 研究入口。
+
+`get_ml_contract` 從特徵、模型及驗證 registry 組裝可選項，讓助手選擇已登錄實作。
+`processor_types` 是 domain 前處理元件的探索資訊；目前 dataset／training 工具
+沒有 processor pipeline 參數，也不會依該清單自動正規化資料。
+
+`build_dataset` 透過 `DataService.load_cached` 讀取行情；缺年度檔或指定區間無資料時失敗，
+不走下載或替換年度快取的路徑，也不檢查每根 K 線是否齊全。
+特徵 registry 建立保留原列的矩陣，feature cache
+依商品、頻率、行情內容及特徵程式身分重用計算。Service 再建立未來報酬與方向標籤、
+排除不完整列，交 `MLDatasetStore` 發佈不可覆寫的內容版本。
+`build_panel` 先逐商品計算特徵及標籤，再由 `domain/ml/calendar.py` 對齊共同日期，
+並回報缺值、丟棄與向前補值情形。標籤始終來自各商品原本的行情。
+
+`MLService.train_model` 委派 `app/ml_training.py` 的 `MLTrainingService`，
+解析有效參數、分折評分並發佈最終 artifact；estimator 只接收宣告特徵與 target。
+最終模型訓練全部列，選填 validation 另建折模型。Walk-forward 依過去訓練；
+purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有兩側，是回顧交叉驗證。
+`domain/ml/validation/temporal.py` 以共享 timestamp 分折，保持同日期各商品的
+訓練／測試角色一致，再以來源行情保留的 label start/end 排除跨邊界的標籤資訊。
+含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
+驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
+
+`predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，再載入
+pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
+單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
+時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
+leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
+`leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
+並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
+
+特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
+讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
+模型 pickle 需要可信的工作區；hash 只檢查內容一致性，不是 sandbox。格式、身分與重記語意集中在
+[ML 研究產物](docs/run_artifacts.md#ml-research-artifacts)。
+
 ## 績效計算與對話摘要
 
 績效處理分成計算、保存與呈現三個責任。摘要欄位只控制回覆大小，不決定後端留下哪些指標。
@@ -480,6 +525,10 @@ MCP 計畫準備時的策略模組載入、建構與訊號契約檢查在受監�
 Walk-forward 依固定 fold 順序共用該次執行的亂數串流；平行 trial 各自建立 context。
 策略透過 `domain.randomness` 取得產生器或種子，第三方模型的 seed 需明確傳入。
 這不會覆寫全域亂數狀態，也不會控制任意第三方產生器。
+
+直接 ML 研究不使用策略 execution manifest；`train_model` 使用所選模型的
+`random_state` 參數及其他有效設定，並將它們記入 model artifact。
+這與策略執行的頂層 `random_seed` 是兩個入口，不能互相推斷。
 
 Manifest 固定請求；來源 hash、資料指紋與套件版本提供追蹤依據。
 它們不等於封存完整行情、Python 依賴與執行環境，因此不承諾跨環境完全重現。

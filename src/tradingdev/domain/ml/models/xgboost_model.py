@@ -9,6 +9,7 @@ import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
 
 from tradingdev.domain.ml.base import BaseModel
+from tradingdev.domain.ml.registry import feature_importance_from_gain
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -161,3 +162,11 @@ class XGBoostDirectionModel(BaseModel):
     def get_parameters(self) -> dict[str, Any]:
         """Return model configuration."""
         return self._config.model_dump()
+
+    def feature_importance(self) -> tuple[tuple[str, float], ...]:
+        """Gain-based importance of the trained booster, highest first."""
+        if self._model is None:
+            return ()
+        return feature_importance_from_gain(
+            self._feature_names, self._model.feature_importances_
+        )

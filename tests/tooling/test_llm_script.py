@@ -69,6 +69,14 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         "    Path('execution_plan.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    (tmp_path / "tests/e2e/test_llm_ml.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_ml_pipeline_only():\n"
+        "    Path('ml_pipeline.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     environment = {
         **os.environ,
         "TRADINGDEV_CHECK_PYTHON": sys.executable,
@@ -149,7 +157,7 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
     assert not (tmp_path / "second.ran").exists()
 
 
-@pytest.mark.parametrize("scenario", ["cleanup", "execution_plan"])
+@pytest.mark.parametrize("scenario", ["cleanup", "execution_plan", "ml_pipeline"])
 def test_script_selects_scenario_without_running_authoring_suite(
     tmp_path: Path,
     scenario: str,
@@ -177,6 +185,6 @@ def test_script_selects_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 4 deselected" in result.stdout
+    assert "1 passed, 5 deselected" in result.stdout
     assert (tmp_path / f"{scenario}.ran").read_text() == "done"
     assert not (tmp_path / "completed.ran").exists()

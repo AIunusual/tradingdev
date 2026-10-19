@@ -28,6 +28,21 @@ workspace/
   data/
     raw/
     processed/
+  ml_datasets/
+    .publish.lock
+    <dataset_id>/
+      dataset.parquet
+      manifest.json
+  ml_feature_cache/
+    .feature-cache.lock
+    <cache_key>.parquet
+    <cache_key>.json
+  models/
+    <model_id>.json
+    <model_id>.bin
+  ml_leaderboard/
+    .leaderboard.lock
+    leaderboard.jsonl
   runs/
     <run_id>/
       manifest.json
@@ -120,6 +135,179 @@ a process can be cancelled directly. Status checks mark a started job failed whe
 its supervisor identity is missing or no longer matches; the first response
 includes the same error persisted in the database. Spawn failures also persist
 `failed`, an explanatory error and `ended_at` before propagating the exception.
+
+## ML Research Artifacts
+
+ML datasets, feature matrices, trained models and signal evaluations use the
+workspace directories above. They do not create background jobs, backtest runs
+or SQLite artifact registrations. Dataset and model IDs refer to their own
+stores; they are not run IDs.
+
+### Immutable Datasets
+
+`MLDatasetStore` publishes schema version 2 datasets as a complete directory
+containing `dataset.parquet` and `manifest.json`. The manifest records:
+
+- The single symbol or ordered panel symbols, timeframe, requested date range,
+  source and dataset kind.
+- Feature-set name, ordered feature columns, build-time feature-code fingerprint,
+  label column, label horizon and dropped-row count.
+- For panels, the calendar settings, coverage summary and date count. As in the
+  tool response, dropped/missing date lists each contain at most 50 dates;
+  `n_dropped_dates` and each `n_missing` remain exact.
+- `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
+  and `dataset_id`.
+
+The Parquet frame retains `label_start` and `label_end`: the original source-bar
+timestamps used to calculate each row's forward return, captured before feature
+rows are dropped or a panel calendar is aligned. Panel labels are computed on
+each symbol's own bars. Forward filling carries these timestamps together with
+the original label; it does not turn that label into a newly observed outcome
+at the filled calendar date. Fold validation refuses panels with carried
+observations and requires rebuilding with intersection or dropped missing dates.
+
+`dataset_id` is `ds_` followed by the first 16 hexadecimal characters of the
+SHA-256 of the sorted JSON manifest, excluding `dataset_id` itself. Thus metadata,
+feature code and the saved data bytes all participate in identity. Rebuilding
+after an input or feature-code change publishes a different version rather than
+replacing the previous dataset. Cache-hit status is response metadata only and
+does not change dataset identity.
+
+Publication holds `.publish.lock` across the existence check and same-directory
+rename of a completed temporary directory. An existing ID is reused only after
+its data and manifest pass verification and its manifest matches the proposed
+one; a collision or corrupt existing version fails without replacing it.
+Temporary publication directories are removed on success and failure. The lock
+file remains available to coordinate later writers.
+
+Every dataset load validates the ID syntax, schema, manifest identity, Parquet
+content hash and row count before exposing a frame. Hashing and parsing use the
+same bytes. Missing, incomplete or altered versions fail rather than rebuilding
+silently. Earlier dataset schemas are unsupported and must be rebuilt; reads do
+not migrate, delete or rewrite their files. These hashes detect inconsistent
+content, not a writer able to replace both the manifest and its data.
+
+Schema 2 alone does not establish that label intervals are present. Fold
+validation additionally requires both interval columns; single-symbol
+evaluation requires `label_end` and chronological `timestamp` rows to check its
+holding intervals. Earlier schema 2 datasets missing the required columns must
+also be rebuilt for those operations. The generic store does not infer missing
+intervals or modify an old version. Validation and evaluation semantics are
+defined in the [ML research contract](strategy_contract.md#fold-validation-and-signal-interpretation).
+
+### Feature Matrix Cache
+
+`ml_feature_cache/<cache_key>.parquet` stores a feature matrix, with a JSON
+sidecar describing the symbol, timeframe, input-data fingerprint, feature set,
+code fingerprint, feature and stored columns, row count, content hash and last
+use time. Labels are constructed after the cache lookup, so changing the label
+horizon can reuse the same feature computation.
+
+The cache key includes bar values, symbol, timeframe, feature set and feature
+code. The default code fingerprint hashes the feature package's relative source
+paths, source bytes and registered column declarations; it does not depend on
+the installation's absolute path or a Git checkout. An application caller may
+explicitly supply that fingerprint. Dataset manifests retain the fingerprint
+used at build time, so later evaluation does not substitute the currently
+installed feature code's identity.
+
+A cache hit requires matching computation metadata and feature columns, a
+matching Parquet hash, and matching stored columns and row count. Sidecars must
+contain a JSON object with string identity fields and SHA-256 hash, a nonnegative
+integer row count, and distinct string lists for stored and feature columns;
+feature columns must be present in the stored columns. A present last-use time
+must be finite and numeric. Malformed metadata, missing files, hash or shape
+mismatches and invalid Parquet content are cache misses, allowing the service
+to recompute and replace the disposable cache entry. The matrix is parsed from
+the same bytes whose hash was verified. Recomputing does not replace source
+market files or immutable dataset versions.
+
+Each cache directory has a persistent `.feature-cache.lock` shared by processes.
+It serializes complete writes and eviction, reads through their recency update,
+and key/statistics snapshots, so an in-progress publication cannot be swept as
+an orphan. The default lock wait is 30 seconds; expiration raises a timeout
+instead of reporting a cache miss. Matrix and sidecar publication use unique
+temporary files in the cache directory, with cleanup on success or failure;
+cleanup errors follow the I/O policy below. The lock file is retained and excluded from retention bytes,
+as are temporary files. This lock covers the disposable feature cache only.
+
+Verification reads and cache publication propagate permission and other storage
+I/O failures; these are not reported as misses. Updating recency is best effort
+and logs a warning if it fails, as does an unsuccessful eviction deletion.
+The default retention limits are 256 entries and 512 MiB, counting matrices and
+sidecars. Successful reads update recency; writes sweep incomplete pairs and evict least
+recently used entries. The just-written entry is protected, so a matrix larger
+than the byte budget remains stored and logs a warning. Failed deletions may
+also leave the cache above its limits. These are retention targets, not a hard
+disk quota; feature-cache eviction does not delete the immutable datasets that
+already contain the computed features.
+
+### Trained Models
+
+`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
+pickled model wrapper. Metadata records model name, framework, kind, effective
+parameters, ordered features, training-row count, available feature importance
+and full blob SHA-256. At build time, the ID is computed as a 16-character
+SHA-256 prefix over name, parameters, ordered features and blob hash. It
+identifies model content, not a training execution or saved validation result.
+
+Save and load verify the blob hash. Loads do not recompute the ID or compare
+metadata with the filename or serialized estimator. JSON is trusted workspace
+state: metadata-only edits may go undetected. The ID neither authenticates
+publishers nor proves metadata unchanged. Prediction additionally checks exact
+ordered dataset features before unpickling.
+
+CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
+before serialization, avoiding identities driven by those incidental values.
+This does not guarantee identical blobs across dependency versions or environments.
+
+Pickle requires trusted workspace files. Hashing is not authentication or a
+sandbox; a writer able to replace metadata and blob can supply executable code.
+The final artifact fits all dataset rows even when training returns fold scores;
+its ID or predictions on those rows do not establish out-of-sample evidence.
+
+### Recorded Signal Evaluations
+
+`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+Whenever `dataset_id` is supplied, including without recording, the signal must
+cover all its rows, the supplied forward returns must exactly match the saved
+`forward_return` values in row order, and an explicit horizon must equal the
+saved horizon; omitting it adopts the saved value. The saved interval endpoints
+must support non-overlapping trades on the simulation grid. Panel datasets are
+refused for evaluation. Non-finite signal or return values are rejected, rather
+than dropped before recording. Without `record=True`, evaluation returns its
+result without a leaderboard write.
+
+`ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
+by ID. Each record preserves finite metrics, observation count, model and dataset
+IDs, a display label, and an evaluation context: symbol or panel symbols,
+timeframe, requested period, horizon, IC window, quantile count, feature set,
+build-time code fingerprint and dataset content hash. Comparison uses the saved
+context; changed data or feature code does not silently inherit an old context.
+
+`leaderboard(dataset_id=...)` verifies and selects one immutable dataset
+version, so models on it can be compared separately from rebuilt versions.
+Records must match its manifest's data context and row count; unknown or invalid
+IDs fail. Other filters combine with this selector. Different IC windows or
+quantile counts require `allow_mixed=True`, which never bypasses dataset
+verification.
+
+The entry ID includes the dataset, evaluation context and caller-supplied model
+ID. With no model ID, it also includes a signal fingerprint computed from a
+canonical JSON array of finite floating-point values; array boundaries and value
+boundaries are preserved. With a model ID, that ID is a caller-declared label:
+recording does not prove that this model produced the supplied signal or that
+the signal was generated out of sample. Repeating a model/dataset/context entry
+replaces its earlier metrics, including when the caller supplies different
+signal values. Distinct unlabelled signals remain separate candidates.
+
+`LeaderboardStore.record` holds `.leaderboard.lock` across its read, update and
+write. It flushes a unique temporary file beside the destination and atomically
+replaces the JSON-lines file. `entries` reads without locking and sees a complete
+old or new file. Temporary files are removed after successful and failed writes, and
+the lock file is retained. Re-recording an entry returns `replaced=True` rather
+than increasing the candidate count. Unreadable records fail the read instead
+of being skipped and silently reducing that count.
 
 ## Execution Manifest
 
@@ -472,15 +660,18 @@ different results. Clearing the pickle cache leaves historical performance JSON
 readable; the cleared historical dashboard artifact is unavailable, while a new
 execution writes its own complete cache.
 
-The CLI cache fingerprint requires the executed manifest hash and combines it with
-processed-data file size/mtime and a Git source-code fingerprint. There is no
-YAML-based key fallback. New settings produce a different manifest and therefore
+The CLI cache fingerprint requires the executed manifest hash and combines it
+with the processed-data file's content hash and the executed strategy revision
+and source hash. It does not derive code identity from the current Git checkout
+or use file size/mtime as data identity. There is no YAML-based key fallback.
+New settings produce a different manifest and therefore
 a different cache key. Completed results are loaded by run ID through the
 registered artifact path, without recomputing a key from current YAML, data, or
 code. The unused YAML-based `load_cached_result` and `save_cached_result` helpers
 have been removed; this storage path does not automatically reuse prior backtests.
-These file-stat and code fingerprints describe the execution inputs; they are not
-immutable data or environment versions and do not guarantee full reproducibility.
+These fingerprints describe the execution inputs; they do not archive immutable
+copies of all data or environment dependencies and do not guarantee full
+reproducibility.
 
 Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical

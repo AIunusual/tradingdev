@@ -1,86 +1,112 @@
-"""Tests for the persistent disk cache utilities."""
+"""Tests for the persistent disk cache utilities.
+
+The key is a claim that a stored result was produced by this manifest, on this
+data, under this code. The tests are about that claim failing loudly: a change
+of the same size as the original (which an mtime/size check would not see), and
+a change of working directory (which the old git-derived code fingerprint did
+not survive).
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+
+from tradingdev.shared.utils.cache import (
+    cache_dir,
+    clear_cache,
+    compute_cache_key,
+    data_fingerprint,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-from tradingdev.shared.utils.cache import (
-    _code_fingerprint,
-    cache_dir,
-    clear_cache,
-    compute_cache_key,
-)
 
 
-class TestCodeFingerprint:
-    """Tests for _code_fingerprint()."""
+class TestDataFingerprint:
+    def test_hashes_the_content(self, tmp_path: Path) -> None:
+        data = tmp_path / "data.parquet"
+        data.write_bytes(b"fake")
+        assert data_fingerprint(data) != "missing"
 
-    def test_returns_16_hex_chars(self) -> None:
-        fp = _code_fingerprint()
-        assert len(fp) == 16
-        assert all(c in "0123456789abcdef" for c in fp)
+    def test_an_edit_of_the_same_size_is_seen(self, tmp_path: Path) -> None:
+        """mtime and size both survive this edit; content does not."""
+        data = tmp_path / "data.parquet"
+        data.write_bytes(b"fake")
+        before = data_fingerprint(data)
+        data.write_bytes(b"faka")
+        assert data.stat().st_size == 4
+        assert data_fingerprint(data) != before
 
-    def test_deterministic_when_code_unchanged(self) -> None:
-        fp1 = _code_fingerprint()
-        fp2 = _code_fingerprint()
-        assert fp1 == fp2
-
-    def test_fallback_on_git_failure(self) -> None:
-        """When git is unavailable, returns random (non-deterministic) value."""
-        with patch(
-            "tradingdev.shared.utils.cache._run_git",
-            return_value=None,
-        ):
-            fp1 = _code_fingerprint()
-            fp2 = _code_fingerprint()
-        assert len(fp1) == 16
-        assert len(fp2) == 16
-        # Two random UUIDs should differ.
-        assert fp1 != fp2
+    def test_a_missing_file_is_named_not_guessed(self, tmp_path: Path) -> None:
+        assert data_fingerprint(tmp_path / "absent.parquet") == "missing"
 
 
 class TestComputeCacheKey:
-    """Tests for compute_cache_key()."""
+    @staticmethod
+    def _key(data: Path, **overrides: str) -> str:
+        values = {"manifest_hash": "1" * 64, "code_fingerprint": "code-v1"}
+        values.update(overrides)
+        return compute_cache_key(processed_path=data, **values)
 
     def test_same_inputs_same_key(self, tmp_path: Path) -> None:
         data = tmp_path / "data.parquet"
         data.write_bytes(b"fake")
-
-        key1 = compute_cache_key(manifest_hash="1" * 64, processed_path=data)
-        key2 = compute_cache_key(manifest_hash="1" * 64, processed_path=data)
-        assert key1 == key2
+        assert self._key(data) == self._key(data)
 
     def test_manifest_change_invalidates(self, tmp_path: Path) -> None:
         data = tmp_path / "data.parquet"
         data.write_bytes(b"fake")
-
-        key1 = compute_cache_key(manifest_hash="1" * 64, processed_path=data)
-        key2 = compute_cache_key(manifest_hash="2" * 64, processed_path=data)
-        assert key1 != key2
+        assert self._key(data, manifest_hash="1" * 64) != self._key(
+            data, manifest_hash="2" * 64
+        )
 
     def test_data_change_invalidates(self, tmp_path: Path) -> None:
         data = tmp_path / "data.parquet"
         data.write_bytes(b"fake")
-        key1 = compute_cache_key(manifest_hash="1" * 64, processed_path=data)
+        before = self._key(data)
         data.write_bytes(b"longer data fixture")
-        key2 = compute_cache_key(manifest_hash="1" * 64, processed_path=data)
-        assert key1 != key2
+        assert self._key(data) != before
+
+    def test_data_change_of_the_same_size_invalidates(self, tmp_path: Path) -> None:
+        data = tmp_path / "data.parquet"
+        data.write_bytes(b"fake")
+        before = self._key(data)
+        data.write_bytes(b"faka")
+        assert self._key(data) != before
+
+    def test_code_fingerprint_change_invalidates(self, tmp_path: Path) -> None:
+        data = tmp_path / "data.parquet"
+        data.write_bytes(b"fake")
+        assert self._key(data, code_fingerprint="v1") != self._key(
+            data, code_fingerprint="v2"
+        )
 
     def test_missing_data_file(self, tmp_path: Path) -> None:
-        missing = tmp_path / "no_such_file.parquet"
-        # Should not raise — just skips data stat.
-        key = compute_cache_key(manifest_hash="1" * 64, processed_path=missing)
+        """Should not raise - it just has no content to contribute."""
+        key = self._key(tmp_path / "no_such_file.parquet")
         assert len(key) == 16
+
+    def test_the_key_does_not_move_with_the_working_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A key that followed the cwd could not be shared between runs.
+
+        It used to be derived from ``git rev-parse`` of the local checkout, and
+        fell back to a random value when git could not be reached - so the same
+        run produced a different key depending on where it was started.
+        """
+        data = tmp_path / "data.parquet"
+        data.write_bytes(b"fake")
+        before = self._key(data)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        assert self._key(data) == before
 
 
 class TestCacheDirectory:
-    """Tests for locating and clearing the cache directory."""
-
     def test_default_cache_dir_uses_workspace(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
