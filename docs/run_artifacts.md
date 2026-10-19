@@ -34,6 +34,7 @@ workspace/
       dataset.parquet
       manifest.json
   ml_feature_cache/
+    .feature-cache.lock
     <cache_key>.parquet
     <cache_key>.json
   models/
@@ -151,7 +152,9 @@ containing `dataset.parquet` and `manifest.json`. The manifest records:
   source and dataset kind.
 - Feature-set name, ordered feature columns, build-time feature-code fingerprint,
   label column, label horizon and dropped-row count.
-- For panels, the calendar settings, coverage summary and date count.
+- For panels, the calendar settings, coverage summary and date count. As in the
+  tool response, dropped/missing date lists each contain at most 50 dates;
+  `n_dropped_dates` and each `n_missing` remain exact.
 - `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
   and `dataset_id`.
 

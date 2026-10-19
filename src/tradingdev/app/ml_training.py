@@ -63,20 +63,7 @@ class MLTrainingService:
         embargo: int = 0,
         min_train_bars: int | None = None,
     ) -> dict[str, Any]:
-        """Fit a registered direction model and persist its pickled artifact.
-
-        The final artifact fits all dataset rows; its training-data predictions
-        are in-sample. Optional validation fits separate fold models and returns
-        scores, not out-of-fold predictions. Walk-forward trains on the past;
-        K-fold is retrospective. ``None`` skips validation.
-
-        Purging uses saved label intervals and horizon; ``embargo`` adds a gap.
-        ``min_train_bars`` counts distinct dates and defaults to half a block,
-        leaving room for the first walk-forward fold's purge. Artifact identity
-        binds effective parameters, ordered features and model bytes.
-
-        Invalid IDs, model kinds, parameters or fold geometry raise ``ValueError``.
-        """
+        """Validate folds, fit all rows and publish a content-bound model artifact."""
         frame, manifest = MLDatasetStore(self._workspace.ml_datasets).load(dataset_id)
         try:
             kind = get_model_kind(model_kind)

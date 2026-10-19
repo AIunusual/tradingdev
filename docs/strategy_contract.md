@@ -384,6 +384,9 @@ frames. `intersection` keeps common timestamps. `union` uses `missing_policy`:
 positions (`null` leaves that carry unbounded). Leading gaps cannot be filled
 from future observations. Read the returned calendar coverage, dropped dates
 and filled-row counts; filled rows are carried observations, not new trades.
+`calendar.dropped_dates` and each `calendar.coverage[].missing` list contain at
+most the first 50 dates; `n_dropped_dates` and each `n_missing` remain exact.
+The saved manifest uses the same bounded calendar summary.
 
 `train_model(dataset_id, model_kind, parameters, validation, ...)` resolves
 effective model defaults plus declared parameter overrides; unknown parameter
