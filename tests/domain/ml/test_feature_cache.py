@@ -10,7 +10,7 @@ silently computed from the wrong inputs.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -24,9 +24,6 @@ from tradingdev.domain.ml.feature_cache import (
     feature_code_fingerprint,
 )
 from tradingdev.domain.ml.features.registry import FeatureSet, get_feature_set
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _ROWS = 40
 _BARS = pd.DataFrame(
@@ -138,6 +135,27 @@ class TestFeatureCacheKey:
 
 
 class TestFeatureCodeFingerprint:
+    def test_copying_the_package_to_another_install_keeps_the_fingerprint(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from tradingdev.domain.ml import features as features_package
+
+        original = feature_code_fingerprint()
+        sources = feature_cache._package_sources()
+        copied = tmp_path / "another-install" / "features"
+        for relative, source in sources:
+            assert not Path(relative).is_absolute()
+            destination = copied / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source)
+        monkeypatch.setattr(features_package, "__path__", [str(copied)])
+        assert feature_code_fingerprint() == original
+
+        # Relative names still matter even when bytes are identical.
+        first = copied / sources[0][0]
+        first.rename(first.with_name("renamed.py"))
+        assert feature_code_fingerprint() != original
+
     def test_is_stable_across_calls(self) -> None:
         assert feature_code_fingerprint() == feature_code_fingerprint()
 

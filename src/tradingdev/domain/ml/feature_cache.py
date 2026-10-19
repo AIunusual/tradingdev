@@ -113,22 +113,23 @@ def _package_sources() -> list[tuple[str, bytes]]:
             "cannot locate the feature package source; pass a code_fingerprint "
             "explicitly instead"
         )
-    found = sorted(
-        (path for root in roots for path in Path(root).rglob("*.py")),
-        key=str,
-    )
     sources: list[tuple[str, bytes]] = []
-    for path in found:
-        try:
-            sources.append((str(path), path.read_bytes()))
-        except OSError as error:  # pragma: no cover - unreadable install
-            raise ValueError(f"cannot read feature source {path}: {error}") from error
+    for root in roots:
+        directory = Path(root)
+        for path in directory.rglob("*.py"):
+            try:
+                relative = path.relative_to(directory).as_posix()
+                sources.append((relative, path.read_bytes()))
+            except OSError as error:  # pragma: no cover - unreadable install
+                raise ValueError(
+                    f"cannot read feature source {path}: {error}"
+                ) from error
     if not sources:
         raise ValueError(
             "the feature package has no readable source; pass a "
             "code_fingerprint explicitly instead"
         )
-    return sources
+    return sorted(sources)
 
 
 def feature_code_fingerprint(
