@@ -23,15 +23,17 @@ if TYPE_CHECKING:
 _CONTEXT = EvaluationContext("BTC/USDT", "1d", "2024-01-01", "2024-12-31", 1)
 
 
-def _entry(model_id: str, value: float) -> LeaderboardEntry:
+def _entry(model_id: str, value: float, *, dataset_id: str = "ds") -> LeaderboardEntry:
     return LeaderboardEntry(
-        entry_id=build_entry_id(model_id=model_id, dataset_id="ds", context=_CONTEXT),
+        entry_id=build_entry_id(
+            model_id=model_id, dataset_id=dataset_id, context=_CONTEXT
+        ),
         label=model_id,
         context=_CONTEXT,
         metrics={"icir": value},
         n_observations=200,
         model_id=model_id,
-        dataset_id="ds",
+        dataset_id=dataset_id,
     )
 
 
@@ -90,6 +92,18 @@ def test_filters_narrow_by_measurement_conditions(store: LeaderboardStore) -> No
     assert [entry.model_id for entry in store.entries(symbol="ETH/USDT")] == [""]
     assert len(store.entries(horizon=1)) == 2
     assert store.entries(horizon=5) == ()
+
+
+def test_dataset_filter_keeps_all_models_for_exact_identity(
+    store: LeaderboardStore,
+) -> None:
+    for model_id, dataset_id in (("a", "ds_old"), ("b", "ds_old"), ("a", "ds_new")):
+        store.record(_entry(model_id, 0.5, dataset_id=dataset_id))
+    entries = store.entries(dataset_id="ds_old", symbol="BTC/USDT")
+    assert {entry.model_id for entry in entries} == {"a", "b"}
+    assert {entry.dataset_id for entry in entries} == {"ds_old"}
+    assert store.entries(dataset_id="ds_old", symbol="ETH/USDT") == ()
+    assert store.entries(dataset_id="ds_missing") == ()
 
 
 def test_a_corrupt_record_is_refused_not_skipped(store: LeaderboardStore) -> None:

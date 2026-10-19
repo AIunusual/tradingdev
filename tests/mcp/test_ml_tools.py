@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import numpy as np
 from mcp.server.fastmcp import FastMCP
 
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import MlContractResponse, SignalEvaluationResponse
 from tradingdev.app.ml_service import MLService
 from tradingdev.mcp.tools import ml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _PERFECT = np.linspace(-1.0, 1.0, 120).tolist()
 
@@ -29,9 +34,9 @@ def _dispatch(
     return asyncio.run(call())
 
 
-def test_get_ml_contract_lists_the_enumerable_vocabulary() -> None:
+def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None:
     mcp = FastMCP("ml-contract-test")
-    ml.register(mcp, MLService())
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
     names = {fs.name for fs in contract.feature_sets}
     assert "comprehensive" in names
@@ -51,9 +56,9 @@ def test_get_ml_contract_lists_the_enumerable_vocabulary() -> None:
     assert contract.schema_version == 1
 
 
-def test_evaluate_signal_runs_the_signal_suite() -> None:
+def test_evaluate_signal_runs_the_signal_suite(tmp_path: Path) -> None:
     mcp = FastMCP("ml-eval-test")
-    ml.register(mcp, MLService())
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     forward = [s * 0.01 for s in _PERFECT]
     response = SignalEvaluationResponse.model_validate(
         _dispatch(
@@ -75,9 +80,9 @@ def test_evaluate_signal_runs_the_signal_suite() -> None:
     assert len(response.simulated.quantile_means) == 5
 
 
-def test_evaluate_signal_rejects_length_mismatch() -> None:
+def test_evaluate_signal_rejects_length_mismatch(tmp_path: Path) -> None:
     mcp = FastMCP("ml-eval-err")
-    ml.register(mcp, MLService())
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     payload = _dispatch(
         mcp,
         "evaluate_signal",
@@ -87,9 +92,9 @@ def test_evaluate_signal_rejects_length_mismatch() -> None:
     assert payload["code"] == "invalid_signal"
 
 
-def test_evaluate_signal_rejects_too_few_observations() -> None:
+def test_evaluate_signal_rejects_too_few_observations(tmp_path: Path) -> None:
     mcp = FastMCP("ml-eval-short")
-    ml.register(mcp, MLService())
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     payload = _dispatch(
         mcp,
         "evaluate_signal",

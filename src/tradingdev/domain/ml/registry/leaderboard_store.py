@@ -44,12 +44,13 @@ class LeaderboardStore:
     def entries(
         self,
         *,
+        dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
         horizon: int | None = None,
         feature_set: str | None = None,
     ) -> tuple[LeaderboardEntry, ...]:
-        """Stored candidates, optionally narrowed by measurement conditions.
+        """Stored candidates, narrowed by dataset identity and measurement conditions.
 
         Raises:
             ValueError: If a stored line cannot be read back. A record that
@@ -59,7 +60,8 @@ class LeaderboardStore:
         return tuple(
             entry
             for entry in self._read()
-            if entry.context.matches(
+            if (dataset_id is None or entry.dataset_id == dataset_id)
+            and entry.context.matches(
                 symbol=symbol,
                 timeframe=timeframe,
                 horizon=horizon,

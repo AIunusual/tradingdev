@@ -1,9 +1,7 @@
 """Application service backing the ML MCP tools.
 
-Thin orchestration over the already-tested domain ML programs: it assembles the
-enumerable contract menu and runs a prediction through the signal-evaluation
-suite (IC / Rank IC, quantile strata, simulated long/short books). It performs
-no training and writes nothing, so both tools stay read-only and idempotent.
+Orchestrates named feature and model registries, immutable datasets, training,
+signal evaluation and recorded comparisons. Storage adapters own dataset IO.
 """
 
 from __future__ import annotations
@@ -22,9 +20,8 @@ import pandas as pd
 
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
-    sha256_file,
-    write_json,
 )
+from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
 from tradingdev.domain.ml.calendar import (
     CalendarMode,
@@ -133,7 +130,6 @@ _PROCESSOR_TYPES = [
 ]
 
 
-_DATASET_ID = re.compile(r"^ds_[0-9a-f]{16}$")
 # model_id is a 16-hex sha256 prefix produced by the artifact registry. Both
 # ids reach the filesystem, so they are locked to a literal shape rather than
 # trusted: an LLM-supplied value must never be able to walk out of the store.
@@ -150,9 +146,8 @@ _FOLD_IC_WINDOW = 60
 class MLService:
     """The enumerable ML vocabulary, signal evaluation, datasets and training.
 
-    Discovery and evaluation are read-only. Dataset building and training
-    persist artifacts under the workspace, but both are deterministic given
-    their inputs and never modify existing records.
+    Dataset versions are immutable. Feature caches are disposable; recording
+    an evaluation replaces only that same candidate and measurement context.
     """
 
     def __init__(
@@ -258,6 +253,10 @@ class MLService:
                 f"(got {len(signal)} vs {len(forward_returns)})"
             )
         aligned = self._align_length(signal, forward_returns)
+        if len(aligned) != len(signal):
+            raise ValueError(
+                "signal and forward_returns must contain only finite values"
+            )
         if len(aligned) < max(window, n_quantiles):
             raise ValueError(
                 f"not enough finite observations after alignment "
@@ -265,8 +264,20 @@ class MLService:
             )
         if window < 2:
             raise ValueError("window must be at least 2")
-        if n_quantiles < 2:
-            raise ValueError("n_quantiles must be at least 2")
+        if not 2 <= n_quantiles <= 10:
+            raise ValueError("n_quantiles must be between 2 and 10")
+
+        if record:
+            horizon = self._recording_horizon(
+                dataset_id,
+                horizon,
+                forward_returns=forward_returns,
+                n_observations=int(len(aligned)),
+            )
+        elif horizon is None:
+            horizon = 1
+        if horizon < 1:
+            raise ValueError("horizon must be at least 1")
 
         pred = pd.Series(signal, dtype=float)
         fwd = pd.Series(forward_returns, dtype=float)
@@ -288,13 +299,6 @@ class MLService:
                 self._finite(value) for value in list(simulated.quantile_means)
             ],
         }
-
-        if record:
-            horizon = self._recording_horizon(
-                dataset_id, horizon, n_observations=int(len(aligned))
-            )
-        elif horizon is None:
-            horizon = 1
 
         evaluation_id = self._evaluation_id(
             signal, forward_returns, horizon, window, n_quantiles
@@ -338,6 +342,7 @@ class MLService:
         horizon: int | None,
         *,
         n_observations: int,
+        forward_returns: list[float],
     ) -> int:
         """The horizon a recorded evaluation may claim.
 
@@ -352,7 +357,7 @@ class MLService:
                 "recording an evaluation requires dataset_id, so the record "
                 "knows what it was measured on"
             )
-        _, manifest = self._load_dataset(dataset_id)
+        frame, manifest = self._load_dataset(dataset_id)
         dataset_horizon = int(manifest["horizon"])
         rows = int(manifest["rows"])
         if n_observations != rows:
@@ -360,6 +365,13 @@ class MLService:
                 f"signal covers {n_observations} observations but "
                 f"{dataset_id} has {rows} rows; the record would not describe "
                 "this dataset"
+            )
+        if not np.array_equal(
+            np.asarray(forward_returns, dtype=float),
+            frame["forward_return"].to_numpy(dtype=float),
+        ):
+            raise ValueError(
+                "forward_returns do not match the stored dataset in row order"
             )
         if horizon is None:
             return dataset_horizon
@@ -402,7 +414,8 @@ class MLService:
             window=window,
             n_quantiles=n_quantiles,
             feature_set=str(manifest["feature_set"]),
-            code_fingerprint=self._code_fingerprint(),
+            code_fingerprint=str(manifest["code_fingerprint"]),
+            data_fingerprint=str(manifest["content_hash"]),
         )
         # Non-finite metrics are dropped rather than stored: a NaN has no
         # business in a ranking, and storing it would only create a row that
@@ -463,6 +476,7 @@ class MLService:
         self,
         metric: str,
         *,
+        dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
         horizon: int | None = None,
@@ -474,6 +488,8 @@ class MLService:
 
         Args:
             metric: A signal metric with a declared optimisation direction.
+            dataset_id: Keep only candidates for this verified dataset version.
+                Their saved data context must match its immutable manifest.
             symbol: Keep only candidates measured on this instrument.
             timeframe: Keep only candidates measured on this bar size.
             horizon: Keep only candidates measured at this label horizon.
@@ -487,13 +503,40 @@ class MLService:
             A success dict suitable for ``LeaderboardResponse``.
 
         Raises:
-            ValueError: If nothing is recorded, the metric cannot rank, or the
-                remaining entries were measured under different conditions.
+            ValueError: If the dataset is invalid, its saved context disagrees,
+                nothing is recorded, the metric cannot rank, or the remaining
+                entries were measured under different conditions.
         """
+        manifest = self._load_dataset(dataset_id)[1] if dataset_id is not None else None
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         entries = store.entries(
-            symbol=symbol, timeframe=timeframe, horizon=horizon, feature_set=feature_set
+            dataset_id=dataset_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            horizon=horizon,
+            feature_set=feature_set,
         )
+        if manifest is not None:
+            for entry in entries:
+                expected = EvaluationContext(
+                    symbol=self._manifest_symbol(manifest),
+                    timeframe=str(manifest["timeframe"]),
+                    start_date=str(manifest["start_date"]),
+                    end_date=str(manifest["end_date"]),
+                    horizon=int(manifest["horizon"]),
+                    window=entry.context.window,
+                    n_quantiles=entry.context.n_quantiles,
+                    feature_set=str(manifest["feature_set"]),
+                    code_fingerprint=str(manifest["code_fingerprint"]),
+                    data_fingerprint=str(manifest["content_hash"]),
+                )
+                if entry.context != expected or entry.n_observations != int(
+                    manifest["rows"]
+                ):
+                    raise ValueError(
+                        "recorded evaluation context does not match dataset_id "
+                        f"{dataset_id}: {entry.entry_id}"
+                    )
         if not entries:
             raise ValueError(
                 "no recorded evaluations; call evaluate_signal with record=True first"
@@ -582,20 +625,11 @@ class MLService:
         dataset = labelled.frame
         dropped_rows = labelled.dropped_rows
 
-        dataset_id = self._dataset_id(
-            symbol, timeframe, start_date, end_date, feature_set, horizon, source
-        )
-        directory = self._workspace.ml_datasets / dataset_id
-        directory.mkdir(parents=True, exist_ok=True)
-        parquet_path = directory / "dataset.parquet"
-        dataset.to_parquet(parquet_path, index=False)
-        content_hash = sha256_file(parquet_path)
-
         feature_columns = list(entry.columns)
-        write_json(
-            directory / "manifest.json",
+        parquet_path, manifest = MLDatasetStore(self._workspace.ml_datasets).save(
+            dataset,
             {
-                "dataset_id": dataset_id,
+                "kind": "single",
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "start_date": start_date,
@@ -603,13 +637,14 @@ class MLService:
                 "source": source,
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
+                "code_fingerprint": self._code_fingerprint(),
                 "label_column": "target",
                 "horizon": horizon,
-                "rows": int(len(dataset)),
                 "dropped_rows": int(dropped_rows),
-                "content_hash": content_hash,
             },
         )
+        dataset_id = manifest["dataset_id"]
+        content_hash = manifest["content_hash"]
         return {
             "success": True,
             "dataset": {
@@ -715,35 +750,15 @@ class MLService:
             .reset_index(drop=True)
         )
 
-        # Under intersection every calendar date exists in every symbol, so the
-        # missing-value options cannot change a single row. They are left out of
-        # the fingerprint there, otherwise two requests that produce the same
-        # panel would be stored twice under different ids.
-        inert = mode is CalendarMode.INTERSECTION
-        dataset_id = self._panel_id(
-            ordered,
-            timeframe,
-            start_date,
-            end_date,
-            feature_set,
-            horizon,
-            source,
-            mode.value,
-            None if inert else policy.value,
-            None if inert else max_staleness,
-        )
-        directory = self._workspace.ml_datasets / dataset_id
-        directory.mkdir(parents=True, exist_ok=True)
-        parquet_path = directory / "dataset.parquet"
-        panel.to_parquet(parquet_path, index=False)
-        content_hash = sha256_file(parquet_path)
-
         calendar = self._calendar_summary(alignment, mode, policy, max_staleness)
         feature_columns = list(entry.columns)
-        write_json(
-            directory / "manifest.json",
+        # Inactive options are normalized so identical panel requests share identity.
+        inert = mode is CalendarMode.INTERSECTION
+        calendar["missing_policy"] = "drop" if inert else policy.value
+        calendar["max_staleness"] = None if inert else max_staleness
+        parquet_path, manifest = MLDatasetStore(self._workspace.ml_datasets).save(
+            panel,
             {
-                "dataset_id": dataset_id,
                 "kind": "panel",
                 "symbols": list(ordered),
                 "timeframe": timeframe,
@@ -752,15 +767,16 @@ class MLService:
                 "source": source,
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
+                "code_fingerprint": self._code_fingerprint(),
                 "label_column": "target",
                 "horizon": horizon,
-                "rows": int(len(panel)),
                 "n_dates": int(alignment.calendar.n_dates),
                 "dropped_rows": int(dropped_rows),
                 "calendar": calendar,
-                "content_hash": content_hash,
             },
         )
+        dataset_id = manifest["dataset_id"]
+        content_hash = manifest["content_hash"]
         return {
             "success": True,
             "panel": {
@@ -1126,15 +1142,8 @@ class MLService:
         }
 
     def _load_dataset(self, dataset_id: str) -> tuple[pd.DataFrame, dict[str, Any]]:
-        """Read a built dataset, refusing ids that could escape the store."""
-        if not _DATASET_ID.match(dataset_id):
-            raise ValueError(f"malformed dataset_id: {dataset_id}")
-        directory = self._workspace.ml_datasets / dataset_id
-        parquet_path = directory / "dataset.parquet"
-        if not parquet_path.exists():
-            raise ValueError(f"unknown dataset_id: {dataset_id}")
-        manifest = json.loads((directory / "manifest.json").read_text("utf-8"))
-        return pd.read_parquet(parquet_path), manifest
+        """Read the exact verified bytes of an immutable dataset version."""
+        return MLDatasetStore(self._workspace.ml_datasets).load(dataset_id)
 
     @staticmethod
     def _feature_set(name: str) -> FeatureSet:
@@ -1154,14 +1163,7 @@ class MLService:
         source: str,
     ) -> pd.DataFrame:
         """Load one symbol's cached OHLCV bars, or say what is missing."""
-        if not self._data_service.data_available(
-            symbol, timeframe, start_date, end_date
-        ):
-            raise ValueError(
-                f"no cached market data for {symbol} {timeframe} "
-                f"{start_date}..{end_date}; run ensure_data first"
-            )
-        loaded = self._data_service.ensure(
+        loaded = self._data_service.load_cached(
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
@@ -1343,68 +1345,6 @@ class MLService:
                 f"unknown parameters for {kind.name}: {', '.join(unknown)}"
             )
         return dict(parameters)
-
-    @staticmethod
-    def _dataset_id(
-        symbol: str,
-        timeframe: str,
-        start_date: str,
-        end_date: str,
-        feature_set: str,
-        horizon: int,
-        source: str,
-    ) -> str:
-        payload = json.dumps(
-            {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "start_date": start_date,
-                "end_date": end_date,
-                "feature_set": feature_set,
-                "horizon": horizon,
-                "source": source,
-            },
-            sort_keys=True,
-        )
-        return f"ds_{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
-
-    @staticmethod
-    def _panel_id(
-        symbols: Sequence[str],
-        timeframe: str,
-        start_date: str,
-        end_date: str,
-        feature_set: str,
-        horizon: int,
-        source: str,
-        calendar_mode: str,
-        missing_policy: str | None,
-        max_staleness: int | None,
-    ) -> str:
-        """Fingerprint a panel request in the same ``ds_`` id space as datasets.
-
-        ``kind`` keeps a panel's id distinct from a single-symbol dataset built
-        from the same bar cache, so the two never collide in the store. The
-        missing-value options may be ``None`` when the calendar mode makes them
-        inert, so a request that cannot change the rows cannot change the id.
-        """
-        payload = json.dumps(
-            {
-                "kind": "panel",
-                "symbols": list(symbols),
-                "timeframe": timeframe,
-                "start_date": start_date,
-                "end_date": end_date,
-                "feature_set": feature_set,
-                "horizon": horizon,
-                "source": source,
-                "calendar_mode": calendar_mode,
-                "missing_policy": missing_policy,
-                "max_staleness": max_staleness,
-            },
-            sort_keys=True,
-        )
-        return f"ds_{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
 
     @staticmethod
     def _align_length(

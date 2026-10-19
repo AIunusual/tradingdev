@@ -8,6 +8,7 @@ anything.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -306,6 +307,110 @@ class TestRanking:
 
 
 class TestComparability:
+    @pytest.mark.parametrize("changed", ["bars", "feature_code"])
+    def test_dataset_filter_selects_saved_versions_and_keeps_their_models(
+        self, workspace: WorkspacePaths, changed: str
+    ) -> None:
+        first = MLService(workspace=workspace, feature_code_fingerprint="v1")
+        old_id = _build(first)
+        old_record = _record(
+            first, workspace, dataset_id=old_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        if changed == "bars":
+            source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            frame = pd.read_parquet(source)
+            frame["close"] *= np.linspace(1.0, 1.2, len(frame))
+            frame.to_parquet(source, index=False)
+        updated = MLService(
+            workspace=workspace,
+            feature_code_fingerprint="v2" if changed == "feature_code" else "v1",
+        )
+        new_id = _build(updated)
+        assert new_id != old_id
+        new_record = _record(
+            updated, workspace, dataset_id=new_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        with pytest.raises(ValueError, match="not measured on the same conditions"):
+            updated.leaderboard("ic_mean")
+        assert updated.leaderboard("ic_mean", allow_mixed=True)["n_candidates"] == 2
+        for dataset_id, record in ((old_id, old_record), (new_id, new_record)):
+            board = updated.leaderboard("ic_mean", dataset_id=dataset_id)
+            assert board["n_candidates"] == board["n_ranked"] == 1
+            assert board["ranked"][0]["dataset_id"] == dataset_id
+            assert board["ranked"][0]["entry_id"] == record["recorded"]["entry_id"]
+
+        _record(
+            updated, workspace, dataset_id=old_id, model_id=_BAD_MODEL, quality=-1.0
+        )
+        board = updated.leaderboard("ic_mean", dataset_id=old_id)
+        assert board["n_candidates"] == 2
+        assert [row["model_id"] for row in board["ranked"]] == [
+            _GOOD_MODEL,
+            _BAD_MODEL,
+        ]
+        assert all(row["dataset_id"] == old_id for row in board["ranked"])
+        with pytest.raises(ValueError, match="no recorded evaluations"):
+            updated.leaderboard("ic_mean", dataset_id=old_id, symbol="ETH/USDT")
+
+    @pytest.mark.parametrize("dataset_id", ["", "invalid", "ds_" + "0" * 16])
+    @pytest.mark.parametrize("allow_mixed", [False, True])
+    def test_dataset_filter_rejects_invalid_ids_even_without_records(
+        self, service: MLService, dataset_id: str, allow_mixed: bool
+    ) -> None:
+        with pytest.raises(ValueError, match="malformed dataset_id|unknown dataset_id"):
+            service.leaderboard(
+                "ic_mean", dataset_id=dataset_id, allow_mixed=allow_mixed
+            )
+
+    @pytest.mark.parametrize("allow_mixed", [False, True])
+    @pytest.mark.parametrize("corrupt", ["context", "row_count", "dataset_bytes"])
+    def test_dataset_filter_rejects_inconsistent_saved_evidence(
+        self,
+        service: MLService,
+        workspace: WorkspacePaths,
+        allow_mixed: bool,
+        corrupt: str,
+    ) -> None:
+        dataset_id = _build(service)
+        _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1
+        )
+        store = LeaderboardStore(workspace.ml_leaderboard)
+        entry = store.entries()[0]
+        if corrupt == "context":
+            store.record(
+                replace(entry, context=replace(entry.context, data_fingerprint="other"))
+            )
+        elif corrupt == "row_count":
+            store.record(replace(entry, n_observations=entry.n_observations - 1))
+        else:
+            path = workspace.ml_datasets / dataset_id / "dataset.parquet"
+            path.write_bytes(path.read_bytes() + b"changed")
+        with pytest.raises(ValueError, match="does not match dataset_id|content hash"):
+            service.leaderboard(
+                "ic_mean", dataset_id=dataset_id, allow_mixed=allow_mixed
+            )
+
+    def test_dataset_filter_preserves_evaluation_setting_comparability(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        realized = _returns(workspace, dataset_id)
+        for window in (20, 30):
+            service.evaluate_signal(
+                realized,
+                realized,
+                window=window,
+                record=True,
+                dataset_id=dataset_id,
+                model_id=_GOOD_MODEL,
+            )
+        with pytest.raises(ValueError, match="not measured on the same conditions"):
+            service.leaderboard("ic_mean", dataset_id=dataset_id)
+        board = service.leaderboard("ic_mean", dataset_id=dataset_id, allow_mixed=True)
+        assert board["n_candidates"] == 2
+        assert board["context"] == "mixed"
+
     def test_different_instruments_are_not_ranked_together(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
@@ -395,13 +500,16 @@ class TestFeatureIdentity:
             dataset_id=dataset_id,
             model_id=_GOOD_MODEL,
         )
-        after = self._service(workspace, code_fingerprint="v2").evaluate_signal(
+        updated = self._service(workspace, code_fingerprint="v2")
+        new_dataset_id = _build(updated)
+        assert new_dataset_id != dataset_id
+        after = updated.evaluate_signal(
             realized,
             realized,
             horizon=1,
             window=20,
             record=True,
-            dataset_id=dataset_id,
+            dataset_id=new_dataset_id,
             model_id=_GOOD_MODEL,
         )
         assert before["recorded"]["replaced"] is False
@@ -411,10 +519,11 @@ class TestFeatureIdentity:
     def test_two_code_versions_are_not_ranked_together(
         self, workspace: WorkspacePaths
     ) -> None:
-        dataset_id = _build(self._service(workspace, code_fingerprint="v1"))
-        realized = _returns(workspace, dataset_id)
         for fingerprint in ("v1", "v2"):
-            self._service(workspace, code_fingerprint=fingerprint).evaluate_signal(
+            version = self._service(workspace, code_fingerprint=fingerprint)
+            dataset_id = _build(version)
+            realized = _returns(workspace, dataset_id)
+            version.evaluate_signal(
                 realized,
                 realized,
                 horizon=1,
@@ -428,6 +537,17 @@ class TestFeatureIdentity:
             service.leaderboard("ic_mean")
         assert "not measured on the same conditions" in str(caught.value)
         assert "code=v1" in str(caught.value) and "code=v2" in str(caught.value)
+
+    def test_existing_dataset_keeps_its_build_time_code_identity(
+        self, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(self._service(workspace, code_fingerprint="v1"))
+        realized = _returns(workspace, dataset_id)
+        response = self._service(workspace, code_fingerprint="v2").evaluate_signal(
+            realized, realized, window=20, record=True, dataset_id=dataset_id
+        )
+        assert "code=v1" in response["recorded"]["context"]
+        assert "code=v2" not in response["recorded"]["context"]
 
     def test_the_feature_set_is_recorded_and_can_narrow_the_field(
         self, workspace: WorkspacePaths

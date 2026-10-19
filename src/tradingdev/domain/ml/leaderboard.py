@@ -23,6 +23,7 @@ Everything here is pure: no IO, no workspace, no clock.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -84,6 +85,8 @@ class EvaluationContext:
     """Named feature set the signal's features came from; ``""`` when unknown."""
     code_fingerprint: str = ""
     """Fingerprint of the feature code that built them; ``""`` when unknown."""
+    data_fingerprint: str = ""
+    """Content hash of the measured dataset; ``""`` when no dataset is bound."""
 
     @property
     def key(self) -> str:
@@ -99,6 +102,7 @@ class EvaluationContext:
                 f"quantiles={self.n_quantiles}",
                 f"features={self.feature_set}",
                 f"code={self.code_fingerprint}",
+                f"data={self.data_fingerprint}",
             )
         )
 
@@ -108,7 +112,7 @@ class EvaluationContext:
             f"{self.symbol} {self.timeframe} {self.start_date}..{self.end_date} "
             f"(horizon={self.horizon}, window={self.window}, "
             f"quantiles={self.n_quantiles}, features={self.feature_set or '-'}, "
-            f"code={self.code_fingerprint or '-'})"
+            f"code={self.code_fingerprint or '-'}, data={self.data_fingerprint or '-'})"
         )
 
     def matches(
@@ -171,6 +175,7 @@ class LeaderboardEntry:
                 "n_quantiles": self.context.n_quantiles,
                 "feature_set": self.context.feature_set,
                 "code_fingerprint": self.context.code_fingerprint,
+                "data_fingerprint": self.context.data_fingerprint,
             },
         }
 
@@ -192,6 +197,7 @@ class LeaderboardEntry:
             # stays unknown rather than being guessed.
             feature_set=str(raw_context.get("feature_set", "")),
             code_fingerprint=str(raw_context.get("code_fingerprint", "")),
+            data_fingerprint=str(raw_context.get("data_fingerprint", "")),
         )
         raw_metrics = record.get("metrics")
         if not isinstance(raw_metrics, Mapping):
@@ -236,11 +242,13 @@ def build_entry_id(
 
 
 def signal_fingerprint(signal: Sequence[float]) -> str:
-    """Hash a signal series so an unmodelled candidate is still identifiable."""
-    digest = hashlib.sha256()
-    for value in signal:
-        digest.update(repr(float(value)).encode("utf-8"))
-    return digest.hexdigest()[:16]
+    """Hash a finite signal series, preserving every value boundary."""
+    payload = json.dumps(
+        [float(value) for value in signal],
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)

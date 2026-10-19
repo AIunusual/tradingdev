@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _PERFECT = np.linspace(-1.0, 1.0, 120).tolist()
 
 
-def test_get_contract_enumerates_the_full_vocabulary() -> None:
-    contract = MLService().get_contract()
+@pytest.fixture
+def service(tmp_path: Path) -> MLService:
+    return MLService(WorkspacePaths(tmp_path / "workspace"))
+
+
+def test_get_contract_enumerates_the_full_vocabulary(service: MLService) -> None:
+    contract = service.get_contract()
     assert contract["success"] is True
     names = {fs["name"] for fs in contract["feature_sets"]}
     assert "comprehensive" in names
@@ -31,8 +42,8 @@ def test_get_contract_enumerates_the_full_vocabulary() -> None:
     assert contract["schema_version"] == 1
 
 
-def test_get_contract_model_defaults_are_json_safe() -> None:
-    contract = MLService().get_contract()
+def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
+    contract = service.get_contract()
     for kind in contract["model_kinds"]:
         params = kind["default_parameters"]
         assert isinstance(params, dict)
@@ -40,10 +51,10 @@ def test_get_contract_model_defaults_are_json_safe() -> None:
         assert "learning_rate" in params
 
 
-def test_evaluate_signal_on_a_perfectly_monotonic_signal() -> None:
+def test_evaluate_signal_on_a_perfectly_monotonic_signal(service: MLService) -> None:
     signal = _PERFECT
     forward = [s * 0.01 for s in signal]
-    result = MLService().evaluate_signal(signal, forward)
+    result = service.evaluate_signal(signal, forward)
     assert result["success"] is True
     assert result["n_observations"] == 120
     assert result["metrics"]["rank_ic_mean"] > 0.9
@@ -58,34 +69,34 @@ def test_evaluate_signal_on_a_perfectly_monotonic_signal() -> None:
     assert len(result["simulated"]["quantile_means"]) == 5
 
 
-def test_evaluate_signal_on_an_inverse_signal_is_negative() -> None:
+def test_evaluate_signal_on_an_inverse_signal_is_negative(service: MLService) -> None:
     signal = _PERFECT
     forward = [-s * 0.01 for s in signal]
-    result = MLService().evaluate_signal(signal, forward)
+    result = service.evaluate_signal(signal, forward)
     assert result["metrics"]["rank_ic_mean"] is not None
     assert result["metrics"]["rank_ic_mean"] < -0.9
     assert result["simulated"]["long_short_mean"] < 0
 
 
-def test_evaluate_signal_rejects_length_mismatch() -> None:
+def test_evaluate_signal_rejects_length_mismatch(service: MLService) -> None:
     with pytest.raises(ValueError, match="equal length"):
-        MLService().evaluate_signal([1.0, 2.0], [1.0])
+        service.evaluate_signal([1.0, 2.0], [1.0])
 
 
-def test_evaluate_signal_rejects_too_few_finite_bars() -> None:
+def test_evaluate_signal_rejects_too_few_finite_bars(service: MLService) -> None:
     with pytest.raises(ValueError, match="not enough finite observations"):
-        MLService().evaluate_signal([1.0, 2.0, 3.0], [0.1, 0.2, 0.3], window=60)
+        service.evaluate_signal([1.0, 2.0, 3.0], [0.1, 0.2, 0.3], window=60)
 
 
-def test_evaluate_signal_drops_non_finite_then_fails() -> None:
+def test_evaluate_signal_drops_non_finite_then_fails(service: MLService) -> None:
     with pytest.raises(ValueError):
-        MLService().evaluate_signal([1.0, float("nan"), 3.0], [0.1, 0.2, 0.3])
+        service.evaluate_signal([1.0, float("nan"), 3.0], [0.1, 0.2, 0.3])
 
 
-def test_evaluation_id_is_deterministic_for_equal_inputs() -> None:
+def test_evaluation_id_is_deterministic_for_equal_inputs(service: MLService) -> None:
     signal = _PERFECT
     forward = [s * 0.01 for s in signal]
-    first = MLService().evaluate_signal(signal, forward)["evaluation_id"]
-    second = MLService().evaluate_signal(signal, forward)["evaluation_id"]
+    first = service.evaluate_signal(signal, forward)["evaluation_id"]
+    second = service.evaluate_signal(signal, forward)["evaluation_id"]
     assert first == second
     assert first.startswith("eval_")

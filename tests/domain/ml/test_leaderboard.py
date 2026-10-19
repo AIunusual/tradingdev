@@ -321,6 +321,22 @@ class TestEntryIdentity:
             context=EvaluationContext("ETH/USDT", "1d", "2024-01-01", "2024-12-31", 1),
         )
 
+    def test_signal_fingerprint_preserves_value_boundaries(self) -> None:
+        # Both used to concatenate to "1.023.04.0" without separators.
+        assert signal_fingerprint([1.0, 23.0, 4.0]) != signal_fingerprint(
+            [1.02, 3.0, 4.0]
+        )
+
+    def test_signal_fingerprint_preserves_length_and_order(self) -> None:
+        assert signal_fingerprint([1, 2]) == signal_fingerprint([1.0, 2.0])
+        assert signal_fingerprint([1, 2]) != signal_fingerprint([2, 1])
+        assert signal_fingerprint([1, 2]) != signal_fingerprint([1, 2, 0])
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+    def test_signal_fingerprint_refuses_non_finite_values(self, value: float) -> None:
+        with pytest.raises(ValueError, match="Out of range float"):
+            signal_fingerprint([value])
+
     def test_record_round_trip_preserves_everything(self) -> None:
         entry = _entry("a", icir=0.5, hit_rate=0.6)
         restored = LeaderboardEntry.from_record(entry.to_record())
@@ -380,6 +396,17 @@ class TestFeatureIdentity:
             self._context(code_fingerprint="v1").key
             != self._context(code_fingerprint="v2").key
         )
+
+    def test_dataset_content_is_part_of_comparability_and_record_identity(self) -> None:
+        before = self._context(data_fingerprint="old-bars")
+        after = self._context(data_fingerprint="corrected-bars")
+        first = self._entry("m", before, icir=0.5)
+        second = self._entry("m", after, icir=0.6)
+        assert before.key != after.key
+        assert first.entry_id != second.entry_id
+        assert comparability_error([first, second]) is not None
+        assert LeaderboardEntry.from_record(first.to_record()).context == before
+        assert "old-bars" in before.describe()
 
     @staticmethod
     def _entry(

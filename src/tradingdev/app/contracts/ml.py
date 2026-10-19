@@ -222,7 +222,7 @@ class BuildPanelResponse(ContractModel):
 
 
 class FeatureImportanceEntry(ContractModel):
-    """One feature and its gain-based importance from a trained model."""
+    """One feature's native model importance; scales differ across frameworks."""
 
     feature: str
     importance: float

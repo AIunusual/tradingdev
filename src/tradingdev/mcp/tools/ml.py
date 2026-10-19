@@ -102,8 +102,10 @@ def register(mcp: FastMCP, service: MLService) -> None:
         that produced the signal, when there is one. Recording is idempotent:
         re-evaluating the same model on the same data rewrites its row instead
         of adding a second candidate. A recorded signal must cover the whole
-        dataset, and its horizon must match the dataset's (omit horizon to
-        adopt it), so a record can never claim data it was not measured on.
+        dataset in saved row order, its returns must exactly match the stored
+        values, and its horizon must match (omit horizon to adopt it).
+        model_id is a caller-declared label; recording does not establish that
+        a model produced the signal or that evaluation data was held out.
         """
         try:
             result = service.evaluate_signal(
@@ -140,8 +142,10 @@ def register(mcp: FastMCP, service: MLService) -> None:
         warm-up and the unlabelled tail are dropped and reported as
         dropped_rows. Requires cached market data for the whole range: this
         tool never downloads, so run ensure_data first if the range is not
-        cached. Returns a dataset_id to pass to train_model. Deterministic:
-        the same inputs always yield the same dataset_id.
+        cached. Reads available bars within the requested interval without
+        changing source files. Returns an immutable dataset_id to pass to
+        train_model. Identical data, request and feature implementation share
+        an ID; changed contents create a new version and preserve earlier ones.
         """
         try:
             result = service.build_dataset(
@@ -191,9 +195,10 @@ def register(mcp: FastMCP, service: MLService) -> None:
         The response reports the resulting calendar: per-symbol coverage, the
         dates that were dropped, and how many rows were forward-filled, so a
         panel dominated by stale carries is visible instead of silent. Requires
-        cached data for every symbol: run ensure_data first. Deterministic; the
-        same inputs always yield the same dataset_id, which train_model and
-        predict accept like any other dataset.
+        cached data for every symbol: run ensure_data first. Identical data,
+        request and feature implementation share an immutable dataset_id;
+        changed contents create a new version. train_model and predict accept
+        it like any other dataset.
         """
         try:
             result = service.build_panel(
@@ -233,9 +238,11 @@ def register(mcp: FastMCP, service: MLService) -> None:
         silently training with defaults. The trained estimator is persisted
         through the model artifact registry and the returned model_id is a
         fingerprint of the hyper-parameters, the feature contract and the model
-        blob. feature_importance is gain-based and sorted descending.
+        blob. feature_importance uses each framework's native definition and is
+        sorted descending; raw scales are not comparable across frameworks.
         in_sample_accuracy is measured on the training rows and is NOT an
-        out-of-sample estimate; use evaluate_signal for that judgement.
+        out-of-sample estimate. Request fold validation or evaluate predictions
+        on genuinely held-out data; evaluate_signal alone cannot prove this.
 
         Pass validation (a scheme name from get_ml_contract) to also fit the
         same kind once per fold on purged training bars and score it on that
@@ -274,9 +281,10 @@ def register(mcp: FastMCP, service: MLService) -> None:
         tampered or corrupted model is refused), checks the dataset's feature
         contract matches the one the model was trained on, and returns the
         per-row signal together with the realised forward_returns aligned to it.
-        Feed that pair straight into evaluate_signal to judge the signal
-        out-of-sample. Read-only and deterministic: the same ids always yield
-        the same signal.
+        Feed that pair into evaluate_signal for signal diagnostics. Predictions
+        on training rows are in-sample; use genuinely held-out data for an
+        out-of-sample assessment. Read-only and deterministic: the same ids
+        yield the same signal while their verified artifacts remain intact.
         """
         try:
             result = service.predict(model_id=model_id, dataset_id=dataset_id)
@@ -291,6 +299,7 @@ def register(mcp: FastMCP, service: MLService) -> None:
     @mcp.tool(annotations=read_only)
     def leaderboard(
         metric: str,
+        dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
         horizon: int | None = None,
@@ -309,8 +318,13 @@ def register(mcp: FastMCP, service: MLService) -> None:
         settings, feature set and feature code - a Rank IC earned on one symbol
         says nothing about one earned on another, and one earned before a
         feature-code fix is not the same candidate as one earned after it. Pass
-        allow_mixed=True to override at your own risk, or use
-        symbol/timeframe/horizon/feature_set to narrow the field first.
+        allow_mixed=True to override at your own risk, or use dataset_id to select
+        one immutable dataset version after rebuilding data or features. The
+        selected dataset is verified and its saved evaluation contexts must
+        match its manifest, even with allow_mixed=True. Different models on the
+        same dataset remain comparable; different evaluation settings still
+        require allow_mixed=True. Additional symbol/timeframe/horizon/feature_set
+        filters further narrow the field.
 
         Read the caveats before trusting the winner: picking the best of N
         candidates is N comparisons, so the top of a long list is the most
@@ -320,6 +334,7 @@ def register(mcp: FastMCP, service: MLService) -> None:
         try:
             result = service.leaderboard(
                 metric,
+                dataset_id=dataset_id,
                 symbol=symbol,
                 timeframe=timeframe,
                 horizon=horizon,

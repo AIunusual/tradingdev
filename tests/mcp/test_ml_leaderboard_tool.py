@@ -172,12 +172,82 @@ def test_recording_with_a_wrong_horizon_is_refused(
 
 
 def test_leaderboard_ranks_the_recorded_candidates(mcp: FastMCP, recorded: str) -> None:
-    payload = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
+    payload = _dispatch(
+        mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded}
+    )
     board = LeaderboardResponse.model_validate(payload)
     assert board.n_candidates == 2
     assert [row.model_id for row in board.ranked] == [_GOOD_MODEL, _BAD_MODEL]
     assert board.ranked[0].rank == 1
     assert board.caveats
+
+
+def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
+    mcp: FastMCP, workspace: WorkspacePaths
+) -> None:
+    records: dict[str, str] = {}
+    for version in (1, 2):
+        if version == 2:
+            source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            frame = pd.read_parquet(source)
+            frame["close"] *= np.linspace(1.0, 1.2, len(frame))
+            frame.to_parquet(source, index=False)
+        built = _dispatch(
+            mcp,
+            "build_dataset",
+            {
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-31",
+                "feature_set": "returns",
+            },
+        )
+        assert built["success"] is True
+        dataset_id = built["dataset"]["dataset_id"]
+        frame = pd.read_parquet(built["dataset"]["path"])
+        realized = frame["forward_return"].astype(float).tolist()
+        evaluated = _dispatch(
+            mcp,
+            "evaluate_signal",
+            {
+                "signal": realized,
+                "forward_returns": realized,
+                "window": 20,
+                "record": True,
+                "dataset_id": dataset_id,
+                "model_id": _GOOD_MODEL,
+            },
+        )
+        assert evaluated["success"] is True
+        records[dataset_id] = evaluated["recorded"]["entry_id"]
+    assert len(records) == 2
+    unfiltered = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
+    assert unfiltered["success"] is False
+    assert unfiltered["code"] == "invalid_leaderboard_request"
+    for dataset_id, entry_id in records.items():
+        board = LeaderboardResponse.model_validate(
+            _dispatch(
+                mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": dataset_id}
+            )
+        )
+        assert board.n_candidates == board.n_ranked == 1
+        assert board.ranked[0].dataset_id == dataset_id
+        assert board.ranked[0].entry_id == entry_id
+
+
+@pytest.mark.parametrize("dataset_id", ["", "invalid", "ds_" + "0" * 16])
+def test_leaderboard_dataset_filter_refuses_invalid_ids(
+    mcp: FastMCP, recorded: str, dataset_id: str
+) -> None:
+    payload = _dispatch(
+        mcp,
+        "leaderboard",
+        {"metric": "ic_mean", "dataset_id": dataset_id, "allow_mixed": True},
+    )
+    assert payload["success"] is False
+    assert payload["code"] == "invalid_leaderboard_request"
+    assert "dataset_id" in payload["error"]
 
 
 def test_leaderboard_refuses_a_metric_without_a_direction(
@@ -201,3 +271,5 @@ def test_leaderboard_is_advertised_read_only(mcp: FastMCP) -> None:
     entries = {tool.name: tool for tool in asyncio.run(tools())}
     assert entries["leaderboard"].annotations is not None
     assert entries["leaderboard"].annotations.readOnlyHint is True
+    assert "dataset_id" in entries["leaderboard"].inputSchema["properties"]
+    assert "dataset_id" not in entries["leaderboard"].inputSchema["required"]

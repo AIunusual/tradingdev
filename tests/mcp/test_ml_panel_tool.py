@@ -132,9 +132,9 @@ def test_build_panel_rejects_a_single_symbol(service: MLService) -> None:
     assert "at least two distinct symbols" in response["error"]
 
 
-def test_contract_enumerates_the_calendar_options() -> None:
+def test_contract_enumerates_the_calendar_options(tmp_path: Path) -> None:
     mcp = FastMCP("ml-contract-calendar-test")
-    ml.register(mcp, MLService())
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
     assert contract.calendar_modes == ["intersection", "union"]
     assert contract.missing_policies == ["drop", "forward_fill", "error"]

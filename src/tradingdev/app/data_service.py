@@ -177,6 +177,66 @@ class DataService:
             dataset_id=self._dataset_id(request, requirements),
         )
 
+    def load_cached(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        source: str = "binance_vision",
+    ) -> LoadedDataset:
+        """Read existing yearly files without fetching, replacing or deleting any."""
+        request = MarketDataRequest(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        # Validate the provider name, but never invoke its fetch methods.
+        create_crawler(source, self.data_config({"data": {"source": source}}))
+        start = pd.Timestamp(request.start_date)
+        end = pd.Timestamp(request.end_date)
+        start = (
+            start.tz_localize("UTC")
+            if start.tzinfo is None
+            else start.tz_convert("UTC")
+        )
+        end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
+        if start > end:
+            raise ValueError("start_date must not follow end_date")
+        paths: list[Path] = []
+        frames: list[pd.DataFrame] = []
+        for year in range(start.year, end.year + 1):
+            directory = self._processed_data_dir()
+            path = directory / market_data_filename(symbol, timeframe, year)
+            if not path.is_file():
+                path = directory / market_data_filename(
+                    symbol, timeframe, year, partial=True
+                )
+            if not path.is_file():
+                raise ValueError(
+                    f"no cached market data for {symbol} {timeframe} in {year}; "
+                    "run ensure_data first"
+                )
+            paths.append(path)
+            frames.append(self._loader.load_parquet(path))
+        frame = pd.concat(frames, ignore_index=True).sort_values("timestamp")
+        frame = frame.loc[
+            (frame["timestamp"] >= start) & (frame["timestamp"] <= end)
+        ].reset_index(drop=True)
+        if frame.empty:
+            raise ValueError(
+                "no cached market data in the requested interval; run ensure_data first"
+            )
+        if frame["timestamp"].duplicated().any():
+            raise ValueError("cached market data has duplicate timestamps")
+        requirements = DataRequirement(
+            market=MarketDataSpec(source=source, symbol=symbol, timeframe=timeframe),
+            features=[],
+        )
+        return LoadedDataset(frame, paths[0], self._dataset_id(request, requirements))
+
     def load_sample(
         self,
         raw_config: dict[str, Any],
