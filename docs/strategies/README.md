@@ -8,7 +8,7 @@
 | KD Stochastic 交叉 | [kd_strategy.md](kd_strategy.md) | KD 隨機指標金叉/死叉 + 超買超賣過濾 |
 | Safety-First Volume | [safety_volume_strategy.md](safety_volume_strategy.md) | 風險門控 + SMA 方向，最小虧損達成交易量目標 |
 | GLFT Market Making | [glft_strategy.md](glft_strategy.md) | GLFT 最優做市模型，解析型 spread-based 進出場（支援 DVOL implied vol） |
-| GLFT + ML Direction | [glft_ml_strategy.md](glft_ml_strategy.md) | GLFT 做市 + AutoGluon ML 方向預測，limit order market making |
+| GLFT + ML Direction | [glft_ml_strategy.md](glft_ml_strategy.md) | GLFT 做市 + FLAML AutoML 方向預測，limit order market making |
 | XGBoost Direction | [xgboost_strategy.md](xgboost_strategy.md) | XGBoost 方向預測 + rolling retrain，volume mode 交易量策略 |
 | Quantile Regime Volume | [quantile_strategy.md](quantile_strategy.md) | XGBoost regime classifier + DVOL/funding rate feature requirements |
 

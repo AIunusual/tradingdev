@@ -1,6 +1,6 @@
 """GLFT + ML direction prediction strategy.
 
-Combines the GLFT analytical spread model with an AutoGluon ML
+Combines the GLFT analytical spread model with a FLAML AutoML
 direction predictor.  The ML model forecasts price direction over
 a configurable horizon (e.g. 5 min); the GLFT model determines
 optimal entry thresholds.  Entries are only taken when both agree.
@@ -18,7 +18,7 @@ import pandas as pd
 
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
-from tradingdev.domain.ml.models.autogluon_model import AutoGluonDirectionModel
+from tradingdev.domain.ml.models.flaml_model import FLAMLAutoMLDirectionModel
 from tradingdev.domain.optimization.grid_search import (
     finite_metric_value,
     is_better_metric,
@@ -44,7 +44,7 @@ _GLFTParamTuple = tuple[float, float, int, int, float, float]
 
 
 class GLFTMLStrategy(BaseStrategy):
-    """GLFT + AutoGluon ML direction prediction strategy.
+    """GLFT + FLAML AutoML direction prediction strategy.
 
     The ML model predicts price direction over the next N minutes.
     The GLFT model computes entry thresholds based on volatility.
@@ -72,11 +72,12 @@ class GLFTMLStrategy(BaseStrategy):
             prediction_horizon=config.prediction_horizon,
         )
         num_cpus = self._compute_num_cpus()
-        self._ml_model = AutoGluonDirectionModel(
-            time_limit=config.ml_time_limit,
-            presets=config.ml_presets,
+        self._ml_model = FLAMLAutoMLDirectionModel(
+            time_budget=config.ml_time_limit,
+            estimator_list=config.ml_estimator_list,
+            metric=config.ml_metric,
             verbosity=0,
-            num_cpus=num_cpus,
+            n_jobs=num_cpus,
             random_seed=config.random_seed,
         )
         self._ml_trained = False
@@ -92,7 +93,7 @@ class GLFTMLStrategy(BaseStrategy):
         self._best_confidence_threshold: float = config.confidence_threshold
 
     def _compute_num_cpus(self) -> int | None:
-        """Derive ``num_cpus`` for AutoGluon from parallel config."""
+        """Derive ``n_jobs`` for the AutoML search from parallel config."""
         if self._parallel_config is None:
             return None
         from tradingdev.shared.utils.parallel import _get_performance_core_count
@@ -108,7 +109,7 @@ class GLFTMLStrategy(BaseStrategy):
         """Train ML model and grid-search GLFT parameters.
 
         Steps:
-        1. Engineer features and train AutoGluon
+        1. Engineer features and run the AutoML direction search
         2. Generate ML direction predictions on training data
         3. Grid-search GLFT parameters using ML-filtered signals
         """
@@ -218,7 +219,7 @@ class GLFTMLStrategy(BaseStrategy):
         Returns:
             Array of 1 (up), -1 (down), 0 (uncertain).
         """
-        # AutoGluon may use int or str column names
+        # Class columns come from the fitted estimator; binary fits are [0, 1]
         cols = list(proba.columns)
         if len(cols) >= 2:
             p_down = np.asarray(proba.iloc[:, 0].values, dtype=np.float64)

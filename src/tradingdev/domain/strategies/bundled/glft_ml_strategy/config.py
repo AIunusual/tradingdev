@@ -4,6 +4,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, model_validator
 
+from tradingdev.domain.ml.models.flaml_model import DEFAULT_ESTIMATOR_LIST
 from tradingdev.domain.strategies.bundled.indicator_parameters import (
     MovingAveragePeriod,
 )
@@ -15,7 +16,8 @@ class GLFTMLStrategyConfig(BaseModel):
     prediction_horizon: int = 5
     feature_lookback: int = 60
     ml_time_limit: int = 300
-    ml_presets: str = "medium_quality"
+    ml_estimator_list: list[str] = list(DEFAULT_ESTIMATOR_LIST)
+    ml_metric: str = "accuracy"
     random_seed: int = 42
     confidence_threshold: float = 0.55
     confidence_threshold_candidates: list[float] = [0.52, 0.55, 0.60]
