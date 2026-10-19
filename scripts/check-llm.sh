@@ -15,6 +15,6 @@ provider=$1
 shift
 exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -u -m pytest \
     tests/e2e/test_llm_workflows.py tests/e2e/test_llm_cleanup.py \
-    tests/e2e/test_llm_execution_plans.py \
+    tests/e2e/test_llm_execution_plans.py tests/e2e/test_llm_ml.py \
     --llm-provider "$provider" -m live_llm \
     -x -vv --capture=tee-sys --tb=short --durations=3 "$@"

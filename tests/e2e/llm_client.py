@@ -223,6 +223,7 @@ async def run_local_model(
     transport: httpx.AsyncBaseTransport | None = None,
     user_reply: UserReply | None = None,
     max_turns: int = 8,
+    tool_names: list[str] | None = None,
 ) -> list[ToolCall]:
     """Bridge local Chat Completions tool calls to real stdio MCP, with bounds.
 
@@ -261,7 +262,7 @@ async def run_local_model(
                     },
                 }
                 for tool in (await client.session.list_tools()).tools
-                if tool.name in LIFECYCLE_TOOLS
+                if tool.name in (LIFECYCLE_TOOLS if tool_names is None else tool_names)
             ]
             allowed = {tool["function"]["name"] for tool in tools}
             _progress(f"{stage}: {len(allowed)} tools available")

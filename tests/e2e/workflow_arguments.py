@@ -31,6 +31,21 @@ _PAGE: dict[str, TypeAdapter[Any]] = {
     "offset": TypeAdapter(int),
 }
 _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
+    "build_dataset": {"horizon": TypeAdapter(int)},
+    "train_model": {
+        "parameters": TypeAdapter(dict[str, JsonValue] | None),
+        "n_folds": TypeAdapter(int),
+        "embargo": TypeAdapter(int),
+        "min_train_bars": TypeAdapter(int | None),
+    },
+    "evaluate_signal": {
+        "signal": TypeAdapter(list[float]),
+        "forward_returns": TypeAdapter(list[float]),
+        "horizon": TypeAdapter(int | None),
+        "window": TypeAdapter(int),
+        "n_quantiles": TypeAdapter(int),
+        "record": TypeAdapter(bool),
+    },
     "prepare_backtest": _PREPARE,
     "prepare_walk_forward": _PREPARE,
     "prepare_optimization": {
