@@ -16,6 +16,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from filelock import FileLock
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.domain.ml.leaderboard import LeaderboardEntry
@@ -26,11 +29,12 @@ _FILE_NAME = "leaderboard.jsonl"
 class LeaderboardStore:
     """Append-and-update storage of evaluated candidates."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, lock_timeout: float = 30) -> None:
         if root is None:
             root = WorkspacePaths().ml_leaderboard
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._lock = FileLock(self.root / ".leaderboard.lock", timeout=lock_timeout)
 
     @property
     def path(self) -> Path:
@@ -70,20 +74,40 @@ class LeaderboardStore:
             ``True`` if an existing record was replaced, ``False`` if this is
             the first record for the id.
         """
-        existing = {item.entry_id: item for item in self._read()}
-        replaced = entry.entry_id in existing
-        existing[entry.entry_id] = entry
-        ordered = sorted(existing.values(), key=lambda item: item.entry_id)
-        payload = "".join(
-            json.dumps(item.to_record(), ensure_ascii=False, sort_keys=True) + "\n"
-            for item in ordered
-        )
-        # Write-then-rename: a reader never sees a half-written file, and the
-        # previous records stay readable if this write fails.
-        staging = self.path.with_suffix(self.path.suffix + ".tmp")
-        staging.write_text(payload, encoding="utf-8")
-        os.replace(staging, self.path)
-        return replaced
+        # The lock covers the complete read-modify-write, not only publication.
+        # Its inode is retained so a waiting writer cannot acquire a new lock
+        # file while another process still owns the old inode.
+        with self._lock:
+            existing = {item.entry_id: item for item in self._read()}
+            replaced = entry.entry_id in existing
+            existing[entry.entry_id] = entry
+            ordered = sorted(existing.values(), key=lambda item: item.entry_id)
+            payload = "".join(
+                json.dumps(item.to_record(), ensure_ascii=False, sort_keys=True) + "\n"
+                for item in ordered
+            )
+            # Same-directory replacement gives readers either the old complete
+            # file or the new one. A failed write cannot leave partial records.
+            staging: Path | None = None
+            try:
+                with NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    newline="",
+                    prefix=".leaderboard-",
+                    suffix=".tmp",
+                    dir=self.root,
+                    delete=False,
+                ) as stream:
+                    staging = Path(stream.name)
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(staging, self.path)
+            finally:
+                if staging is not None:
+                    staging.unlink(missing_ok=True)
+            return replaced
 
     def _read(self) -> list[LeaderboardEntry]:
         if not self.path.exists():
