@@ -1,8 +1,8 @@
 """ML MCP tools: enumerate the safe ML vocabulary and work through a signal.
 
-``get_ml_contract`` is pure discovery of the audited, enumerable ML options and
-``evaluate_signal`` runs the signal-evaluation suite on caller-supplied arrays;
-both are read-only and idempotent.
+``get_ml_contract`` is read-only discovery of the enumerable ML options.
+``evaluate_signal`` evaluates caller-supplied arrays and can replace a recorded
+evaluation when ``record=True``.
 
 ``build_dataset`` and ``train_model`` write into the workspace and are
 idempotent, so repeating either yields the same id. ``predict`` is read-only
@@ -70,7 +70,7 @@ def register(mcp: FastMCP, service: MLService) -> None:
     # second, which keeps it idempotent.
     write_artifact = ToolAnnotations(
         readOnlyHint=False,
-        destructiveHint=False,
+        destructiveHint=True,
         idempotentHint=True,
         openWorldHint=False,
     )

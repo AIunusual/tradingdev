@@ -106,3 +106,19 @@ def test_evaluate_signal_rejects_too_few_observations(tmp_path: Path) -> None:
     )
     assert payload["success"] is False
     assert payload["code"] == "invalid_signal"
+
+
+def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) -> None:
+    mcp = FastMCP("ml-side-effects")
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
+    entries = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    writers = {"build_dataset", "build_panel", "train_model", "evaluate_signal"}
+    readers = {"get_ml_contract", "predict", "leaderboard"}
+    assert set(entries) == writers | readers
+    for name, tool in entries.items():
+        annotations = tool.annotations
+        assert annotations is not None
+        assert annotations.readOnlyHint is (name in readers)
+        assert annotations.destructiveHint is (name in writers)
+        assert annotations.idempotentHint is True
+        assert annotations.openWorldHint is False
