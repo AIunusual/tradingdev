@@ -236,7 +236,7 @@ class TestKFold:
         )
         assert sum(fold["test_bars"] for fold in validation["folds"]) == dataset["rows"]
 
-    def test_the_first_fold_has_nothing_before_it_to_purge(
+    def test_kfold_purges_the_right_edge_and_both_sides_of_middle_folds(
         self, service: MLService
     ) -> None:
         validation = _validation(
@@ -245,8 +245,8 @@ class TestKFold:
             validation="purged_kfold",
             n_folds=3,
         )
-        assert validation["folds"][0]["purged_bars"] == 0
-        assert validation["folds"][1]["purged_bars"] == 5
+        assert validation["folds"][0]["purged_bars"] == 5
+        assert validation["folds"][1]["purged_bars"] == 10
 
     def test_the_two_schemes_do_not_cut_the_same_windows(
         self, service: MLService

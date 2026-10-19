@@ -155,6 +155,14 @@ containing `dataset.parquet` and `manifest.json`. The manifest records:
 - `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
   and `dataset_id`.
 
+The Parquet frame retains `label_start` and `label_end`: the original source-bar
+timestamps used to calculate each row's forward return, captured before feature
+rows are dropped or a panel calendar is aligned. Panel labels are computed on
+each symbol's own bars. Forward filling carries these timestamps together with
+the original label; it does not turn that label into a newly observed outcome
+at the filled calendar date. Fold validation refuses panels with carried
+observations and requires rebuilding with intersection or dropped missing dates.
+
 `dataset_id` is `ds_` followed by the first 16 hexadecimal characters of the
 SHA-256 of the sorted JSON manifest, excluding `dataset_id` itself. Thus metadata,
 feature code and the saved data bytes all participate in identity. Rebuilding
@@ -175,6 +183,14 @@ same bytes. Missing, incomplete or altered versions fail rather than rebuilding
 silently. Earlier dataset schemas are unsupported and must be rebuilt; reads do
 not migrate, delete or rewrite their files. These hashes detect inconsistent
 content, not a writer able to replace both the manifest and its data.
+
+Schema 2 alone does not establish that label intervals are present. Fold
+validation additionally requires both interval columns; single-symbol
+evaluation requires `label_end` and chronological `timestamp` rows to check its
+holding intervals. Earlier schema 2 datasets missing the required columns must
+also be rebuilt for those operations. The generic store does not infer missing
+intervals or modify an old version. Validation and evaluation semantics are
+defined in the [ML research contract](strategy_contract.md#fold-validation-and-signal-interpretation).
 
 ### Feature Matrix Cache
 
@@ -231,12 +247,15 @@ training dataset establishes out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-`evaluate_signal(record=True)` requires a verified saved dataset. The signal
-must cover all its rows, the supplied forward returns must exactly match the
-saved `forward_return` values in row order, and an explicit horizon must equal
-the saved horizon; omitting it adopts the saved value. Non-finite signal or
-return values are rejected, rather than dropped before recording. Without
-`record=True`, evaluation returns its result without a leaderboard write.
+`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+Whenever `dataset_id` is supplied, including without recording, the signal must
+cover all its rows, the supplied forward returns must exactly match the saved
+`forward_return` values in row order, and an explicit horizon must equal the
+saved horizon; omitting it adopts the saved value. The saved interval endpoints
+must support non-overlapping trades on the simulation grid. Panel datasets are
+refused for evaluation. Non-finite signal or return values are rejected, rather
+than dropped before recording. Without `record=True`, evaluation returns its
+result without a leaderboard write.
 
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset

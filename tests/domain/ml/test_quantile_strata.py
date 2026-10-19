@@ -45,6 +45,11 @@ class TestQuantileBins:
         bins = quantile_bins(pd.Series([7.0] * 10), 5)
         assert bins.nunique() == 1
 
+    def test_unbalanced_binary_signal_with_two_requested_bins(self) -> None:
+        signal = pd.Series([-1.0] * 95 + [1.0] * 5)
+        bins = quantile_bins(signal, 2)
+        assert bins.tolist() == [0] * 95 + [1] * 5
+
 
 class TestQuantileStrata:
     def test_continuous_signal_forms_the_requested_bins(self) -> None:
@@ -62,6 +67,13 @@ class TestQuantileStrata:
         assert len(strata) == 3
         assert strata["mean_forward_return"].is_monotonic_increasing
         assert strata["count"].tolist() == [20, 20, 20]
+
+    def test_unbalanced_binary_strata_keep_both_signal_values(self) -> None:
+        prediction = pd.Series([-1.0] * 95 + [1.0] * 5)
+        forward = pd.Series([-0.02] * 95 + [0.03] * 5)
+        strata = quantile_strata(prediction, forward, n_bins=2)
+        assert strata["count"].tolist() == [95, 5]
+        assert strata["mean_forward_return"].tolist() == pytest.approx([-0.02, 0.03])
 
     def test_too_few_observations_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="not enough observations"):

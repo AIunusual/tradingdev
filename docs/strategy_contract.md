@@ -242,6 +242,161 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
+## ML Research Contract
+
+The ML MCP tools are a separate synchronous research interface. They select
+registered feature builders and estimators without generating a strategy,
+preparing an execution plan or starting a backtest worker. A saved model is not
+a runnable strategy revision and does not bypass the Python signal contract or
+strategy lifecycle. User workflow is documented in the
+[README](../README.md#研究機器學習訊號); file identities and persistence rules are in
+[ML Research Artifacts](run_artifacts.md#ml-research-artifacts).
+
+`get_ml_contract` returns schema version 1 discovery information: named feature
+sets with ordered columns, model kinds with default parameters, validation
+schemes, processor types, IC methods, quantile limits, calendar modes, missing
+policies and rankable metrics. Use these returned names rather than constructing
+arbitrary model classes. `processor_types` advertises domain building blocks
+only: `build_dataset`, `build_panel` and `train_model` do not accept or execute a
+processor pipeline. In particular, training does not implicitly fit a scaler
+because its name appears in discovery.
+
+### Dataset and Model Inputs
+
+`build_dataset` reads existing yearly OHLCV files for the requested symbol and
+timeframe, selecting available rows within the requested period. Missing yearly
+files or an empty selected period fail the request; success does not establish
+complete bar-by-bar coverage. Use `ensure_data` separately when a download is
+needed. Building a dataset does not download, refresh an old partial-year market
+cache or remove market files. The feature builder preserves rows and emits unavailable values
+during warm-up. The service computes `forward_return = close[t+horizon] /
+close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
+or label rows and reports their count. `horizon` is a positive number of source
+bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
+the model's declared feature list.
+
+`build_panel` requires at least two distinct symbols. It sorts symbol identity,
+builds each symbol's features and labels independently, then aligns the labelled
+frames. `intersection` keeps common timestamps. `union` uses `missing_policy`:
+`drop` removes dates that any symbol cannot supply, `error` rejects gaps, and
+`forward_fill` carries prior observations up to `max_staleness` shared calendar
+positions (`null` leaves that carry unbounded). Leading gaps cannot be filled
+from future observations. Read the returned calendar coverage, dropped dates
+and filled-row counts; filled rows are carried observations, not new trades.
+
+`train_model(dataset_id, model_kind, parameters, validation, ...)` resolves
+effective model defaults plus declared parameter overrides; unknown parameter
+names are rejected. It trains only the dataset's ordered feature columns plus
+`target`. Standalone ML training uses the model's `random_state` parameter,
+independently of the top-level strategy YAML `random_seed`.
+Feature importance is sorted descending using each estimator's native
+`feature_importances_` values. It is not a common cross-framework scale or a
+universal gain measure.
+
+The final persisted artifact is fitted on every dataset row, and
+`in_sample_accuracy` evaluates those same training rows. Optional validation
+fits additional models for its folds; it does not replace the artifact with a
+fold model or persist an out-of-fold prediction stream. Preserve the returned
+validation evidence if it is needed later.
+
+`predict` verifies the saved dataset and model blob, requires an exact ordered
+feature-column match, then returns `signal` and `forward_returns` in dataset row
+order with their `model_id`, `dataset_id` and horizon. It does not establish
+whether the requested data or its label interval was used for fitting or
+parameter selection. Evaluating the final artifact on its training dataset is
+in-sample even when the training response includes validation scores. A separate
+test dataset must be reserved before selection, with training label intervals
+ending before that test period, to support a chronological out-of-sample claim.
+
+### Fold Validation and Signal Interpretation
+
+Omitting `validation` skips fold validation. A supplied scheme uses the saved
+label horizon for purging and an optional nonnegative `embargo` gap; callers
+cannot replace the dataset's horizon with a more convenient value.
+`n_folds` and `min_train_bars` must leave usable training and test data after
+exclusions; unsupported schemes or insufficient data fail the request.
+
+Folds are built on sorted distinct timestamps, not the panel's physical row
+order. Every symbol on one timestamp shares the same training/test role.
+`min_train_bars` counts distinct training timestamps, whereas returned
+`train_bars`, `test_bars`, `purged_bars` and `embargoed_bars` count dataset rows.
+The service retains each label's original `label_start` and `label_end` before
+feature-row removal or calendar alignment. In addition to the horizon-based
+gap, it excludes training dates whose label intervals touch the test interval;
+one symbol's overlap excludes that date for all symbols. This also checks test
+labels extending into the training window on the right in K-fold validation.
+Datasets without the label intervals must be rebuilt before validation.
+
+A panel containing forward-filled observations is rejected for fold validation:
+its carried label describes the original observation, not a new sample at the
+filled timestamp. Rebuild with `intersection` or `missing_policy="drop"` for
+validation. Such panels can still be fitted without validation and passed to
+`predict`; this is not evidence of an out-of-sample test.
+
+- `purged_walk_forward` expands training through dates before each test window.
+- `purged_kfold` tests each fold using training data from both sides of that
+  window. Its results describe retrospective held-out cross-validation, not
+  predictions that could have been made at the test date.
+
+The response reports each fold's retained training/test rows, purged and
+embargoed rows, accuracy, IC, Rank IC and hit rate, plus the mean of available
+fold scores. Panel fold metrics are calculated separately in timestamp order
+for each symbol, then averaged across symbols with available values; rolling
+IC windows never cross from one symbol into another. Unavailable scores remain
+`null`. `artifact_trained_on: all_bars`
+distinguishes the final artifact from the fold models. `leakage_audit_clean`
+describes the implemented split and label-overlap checks only; it cannot prove
+that features, research choices or external inputs are free of future knowledge.
+
+`evaluate_signal` takes one asset's chronological sequence of consecutive bars,
+as equal-length, finite numeric arrays in the same row order, with enough
+observations for the chosen IC `window` and `n_quantiles`
+(2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
+prediction strata and simplified return summaries. These signal statistics are
+separate from backtest performance metrics and do not model transaction costs,
+slippage or order execution. Full-sample strata and their quantile means are
+descriptive comparisons, not fitted trading thresholds or out-of-sample evidence.
+Ties can reduce the actual number of strata; do not infer their count from the
+requested `n_bins` alone.
+
+The simplified long/short and long-only streams use thresholds computed only
+from earlier signals. The first `n_quantiles` observations are warm-up, and at
+least two distinct past signal values are needed. With few distinct signals,
+historical minimum/maximum select the tails; otherwise expanding quantiles do.
+Only original positions `0, horizon, 2*horizon, ...` can open a trade, so the
+holding intervals do not overlap. Other rows contribute zero. Cumulative values
+compound these holding-interval returns; means include the inactive rows.
+Returns are indexed by decision row, not realization time, and do not form a
+mark-to-market equity curve. A constant signal cannot form a long/short book and
+is rejected. With no dataset ID, the caller is responsible for chronological
+single-asset alignment and the correct horizon; omission defaults to one bar.
+
+Whenever `dataset_id` is supplied, evaluation requires a single-symbol dataset,
+all of its rows, exact saved forward returns in order, and a matching horizon
+(or omission to adopt the saved value), including when `record=False`.
+Dataset rows must be strictly chronological, and saved label end times must
+show non-overlapping holding intervals on the simulation grid. Datasets without
+label intervals must be rebuilt for evaluation.
+Panel evaluation is rejected; build a single-symbol dataset and call `predict`
+on it before evaluation. Do not concatenate different assets into one time
+series. `record=True` additionally requires the dataset ID.
+`model_id` is a caller-declared label, not proof of signal origin or a held-out
+evaluation. Recording and candidate-replacement semantics are defined in the
+[artifact contract](run_artifacts.md#recorded-signal-evaluations).
+`leaderboard` ranks only a metric with a declared direction and, by default,
+only matching measurement contexts. Its optional `dataset_id` filter selects a
+verified dataset version and checks that recorded data context matches its
+manifest; differences in evaluation settings still require compatible context.
+`allow_mixed=True` opts into incomparable
+contexts and must not be presented as a controlled comparison. Retain its
+`caveats`, skipped entries and candidate counts when interpreting the winner;
+trying more candidates increases selection bias.
+
+Model prediction unpickles trusted Python objects. Generated-strategy import
+checks do not apply to those objects, and a matching hash is not a sandbox or
+proof of a trustworthy publisher. Do not load model files from an untrusted
+workspace.
+
 ## Lifecycle
 
 1. `save_strategy`: writes a new draft source/config revision and metadata,

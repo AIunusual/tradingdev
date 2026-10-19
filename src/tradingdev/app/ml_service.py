@@ -79,11 +79,10 @@ from tradingdev.domain.ml.registry import (
     load_model_bytes,
 )
 from tradingdev.domain.ml.validation import (
-    audit_validation_splits,
-    build_validation_splits,
     get_validation_scheme,
     validation_scheme_names,
 )
+from tradingdev.domain.ml.validation.temporal import temporal_folds
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,7 +90,6 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from tradingdev.domain.ml.calendar import PanelAlignment
-    from tradingdev.domain.ml.validation.splits import Split
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -222,13 +220,11 @@ class MLService:
         """Judge a prediction against realised forward returns.
 
         Args:
-            signal: Prediction values, one per bar.
+            signal: Chronologically ordered predictions for one asset.
             forward_returns: Realised return over the label horizon, one per bar.
-            horizon: Label horizon the returns were computed at. Informational
-                unless ``record`` is set, in which case it must agree with the
-                dataset's own horizon: a record labelled with the wrong horizon
-                would later be ranked against numbers that mean something else.
-                Left as ``None`` when recording, the dataset's horizon is used.
+            horizon: Holding interval in original bars for the simulation.
+                When dataset_id is given, it must agree with the stored horizon;
+                omission adopts that value. Without a dataset it defaults to one.
             window: Rolling IC window in bars.
             n_quantiles: Quantile count for strata and simulated books.
             record: Store the result so it can be ranked by ``leaderboard``.
@@ -236,7 +232,8 @@ class MLService:
                 measured on, the record could later be compared against
                 numbers that mean something else.
             model_id: Model that produced the signal, when there is one.
-            dataset_id: Dataset the signal was computed on.
+            dataset_id: Single-symbol dataset the signal was computed on. When
+                supplied, verifies exact saved returns even without recording.
 
         Returns:
             A success dict suitable for ``SignalEvaluationResponse``.
@@ -267,7 +264,7 @@ class MLService:
         if not 2 <= n_quantiles <= 10:
             raise ValueError("n_quantiles must be between 2 and 10")
 
-        if record:
+        if record or dataset_id is not None:
             horizon = self._recording_horizon(
                 dataset_id,
                 horizon,
@@ -289,7 +286,9 @@ class MLService:
         strata = [record.model_dump() for record in strata_records(strata_df)]
         strata_stats = strata_statistics(strata_df)
 
-        simulated = simulate_strategy_returns(pred, fwd, n_quantiles=n_quantiles)
+        simulated = simulate_strategy_returns(
+            pred, fwd, n_quantiles=n_quantiles, horizon=horizon
+        )
         simulated_summary = {
             "long_short_mean": self._finite(simulated.long_short_mean),
             "long_only_mean": self._finite(simulated.long_only_mean),
@@ -358,7 +357,24 @@ class MLService:
                 "knows what it was measured on"
             )
         frame, manifest = self._load_dataset(dataset_id)
+        if manifest.get("kind") == "panel":
+            raise ValueError(
+                "evaluate_signal requires a single-symbol dataset; predict on "
+                "a separately built single-symbol dataset to evaluate a panel model"
+            )
         dataset_horizon = int(manifest["horizon"])
+        dates = pd.to_datetime(frame["timestamp"], utc=True)
+        if not dates.is_monotonic_increasing or not dates.is_unique:
+            raise ValueError("evaluation requires strictly chronological dataset rows")
+        if "label_end" not in frame.columns:
+            raise ValueError(
+                "dataset has no label intervals; rebuild it for evaluation"
+            )
+        entries = frame.iloc[::dataset_horizon]
+        starts = pd.to_datetime(entries["timestamp"], utc=True).reset_index(drop=True)
+        ends = pd.to_datetime(entries["label_end"], utc=True).reset_index(drop=True)
+        if (ends.shift(1).iloc[1:] > starts.iloc[1:]).any():
+            raise ValueError("dataset holding intervals overlap on the simulation grid")
         rows = int(manifest["rows"])
         if n_observations != rows:
             raise ValueError(
@@ -826,12 +842,13 @@ class MLService:
                 ``validation_schemes``; ``None`` skips it. When given, the
                 model is also fitted once per fold on purged training bars and
                 scored on that fold's test window, so the response carries an
-                out-of-sample estimate alongside the artifact.
+                held-out fold scores alongside the artifact. K-fold is
+                retrospective; only walk-forward restricts training to the past.
             n_folds: How many test windows the scheme should produce.
             embargo: Extra bars removed around every test window, on top of
                 the purge. Guards against serial correlation, which a purge
                 sized exactly to the label horizon does not.
-            min_train_bars: Smallest training window accepted per fold;
+            min_train_bars: Smallest number of distinct training dates per fold;
                 defaults to half a block's worth. A whole block cannot be
                 asked for under walk-forward, because the first fold's
                 training window is one block before the purge is carved out
@@ -858,15 +875,11 @@ class MLService:
             n_folds=n_folds,
             embargo=embargo,
             min_train_bars=min_train_bars,
-            n_bars=len(frame),
+            n_bars=frame["timestamp"].nunique(),
             label_horizon=int(manifest["horizon"]),
         )
 
-        model = create_direction_model(model_kind, **params)
-        # Hand the model only the columns the feature set declared, so extra
-        # bookkeeping columns (forward_return, OHLCV) can never become features.
         feature_columns = list(manifest["feature_columns"])
-        model.train(frame[feature_columns + ["target"]])
 
         validation_summary = None
         if request is not None:
@@ -877,6 +890,10 @@ class MLService:
                 frame=frame,
                 feature_columns=feature_columns,
             )
+
+        model = create_direction_model(model_kind, **params)
+        # Explicit feature selection excludes labels and their observation times.
+        model.train(frame[feature_columns + ["target"]])
 
         # Record the effective settings (declared defaults plus overrides)
         # rather than asking the estimator, so the fingerprint cannot depend
@@ -978,32 +995,24 @@ class MLService:
         their information reaches is a fact about the dataset, not a setting
         the caller should be free to get wrong.
 
-        The artifact handed back alongside these numbers is still fit on every
-        bar - that is the model worth deploying - so the folds estimate the
-        procedure, and the summary says so.
+        Every symbol on a date stays in the same fold. Actual label intervals
+        are checked after geometric purging. The saved artifact is subsequently
+        fit on every row; the fold scores do not describe that fitted object's
+        predictions on its training rows.
         """
-        splits: list[Split] = build_validation_splits(
-            request.scheme,
-            n_bars=len(frame),
+        splits = temporal_folds(
+            frame,
+            scheme=request.scheme,
             horizon=request.label_horizon,
             n_folds=request.n_folds,
             embargo=request.embargo,
-            min_train_bars=request.min_train_bars,
+            min_train_dates=request.min_train_bars,
         )
-        violations = audit_validation_splits(splits, horizon=request.label_horizon)
-        if violations:
-            # The builders purge by construction; getting here means the
-            # geometry or the horizon changed underneath them.
-            raise ValueError(
-                "the requested validation would leak: " + "; ".join(violations)
-            )
 
         folds: list[dict[str, Any]] = []
         for index, split in enumerate(splits):
-            train_rows = self._window_rows(split.train)
-            test_rows = self._window_rows([split.test])
-            train_frame = frame.iloc[train_rows]
-            test_frame = frame.iloc[test_rows]
+            train_frame = frame.iloc[list(split.train_rows)]
+            test_frame = frame.iloc[list(split.test_rows)]
             fold_model = create_direction_model(model_kind, **params)
             fold_model.train(train_frame[feature_columns + ["target"]])
             predictions = fold_model.predict(test_frame).to_numpy()
@@ -1012,13 +1021,9 @@ class MLService:
                     "fold": index,
                     "train_bars": int(len(train_frame)),
                     "test_bars": int(len(test_frame)),
-                    "purged_bars": int(split.purged_bars),
-                    "embargoed_bars": int(split.embargoed_bars),
-                    **self._fold_scores(
-                        predictions=predictions,
-                        forward_returns=test_frame["forward_return"].to_numpy(),
-                        targets=test_frame["target"].to_numpy(),
-                    ),
+                    "purged_bars": split.purged_rows,
+                    "embargoed_bars": split.embargoed_rows,
+                    **self._frame_scores(test_frame, predictions),
                 }
             )
 
@@ -1027,21 +1032,34 @@ class MLService:
             "label_horizon": int(request.label_horizon),
             "embargo": int(request.embargo),
             "n_folds": len(folds),
-            "purged_bars": int(sum(split.purged_bars for split in splits)),
-            "embargoed_bars": int(sum(split.embargoed_bars for split in splits)),
+            "purged_bars": sum(split.purged_rows for split in splits),
+            "embargoed_bars": sum(split.embargoed_rows for split in splits),
             "leakage_audit_clean": True,
             "artifact_trained_on": "all_bars",
             "folds": folds,
             "aggregate": self._aggregated_scores(folds),
         }
 
-    @staticmethod
-    def _window_rows(windows: Sequence[tuple[int, int]]) -> list[int]:
-        """Flatten half-open index windows into the row positions they cover."""
-        rows: list[int] = []
-        for start, end in windows:
-            rows.extend(range(start, end))
-        return rows
+    def _frame_scores(
+        self, frame: pd.DataFrame, predictions: npt.NDArray[Any]
+    ) -> dict[str, Any]:
+        """Average per-symbol scores without rolling across asset boundaries."""
+        scored = frame.assign(prediction=predictions)
+        groups = (
+            [group for _, group in scored.groupby("symbol")]
+            if "symbol" in scored.columns
+            else [scored]
+        )
+        return self._aggregated_scores(
+            [
+                self._fold_scores(
+                    predictions=group["prediction"].to_numpy(),
+                    forward_returns=group["forward_return"].to_numpy(),
+                    targets=group["target"].to_numpy(),
+                )
+                for group in (item.sort_values("timestamp") for item in groups)
+            ]
+        )
 
     def _fold_scores(
         self,
@@ -1255,10 +1273,12 @@ class MLService:
         # only, so this cannot leak into a model.
         dataset["forward_return"] = forward
         dataset["target"] = np.sign(forward).astype(float)
+        dataset["label_start"] = dataset["timestamp"]
+        dataset["label_end"] = dataset["timestamp"].shift(-horizon)
 
         rows_before = len(dataset)
         dataset = dataset.dropna(
-            subset=[*entry.columns, "target", "forward_return"]
+            subset=[*entry.columns, "target", "forward_return", "label_end"]
         ).reset_index(drop=True)
         dropped_rows = rows_before - len(dataset)
         if dataset.empty:

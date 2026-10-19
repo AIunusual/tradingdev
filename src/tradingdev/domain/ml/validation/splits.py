@@ -7,8 +7,9 @@ prices inside the test window.
 
 Two gaps keep a split honest:
 
-* **Purge** removes the training bars immediately before the test window
-  whose label reaches into it. Its width is fully determined by ``horizon``.
+* **Purge** removes training bars whose label intervals overlap test label
+  intervals, on either side of the test window. Its width is determined by
+  ``horizon``.
 * **Embargo** removes an extra buffer on both sides of the test window. Its
   width is a conservative choice, not a derivable quantity: financial
   features are serially correlated, so purge alone does not remove every
@@ -101,12 +102,14 @@ def _apply_gap(
         remaining = (start, remaining_end) if remaining_end > start else None
         return remaining, purged, embargoed
     if start >= test_end:
-        # Labels run away from the test window; only the embargo buffer applies.
-        cutoff = test_end + embargo
-        embargoed = max(0, min(end, cutoff) - start)
+        # The last test label extends beyond its decision bar into this range.
+        purge_until = test_end + horizon
+        cutoff = purge_until + embargo
+        purged = max(0, min(end, purge_until) - start)
+        embargoed = max(0, min(end, cutoff) - max(start, purge_until))
         remaining_start = max(start, cutoff)
         remaining = (remaining_start, end) if end > remaining_start else None
-        return remaining, 0, embargoed
+        return remaining, purged, embargoed
     raise ValueError("train range overlaps the test window")
 
 
@@ -218,8 +221,10 @@ def purged_kfold_splits(
     """Contiguous K-fold splits, each purged and embargoed.
 
     Every bar appears in exactly one test window. Training bars on both
-    sides of the window are kept, except for the purge gap before it and
-    the embargo buffer on either side.
+    sides of the window are kept, except for the label-overlap purge and
+    additional embargo buffer on either side. This is a retrospective
+    validation scheme: later training windows are not available in a live
+    walk-forward simulation, even when their labels do not overlap the test.
     """
     _validate(n_bars, horizon, n_folds, embargo, min_train_bars)
     blocks = _blocks(n_bars, n_folds)
@@ -244,7 +249,7 @@ def purged_kfold_splits(
 
 
 def leakage_audit(splits: Sequence[Split], *, horizon: int) -> list[str]:
-    """Report training bars whose label reaches into their own test window.
+    """Report overlapping training and test label intervals on either side.
 
     An empty list means every split is free of *label* leakage. Embargo
     widths cannot be audited this way because they guard against serial
@@ -254,7 +259,7 @@ def leakage_audit(splits: Sequence[Split], *, horizon: int) -> list[str]:
         raise ValueError("horizon must be at least 1")
     violations: list[str] = []
     for split in splits:
-        test_start = split.test[0]
+        test_start, test_end = split.test
         for start, end in split.train:
             if end <= test_start and end > test_start - horizon:
                 low = max(start, test_start - horizon)
@@ -262,5 +267,11 @@ def leakage_audit(splits: Sequence[Split], *, horizon: int) -> list[str]:
                 violations.append(
                     f"{split.name}: training bars [{low}, {high}) have labels "
                     f"reaching test start {test_start}"
+                )
+            elif start >= test_end and start < test_end + horizon:
+                high = min(end, test_end + horizon)
+                violations.append(
+                    f"{split.name}: training bars [{start}, {high}) overlap "
+                    f"test labels ending at {test_end - 1 + horizon}"
                 )
     return violations

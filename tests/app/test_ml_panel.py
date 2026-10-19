@@ -275,8 +275,9 @@ class TestPanelTrainingLoop:
         assert len(prediction["signal"]) == panel["rows"]
         assert len(prediction["forward_returns"]) == panel["rows"]
 
-    def test_prediction_feeds_straight_into_evaluate_signal(
-        self, service: MLService
+    @pytest.mark.parametrize("record", [False, True])
+    def test_panel_prediction_cannot_be_evaluated_as_one_asset(
+        self, service: MLService, record: bool
     ) -> None:
         panel = _build(service)["panel"]
         model = service.train_model(
@@ -287,10 +288,11 @@ class TestPanelTrainingLoop:
         prediction = service.predict(
             model_id=model["model_id"], dataset_id=panel["dataset_id"]
         )["prediction"]
-        evaluation = service.evaluate_signal(
-            prediction["signal"],
-            prediction["forward_returns"],
-            window=20,
-        )
-        assert evaluation["success"] is True
-        assert evaluation["n_observations"] > 0
+        with pytest.raises(ValueError, match="single-symbol dataset"):
+            service.evaluate_signal(
+                prediction["signal"],
+                prediction["forward_returns"],
+                dataset_id=panel["dataset_id"],
+                record=record,
+                window=20,
+            )

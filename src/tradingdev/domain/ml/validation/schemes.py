@@ -57,7 +57,8 @@ _SCHEMES = (
         name="purged_kfold",
         description=(
             "Every bar falls in exactly one test window; training spans both "
-            "sides with the label horizon purged and an embargo gap."
+            "sides with the label horizon purged and an embargo gap. "
+            "Retrospective cross-validation, not a past-only deployment simulation."
         ),
         fold_parameter="n_folds",
         build=purged_kfold_splits,

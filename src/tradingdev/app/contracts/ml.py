@@ -67,7 +67,10 @@ class StratumSummary(ContractModel):
 
 
 class SimulatedReturnsSummary(ContractModel):
-    """Per-period simulated book returns derived from the signal ranks."""
+    """Causal, non-overlapping holding returns; no costs or mark-to-market curve.
+
+    Means include inactive zero rows. Quantile means describe the full sample.
+    """
 
     long_short_mean: float | None
     long_only_mean: float | None
@@ -264,10 +267,8 @@ class BuildDatasetResponse(ContractModel):
 class ValidationFold(ContractModel):
     """One purged fold: what it trained on, what it was judged on, what it scored.
 
-    ``purged_bars`` and ``embargoed_bars`` are the bars the split removed from
-    this fold's training window. They are reported, not just applied, because a
-    fold that removed nothing either has a horizon of zero or is not the split
-    that was asked for.
+    Counts are dataset rows; all symbols on one date are assigned together.
+    Panel scores average the per-symbol scores, avoiding rolling across assets.
     """
 
     fold: int
@@ -292,18 +293,16 @@ class ValidationAggregate(ContractModel):
 
 
 class ValidationSummary(ContractModel):
-    """Out-of-sample estimate of the training *procedure*, fold by fold.
+    """Held-out fold scores of the training procedure.
 
-    The numbers here are what the model is worth when it has not seen the bars
-    it is judged on. They are not the numbers of the artifact stored alongside
-    them, which is fit on every bar - see ``artifact_trained_on``: the folds
-    measure how good this way of training is, not how good that particular
-    fitted object is.
+    K-fold uses both temporal sides and is retrospective. Walk-forward trains
+    only on earlier dates. Neither describes predictions of the saved artifact
+    on its training rows: that artifact is fit on all rows after validation.
     """
 
     scheme: str
     label_horizon: int
-    """Label horizon of the dataset; it alone decides the purge width."""
+    """Nominal purge width; actual label intervals can require more removal."""
     embargo: int
     n_folds: int
     purged_bars: int

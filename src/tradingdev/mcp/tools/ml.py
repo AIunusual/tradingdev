@@ -91,11 +91,20 @@ def register(mcp: FastMCP, service: MLService) -> None:
         Computes the full signal-quality suite without any backtest: IC and Rank
         IC means/IR/t-stat (with overlap-corrected sample size), hit rate,
         turnover, prediction quantile strata (monotonicity and long/short
-        spread), and a simulated long/short book built from the signal ranks.
+        spread), and a causal simulated long/short book. Position thresholds
+        use only earlier signals; trades open on a non-overlapping horizon-bar
+        grid after warmup. Returns exclude costs and are holding-interval
+        outcomes, not mark-to-market bar returns. Quantile strata describe the
+        whole sample and do not drive positions.
         Both the Pearson and Spearman families are returned. Provide a signal
         and its realised forward returns as equal-length numeric arrays. Returns
         a validation error on length mismatch, non-finite values, or too few
         finite bars for the requested window/quantiles.
+        Arrays must be one asset in chronological order. Without dataset_id,
+        the caller supplies the correct horizon (default 1). With dataset_id,
+        exact saved returns and horizon are verified even when record=False.
+        Panel datasets are refused: use the panel-trained model to predict on
+        a separately built single-symbol dataset before evaluation.
 
         Pass record=True together with the dataset_id the signal was computed on
         to store the result for leaderboard ranking; model_id names the model
@@ -254,6 +263,12 @@ def register(mcp: FastMCP, service: MLService) -> None:
         what the fold scored, plus their average. Note the artifact is still
         fit on every bar: the folds estimate this way of training, not that
         particular fitted object.
+        All symbols on a date stay in the same fold; actual label intervals
+        must not overlap across train/test. min_train_bars counts distinct
+        dates, while fold train/test/purge counts are rows. A forward-filled
+        panel with carried observations cannot be validated: use intersection
+        or missing_policy=drop. purged_kfold trains on both sides and is a
+        retrospective comparison, not a past-only deployment simulation.
         """
         try:
             result = service.train_model(

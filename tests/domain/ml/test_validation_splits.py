@@ -117,10 +117,39 @@ def test_audit_accepts_a_manually_purged_split() -> None:
     assert leakage_audit(clean, horizon=3) == []
 
 
-def test_audit_ignores_training_after_the_test_window() -> None:
-    """Labels run forward, so bars after the test cannot overlap it."""
+def test_audit_flags_test_labels_reaching_right_hand_training() -> None:
+    """Test labels extend beyond the last test decision bar."""
     split = [Split(name="fold/0", train=((20, 30),), test=(10, 20))]
+    violations = leakage_audit(split, horizon=5)
+    assert len(violations) == 1
+    assert "[20, 25)" in violations[0]
+    assert "ending at 24" in violations[0]
+
+
+def test_audit_accepts_right_hand_training_beyond_test_label_end() -> None:
+    split = [Split(name="fold/0", train=((25, 30),), test=(10, 20))]
     assert leakage_audit(split, horizon=5) == []
+
+
+def test_kfold_purges_both_sides_before_adding_embargo() -> None:
+    splits = purged_kfold_splits(120, horizon=5, n_folds=3, embargo=2)
+    middle = splits[1]
+    assert middle.test == (40, 80)
+    assert middle.train == ((0, 33), (87, 120))
+    assert middle.purged_bars == 10
+    assert middle.embargoed_bars == 4
+
+
+@pytest.mark.parametrize(("n_bars", "horizon", "n_folds", "embargo"), _KFOLD_CASES)
+def test_kfold_training_and_test_labels_have_no_shared_price_bar(
+    n_bars: int, horizon: int, n_folds: int, embargo: int
+) -> None:
+    for split in purged_kfold_splits(
+        n_bars, horizon=horizon, n_folds=n_folds, embargo=embargo
+    ):
+        test_label_bars = set(range(split.test[0], split.test[1] + horizon))
+        for train_bar in _train_indices(split):
+            assert test_label_bars.isdisjoint(range(train_bar, train_bar + horizon + 1))
 
 
 def test_splits_are_deterministic() -> None:

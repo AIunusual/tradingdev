@@ -185,13 +185,13 @@ class TestBuilding:
         assert [split.purged_bars for split in splits] == [7, 7, 7, 7]
         assert [split.embargoed_bars for split in splits] == [3, 3, 3, 3]
 
-    def test_kfold_cannot_purge_before_the_first_test_window(self) -> None:
-        """There are no bars before fold 0, so there is nothing to purge."""
+    def test_kfold_purges_after_the_first_test_window(self) -> None:
+        """Fold 0 still has test labels extending into right-hand training."""
         splits = build_validation_splits(
             "purged_kfold", n_bars=200, horizon=7, n_folds=4, embargo=3
         )
-        assert splits[0].purged_bars == 0
-        assert [split.purged_bars for split in splits[1:]] == [7, 7, 7]
+        assert splits[0].purged_bars == 7
+        assert [split.purged_bars for split in splits[1:]] == [14, 14, 7]
 
     def test_embargo_is_charged_on_top_of_the_purge(self) -> None:
         baseline = build_validation_splits(

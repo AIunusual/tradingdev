@@ -26,8 +26,8 @@ def quantile_bins(prediction: pd.Series, n_bins: int) -> pd.Series:
     """Assign every bar a 0-based stratum, ascending by signal.
 
     A continuous signal is cut at quantile edges. A discrete signal - a
-    direction model emits only ``-1``/``0``/``1`` - has fewer distinct values
-    than the requested bins, so every quantile edge lands on a tie and
+    direction model emits only ``-1``/``0``/``1`` - has at most as many distinct
+    values as the requested bins, so quantile edges can land on ties and
     ``duplicates="drop"`` would collapse the entire series into one bin. Such
     signals are grouped by distinct value instead, so ``-1``/``0``/``1`` still
     yields the short / flat / long strata a long-short book needs.
@@ -40,7 +40,7 @@ def quantile_bins(prediction: pd.Series, n_bins: int) -> pd.Series:
         Integer Series of stratum numbers sharing ``prediction``'s index.
     """
     distinct = int(prediction.nunique())
-    if distinct < n_bins:
+    if distinct <= n_bins:
         # One stratum per distinct value; ties are the signal, not noise.
         return (prediction.rank(method="dense") - 1).astype(int)
     return pd.qcut(prediction, n_bins, labels=False, duplicates="drop").astype(int)

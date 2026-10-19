@@ -48,34 +48,33 @@ def test_uninformative_signal_is_roughly_zero() -> None:
     assert abs(noisy.long_short_mean) < 0.2 * abs(perfect.long_short_mean)
 
 
-def test_long_only_only_holds_the_top_quantile() -> None:
+def test_increasing_signal_buys_only_after_historical_warmup() -> None:
     signal = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
     forward = pd.Series([0.1] * 10)
     result = simulate_strategy_returns(signal, forward, n_quantiles=2)
 
-    assert result.long_only.to_list() == [0.0] * 5 + [0.1] * 5
-    # Held half the time, so the mean is half the top-quantile mean.
-    assert result.long_only_mean == pytest.approx(0.1 * (5 / 10))
+    assert result.long_only.to_list() == [0.0] * 2 + [0.1] * 8
+    assert result.long_only_mean == pytest.approx(0.1 * (8 / 10))
 
 
 def test_long_short_book_holds_the_short_leg() -> None:
-    signal = pd.Series([1.0, 2.0, 3.0, 4.0])
+    signal = pd.Series([2.0, 1.0, 0.0, 3.0])
     forward = pd.Series([0.1, 0.2, 0.3, 0.4])
     result = simulate_strategy_returns(signal, forward, n_quantiles=2)
 
-    assert result.long_only.to_list() == [0.0, 0.0, 0.3, 0.4]
-    assert result.long_short.to_list() == [-0.1, -0.2, 0.3, 0.4]
-    assert result.long_short_mean == pytest.approx(0.1)
-    assert result.long_short_cumulative == pytest.approx(0.9 * 0.8 * 1.3 * 1.4 - 1.0)
+    assert result.long_only.to_list() == [0.0, 0.0, 0.0, 0.4]
+    assert result.long_short.to_list() == [0.0, 0.0, -0.3, 0.4]
+    assert result.long_short_mean == pytest.approx(0.025)
+    assert result.long_short_cumulative == pytest.approx(0.7 * 1.4 - 1.0)
 
 
 def test_cumulative_compounds_period_returns() -> None:
-    signal = pd.Series([1.0, 2.0, 3.0, 4.0])
+    signal = pd.Series([2.0, 1.0, 0.0, 3.0])
     forward = pd.Series([0.1, 0.2, 0.3, 0.4])
     result = simulate_strategy_returns(signal, forward, n_quantiles=2)
 
-    assert result.long_short.to_list() == [-0.1, -0.2, 0.3, 0.4]
-    assert result.long_short_cumulative == pytest.approx(0.9 * 0.8 * 1.3 * 1.4 - 1.0)
+    assert result.long_short.to_list() == [0.0, 0.0, -0.3, 0.4]
+    assert result.long_short_cumulative == pytest.approx(0.7 * 1.4 - 1.0)
 
 
 def test_nan_pairs_are_dropped() -> None:
@@ -169,3 +168,96 @@ def test_simulated_returns_on_walk_forward_folds() -> None:
 
         assert len(result.long_short) == split.test_bars
         assert result.long_only_mean > 0
+
+
+@pytest.mark.parametrize("horizon", [1, 3])
+def test_appending_future_signals_cannot_change_past_positions(horizon: int) -> None:
+    signal = pd.Series([2.0, 1.0, 0.0, 3.0, 2.5, -0.5, 4.0, -1.0])
+    forward = pd.Series([0.05] * len(signal))
+    prefix = simulate_strategy_returns(signal, forward, n_quantiles=2, horizon=horizon)
+    extended_signal = pd.concat([signal, pd.Series([1e6] * 20)], ignore_index=True)
+    extended_forward = pd.Series([0.05] * len(extended_signal))
+    extended = simulate_strategy_returns(
+        extended_signal, extended_forward, n_quantiles=2, horizon=horizon
+    )
+    pd.testing.assert_series_equal(prefix.long_short, extended.long_short.iloc[:8])
+    pd.testing.assert_series_equal(prefix.long_only, extended.long_only.iloc[:8])
+
+
+def test_multi_bar_returns_compound_only_non_overlapping_intervals() -> None:
+    signal = pd.Series(range(10), dtype=float)
+    forward = pd.Series([0.21] * 10)
+    result = simulate_strategy_returns(signal, forward, n_quantiles=2, horizon=2)
+
+    # Every eligible trade earns a two-bar holding return. Rows between entry
+    # bars are zero; counting their overlapping forward returns would overstate it.
+    assert result.long_only.to_list() == [
+        0.0,
+        0.0,
+        0.21,
+        0.0,
+        0.21,
+        0.0,
+        0.21,
+        0.0,
+        0.21,
+        0.0,
+    ]
+    assert result.long_only_cumulative == pytest.approx(1.21**4 - 1.0)
+
+
+def test_missing_pairs_do_not_shift_the_holding_grid_or_signal_history() -> None:
+    signal = pd.Series(range(10), dtype=float)
+    forward = pd.Series([0.1] * 10)
+    forward.iloc[1] = np.nan
+    result = simulate_strategy_returns(signal, forward, n_quantiles=2, horizon=2)
+
+    assert result.long_only.index.tolist() == [0, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert result.long_only.loc[2] == pytest.approx(0.1)
+    assert result.long_only.loc[[3, 5, 7, 9]].eq(0.0).all()
+
+
+def test_unbalanced_binary_signal_with_two_quantiles_is_tradeable() -> None:
+    signal = pd.Series([-1.0] * 95 + [1.0] * 5)
+    forward = pd.Series([-0.01] * 95 + [0.03] * 5)
+    result = simulate_strategy_returns(signal, forward, n_quantiles=2)
+
+    assert result.n_quantiles == 2
+    # The first new value cannot be classified using a previously unknown tail.
+    assert result.long_short.iloc[:96].eq(0.0).all()
+    assert result.long_short.iloc[96:].eq(0.03).all()
+
+
+def test_repeated_value_on_collapsed_historical_cutoffs_is_neutral() -> None:
+    signal = pd.Series([-1.0, 0.0, 1.0] + [0.0] * 8 + [2.0, -2.0])
+    forward = pd.Series([0.1] * len(signal))
+    result = simulate_strategy_returns(signal, forward, n_quantiles=2)
+
+    assert result.long_short.iloc[3:11].eq(0.0).all()
+    assert result.long_short.iloc[-2:].tolist() == [0.1, -0.1]
+
+
+@pytest.mark.parametrize("missing", [np.nan, np.inf, -np.inf])
+def test_nonfinite_signal_and_return_pairs_are_omitted(missing: float) -> None:
+    signal = pd.Series([1.0, 2.0, missing, 4.0, 5.0, 6.0])
+    forward = pd.Series([0.1, 0.1, 0.1, missing, 0.1, 0.1])
+    result = simulate_strategy_returns(signal, forward, n_quantiles=2)
+    assert result.long_short.index.tolist() == [0, 1, 4, 5]
+    assert np.isfinite(result.long_short).all()
+
+
+def test_nonpositive_horizon_is_rejected() -> None:
+    signal, forward = _seeded_returns(10)
+    with pytest.raises(ValueError, match="horizon must be at least 1"):
+        simulate_strategy_returns(signal, forward, horizon=0)
+
+
+def test_different_or_duplicate_bar_indexes_are_rejected() -> None:
+    signal = pd.Series([1.0, 2.0, 3.0], index=[0, 1, 2])
+    forward = pd.Series([0.1, 0.2, 0.3], index=[1, 2, 3])
+    with pytest.raises(ValueError, match="same unique bar index"):
+        simulate_strategy_returns(signal, forward, n_quantiles=2)
+    signal.index = pd.Index([0, 0, 1])
+    forward.index = signal.index
+    with pytest.raises(ValueError, match="same unique bar index"):
+        simulate_strategy_returns(signal, forward, n_quantiles=2)
