@@ -219,6 +219,15 @@ to recompute and replace the disposable cache entry. The matrix is parsed from
 the same bytes whose hash was verified. Recomputing does not replace source
 market files or immutable dataset versions.
 
+Each cache directory has a persistent `.feature-cache.lock` shared by processes.
+It serializes complete writes and eviction, reads through their recency update,
+and key/statistics snapshots, so an in-progress publication cannot be swept as
+an orphan. The default lock wait is 30 seconds; expiration raises a timeout
+instead of reporting a cache miss. Matrix and sidecar publication use unique
+temporary files in the cache directory, with cleanup on success or failure;
+cleanup errors follow the I/O policy below. The lock file is retained and excluded from retention bytes,
+as are temporary files. This lock covers the disposable feature cache only.
+
 Verification reads and cache publication propagate permission and other storage
 I/O failures; these are not reported as misses. Updating recency is best effort
 and logs a warning if it fails, as does an unsuccessful eviction deletion.

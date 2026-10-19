@@ -40,9 +40,11 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+from filelock import FileLock
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 
@@ -56,6 +58,7 @@ logger = logging.getLogger(__name__)
 _SUFFIX = ".parquet"
 _META_SUFFIX = ".json"
 _TMP_SUFFIX = ".tmp"
+_LOCK_NAME = ".feature-cache.lock"
 
 # A cache of one matrix per (symbol, timeframe, bars, feature set, code) fills
 # up slowly - it takes a code change or a data edit, not a run, to add an entry
@@ -124,6 +127,7 @@ class FeatureCacheStore:
         max_entries: int | None = _DEFAULT_MAX_ENTRIES,
         max_bytes: int | None = _DEFAULT_MAX_BYTES,
         clock: Callable[[], float] | None = None,
+        lock_timeout: float = 30,
     ) -> None:
         """Open the cache.
 
@@ -135,6 +139,8 @@ class FeatureCacheStore:
             clock: Source of the timestamps used to decide what is stale;
                 defaults to wall time. Injected in tests so recency is a fact
                 rather than something that depends on how fast the test ran.
+            lock_timeout: Seconds to wait for another cache operation before
+                raising ``filelock.Timeout``.
 
         Raises:
             ValueError: If a bound is set to less than one. A bound of zero is
@@ -151,6 +157,9 @@ class FeatureCacheStore:
         self.max_entries = max_entries
         self.max_bytes = max_bytes
         self._clock = clock or time.time
+        # Retain the lock inode: removing it could let a new caller acquire
+        # another inode while an existing waiter still uses the original one.
+        self._lock = FileLock(self.root / _LOCK_NAME, timeout=lock_timeout)
 
     def path_for(self, key: str) -> Path:
         """Where the matrix for ``key`` is stored."""
@@ -162,13 +171,14 @@ class FeatureCacheStore:
 
     def keys(self) -> tuple[str, ...]:
         """Cache keys that have both a matrix and its sidecar."""
-        return tuple(
-            sorted(
-                path.name[: -len(_SUFFIX)]
-                for path in self.root.glob(f"*{_SUFFIX}")
-                if self.meta_path_for(path.name[: -len(_SUFFIX)]).exists()
+        with self._lock:
+            return tuple(
+                sorted(
+                    path.name[: -len(_SUFFIX)]
+                    for path in self.root.glob(f"*{_SUFFIX}")
+                    if self.meta_path_for(path.name[: -len(_SUFFIX)]).exists()
+                )
             )
-        )
 
     def load(
         self,
@@ -193,6 +203,16 @@ class FeatureCacheStore:
         Raises:
             OSError: If files cannot be accessed for a reason other than absence.
         """
+        with self._lock:
+            return self._load(identity, feature_columns=feature_columns)
+
+    def _load(
+        self,
+        identity: FeatureCacheIdentity,
+        *,
+        feature_columns: Sequence[str],
+    ) -> pd.DataFrame | None:
+        """Read and update recency while publication and eviction are excluded."""
         key = identity.key
         record = self._read_meta(self.meta_path_for(key))
         if record is None:
@@ -241,11 +261,33 @@ class FeatureCacheStore:
         the entry just written is protected from that sweep: a bounded cache
         that could discard what it was asked to keep would not be a cache.
         """
+        # A root-wide lock covers both publication and sweeping other keys.
+        # Per-key locks would still let a writer remove another writer's
+        # matrix in the interval before its sidecar was published.
+        with self._lock:
+            return self._save(identity, frame, feature_columns=feature_columns)
+
+    def _save(
+        self,
+        identity: FeatureCacheIdentity,
+        frame: pd.DataFrame,
+        *,
+        feature_columns: Sequence[str],
+    ) -> Path:
         key = identity.key
         parquet = self.path_for(key)
-        staging = parquet.with_name(f"{parquet.name}.tmp")
-        frame.to_parquet(staging, index=False)
-        os.replace(staging, parquet)
+        staging: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                prefix=f".{key}-", suffix=".parquet.tmp", dir=self.root, delete=False
+            ) as stream:
+                staging = Path(stream.name)
+            frame.to_parquet(staging, index=False)
+            content_hash = sha256_file(staging)
+            os.replace(staging, parquet)
+        finally:
+            if staging is not None:
+                staging.unlink(missing_ok=True)
         record = {
             "cache_key": key,
             "symbol": identity.symbol,
@@ -256,11 +298,11 @@ class FeatureCacheStore:
             "feature_columns": [str(column) for column in feature_columns],
             "columns": [str(column) for column in frame.columns],
             "rows": int(len(frame)),
-            "content_hash": sha256_file(parquet),
+            "content_hash": content_hash,
             "used_at": self._clock(),
         }
         self._write_meta(self.meta_path_for(key), record)
-        report = self.evict(keep=key)
+        report = self._evict(keep=key)
         if not report.empty:
             logger.info(
                 "feature cache after writing %s: removed %d, swept %d, "
@@ -271,7 +313,7 @@ class FeatureCacheStore:
                 report.freed_bytes,
                 report.remaining,
             )
-        if self.stats().over_limit:
+        if self._stats().over_limit:
             # The entry just written cannot be dropped to make room, so a
             # matrix bigger than the whole budget stays over it. Say so
             # rather than leaving the bound quietly unmet.
@@ -287,11 +329,20 @@ class FeatureCacheStore:
         Bytes counts every file the cache owns, including the ones a sweep
         would delete: what matters about a full disk is what is on it, not
         what is still loadable. Half-written ``.tmp`` files are left out -
-        they are another write in progress, not cache content.
+        they are staging, not published cache content. The persistent lock
+        file is coordination state and is also excluded.
         """
+        with self._lock:
+            return self._stats()
+
+    def _stats(self) -> CacheStats:
         total = 0
         for path in self.root.iterdir():
-            if path.is_file() and not path.name.endswith(_TMP_SUFFIX):
+            if (
+                path.is_file()
+                and not path.name.endswith(_TMP_SUFFIX)
+                and path.name != _LOCK_NAME
+            ):
                 try:
                     total += path.stat().st_size
                 except OSError:  # pragma: no cover - vanishing file
@@ -323,6 +374,10 @@ class FeatureCacheStore:
         Returns:
             What was removed and what is left.
         """
+        with self._lock:
+            return self._evict(keep=keep)
+
+    def _evict(self, *, keep: str | None = None) -> EvictionReport:
         swept: list[str] = []
         freed = 0
         for key in self._garbage():
@@ -334,7 +389,7 @@ class FeatureCacheStore:
             (entry for entry in self._entries() if entry.key != keep),
             key=lambda entry: (entry.used_at, entry.key),
         )
-        stats = self.stats()
+        stats = self._stats()
         index = 0
         # Each iteration re-reads the disk: a deletion that fails - a file
         # locked by something else - must not be counted as freed space, and
@@ -344,7 +399,7 @@ class FeatureCacheStore:
             index += 1
             freed += self._delete(victim.key)
             removed.append(victim.key)
-            stats = self.stats()
+            stats = self._stats()
         return EvictionReport(
             removed=tuple(removed),
             swept=tuple(swept),
@@ -527,9 +582,23 @@ class FeatureCacheStore:
     @staticmethod
     def _write_meta(path: Path, record: dict[str, Any]) -> None:
         payload = json.dumps(record, indent=2, ensure_ascii=False, sort_keys=True)
-        staging = path.with_name(f"{path.name}.tmp")
-        staging.write_text(payload, encoding="utf-8")
-        os.replace(staging, path)
+        staging: Path | None = None
+        try:
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                prefix=f".{path.stem}-",
+                suffix=".json.tmp",
+                dir=path.parent,
+                delete=False,
+            ) as stream:
+                staging = Path(stream.name)
+                stream.write(payload)
+            os.replace(staging, path)
+        finally:
+            if staging is not None:
+                staging.unlink(missing_ok=True)
 
     @staticmethod
     def _miss(key: str, reason: str) -> None:
