@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,9 @@ from tradingdev.domain.ml.models.flaml_model import (
     DEFAULT_ESTIMATOR_LIST,
     FLAMLAutoMLDirectionModel,
 )
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 #: Distinguishes "no model was passed" from "the search produced no model",
 #: which is the failure mode the wrapper has to detect.
@@ -49,7 +52,7 @@ class _FakeAutoML:
     def __init__(
         self,
         *,
-        classes: tuple[Any, ...] = (0, 1),
+        classes: tuple[int, ...] = (0, 1),
         importances: list[float] | None = None,
         model: _FakeModel | None | object = _UNSET,
     ) -> None:
@@ -71,10 +74,12 @@ class _FakeAutoML:
     ) -> None:
         self.fit_calls.append({"X_train": X_train, "y_train": y_train, **kwargs})
 
-    def predict(self, frame: pd.DataFrame) -> np.ndarray:
-        return np.asarray([self.classes_[i % 2] for i in range(len(frame))])
+    def predict(self, frame: pd.DataFrame) -> npt.NDArray[np.int64]:
+        return np.asarray(
+            [self.classes_[i % 2] for i in range(len(frame))], dtype=np.int64
+        )
 
-    def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+    def predict_proba(self, frame: pd.DataFrame) -> npt.NDArray[np.float64]:
         return np.tile([0.25, 0.75], (len(frame), 1))
 
 
@@ -91,7 +96,7 @@ def _install_fake_flaml(
         created.append(instance)
         return instance
 
-    module.AutoML = factory
+    monkeypatch.setattr(module, "AutoML", factory, raising=False)
     monkeypatch.setitem(sys.modules, "flaml", module)
     return created
 
@@ -125,53 +130,71 @@ def _train(
 
 
 class TestTrainContract:
-    def test_only_feature_columns_reach_the_search(self, monkeypatch) -> None:
+    def test_only_feature_columns_reach_the_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _, automl = _train(monkeypatch)
         assert list(automl.fit_calls[0]["X_train"].columns) == ["f1", "f2"]
 
-    def test_target_is_passed_verbatim(self, monkeypatch) -> None:
+    def test_target_is_passed_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _, automl = _train(monkeypatch)
         assert automl.fit_calls[0]["y_train"].tolist() == [0, 1, 0, 1, 0, 1]
 
-    def test_search_is_configured_for_binary_classification(self, monkeypatch) -> None:
+    def test_search_is_configured_for_binary_classification(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _, automl = _train(monkeypatch)
         call = automl.fit_calls[0]
         assert call["task"] == "classification"
         assert call["metric"] == "accuracy"
 
-    def test_default_estimator_list_is_used_when_none_given(self, monkeypatch) -> None:
+    def test_default_estimator_list_is_used_when_none_given(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _, automl = _train(monkeypatch)
         assert automl.fit_calls[0]["estimator_list"] == list(DEFAULT_ESTIMATOR_LIST)
 
-    def test_custom_estimator_list_is_forwarded(self, monkeypatch) -> None:
+    def test_custom_estimator_list_is_forwarded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject = FLAMLAutoMLDirectionModel(estimator_list=["lgbm", "rf"])
         _, automl = _train(monkeypatch, subject=subject)
         assert automl.fit_calls[0]["estimator_list"] == ["lgbm", "rf"]
 
-    def test_time_budget_is_forwarded_as_seconds(self, monkeypatch) -> None:
+    def test_time_budget_is_forwarded_as_seconds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject = FLAMLAutoMLDirectionModel(time_budget=30)
         _, automl = _train(monkeypatch, subject=subject)
         assert automl.fit_calls[0]["time_budget"] == 30.0
 
-    def test_validation_set_is_forwarded_when_supplied(self, monkeypatch) -> None:
+    def test_validation_set_is_forwarded_when_supplied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         eval_df = _frame()
         _, automl = _train(monkeypatch, eval_df=eval_df)
         call = automl.fit_calls[0]
         assert list(call["X_val"].columns) == ["f1", "f2"]
         assert call["y_val"].tolist() == [0, 1, 0, 1, 0, 1]
 
-    def test_validation_keys_are_omitted_when_no_eval_frame(self, monkeypatch) -> None:
+    def test_validation_keys_are_omitted_when_no_eval_frame(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         _, automl = _train(monkeypatch)
         assert "X_val" not in automl.fit_calls[0]
         assert "y_val" not in automl.fit_calls[0]
 
-    def test_optional_search_settings_are_omitted_when_unset(self, monkeypatch) -> None:
+    def test_optional_search_settings_are_omitted_when_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject = FLAMLAutoMLDirectionModel(n_jobs=None, random_seed=None)
         _, automl = _train(monkeypatch, subject=subject)
         assert "n_jobs" not in automl.fit_calls[0]
         assert "seed" not in automl.fit_calls[0]
 
-    def test_optional_search_settings_are_forwarded_when_set(self, monkeypatch) -> None:
+    def test_optional_search_settings_are_forwarded_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject = FLAMLAutoMLDirectionModel(n_jobs=2, random_seed=7)
         _, automl = _train(monkeypatch, subject=subject)
         call = automl.fit_calls[0]
@@ -199,7 +222,7 @@ class TestTrainContract:
                 super().fit(X_train=X_train, y_train=y_train, **kwargs)
 
         module = types.ModuleType("flaml")
-        module.AutoML = SpillingAutoML
+        monkeypatch.setattr(module, "AutoML", SpillingAutoML, raising=False)
         monkeypatch.setitem(sys.modules, "flaml", module)
 
         FLAMLAutoMLDirectionModel().train(_frame())
@@ -210,7 +233,9 @@ class TestTrainContract:
         assert not scratch.exists()
         assert list(tmp_path.iterdir()) == []
 
-    def test_a_search_that_returns_no_model_is_reported(self, monkeypatch) -> None:
+    def test_a_search_that_returns_no_model_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # `model is None` is what FLAML reports when nothing could be fitted.
         _install_fake_flaml(monkeypatch, model=None)
         with pytest.raises(RuntimeError, match="without a model"):
@@ -218,15 +243,25 @@ class TestTrainContract:
 
 
 class TestPredictContract:
-    def test_probability_columns_follow_the_fitted_classes(self, monkeypatch) -> None:
+    def test_probability_columns_follow_the_fitted_classes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch)
-        assert list(subject.predict_proba(_frame()).columns) == [0, 1]
+        np.testing.assert_array_equal(
+            subject.predict_proba(_frame()).columns.to_numpy(), [0, 1]
+        )
 
-    def test_probability_columns_follow_non_standard_labels(self, monkeypatch) -> None:
+    def test_probability_columns_follow_non_standard_labels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch, classes=(-1, 1))
-        assert list(subject.predict_proba(_frame()).columns) == [-1, 1]
+        np.testing.assert_array_equal(
+            subject.predict_proba(_frame()).columns.to_numpy(), [-1, 1]
+        )
 
-    def test_probabilities_are_row_aligned_with_the_input(self, monkeypatch) -> None:
+    def test_probabilities_are_row_aligned_with_the_input(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch)
         frame = _frame()
         proba = subject.predict_proba(frame)
@@ -234,12 +269,16 @@ class TestPredictContract:
         assert list(proba.index) == list(frame.index)
         assert proba.iloc[0].tolist() == [0.25, 0.75]
 
-    def test_predict_returns_original_labels(self, monkeypatch) -> None:
+    def test_predict_returns_original_labels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch, classes=(-1, 1))
         predicted = subject.predict(_frame())
         assert predicted.tolist() == [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0]
 
-    def test_predict_preserves_the_input_index(self, monkeypatch) -> None:
+    def test_predict_preserves_the_input_index(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch)
         frame = _frame()
         assert list(subject.predict(frame).index) == list(frame.index)
@@ -261,7 +300,9 @@ class TestReportedParameters:
         assert params["estimator_list"] == list(DEFAULT_ESTIMATOR_LIST)
         assert "selected_estimator" not in params
 
-    def test_the_winner_is_reported_after_the_search(self, monkeypatch) -> None:
+    def test_the_winner_is_reported_after_the_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch)
         assert subject.get_parameters()["selected_estimator"] == "lgbm"
 
@@ -275,11 +316,15 @@ class TestReportedParameters:
 
 
 class TestFeatureImportance:
-    def test_gain_is_projected_and_sorted(self, monkeypatch) -> None:
+    def test_gain_is_projected_and_sorted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch, importances=[1.0, 9.0])
         assert subject.feature_importance() == (("f2", 9.0), ("f1", 1.0))
 
-    def test_no_gain_means_absent_not_zero(self, monkeypatch) -> None:
+    def test_no_gain_means_absent_not_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         subject, _ = _train(monkeypatch, model=_FakeModel(_FakeEstimator()))
         assert subject.feature_importance() == ()
 
@@ -314,7 +359,7 @@ def test_real_search_produces_a_usable_model() -> None:
     assert set(cwd.iterdir()) == before, sorted(set(cwd.iterdir()) - before)
 
     proba = subject.predict_proba(frame)
-    assert list(proba.columns) == [0, 1]
+    np.testing.assert_array_equal(proba.columns.to_numpy(), [0, 1])
     assert len(proba) == n
     assert np.allclose(proba.sum(axis=1).to_numpy(), 1.0)
     assert subject.get_parameters()["selected_estimator"]

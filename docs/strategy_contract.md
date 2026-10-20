@@ -259,7 +259,16 @@ scheme by name or infer a label horizon from an ML dataset.
 With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
 and `test_end` values select one explicit date split. Otherwise the plain
 splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
-by default; a partial set of date fields does not select an explicit split.
+by default. Each boundary is an inclusive UTC calendar day, so the four dates
+are converted to UTC first (naive values are treated as UTC), then their time
+of day is discarded. Their UTC days must satisfy
+`train_start <= train_end < test_start <= test_end`: a train
+window ending on the day the test window starts would train on bars the test
+set also scores, so it is rejected. Supplying only some of the four fields is
+rejected as well, instead of silently falling back to automatic windows. The
+splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
+timestamps are not ascending, a window selects no rows, or the selected train
+and test rows share a bar.
 A positive `label_horizon` checks the selected windows before any fold's
 strategy fitting or backtest runs. If training labels reach the test window,
 the full validation raises `WalkForwardLeakageError`; this audit detects the
@@ -284,7 +293,9 @@ near-equal blocks. The first is training-only; each later block is tested once,
 using all preceding blocks as anchored training history after removing the
 `label_horizon + embargo_bars` gap immediately before its test window. In this
 full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
-folds, even if present in the YAML. Omit those inactive settings to keep the
+folds, even if present in the YAML. The schema still parses supplied dates as
+datetimes, but does not require all four or validate their order in purged mode.
+Omit those inactive settings to keep the
 request clear. The backtest's data bounds still determine the history supplied
 to the splitter.
 
@@ -369,10 +380,13 @@ for example these `build_dataset` arguments:
 The selected end bounds the source bars, so trailing rows whose forward label
 needs later prices are still dropped. Reversed bounds fail; the loader does not
 extend them to obtain missing labels. This timestamp contract differs from a
-strategy walk-forward's explicit date split, whose end filter is
-`timestamp < configured_end + 1 day`, and from optimization's inclusive UTC
-calendar-day bounds. For whole-day strategy split endpoints, use date-only
-values; an intraday explicit walk-forward end is also extended by one day.
+strategy walk-forward's explicit date split and optimization's inclusive UTC
+calendar-day bounds. Explicit walk-forward dates first convert offsets to UTC,
+then discard the time of day; the range is
+`UTC midnight of start day <= timestamp < UTC midnight after end day`.
+For example, `2024-01-02T03:00:00+08:00` names the entire January 1 UTC day.
+The confirmation document displays these effective UTC boundaries, including
+the exclusive upper bound, alongside the original settings.
 Do not copy the ML timestamp example into optimization, which accepts only
 `YYYY-MM-DD` boundaries.
 

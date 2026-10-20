@@ -63,14 +63,13 @@ _MUTATING_HINTS = {
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
-    # The ML tools write a dataset, panel or model artifact, or - in the case
-    # of evaluate_signal - a leaderboard row. None of them overwrite anything
-    # that already exists, and their ids are content-derived, so asking twice
-    # is the same as asking once.
-    "evaluate_signal": (False, False, True, False),
-    "build_dataset": (False, False, True, False),
-    "build_panel": (False, False, True, False),
-    "train_model": (False, False, True, False),
+    # Recording can replace an evaluation; dataset/panel builds can evict
+    # feature caches, and training rewrites stored model artifacts. Stable
+    # identities do not remove these operations' destructive side effects.
+    "evaluate_signal": (False, True, True, False),
+    "build_dataset": (False, True, True, False),
+    "build_panel": (False, True, True, False),
+    "train_model": (False, True, True, False),
 }
 
 

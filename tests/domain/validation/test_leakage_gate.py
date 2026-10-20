@@ -9,6 +9,7 @@ frames that actually get executed.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -136,12 +137,12 @@ class TestSplitterWindowConsistency:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         ts = walk_forward_ohlcv_df["timestamp"]
-        mid = ts.iloc[len(ts) // 2]
+        boundary = ts.iloc[len(ts) // 2]
         self._assert_consistent(
             WalkForwardConfig(
                 train_start=ts.iloc[0].to_pydatetime(),
-                train_end=mid.to_pydatetime(),
-                test_start=mid.to_pydatetime(),
+                train_end=boundary.to_pydatetime(),
+                test_start=(boundary + timedelta(days=1)).to_pydatetime(),
                 test_end=ts.iloc[-1].to_pydatetime(),
             ),
             walk_forward_ohlcv_df,

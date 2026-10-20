@@ -6,6 +6,7 @@ import argparse
 import json
 import pickle
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -44,6 +45,7 @@ from tradingdev.domain.preflight import (
 )
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.splitter import DataSplitter
@@ -329,13 +331,14 @@ def execute_preflight(
                 ),
             ):
                 assert wf_begin is not None and wf_finish is not None
-                end = (
-                    pd.Timestamp(wf_finish)
-                    + pd.Timedelta(days=1)
-                    - pd.Timedelta(microseconds=1)
-                )
+                lower, upper = inclusive_day_window(wf_begin, wf_finish)
                 frames.append(
-                    load(wf_role, wf_begin, end.to_pydatetime(), wf_limit).frame
+                    load(
+                        wf_role,
+                        lower,
+                        upper - timedelta(microseconds=1),
+                        wf_limit,
+                    ).frame
                 )
             train, test = frames
             total_folds = 1
