@@ -1,13 +1,16 @@
 """Tests for the Deribit DVOL crawler (using mocked httpx)."""
 
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestDeribitDVOLCrawler:

@@ -2,8 +2,7 @@
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pandas as pd
@@ -16,6 +15,9 @@ from tradingdev.domain.data.crawlers.sampling import (
     stream_sample_json,
 )
 from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = setup_logger(__name__)
 

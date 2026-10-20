@@ -1,10 +1,13 @@
 """Abstract base class for all data crawlers."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:
+    from datetime import datetime
+    from pathlib import Path
+
+    import pandas as pd
 
 
 class BaseCrawler(ABC):

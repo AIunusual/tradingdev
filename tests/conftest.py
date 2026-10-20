@@ -1,14 +1,17 @@
 """Shared test fixtures."""
 
 import os
-from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytest_plugins = ["tests.llm_plugin"]
 

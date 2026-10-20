@@ -16,12 +16,15 @@ unsuitable for backtesting.  They can still be used in live trading.
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import ccxt
 import pandas as pd
 
 from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = setup_logger(__name__)
 

@@ -1,15 +1,8 @@
 """FLAML AutoML direction prediction model.
 
-This is the AutoML entry point for direction prediction. It replaces the
-previous AutoGluon wrapper: AutoGluon publishes ``Requires-Python: <3.14``
-across every release, so a hard dependency on it caps the whole project below
-Python 3.14 and drags in torch, ray and spaCy (~5.5 GB of wheels) even though
-this project only ever fits tabular gradient-boosted trees.
-
-FLAML gives the same capability — search a set of estimators and their
-hyper-parameters under a wall-clock budget, then keep the winner — while
-depending on nothing beyond the scientific stack already present here, and it
-declares ``Requires-Python: >=3.10`` with no upper bound.
+FLAML searches tree estimators and their hyperparameters under a wall-clock
+budget, then keeps the winning model. Bundled strategies use this entry point
+without requiring a deep-learning stack.
 
 Deliberately *not* in the model zoo (:mod:`tradingdev.domain.ml.models.registry`):
 a zoo kind must be reproducible from its recorded parameters, and an AutoML

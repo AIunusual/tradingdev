@@ -1,8 +1,11 @@
 """Tests for the feature engineering module."""
 
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class TestFeatureEngineer:

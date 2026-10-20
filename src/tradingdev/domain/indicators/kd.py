@@ -1,11 +1,12 @@
 """KD Stochastic Oscillator indicator."""
 
-from typing import Any
-
-import pandas as pd
+from typing import TYPE_CHECKING, Any
 
 from tradingdev.domain import indicators
 from tradingdev.domain.indicators.base import BaseIndicator
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class KDIndicator(BaseIndicator):

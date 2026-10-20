@@ -534,7 +534,7 @@ class FeatureCacheStore:
         """Reject malformed cache metadata without hiding file-access failures."""
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             return None
         if not isinstance(record, dict):
             return None

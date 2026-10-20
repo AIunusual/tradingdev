@@ -146,7 +146,7 @@ class MergeCandidate:
 @contextmanager
 def merge_candidate(
     source: str, base_ref: str, head_ref: str
-) -> Generator[MergeCandidate, None, None]:
+) -> Generator[MergeCandidate]:
     """Fetch and merge in a disposable repository, leaving the caller untouched."""
     with TemporaryDirectory(prefix="tradingdev-pr-candidate-") as temporary:
         repository = Path(temporary)

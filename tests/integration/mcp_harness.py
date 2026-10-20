@@ -136,7 +136,7 @@ class MCPWorkspace:
     @asynccontextmanager
     async def connect(
         self, *, elicitation_callback: ElicitationFnT | None = None
-    ) -> AsyncGenerator[MCPClient, None]:
+    ) -> AsyncGenerator[MCPClient]:
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "tradingdev.mcp.server"],
@@ -256,7 +256,7 @@ def worker_is_alive(process: psutil.Process) -> bool:
 
 
 @contextmanager
-def temporary_mcp_workspace() -> Generator[MCPWorkspace, None, None]:
+def temporary_mcp_workspace() -> Generator[MCPWorkspace]:
     # Also used outside pytest; stop detached workers before removing files.
     directory = Path(mkdtemp(prefix="tradingdev-mcp-test-")).resolve()
     workspace = MCPWorkspace(directory)

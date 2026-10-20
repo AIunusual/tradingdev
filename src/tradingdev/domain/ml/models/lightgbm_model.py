@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import lightgbm as lgb
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
@@ -86,8 +87,8 @@ class LightGBMDirectionModel(BaseModel):
             raise RuntimeError(msg)
 
         x = df[self._feature_names]
-        encoded_preds = self._model.predict(x)
-        preds = self._label_encoder.inverse_transform(encoded_preds.astype(int))
+        encoded_preds = np.asarray(self._model.predict(x), dtype=int)
+        preds = self._label_encoder.inverse_transform(encoded_preds)
         return pd.Series(preds, index=df.index, dtype=float)
 
     def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -97,7 +98,7 @@ class LightGBMDirectionModel(BaseModel):
             raise RuntimeError(msg)
 
         x = df[self._feature_names]
-        proba = self._model.predict_proba(x)
+        proba = np.asarray(self._model.predict_proba(x))
 
         n_classes_encoder = len(self._label_encoder.classes_)
         n_cols_proba = proba.shape[1]

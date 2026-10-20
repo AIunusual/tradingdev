@@ -34,7 +34,7 @@ def tool_payload(result: dict[str, Any]) -> Any:
             if block.get("type") == "text":
                 try:
                     structured = json.loads(block["text"])
-                except (ValueError, KeyError):
+                except ValueError, KeyError:
                     continue
                 break
     if isinstance(structured, dict) and set(structured) == {"result"}:
@@ -110,7 +110,7 @@ def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
             observed.append(_canonical_json(decoded[0]))
         if not expected.intersection(observed):
             return payload
-    except (TypeError, ValueError, RecursionError):
+    except TypeError, ValueError, RecursionError:
         return payload
     return {key: value for key, value in payload.items() if key != "content"}
 

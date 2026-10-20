@@ -34,7 +34,7 @@ def _alive(process: psutil.Process) -> bool:
         return bool(process.is_running() and process.status() != psutil.STATUS_ZOMBIE)
     except psutil.NoSuchProcess:
         return False
-    except (psutil.AccessDenied, PermissionError):
+    except psutil.AccessDenied, PermissionError:
         return bool(process.is_running())
 
 
@@ -46,7 +46,7 @@ def _observe(known: set[psutil.Process]) -> bool:
                 known.update(process.children(recursive=True))
             except psutil.NoSuchProcess:
                 pass
-            except (psutil.AccessDenied, PermissionError):
+            except psutil.AccessDenied, PermissionError:
                 complete = False
     return complete
 
@@ -70,7 +70,7 @@ def _signal_leader(leader: psutil.Process | None, sig: signal.Signals) -> None:
         if os.getpgid(leader.pid) == leader.pid:
             os.killpg(leader.pid, sig)
             return
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         pass
     with suppress(psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
         leader.send_signal(sig)

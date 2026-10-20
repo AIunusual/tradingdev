@@ -1,9 +1,11 @@
 """YAML configuration loader."""
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def load_config(path: Path) -> dict[str, Any]:
