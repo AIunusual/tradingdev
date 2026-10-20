@@ -95,7 +95,8 @@ strategy:
     prediction_horizon: 5
     feature_lookback: 60
     ml_time_limit: 300
-    ml_presets: "medium_quality"
+    ml_estimator_list: ["lgbm", "xgboost", "catboost", "rf", "extra_tree"]
+    ml_metric: "accuracy"
     confidence_threshold: 0.55
     gamma: 0.0
     kappa: 1000.0
