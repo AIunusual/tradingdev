@@ -1,12 +1,15 @@
 """Tests for the Binance API crawler (using mocked ccxt)."""
 
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestBinanceAPICrawler:

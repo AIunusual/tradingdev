@@ -2,7 +2,7 @@
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import ccxt
 import pandas as pd
@@ -10,6 +10,9 @@ import pandas as pd
 from tradingdev.domain.data.crawlers.base import BaseCrawler
 from tradingdev.domain.data.crawlers.sampling import sample_frame, sample_range
 from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = setup_logger(__name__)
 

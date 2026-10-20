@@ -1,10 +1,13 @@
 """Data loading utilities for CSV and Parquet files."""
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = setup_logger(__name__)
 

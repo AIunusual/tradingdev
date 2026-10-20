@@ -5,10 +5,11 @@
 
 ## 環境與常用命令
 
-首次設置：
+開發環境使用 Python 3.14；版本範圍以 `pyproject.toml` 為準。
+首次設置或從較舊的 Python 升級：
 
 ```bash
-uv sync --locked --all-extras
+uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 

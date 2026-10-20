@@ -1,10 +1,13 @@
 """Data cleaning and transformation pipeline."""
 
-from pathlib import Path
-
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pandas as pd
 
 logger = setup_logger(__name__)
 

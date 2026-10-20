@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -54,17 +55,21 @@ class TestDataFingerprint:
     def test_an_edit_that_keeps_the_file_size_is_still_seen(
         self, tmp_path: Path
     ) -> None:
-        """Size and mtime are not evidence: swapping two bars keeps both."""
+        """Equal size and mtime cannot hide swapped close values."""
         first = tmp_path / "a.parquet"
-        _BARS.to_parquet(first, index=False)
+        _BARS.to_parquet(first, index=False, compression=None, use_dictionary=False)
         edited = _BARS.copy()
         edited.loc[0, "close"], edited.loc[1, "close"] = (
             _BARS.loc[1, "close"],
             _BARS.loc[0, "close"],
         )
         second = tmp_path / "b.parquet"
-        edited.to_parquet(second, index=False)
-        assert first.stat().st_size == second.stat().st_size
+        edited.to_parquet(second, index=False, compression=None, use_dictionary=False)
+        first_stat = first.stat()
+        os.utime(second, ns=(first_stat.st_atime_ns, first_stat.st_mtime_ns))
+        second_stat = second.stat()
+        assert first_stat.st_size == second_stat.st_size
+        assert first_stat.st_mtime_ns == second_stat.st_mtime_ns
         assert data_fingerprint(pd.read_parquet(second)) != data_fingerprint(
             pd.read_parquet(first)
         )

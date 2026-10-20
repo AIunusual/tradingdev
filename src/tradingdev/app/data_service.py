@@ -333,7 +333,7 @@ class DataService:
         try:
             start_year = int(start_date[:4])
             end_year = int(end_date[:4])
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             return False
         for year in range(start_year, end_year + 1):
             complete = processed_dir / market_data_filename(symbol, timeframe, year)

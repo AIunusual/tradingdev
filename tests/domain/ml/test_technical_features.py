@@ -7,6 +7,7 @@ import talib
 
 from tradingdev.domain.ml.features.direction_features import DirectionFeatureEngineer
 from tradingdev.domain.ml.features.features import FeatureEngineer
+from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.features.technical_features import (
     compute_sma_ratios,
@@ -42,6 +43,21 @@ class TestRatioFeatures:
         np.testing.assert_allclose(
             features["vol_sma_ratio_7"].dropna(), expected.dropna()
         )
+
+    def test_volume_change_keeps_missing_endpoints_unknown(self) -> None:
+        timestamps = pd.date_range("2024-01-01", periods=5, freq="h", tz="UTC")
+        volume = pd.Series(
+            [100.0, 110.0, np.nan, 121.0, 133.1],
+            index=timestamps,
+            name="volume",
+        )
+        actual = compute_volume_features(volume, [2])["volume_change"]
+        expected = pd.Series(
+            [np.nan, 0.1, np.nan, np.nan, 0.1],
+            index=timestamps,
+            name="volume",
+        )
+        pd.testing.assert_series_equal(actual, expected)
 
 
 class TestComputeTaIndicators:
@@ -112,6 +128,52 @@ def _expected_by_timestamp(df: pd.DataFrame) -> pd.DataFrame:
 
 
 class TestFeatureEngineersUseIndicatorSemantics:
+    @pytest.mark.parametrize(
+        ("engineer", "changes"),
+        [
+            (
+                DirectionFeatureEngineer(),
+                (("dvol_change_5", 5), ("dvol_change_15", 15)),
+            ),
+            (QuantileFeatureEngineer(), (("dvol_change", 5),)),
+        ],
+        ids=["DirectionFeatureEngineer", "QuantileFeatureEngineer"],
+    )
+    def test_dvol_gap_drops_unknown_endpoints_and_recovers(
+        self,
+        engineer: DirectionFeatureEngineer | QuantileFeatureEngineer,
+        changes: tuple[tuple[str, int], ...],
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        frame = sample_ohlcv_df.assign(
+            dvol=np.linspace(40.0, 60.0, len(sample_ohlcv_df))
+        )
+        baseline = engineer.transform(frame, include_target=False).set_index(
+            "timestamp"
+        )
+        gap = 80
+        unavailable = frame["timestamp"].take(
+            [gap, *(gap + period for _, period in changes)]
+        )
+        assert unavailable.isin(baseline.index).all()
+
+        with_gap = frame.copy()
+        with_gap.loc[gap, "dvol"] = np.nan
+        actual = engineer.transform(with_gap, include_target=False).set_index(
+            "timestamp"
+        )
+
+        expected = baseline.loc[~baseline.index.isin(unavailable)]
+        pd.testing.assert_frame_equal(actual, expected)
+        for column, period in changes:
+            recovered = gap + period + 1
+            timestamp = frame["timestamp"].iloc[recovered]
+            expected_change = (
+                frame["dvol"].iloc[recovered] / frame["dvol"].iloc[recovered - period]
+                - 1
+            )
+            assert actual.loc[timestamp, column] == pytest.approx(expected_change)
+
     @pytest.mark.parametrize(
         "engineer",
         [

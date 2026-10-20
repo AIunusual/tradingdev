@@ -29,12 +29,18 @@ class TestLightGBMDirectionModel:
 
     def test_predict_proba_columns(self, large_ohlcv_df: pd.DataFrame) -> None:
         feat = self._make_feature_df(large_ohlcv_df)
+        feat.index = pd.Index(range(100, 100 + len(feat)), name="sample")
         config = LightGBMModelConfig(n_estimators=10, max_depth=3)
         model = LightGBMDirectionModel(config=config)
         model.train(feat)
         proba = model.predict_proba(feat)
         assert isinstance(proba, pd.DataFrame)
         assert len(proba) == len(feat)
+        pd.testing.assert_index_equal(proba.index, feat.index)
+        assert list(proba.columns) == sorted(feat["target"].unique())
+        pd.testing.assert_series_equal(
+            model.predict(feat), proba.idxmax(axis=1).astype(float)
+        )
         row_sums = proba.sum(axis=1)
         assert (abs(row_sums - 1.0) < 0.01).all()
 

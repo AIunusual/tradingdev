@@ -98,6 +98,7 @@ class QuantileFeatureEngineer:
 
         Returns:
             DataFrame with original + feature + target columns.
+            DVOL changes remain unknown when either comparison endpoint is missing.
             Rows with NaN features are dropped.
         """
         close = df["close"].astype(float)
@@ -150,7 +151,7 @@ class QuantileFeatureEngineer:
         if "dvol" in df.columns:
             dvol = df["dvol"].astype(float)
             features["dvol_level"] = dvol
-            features["dvol_change"] = dvol.pct_change(5)
+            features["dvol_change"] = dvol.pct_change(5, fill_method=None)
 
         # --- Funding rate features (optional) ---
         if "funding_rate" in df.columns:

@@ -40,7 +40,7 @@ def _get_performance_core_count() -> int:
                 count = int(result.stdout.strip())
                 if count > 0:
                     return count
-        except (OSError, ValueError, subprocess.TimeoutExpired):
+        except OSError, ValueError, subprocess.TimeoutExpired:
             pass
 
     return os.cpu_count() or 4

@@ -260,6 +260,11 @@ ordered dataset features before unpickling.
 CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
 before serialization, avoiding identities driven by those incidental values.
 This does not guarantee identical blobs across dependency versions or environments.
+Pickled wrappers are tied to the training environment, not a portable model
+exchange format. After a Python or ML dependency upgrade, retrain in the new
+environment and use the returned model ID. Schema 1 does not record dependency
+versions or enforce compatibility; a valid blob hash cannot establish that an
+older pickle is loadable in the current environment.
 
 Pickle requires trusted workspace files. Hashing is not authentication or a
 sandbox; a writer able to replace metadata and blob can supply executable code.

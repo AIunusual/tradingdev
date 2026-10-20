@@ -87,7 +87,7 @@ class ModelArtifactStore:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 result.append(ModelArtifact.from_metadata(payload))
-            except (ValueError, json.JSONDecodeError):
+            except ValueError, json.JSONDecodeError:
                 continue
         return result
 

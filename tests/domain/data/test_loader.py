@@ -1,10 +1,13 @@
 """Tests for the data loader."""
 
-from pathlib import Path
-
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from tradingdev.domain.data.loader import DataLoader
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pandas as pd
 
 
 class TestDataLoader:

@@ -106,7 +106,7 @@ class GitRepository:
 
 
 @contextmanager
-def _repository(primary: str = "main") -> Generator[GitRepository, None, None]:
+def _repository(primary: str = "main") -> Generator[GitRepository]:
     with TemporaryDirectory(prefix="tradingdev-git-hook-test-") as temporary:
         root = Path(temporary) / "repository"
         root.mkdir()

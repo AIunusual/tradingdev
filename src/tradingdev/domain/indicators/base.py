@@ -1,9 +1,10 @@
 """Abstract base class for all technical indicators."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class BaseIndicator(ABC):

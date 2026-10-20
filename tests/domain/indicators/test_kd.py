@@ -1,8 +1,11 @@
 """Tests for the KD Stochastic Oscillator indicator."""
 
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from tradingdev.domain.indicators.kd import KDIndicator
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class TestKDIndicator:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import pytest
@@ -350,10 +350,16 @@ def test_cache_sampling_crosses_year_boundary_without_losing_midnight(
 
 
 @pytest.mark.parametrize("earlier_year_cached", [False, True])
+@pytest.mark.parametrize("timestamp_unit", ["ms", "us", "ns"])
 def test_provider_sampling_includes_midnight_at_year_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, earlier_year_cached: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    earlier_year_cached: bool,
+    timestamp_unit: Literal["ms", "us", "ns"],
 ) -> None:
-    timestamps = pd.date_range("2024-12-31 22:57", periods=64, freq="min", tz="UTC")
+    timestamps = pd.date_range(
+        "2024-12-31 22:57", periods=64, freq="min", tz="UTC"
+    ).as_unit(timestamp_unit)
     frame = _frame(timestamps)
     service, config, _ = _service(
         tmp_path,
@@ -392,7 +398,10 @@ def test_provider_sampling_includes_midnight_at_year_end(
     result = service.load_sample(
         {}, config, max_rows=64, output_dir=tmp_path / "sample"
     )
-    pd.testing.assert_frame_equal(result.frame, frame)
+    pd.testing.assert_frame_equal(
+        result.frame.assign(timestamp=result.frame["timestamp"].dt.as_unit("ns")),
+        frame.assign(timestamp=frame["timestamp"].dt.as_unit("ns")),
+    )
 
 
 @pytest.mark.parametrize("cached_year", [2024, 2025])

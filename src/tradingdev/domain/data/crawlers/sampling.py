@@ -2,10 +2,12 @@
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-import httpx
 import pandas as pd
+
+if TYPE_CHECKING:
+    import httpx
 
 SAMPLE_BATCH_ROWS = 1000
 SAMPLE_RESPONSE_BYTES = 4 * 1024 * 1024

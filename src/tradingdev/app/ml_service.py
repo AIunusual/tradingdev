@@ -426,7 +426,7 @@ class MLService:
             )
         try:
             artifact = ModelArtifactStore(self._workspace.models).load(model_id)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             return model_id
         return f"{artifact.model_name} ({artifact.framework})"
 

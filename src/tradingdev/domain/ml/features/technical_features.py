@@ -22,8 +22,13 @@ def compute_volume_features(
     volume: pd.Series,
     windows: list[int],
 ) -> dict[str, pd.Series]:
-    """Compute volume change rate and volume/SMA ratios."""
-    features: dict[str, pd.Series] = {"volume_change": volume.pct_change()}
+    """Compute volume change rate and volume/SMA ratios.
+
+    Volume change remains unknown when either comparison endpoint is missing.
+    """
+    features: dict[str, pd.Series] = {
+        "volume_change": volume.pct_change(fill_method=None)
+    }
     for w in windows:
         features[f"vol_sma_ratio_{w}"] = volume / indicators.sma(volume, w)
     return features

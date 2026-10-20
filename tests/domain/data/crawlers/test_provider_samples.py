@@ -1,9 +1,8 @@
 """Bounded provider sampling with fake CCXT and HTTP transports only."""
 
 import gzip
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
@@ -15,6 +14,9 @@ from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.sampling import stream_sample_json
 from tradingdev.domain.data.crawlers.yahoo_finance import YahooFinanceCrawler
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _START = datetime(2024, 1, 1, tzinfo=UTC)
 _START_MS = int(_START.timestamp() * 1000)

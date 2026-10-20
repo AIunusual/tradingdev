@@ -54,7 +54,7 @@ def _group_is_alive(
         try:
             if os.getpgid(process.pid) == group_id:
                 members[process.pid] = process
-        except (ProcessLookupError, psutil.NoSuchProcess):
+        except ProcessLookupError, psutil.NoSuchProcess:
             continue
     alive = False
     for pid, process in list(members.items()):

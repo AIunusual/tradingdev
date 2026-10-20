@@ -86,6 +86,7 @@ class DirectionFeatureEngineer:
 
         Returns:
             DataFrame with original columns + feature columns + target.
+            DVOL changes remain unknown when either comparison endpoint is missing.
             Rows with NaN features are dropped.
         """
         close = df["close"].astype(float)
@@ -154,7 +155,7 @@ class DirectionFeatureEngineer:
             dvol = df["dvol"].astype(float)
             features["dvol_level"] = dvol
             for w in [5, 15]:
-                features[f"dvol_change_{w}"] = dvol.pct_change(w)
+                features[f"dvol_change_{w}"] = dvol.pct_change(w, fill_method=None)
 
         # --- Time features (cyclical encoding) ---
         if "timestamp" in df.columns:
