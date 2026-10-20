@@ -20,10 +20,12 @@ from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
-from tradingdev.domain.validation.splitter import (
-    DataSplitter,
+from tradingdev.domain.validation.date_windows import (
     WalkForwardSplitError,
+    inclusive_day_window,
 )
+from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
+from tradingdev.domain.validation.splitter import DataSplitter
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
 
@@ -97,7 +99,57 @@ class TestConfigRejectsLeakingDates:
             )
 
 
+@pytest.mark.parametrize(
+    "dates",
+    [
+        {"train_start": "2024-01-01"},
+        _dates(train_end="2024-01-15"),
+        _dates(train_start="2024-01-10", train_end="2024-01-01"),
+        _dates(test_start="2024-01-20", test_end="2024-01-11"),
+    ],
+    ids=["partial", "overlapping", "reversed_train", "reversed_test"],
+)
+def test_purged_dates_do_not_affect_schema_or_fold_geometry(
+    walk_forward_ohlcv_df: pd.DataFrame, dates: dict[str, Any]
+) -> None:
+    config = WalkForwardConfig(
+        purged_split=True, label_horizon=5, embargo_bars=2, n_splits=2, **dates
+    )
+    baseline = PurgedDataSplitter(
+        WalkForwardConfig(
+            purged_split=True, label_horizon=5, embargo_bars=2, n_splits=2
+        )
+    )
+    splitter = PurgedDataSplitter(config)
+    expected = baseline.split_windows(walk_forward_ohlcv_df)
+    assert splitter.split_windows(walk_forward_ohlcv_df) == expected
+    for (train, test), (train_window, test_window) in zip(
+        splitter.split(walk_forward_ohlcv_df), expected, strict=True
+    ):
+        assert train.equals(walk_forward_ohlcv_df.iloc[slice(*train_window)])
+        assert test.equals(walk_forward_ohlcv_df.iloc[slice(*test_window)])
+
+
 class TestExplicitSplitGeometry:
+    def test_offset_dates_select_the_full_utc_calendar_days(
+        self, walk_forward_ohlcv_df: pd.DataFrame
+    ) -> None:
+        config = WalkForwardConfig(
+            train_start="2024-01-02T03:00:00+08:00",
+            train_end="2024-01-03T03:00:00+08:00",
+            test_start="2024-01-04T03:00:00+08:00",
+            test_end="2024-01-05T03:00:00+08:00",
+        )
+        splitter = DataSplitter(config)
+        train, test = splitter.split(walk_forward_ohlcv_df)[0]
+        assert train.equals(walk_forward_ohlcv_df.iloc[:48])
+        assert test.equals(walk_forward_ohlcv_df.iloc[48:96])
+        assert splitter.split_windows(walk_forward_ohlcv_df) == [((0, 48), (48, 96))]
+
+    def test_end_day_without_a_representable_upper_bound_is_rejected(self) -> None:
+        with pytest.raises(WalkForwardSplitError, match="following UTC day"):
+            inclusive_day_window(datetime(9999, 12, 30), datetime(9999, 12, 31))
+
     def test_train_window_covers_the_whole_end_day(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:

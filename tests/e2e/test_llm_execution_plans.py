@@ -44,10 +44,10 @@ _WF_VALIDATION = {
     "label_horizon": 5,
     "embargo_bars": 2,
     "purged_split": True,
-    "train_start": "2024-01-02",
-    "train_end": "2024-01-03",
+    "train_start": "2024-01-06",
+    "train_end": "2024-01-05",
     "test_start": "2024-01-05",
-    "test_end": "2024-01-06",
+    "test_end": "2024-01-03",
     "train_ratio": 0.6,
     "expanding": False,
 }
@@ -296,6 +296,8 @@ def _assert_evidence(
         assert "已試跑的驗證分段：1 / 2" in confirmation
         assert "固定起點、逐次擴大訓練區間" in confirmation
         assert "淨化分段不使用指定日期" in confirmation
+        assert "訓練開始：2024-01-06" in confirmation
+        assert "訓練結束：2024-01-05" in confirmation
         assert "淨化分段不使用此比例" in confirmation
         assert "此欄設定值（否）不使用" in confirmation
         origin = pd.Timestamp("2024-01-01", tz="UTC")

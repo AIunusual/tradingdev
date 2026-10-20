@@ -6,6 +6,7 @@ import argparse
 import json
 import pickle
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -44,9 +45,10 @@ from tradingdev.domain.preflight import (
 )
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
 from tradingdev.domain.validation.report import summarize_results
-from tradingdev.domain.validation.splitter import DataSplitter, inclusive_day_window
+from tradingdev.domain.validation.splitter import DataSplitter
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 from tradingdev.shared.utils.json_values import normalize_json_object
 
@@ -333,8 +335,8 @@ def execute_preflight(
                 frames.append(
                     load(
                         wf_role,
-                        lower.to_pydatetime(),
-                        (upper - pd.Timedelta(microseconds=1)).to_pydatetime(),
+                        lower,
+                        upper - timedelta(microseconds=1),
                         wf_limit,
                     ).frame
                 )

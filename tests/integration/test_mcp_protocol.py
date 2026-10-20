@@ -479,15 +479,42 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         ] == "draft"
 
 
+@pytest.mark.parametrize(
+    ("validation", "fold_count"),
+    [
+        ({"n_splits": 2, "train_ratio": 0.6}, 2),
+        (
+            {
+                "train_start": "2024-01-02T03:00:00+08:00",
+                "train_end": "2024-01-03T03:00:00+08:00",
+                "test_start": "2024-01-04T03:00:00+08:00",
+                "test_end": "2024-01-05T03:00:00+08:00",
+            },
+            1,
+        ),
+        (
+            {
+                "n_splits": 2,
+                "purged_split": True,
+                "label_horizon": 5,
+                "train_start": "2024-01-08",
+            },
+            2,
+        ),
+    ],
+    ids=["automatic", "explicit_offset_dates", "purged_partial_dates"],
+)
 async def test_walk_forward_runs_through_real_worker(
     mcp_workspace: MCPWorkspace,
     sample_ohlcv_with_kd: pd.DataFrame,
+    validation: dict[str, Any],
+    fold_count: int,
 ) -> None:
     mcp_workspace.seed_market(sample_ohlcv_with_kd)
     async with mcp_workspace.connect() as client:
         code, config_text, _ = await save_example(client)
         config = yaml.safe_load(config_text)
-        config["validation"] = {"n_splits": 2, "train_ratio": 0.6}
+        config["validation"] = validation
         await client.call(
             "save_strategy",
             strategy_id=STRATEGY_ID,
@@ -499,25 +526,38 @@ async def test_walk_forward_runs_through_real_worker(
         assert not wrong_mode["success"]
         assert "prepare_walk_forward" in wrong_mode["error"]
         prepared = await client.call("prepare_walk_forward", **PREPARE_ARGUMENTS)
+        assert prepared["success"], prepared
+        if fold_count == 1:
+            confirmation = (
+                Path(prepared["html_path"]).with_name("confirmation.txt").read_text()
+            )
+            assert "訓練開始：2024-01-01 00:00:00 UTC（含）" in confirmation
+            assert "測試結束：2024-01-05 00:00:00 UTC（不含）" in confirmation
         started = await confirm_prepared(client, prepared)
         completed = await client.wait_for_job(started["job_id"])
         assert completed["status"] == "done", completed
         assert completed["default_scope"] == "test_summary"
-        assert set(completed["available_scopes"]) == {
-            "fold/0/train",
-            "fold/0/test",
-            "fold/1/train",
-            "fold/1/test",
-            "test_summary",
+        assert set(completed["available_scopes"]) == {"test_summary"} | {
+            f"fold/{index}/{role}"
+            for index in range(fold_count)
+            for role in ("train", "test")
         }
         summary = await client.call("get_run_metrics", run_id=completed["run_id"])
-        assert summary["metadata"]["n_folds"] == 2
+        assert summary["metadata"]["n_folds"] == fold_count
         assert summary["kind"] == "fold_summary"
-        assert summary["metrics"]["total_pnl"]["valid_count"] == 2
+        assert summary["metrics"]["total_pnl"]["valid_count"] == fold_count
         fold = await client.call(
             "get_run_metrics", run_id=completed["run_id"], scope="fold/0/test"
         )
         assert fold["kind"] == "backtest" and fold["split"] == "test"
         assert isinstance(fold["metrics"]["total_pnl"], float)
+        if fold_count == 1:
+            assert fold["metadata"]["observations"]["bar_count"] == 48
+            assert fold["metadata"]["observations"]["start_date"].startswith(
+                "2024-01-03T00:00:00"
+            )
+            assert fold["metadata"]["observations"]["end_date"].startswith(
+                "2024-01-04T23:00:00"
+            )
         artifacts = await client.call("list_artifacts", run_id=completed["run_id"])
         assert any(item["artifact_type"] == "pipeline_result" for item in artifacts)

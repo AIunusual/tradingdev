@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.strategies.execution import merge_strategy_parameters
+from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
     from tradingdev.domain.execution import ExecutionManifest
@@ -569,20 +571,38 @@ def _validation_section(value: object) -> ConfirmationSection:
         )
     else:
         mode = "使用指定日期的一組訓練／測試區間" if explicit else "依資料筆數自動分段"
-        date_description = "所有日期齊全時才使用指定日期切分；結束日包含當日。"
+        date_description = (
+            "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒；包含起訖 UTC 整日。"
+            if explicit
+            else "未指定日期，由自動分段決定。"
+        )
         ratio_description = (
             "指定日期模式不使用此設定。" if explicit else "每組資料中用於訓練的比例。"
         )
         expanding_description = (
             "指定日期模式不使用此設定。" if explicit else "啟用時保留更早的訓練資料。"
         )
+    date_values = {key: values[key] for key in dates}
+    if explicit:
+        for start_key, end_key in (
+            ("train_start", "train_end"),
+            ("test_start", "test_end"),
+        ):
+            lower, upper = inclusive_day_window(
+                datetime.fromisoformat(str(values[start_key])),
+                datetime.fromisoformat(str(values[end_key])),
+            )
+            date_values[start_key] = f"{lower:%Y-%m-%d %H:%M:%S} UTC（含）"
+            date_values[end_key] = f"{upper:%Y-%m-%d %H:%M:%S} UTC（不含）"
     fields = [
         _field("分段方式", mode),
         *[
             _field(
                 label,
-                values[key],
-                date_description,
+                date_values[key],
+                f"{date_description} 原始設定：{values[key]}。"
+                if explicit
+                else date_description,
                 missing="不使用" if purged else "由自動分段決定",
             )
             for key, label in zip(

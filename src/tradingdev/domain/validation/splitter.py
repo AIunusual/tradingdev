@@ -5,18 +5,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
+
+from tradingdev.domain.validation.date_windows import (
+    WalkForwardSplitError,
+    inclusive_day_window,
+)
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     import numpy.typing as npt
+    import pandas as pd
 
     from tradingdev.domain.backtest.schemas import WalkForwardConfig
-
-
-class WalkForwardSplitError(ValueError):
-    """Raised when explicit walk-forward dates do not describe usable folds."""
 
 
 class DataSplitter:
@@ -200,33 +199,3 @@ class DataSplitter:
             splits.append((train_df, test_df))
 
         return splits
-
-
-def inclusive_day_window(
-    begin: datetime, end: datetime
-) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Half-open UTC range covering every calendar day from ``begin`` to ``end``.
-
-    Boundaries are inclusive UTC days, so the window closes at midnight after
-    ``end``'s day. Truncating to the day (instead of adding 24 hours to
-    ``end``) keeps the window independent of the time of day in the config.
-    """
-    lower = _day_floor(begin)
-    upper = _day_floor(end)
-    if upper < lower:
-        msg = f"Window end {end} precedes its start {begin}"
-        raise WalkForwardSplitError(msg)
-    return lower, upper + pd.Timedelta(days=1)
-
-
-def _day_floor(value: datetime) -> pd.Timestamp:
-    """Midnight UTC of ``value``'s calendar day."""
-    return _to_utc_ts(value).tz_convert("UTC").normalize()
-
-
-def _to_utc_ts(dt: datetime) -> pd.Timestamp:
-    """Convert datetime to UTC-aware pandas Timestamp."""
-    t = pd.Timestamp(dt)
-    if t.tzinfo is None:
-        t = t.tz_localize("UTC")
-    return t

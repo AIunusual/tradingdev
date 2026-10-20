@@ -113,17 +113,69 @@ def test_preflight_zero_trades_does_not_claim_trading_coverage(
 @pytest.mark.parametrize(
     ("purged", "dates", "expected_windows", "total_folds"),
     [
-        (False, False, ((0, 32), (32, 64)), 2),
-        (False, True, ((168, 232), (456, 520)), 1),
-        (True, False, ((0, 36), (43, 86)), 2),
-        (True, True, ((0, 36), (43, 86)), 2),
+        (False, {}, ((0, 32), (32, 64)), 2),
+        (
+            False,
+            {
+                "train_start": "2024-01-08",
+                "train_end": "2024-01-10",
+                "test_start": "2024-01-20",
+                "test_end": "2024-01-22",
+            },
+            ((168, 232), (456, 520)),
+            1,
+        ),
+        (
+            False,
+            {
+                "train_start": "2024-01-02T03:00:00+08:00",
+                "train_end": "2024-01-03T03:00:00+08:00",
+                "test_start": "2024-01-04T03:00:00+08:00",
+                "test_end": "2024-01-05T03:00:00+08:00",
+            },
+            ((0, 48), (48, 96)),
+            1,
+        ),
+        (True, {}, ((0, 36), (43, 86)), 2),
+        (True, {"train_start": "2024-01-08"}, ((0, 36), (43, 86)), 2),
+        (
+            True,
+            {
+                "train_start": "2024-01-08",
+                "train_end": "2024-01-20",
+                "test_start": "2024-01-20",
+                "test_end": "2024-01-22",
+            },
+            ((0, 36), (43, 86)),
+            2,
+        ),
+        (
+            True,
+            {
+                "train_start": "2024-01-10",
+                "train_end": "2024-01-08",
+                "test_start": "2024-01-22",
+                "test_end": "2024-01-20",
+            },
+            ((0, 36), (43, 86)),
+            2,
+        ),
+    ],
+    ids=[
+        "plain_auto",
+        "plain_dates",
+        "plain_offset_dates",
+        "purged_auto",
+        "purged_partial_dates",
+        "purged_overlapping_dates",
+        "purged_reversed_dates",
     ],
 )
 def test_walk_forward_preflight_uses_selected_splitter_on_bounded_sample(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     purged: bool,
-    dates: bool,
+    dates: dict[str, str],
     expected_windows: tuple[tuple[int, int], tuple[int, int]],
     total_folds: int,
 ) -> None:
@@ -134,14 +186,8 @@ def test_walk_forward_preflight_uses_selected_splitter_on_bounded_sample(
         "label_horizon": 5,
         "embargo_bars": 2,
         "purged_split": purged,
+        **dates,
     }
-    if dates:
-        validation.update(
-            train_start="2024-01-08",
-            train_end="2024-01-10",
-            test_start="2024-01-20",
-            test_end="2024-01-22",
-        )
     workspace, request = make_preflight_fixture(
         tmp_path, monkeypatch, kind="walk_forward", validation=validation
     )

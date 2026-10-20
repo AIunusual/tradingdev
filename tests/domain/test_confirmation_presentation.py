@@ -505,6 +505,42 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     assert "已試跑的驗證分段：1 / 1" in text
 
 
+@pytest.mark.parametrize("offset", ["", "+08:00"])
+def test_explicit_validation_displays_effective_utc_bounds_in_text_and_html(
+    offset: str,
+) -> None:
+    first_day = 2 if offset else 1
+    validation = {
+        key: f"2024-01-{day:02d}T03:00:00{offset}"
+        for key, day in zip(
+            ("train_start", "train_end", "test_start", "test_end"),
+            range(first_day, first_day + 4),
+            strict=True,
+        )
+    }
+    document = _document(_manifest("walk_forward", validation=validation))
+    text = render_confirmation_text(document)
+    html = unescape(render_confirmation_html(document))
+    expected = {
+        "訓練開始": "2024-01-01 00:00:00 UTC（含）",
+        "訓練結束": "2024-01-03 00:00:00 UTC（不含）",
+        "測試開始": "2024-01-03 00:00:00 UTC（含）",
+        "測試結束": "2024-01-05 00:00:00 UTC（不含）",
+    }
+    section = next(
+        section for section in document.sections if section.id == "validation"
+    )
+    actual = {field.label: field.value_text for field in section.fields}
+    assert expected.items() <= actual.items()
+    for label, value in expected.items():
+        assert f"{label}：{value}" in text
+        assert value in html
+    for rendered in (text, html):
+        assert "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒" in rendered
+        assert "包含起訖 UTC 整日" in rendered
+        assert f"原始設定：{validation['train_start']}" in rendered
+
+
 @pytest.mark.parametrize("expanding", [False, True])
 def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
     expanding: bool,

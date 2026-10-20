@@ -16,6 +16,7 @@ from pydantic import (
 
 from tradingdev.domain.data.requirements import FeatureSpec, MarketDataSpec
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.validation.date_windows import utc_calendar_day
 from tradingdev.shared.utils.json_values import strict_json_value
 
 
@@ -96,14 +97,17 @@ class WalkForwardConfig(BaseModel):
 
     @model_validator(mode="after")
     def explicit_dates_ordered(self) -> Self:
-        """Require all four explicit dates, ordered and disjoint by UTC day.
+        """Require active explicit dates to be ordered and disjoint by UTC day.
 
         Every boundary is an inclusive UTC calendar day, so a train window
         ending on the day the test window starts shares that day's bars with
         the test set. ``train_end`` and ``test_start`` must therefore name
         different days; reversed or partially specified periods are rejected
-        instead of silently falling back to the automatic split.
+        instead of silently falling back to the automatic split. Purged mode
+        does not use these dates, so their completeness and order are irrelevant.
         """
+        if self.purged_split:
+            return self
         train_start, train_end = self.train_start, self.train_end
         test_start, test_end = self.test_start, self.test_end
         if (
@@ -130,7 +134,7 @@ class WalkForwardConfig(BaseModel):
             )
 
         days = tuple(
-            _utc_calendar_day(value)
+            utc_calendar_day(value)
             for value in (train_start, train_end, test_start, test_end)
         )
         if not (days[0] <= days[1] < days[2] <= days[3]):
@@ -142,17 +146,6 @@ class WalkForwardConfig(BaseModel):
                 "precede the test window's first day"
             )
         return self
-
-
-def _utc_calendar_day(value: dt.datetime) -> dt.date:
-    """Calendar day of ``value`` in UTC, matching the splitter's day boundaries.
-
-    Naive values are read as UTC, the same convention ``DataSplitter`` uses
-    when it localizes them.
-    """
-    if value.tzinfo is None:
-        return value.date()
-    return value.astimezone(dt.UTC).date()
 
 
 class ParallelConfig(BaseModel):
