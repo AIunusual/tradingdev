@@ -16,13 +16,34 @@ from tradingdev.domain.preflight import PreflightReceipt, PreflightRequest
         {},
         {"minimum_history_bars": True},
         {"minimum_history_bars": 0},
+        {"minimum_history_bars": 4097},
         {"minimum_history_bars": 1025},
+        {"minimum_history_bars": 129, "sample_bars": 128},
+        {"minimum_history_bars": 1, "sample_bars": True},
+        {"minimum_history_bars": 1, "sample_bars": "128"},
+        {"minimum_history_bars": 1, "sample_bars": 63},
         {"minimum_history_bars": 1, "sample_bars": 4097},
     ],
 )
 def test_request_requires_explicit_feasible_history(fields: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         PreflightRequest.model_validate({"kind": "backtest", "arguments": {}, **fields})
+
+
+@pytest.mark.parametrize(
+    ("minimum_history_bars", "sample_bars"), [(1, 64), (64, 64), (4096, 4096)]
+)
+def test_request_accepts_inclusive_sample_boundaries(
+    minimum_history_bars: int, sample_bars: int
+) -> None:
+    request = PreflightRequest(
+        kind="backtest",
+        arguments={},
+        minimum_history_bars=minimum_history_bars,
+        sample_bars=sample_bars,
+    )
+    assert request.minimum_history_bars == minimum_history_bars
+    assert request.sample_bars == sample_bars
 
 
 @pytest.mark.parametrize(

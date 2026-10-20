@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.history import (
@@ -22,21 +22,21 @@ from tradingdev.app.contracts.reports import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.report_service import ReportService
     from tradingdev.app.trade_history_service import TradeHistoryService
 
 
 def register(
-    mcp: FastMCP, history: TradeHistoryService, reports: ReportService
+    mcp: MCPServer, history: TradeHistoryService, reports: ReportService
 ) -> None:
     """Keep all clients on the same verified historical data services."""
     read_only = ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 
     @mcp.tool(annotations=read_only)
@@ -195,10 +195,10 @@ def register(
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def generate_report(

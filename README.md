@@ -28,7 +28,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 你需要 macOS（Apple Silicon）或 Linux、Git、
 [uv](https://docs.astral.sh/uv/getting-started/installation/)，
 以及支援本機 MCP（stdio）的 AI 客戶端。專案使用 Python 3.14；
-鎖定的 Numba／llvmlite 不提供 Intel Mac 安裝套件，
+鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
 首次下載與安裝：
@@ -43,6 +43,10 @@ uv sync --locked
 這會建立 `.venv` 並安裝鎖定版本的套件，包含內建策略需要的機器學習依賴；
 首次安裝可能需要較長時間。從 Python 3.12／3.13 升級或明確選擇版本時，
 使用 `uv sync --locked --python 3.14`；舊版 Python 不再支援。
+
+FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBoost 組合
+仍超出 FLAML 上游宣告的支援範圍。使用前請參閱
+[依賴相容性限制](docs/development.md#依賴相容性限制)。
 
 以下終端機命令皆在專案根目錄執行。
 
@@ -442,6 +446,8 @@ uv run --locked tradingdev-mcp \
 
 HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
 執行前的確認仍在一般對話中完成。
+Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
+傳送大型策略程式或設定時，請縮小單次內容。
 
 ## 常見問題
 

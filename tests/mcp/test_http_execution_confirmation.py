@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from sse_starlette.sse import AppStatus
 from tests.mcp.http_harness import http_plan_server
@@ -90,7 +92,7 @@ def test_http_invalid_decision_does_not_consume_or_launch_plan(
             result = await client.session.call_tool(
                 "submit_execution_decision", {"plan_id": prepared["plan_id"], **content}
             )
-            assert result.isError
+            assert result.is_error
             retained = await client.call(
                 "get_execution_plan", plan_id=prepared["plan_id"]
             )
@@ -171,5 +173,62 @@ def test_http_harness_can_restart_within_one_event_loop(
                 assert prepared["success"]
             assert all(watcher.done() for watcher in runtime.shutdown_watchers)
             assert not runtime.root.exists()
+
+    asyncio.run(check())
+
+
+def test_http_request_size_limit_accepts_four_mib_and_rejects_larger_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def check() -> None:
+        async with http_plan_server(monkeypatch) as runtime:
+            host, port = runtime.address
+            url = f"http://{host}:{port}/mcp"
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            }
+            request = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": {"name": "body-limit-test", "version": "1"},
+                    },
+                }
+            ).encode()
+            body = request.ljust(4 * 1024 * 1024, b" ")
+            async with httpx.AsyncClient(timeout=5) as client:
+                accepted = await client.post(url, headers=headers, content=body)
+                assert accepted.status_code == 200, accepted.text
+                session_id = accepted.headers["mcp-session-id"]
+                try:
+                    rejected = await client.post(
+                        url,
+                        headers={
+                            **headers,
+                            "Mcp-Session-Id": session_id,
+                            "MCP-Protocol-Version": "2025-11-25",
+                        },
+                        content=body + b" ",
+                    )
+                    assert rejected.status_code == 413
+                finally:
+                    deleted = await client.delete(
+                        url,
+                        headers={
+                            **headers,
+                            "Mcp-Session-Id": session_id,
+                            "MCP-Protocol-Version": "2025-11-25",
+                        },
+                    )
+                    assert deleted.status_code == 200
+            assert runtime.context.runner.calls == []
+            assert runtime.context.service.jobs.list_all_jobs() == []
+        assert runtime.task.done()
+        assert not runtime.root.exists()
 
     asyncio.run(check())

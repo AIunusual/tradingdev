@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import pickle
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -149,6 +151,7 @@ def test_store_save_and_load_round_trip(tmp_path: Path) -> None:
 
     loaded = store.load(artifact.model_id)
     assert loaded == artifact
+    assert store.load_with_bytes(artifact.model_id) == (artifact, blob)
     assert store.path_for(artifact.model_id).read_bytes() == blob
 
 
@@ -190,3 +193,59 @@ def test_store_list_returns_all_metadata(tmp_path: Path) -> None:
         seen.append(artifact.model_id)
     listed = store.list()
     assert {item.model_id for item in listed} == set(seen)
+
+
+def test_save_rejects_a_forged_identity_before_writing(tmp_path: Path) -> None:
+    blob = _sample_blob({"model": "weights"})
+    artifact = replace(_sample_artifact(content_sha256(blob)), model_id="0" * 16)
+    store = ModelArtifactStore(tmp_path)
+    with pytest.raises(ValueError, match="model_id does not match"):
+        store.save(model_bytes=blob, artifact=artifact)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model_id", "0" * 16),
+        ("model_name", "changed"),
+        ("parameters", {"max_depth": 10}),
+        ("feature_names", ["different"]),
+    ],
+)
+def test_load_and_listing_reject_changed_identity_metadata(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    blob = _sample_blob({"model": "weights"})
+    artifact = _sample_artifact(content_sha256(blob))
+    store = ModelArtifactStore(tmp_path)
+    store.save(model_bytes=blob, artifact=artifact)
+    payload = artifact.to_metadata()
+    payload[field] = value
+    (tmp_path / f"{artifact.model_id}.json").write_text(json.dumps(payload), "utf-8")
+    with pytest.raises(ValueError, match="model_id does not match"):
+        store.load_with_bytes(artifact.model_id)
+    assert store.list() == []
+
+
+def test_load_rejects_metadata_under_a_different_filename(tmp_path: Path) -> None:
+    blob = _sample_blob({"model": "weights"})
+    artifact = _sample_artifact(content_sha256(blob))
+    store = ModelArtifactStore(tmp_path)
+    other_id = "0" * 16
+    (tmp_path / f"{other_id}.json").write_text(
+        json.dumps(artifact.to_metadata()), "utf-8"
+    )
+    store.path_for(other_id).write_bytes(blob)
+    with pytest.raises(ValueError, match="model_id does not match"):
+        store.load(other_id)
+
+
+def test_load_rejects_a_missing_blob_for_published_metadata(tmp_path: Path) -> None:
+    blob = _sample_blob({"model": "weights"})
+    artifact = _sample_artifact(content_sha256(blob))
+    store = ModelArtifactStore(tmp_path)
+    store.save(model_bytes=blob, artifact=artifact)
+    store.path_for(artifact.model_id).unlink()
+    with pytest.raises(FileNotFoundError, match="model blob missing"):
+        store.load_with_bytes(artifact.model_id)

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, create_autospec, patch
 import httpx
 import pytest
 from mcp import ClientSession
-from mcp.types import CallToolResult, ListToolsResult, Tool
+from mcp_types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS
 from tests.e2e.llm_client import (
@@ -71,15 +71,59 @@ def _mock_client(
             Tool(
                 name="list_strategies",
                 description="List strategies.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
             *(extra_tools or []),
         ]
     )
     session.call_tool.return_value = CallToolResult(
-        content=[], structuredContent={"result": []}
+        content=[], structured_content={"result": []}
     )
     return MCPClient(session, "Use MCP tools."), session.call_tool
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+def test_local_model_receives_sdk_wire_aliases_and_compacted_structured_result(
+    is_error: bool,
+) -> None:
+    client, invoke = _mock_client()
+    structured = {"success": not is_error, "rows": 0}
+    invoke.return_value = CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(structured))],
+        structured_content=structured,
+        is_error=is_error,
+        meta={"fixture": "wire"},
+    )
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return _reply([_call()])
+        message = json.loads(request.content)["messages"][-1]
+        assert message["role"] == "tool"
+        assert json.loads(message["content"]) == {
+            "structuredContent": structured,
+            "isError": is_error,
+            "resultType": "complete",
+            "_meta": {"fixture": "wire"},
+        }
+        return _reply()
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Inspect the tool result",
+            model="fixture",
+            base_url="http://fixture/v1",
+            timeout_seconds=5,
+            transport=httpx.MockTransport(respond),
+        )
+    )
+    assert requests == 2
+    assert calls == [ToolCall("list_strategies", {}, structured)]
+    invoke.assert_awaited_once_with("list_strategies", {})
 
 
 def test_local_user_reply_keeps_prior_messages_and_observes_only_completed_turns() -> (
@@ -196,7 +240,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                 }
                 original_payloads = {
                     call_id: (await client.session.call_tool(name, {})).model_dump(
-                        mode="json"
+                        mode="json", by_alias=True
                     )
                     for call_id, name in (
                         ("list", "list_strategies"),
@@ -226,7 +270,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     }
                     assert set(schemas) == set(LIFECYCLE_TOOLS) & advertised.keys()
                     for name, schema in schemas.items():
-                        assert schema["parameters"] == advertised[name].inputSchema
+                        assert schema["parameters"] == advertised[name].input_schema
                     if len(requests) == 1:
                         assert (
                             body["messages"][1]["content"] == "Find a valid strategy."
@@ -503,7 +547,7 @@ def test_progress_reports_usage_and_results_without_source_or_reasoning(
     client, invoke = _mock_client()
     invoke.return_value = CallToolResult(
         content=[],
-        structuredContent={"success": True, "source_code": "PRIVATE_SOURCE"},
+        structured_content={"success": True, "source_code": "PRIVATE_SOURCE"},
     )
     requests = 0
 
@@ -606,7 +650,7 @@ def test_provider_tool_error_receives_feedback_without_replaying_completed_calls
             Tool(
                 name="get_job_status",
                 description="Get job status.",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {"job_id": {"type": "string"}},
                     "required": ["job_id"],
@@ -866,7 +910,7 @@ def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> Non
     client, invoke = _mock_client()
     invoke.return_value = CallToolResult(
         content=[],
-        structuredContent={"success": False, "error": "Storage unavailable"},
+        structured_content={"success": False, "error": "Storage unavailable"},
     )
     requests = 0
     original_error: httpx.ReadTimeout | None = None

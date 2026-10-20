@@ -3,8 +3,9 @@
 The search is driven through a stand-in ``flaml`` module so these tests
 assert the contract the wrapper must honour — which columns reach the
 search, how ``eval_df`` is forwarded, and what ``predict_proba`` looks
-like — without spending a real time budget. Smoke tests at the end run
-FLAML for real, including CatBoost's file output settings.
+like — without spending a real time budget. Real learner tests at the end
+exercise holdout training and prediction, including CatBoost's file output
+settings.
 """
 
 from __future__ import annotations
@@ -483,6 +484,60 @@ def test_real_search_produces_a_usable_model(isolated_search_directory: Path) ->
     predicted = subject.predict(frame)
     assert len(predicted) == len(frame)
     assert set(predicted.unique()) <= {0.0, 1.0}
+
+
+@pytest.mark.parametrize("learner", ["lgbm", "xgboost", "rf", "extra_tree"])
+def test_each_real_learner_trains_with_holdout_and_predicts(
+    isolated_search_directory: Path, learner: str
+) -> None:
+    """A winning alternative cannot hide an incompatible learner."""
+    from lightgbm import LGBMClassifier
+    from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+    from sklearn.utils.validation import check_is_fitted
+    from xgboost import XGBClassifier
+
+    estimator_types = {
+        "lgbm": LGBMClassifier,
+        "xgboost": XGBClassifier,
+        "rf": RandomForestClassifier,
+        "extra_tree": ExtraTreesClassifier,
+    }
+    frame = _real_training_frame()
+    training = frame.iloc[:120].copy()
+    validation = frame.iloc[120:160].copy()
+    prediction_input = frame.iloc[160:].drop(columns=["target"])
+    original_training = training.copy(deep=True)
+    original_validation = validation.copy(deep=True)
+    original_prediction_input = prediction_input.copy(deep=True)
+
+    subject = FLAMLAutoMLDirectionModel(
+        time_budget=3.0,
+        estimator_list=[learner],
+        n_jobs=1,
+        random_seed=42,
+    )
+    subject.train(training, eval_df=validation)
+
+    assert subject.get_parameters()["selected_estimator"] == learner
+    estimator = subject._require_trained().model.estimator
+    assert isinstance(estimator, estimator_types[learner])
+    check_is_fitted(estimator)
+
+    proba = subject.predict_proba(prediction_input)
+    np.testing.assert_array_equal(proba.columns.to_numpy(), [0, 1])
+    pd.testing.assert_index_equal(proba.index, prediction_input.index)
+    probabilities = proba.to_numpy()
+    assert np.isfinite(probabilities).all()
+    assert ((probabilities >= 0.0) & (probabilities <= 1.0)).all()
+    np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, rtol=1e-6)
+
+    predicted = subject.predict(prediction_input)
+    pd.testing.assert_series_equal(predicted, proba.idxmax(axis=1).astype(float))
+    pd.testing.assert_frame_equal(training, original_training)
+    pd.testing.assert_frame_equal(validation, original_validation)
+    pd.testing.assert_frame_equal(prediction_input, original_prediction_input)
+    assert Path.cwd() == isolated_search_directory
+    assert list(isolated_search_directory.iterdir()) == []
 
 
 def test_real_catboost_search_disables_file_output(

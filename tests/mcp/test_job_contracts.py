@@ -1,4 +1,4 @@
-"""Job contract regressions at the FastMCP boundary."""
+"""Job contract regressions at the MCPServer boundary."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.execution_submission import PreparedExecution
@@ -34,7 +35,7 @@ def job_service(tmp_path: Path) -> Iterator[JobService]:
 def test_job_output_rejects_unknown_fields_and_invalid_state(
     job_service: JobService, monkeypatch: pytest.MonkeyPatch, corruption: str
 ) -> None:
-    server = FastMCP("contract-test")
+    server = MCPServer("contract-test")
     jobs.register(server, job_service)
     # A service regression must fail at the boundary, not silently publish an
     # arbitrary object or discard an internal field the client should not see.
@@ -110,11 +111,12 @@ def test_job_lifecycle_payloads_satisfy_advertised_contract(
         )
         store.update_job("job", result_path=str(result_path))
     monkeypatch.setattr(job_service, "_is_process_alive", lambda _: True)
-    server = FastMCP("contract-test")
+    server = MCPServer("contract-test")
     jobs.register(server, job_service)
     result = asyncio.run(server.call_tool("get_job_status", {"job_id": "job"}))
-    assert isinstance(result, tuple)
-    payload: Any = result[1]["result"]
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    payload: Any = result.structured_content["result"]
     assert payload["status"] == state
     assert payload["manifest_hash"] is None
     if state == "done":
@@ -137,11 +139,12 @@ def test_cancel_contract_does_not_claim_success_when_identity_missing(
         config_path="missing.yaml",
     )
     store.update_job("job", status="running_backtest", pid=12345)
-    server = FastMCP("contract-test")
+    server = MCPServer("contract-test")
     jobs.register(server, job_service)
     result = asyncio.run(server.call_tool("cancel_job", {"job_id": "job"}))
-    assert isinstance(result, tuple)
-    payload = result[1]["result"]
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    payload = result.structured_content["result"]
     assert not payload["success"]
     assert payload["code"] == "worker_identity_unavailable"
     assert "process_terminated" not in payload
@@ -150,7 +153,7 @@ def test_cancel_contract_does_not_claim_success_when_identity_missing(
 
 
 def test_old_confirmation_tool_is_no_longer_registered(job_service: JobService) -> None:
-    server = FastMCP("retired-confirmation")
+    server = MCPServer("retired-confirmation")
     jobs.register(server, job_service)
     with pytest.raises(ToolError, match="Unknown tool"):
         asyncio.run(server.call_tool("confirm_optimization", {"job_id": "legacy"}))

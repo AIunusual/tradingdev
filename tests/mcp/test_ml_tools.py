@@ -1,4 +1,4 @@
-"""ML tool contracts through in-process MCP dispatch with FastMCP."""
+"""ML tool contracts through in-process MCP dispatch with MCPServer."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import numpy as np
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import MlContractResponse, SignalEvaluationResponse
@@ -20,12 +21,13 @@ _PERFECT = np.linspace(-1.0, 1.0, 120).tolist()
 
 
 def _dispatch(
-    mcp: FastMCP, name: str, arguments: dict[str, object]
+    mcp: MCPServer, name: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -35,7 +37,7 @@ def _dispatch(
 
 
 def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-contract-test")
+    mcp = MCPServer("ml-contract-test")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
     names = {fs.name for fs in contract.feature_sets}
@@ -57,7 +59,7 @@ def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None
 
 
 def test_evaluate_signal_runs_the_signal_suite(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-eval-test")
+    mcp = MCPServer("ml-eval-test")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     forward = [s * 0.01 for s in _PERFECT]
     response = SignalEvaluationResponse.model_validate(
@@ -81,7 +83,7 @@ def test_evaluate_signal_runs_the_signal_suite(tmp_path: Path) -> None:
 
 
 def test_evaluate_signal_rejects_length_mismatch(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-eval-err")
+    mcp = MCPServer("ml-eval-err")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     payload = _dispatch(
         mcp,
@@ -93,7 +95,7 @@ def test_evaluate_signal_rejects_length_mismatch(tmp_path: Path) -> None:
 
 
 def test_evaluate_signal_rejects_too_few_observations(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-eval-short")
+    mcp = MCPServer("ml-eval-short")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     payload = _dispatch(
         mcp,
@@ -109,7 +111,7 @@ def test_evaluate_signal_rejects_too_few_observations(tmp_path: Path) -> None:
 
 
 def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-side-effects")
+    mcp = MCPServer("ml-side-effects")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     entries = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
     writers = {"build_dataset", "build_panel", "train_model", "evaluate_signal"}
@@ -118,7 +120,7 @@ def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) 
     for name, tool in entries.items():
         annotations = tool.annotations
         assert annotations is not None
-        assert annotations.readOnlyHint is (name in readers)
-        assert annotations.destructiveHint is (name in writers)
-        assert annotations.idempotentHint is True
-        assert annotations.openWorldHint is False
+        assert annotations.read_only_hint is (name in readers)
+        assert annotations.destructive_hint is (name in writers)
+        assert annotations.idempotent_hint is True
+        assert annotations.open_world_hint is False

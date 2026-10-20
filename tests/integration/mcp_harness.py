@@ -9,7 +9,6 @@ import sqlite3
 import sys
 from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any
@@ -19,7 +18,7 @@ import psutil
 from jsonschema import validate
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.types import ElicitResult, PaginatedRequestParams
+from mcp_types import ElicitResult, PaginatedRequestParams
 
 from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
@@ -31,9 +30,8 @@ if TYPE_CHECKING:
     from typing import Literal
 
     import pandas as pd
-    from mcp.client.session import ElicitationFnT
-    from mcp.shared.context import RequestContext
-    from mcp.types import ElicitRequestParams
+    from mcp.client.session import ClientRequestContext, ElicitationFnT
+    from mcp_types import ElicitRequestParams
 
 
 @dataclass
@@ -46,7 +44,7 @@ class SimulatedUserApproval:
 
     async def __call__(
         self,
-        context: RequestContext[ClientSession, Any],
+        context: ClientRequestContext,
         params: ElicitRequestParams,
     ) -> ElicitResult:
         return await self.respond(params)
@@ -68,9 +66,9 @@ class MCPClient:
 
     async def call(self, name: str, **arguments: Any) -> Any:
         result = await self.session.call_tool(name, arguments)
-        assert not result.isError, result.model_dump(mode="json")
-        assert result.structuredContent is not None, result
-        payload = result.structuredContent
+        assert not result.is_error, result.model_dump(mode="json", by_alias=True)
+        assert result.structured_content is not None, result
+        payload = result.structured_content
         assert name in self.output_schemas, f"No advertised outputSchema for {name}"
         validate(instance=payload, schema=self.output_schemas[name])
         return payload["result"] if set(payload) == {"result"} else payload
@@ -146,36 +144,38 @@ class MCPWorkspace:
         log_path = self.root / "server.log"
         try:
             with log_path.open("a", encoding="utf-8") as errlog:
-                async with stdio_client(params, errlog=errlog) as (read, write):
-                    async with ClientSession(
+                async with (
+                    stdio_client(params, errlog=errlog) as (read, write),
+                    ClientSession(
                         read,
                         write,
-                        read_timeout_seconds=timedelta(seconds=100),
+                        read_timeout_seconds=100.0,
                         elicitation_callback=elicitation_callback,
-                    ) as session:
-                        initialized = await session.initialize()
-                        assert initialized.serverInfo.name == "tradingdev"
-                        assert "save_strategy" in (initialized.instructions or "")
-                        try:
-                            output_schemas: dict[str, dict[str, Any]] = {}
-                            cursor = None
-                            while True:
-                                listed = await session.list_tools(
-                                    params=PaginatedRequestParams(cursor=cursor)
-                                )
-                                for tool in listed.tools:
-                                    assert tool.outputSchema is not None, tool.name
-                                    output_schemas[tool.name] = tool.outputSchema
-                                cursor = listed.nextCursor
-                                if cursor is None:
-                                    break
-                            yield MCPClient(
-                                session,
-                                initialized.instructions or "",
-                                output_schemas,
+                    ) as session,
+                ):
+                    initialized = await session.initialize()
+                    assert initialized.server_info.name == "tradingdev"
+                    assert "save_strategy" in (initialized.instructions or "")
+                    try:
+                        output_schemas: dict[str, dict[str, Any]] = {}
+                        cursor = None
+                        while True:
+                            listed = await session.list_tools(
+                                params=PaginatedRequestParams(cursor=cursor)
                             )
-                        finally:
-                            self.stop_workers()
+                            for tool in listed.tools:
+                                assert tool.output_schema is not None, tool.name
+                                output_schemas[tool.name] = tool.output_schema
+                            cursor = listed.next_cursor
+                            if cursor is None:
+                                break
+                        yield MCPClient(
+                            session,
+                            initialized.instructions or "",
+                            output_schemas,
+                        )
+                    finally:
+                        self.stop_workers()
         except BaseException:
             # Capture the failure log before successful workspace cleanup.
             print(log_path.read_text(encoding="utf-8"))

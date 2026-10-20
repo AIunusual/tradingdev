@@ -7,7 +7,6 @@ import shutil
 import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING
@@ -42,19 +41,19 @@ class HTTPPlanServer:
     async def connect(self) -> AsyncIterator[MCPClient]:
         host, port = self.address
         async with (
-            streamable_http_client(f"http://{host}:{port}/mcp") as (read, write, _),
+            streamable_http_client(f"http://{host}:{port}/mcp") as (read, write),
             ClientSession(
                 read,
                 write,
-                read_timeout_seconds=timedelta(seconds=5),
+                read_timeout_seconds=5.0,
             ) as session,
         ):
             await session.initialize()
             tools = (await session.list_tools()).tools
             schemas = {
-                tool.name: tool.outputSchema
+                tool.name: tool.output_schema
                 for tool in tools
-                if tool.outputSchema is not None
+                if tool.output_schema is not None
             }
             yield MCPClient(session, output_schemas=schemas)
 
@@ -96,7 +95,10 @@ async def http_plan_server(
             address = listener.getsockname()
             server = uvicorn.Server(
                 uvicorn.Config(
-                    mcp.streamable_http_app(),
+                    mcp.streamable_http_app(
+                        json_response=False,
+                        transport_security=server_module.HTTP_TRANSPORT_SECURITY,
+                    ),
                     log_level="error",
                     lifespan="on",
                     timeout_graceful_shutdown=2,

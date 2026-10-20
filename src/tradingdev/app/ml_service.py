@@ -70,7 +70,6 @@ from tradingdev.domain.ml.registry import (
     FeatureCacheStore,
     LeaderboardStore,
     ModelArtifactStore,
-    load_model_bytes,
 )
 from tradingdev.domain.ml.validation import (
     get_validation_scheme,
@@ -769,7 +768,7 @@ class MLService:
         if not store.exists(model_id):
             raise ValueError(f"unknown model_id: {model_id}")
         try:
-            artifact = store.load(model_id)
+            artifact, model_bytes = store.load_with_bytes(model_id)
         except FileNotFoundError as exc:
             raise ValueError(f"model blob missing for id: {model_id}") from exc
 
@@ -781,7 +780,7 @@ class MLService:
                 f"{list(expected)}"
             )
 
-        model = pickle.loads(load_model_bytes(store.path_for(model_id)))
+        model = pickle.loads(model_bytes)
         signal = model.predict(frame).to_numpy(dtype=float).tolist()
         realized = frame["forward_return"].to_numpy(dtype=float).tolist()
         return {

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, create_autospec
 import httpx
 import pytest
 from mcp import ClientSession
-from mcp.types import CallToolResult, ListToolsResult, Tool
+from mcp_types import CallToolResult, ListToolsResult, Tool
 
 from tests.e2e.llm_client import ToolCall, run_local_model
 from tests.integration.mcp_harness import MCPClient
@@ -21,12 +21,12 @@ def ml_client() -> tuple[MCPClient, AsyncMock]:
     session = create_autospec(ClientSession, instance=True)
     session.list_tools.return_value = ListToolsResult(
         tools=[
-            Tool(name=name, inputSchema={"type": "object", "properties": {}})
+            Tool(name=name, input_schema={"type": "object", "properties": {}})
             for name in ("list_strategies", "get_ml_contract")
         ]
     )
     session.call_tool.return_value = CallToolResult(
-        content=[], structuredContent={"result": []}
+        content=[], structured_content={"result": []}
     )
     return MCPClient(session, "Use MCP tools."), session.call_tool
 

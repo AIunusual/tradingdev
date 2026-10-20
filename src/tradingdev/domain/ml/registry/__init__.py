@@ -12,7 +12,6 @@ from tradingdev.domain.ml.registry.model_registry import (
     compute_model_id,
     content_sha256,
     feature_importance_from_gain,
-    load_model_bytes,
 )
 
 __all__ = [
@@ -24,6 +23,5 @@ __all__ = [
     "compute_model_id",
     "content_sha256",
     "feature_importance_from_gain",
-    "load_model_bytes",
     "save_model_artifact",
 ]

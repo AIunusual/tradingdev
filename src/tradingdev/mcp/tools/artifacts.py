@@ -4,26 +4,26 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.research import ArtifactRecord, ArtifactResponse
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.artifact_service import ArtifactService
 
 
-def register(mcp: FastMCP, service: ArtifactService) -> None:
+def register(mcp: MCPServer, service: ArtifactService) -> None:
     """Register artifact tools."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def list_artifacts(run_id: str | None = None) -> list[ArtifactRecord]:
@@ -34,10 +34,10 @@ def register(mcp: FastMCP, service: ArtifactService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_artifact(

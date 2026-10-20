@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 from pydantic import TypeAdapter
 
 from tradingdev.app.contracts.jobs import (
@@ -16,20 +16,20 @@ from tradingdev.app.contracts.jobs import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.job_service import JobService
 
 
-def register(mcp: FastMCP, service: JobService) -> None:
+def register(mcp: MCPServer, service: JobService) -> None:
     """Register job tools."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_job_status(job_id: str) -> JobStatus | JobNotFound:
@@ -45,10 +45,10 @@ def register(mcp: FastMCP, service: JobService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def list_jobs() -> list[JobSummary]:
@@ -57,10 +57,10 @@ def register(mcp: FastMCP, service: JobService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def cancel_job(job_id: str) -> JobCancelled | JobActionFailed:

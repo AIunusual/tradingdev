@@ -6,8 +6,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
-from mcp.types import ToolAnnotations
-from pydantic import JsonValue  # noqa: TC002
+from mcp_types import ToolAnnotations
+from pydantic import JsonValue, ValidationError  # noqa: TC002
 
 from tradingdev.app.contracts.plans import (
     ExecutionDecision,  # noqa: TC001
@@ -15,29 +15,48 @@ from tradingdev.app.contracts.plans import (
     PlanResponse,  # noqa: TC001
     PlanStarted,  # noqa: TC001
 )
-from tradingdev.domain.preflight import PreflightRequest
+from tradingdev.domain.preflight import (
+    MinimumHistoryBars,  # noqa: TC001 — SDK resolves tool annotations.
+    PreflightRequest,
+    SampleBars,  # noqa: TC001 — SDK resolves tool annotations.
+)
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,  # noqa: TC001
 )
 from tradingdev.mcp.schemas import BacktestInput, OptimizationInput
+from tradingdev.mcp.tools.input_errors import invalid_arguments
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.execution_plan_service import ExecutionPlanService
+    from tradingdev.domain.execution import ExecutionKind
 
 
-def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
+def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     prepare_annotations = ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=True,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
     )
 
     async def prepare(
-        request: PreflightRequest, presentation: ConfirmationPresentation
+        kind: ExecutionKind,
+        arguments: BacktestInput | OptimizationInput,
+        minimum_history_bars: int,
+        sample_bars: int,
+        presentation: ConfirmationPresentation,
     ) -> PlanResponse | PlanRejected:
+        try:
+            request = PreflightRequest(
+                kind=kind,
+                arguments=arguments.model_dump(mode="json"),
+                minimum_history_bars=minimum_history_bars,
+                sample_bars=sample_bars,
+            )
+        except ValidationError as exc:
+            raise invalid_arguments(exc) from exc
         return await anyio.to_thread.run_sync(
             partial(service.prepare, request, presentation)
         )
@@ -50,11 +69,11 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare a frozen plan after a bounded market-data/engine trial; no full job.
 
@@ -89,12 +108,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="backtest",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "backtest",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
@@ -106,11 +123,11 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare walk-forward confirmation after a bounded representative fold.
 
@@ -135,12 +152,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="walk_forward",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "walk_forward",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
@@ -156,11 +171,11 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
         test_start: str,
         test_end: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: int,
+        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: int = 1024,
+        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
         """Prepare a pinned search after checking the grid and trialing one candidate.
 
@@ -190,21 +205,19 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
             backtest_overrides=backtest_overrides,
         )
         return await prepare(
-            PreflightRequest(
-                kind="optimization",
-                arguments=args.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
-            ),
+            "optimization",
+            args,
+            minimum_history_bars,
+            sample_bars,
             presentation,
         )
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
@@ -213,10 +226,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def cancel_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
@@ -225,10 +238,10 @@ def register(mcp: FastMCP, service: ExecutionPlanService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=True,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=True,
         )
     )
     async def submit_execution_decision(

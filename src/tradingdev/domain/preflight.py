@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 # Pydantic resolves both annotations when validating the wire schema.
 from tradingdev.domain.execution import ExecutionKind, ExecutionManifest  # noqa: TC001
+
+type MinimumHistoryBars = Annotated[int, Field(ge=1, le=4096)]
+type SampleBars = Annotated[int, Field(ge=64, le=4096)]
 
 type PreflightCheck = Literal[
     "configuration",
@@ -31,13 +34,13 @@ class PreflightRequest(PreflightModel):
 
     kind: ExecutionKind
     arguments: dict[str, JsonValue]
-    minimum_history_bars: int = Field(ge=1, le=4096)
-    sample_bars: int = Field(default=1024, ge=64, le=4096)
+    minimum_history_bars: MinimumHistoryBars
+    sample_bars: SampleBars = 1024
 
     @model_validator(mode="after")
     def sufficient_budget(self) -> Self:
         if self.minimum_history_bars > self.sample_bars:
-            raise ValueError("minimum_history_bars exceeds the total sample budget")
+            raise ValueError("minimum_history_bars must not exceed sample_bars")
         return self
 
 
@@ -55,9 +58,9 @@ class PreflightReceipt(PreflightModel):
 
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     elapsed_seconds: float = Field(ge=0)
-    sample_bars_requested: int = Field(ge=64, le=4096)
+    sample_bars_requested: SampleBars
     sample_bars_used: int = Field(ge=1, le=4096)
-    minimum_history_bars: int = Field(ge=1, le=4096)
+    minimum_history_bars: MinimumHistoryBars
     data_origin: Literal["market_data"] = "market_data"
     data_source: str
     windows: list[PreflightWindow]

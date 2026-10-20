@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 import yaml
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 from pydantic import ValidationError
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -30,20 +31,21 @@ if TYPE_CHECKING:
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "tradingdev"
 
 
-def _server(tmp_path: Path) -> tuple[FastMCP, StrategyService]:
+def _server(tmp_path: Path) -> tuple[MCPServer, StrategyService]:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
-    server = FastMCP("strategy-contract-test")
+    server = MCPServer("strategy-contract-test")
     register(server, service, _PACKAGE_ROOT)
     return server, service
 
 
 def _call(
-    server: FastMCP, name: str, arguments: dict[str, object]
+    server: MCPServer, name: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     result = asyncio.run(server.call_tool(name, arguments))
-    assert isinstance(result, tuple)
-    assert isinstance(result[1], dict)
-    payload = result[1]["result"]
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    assert isinstance(result.structured_content, dict)
+    payload = result.structured_content["result"]
     assert isinstance(payload, dict)
     return payload
 
@@ -62,8 +64,9 @@ def test_contract_advertises_seed_location_and_strict_config_schema(
 ) -> None:
     server, _service = _server(tmp_path)
     result = asyncio.run(server.call_tool("get_strategy_contract", {}))
-    assert isinstance(result, tuple)
-    contract = result[1]
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    contract = result.structured_content
     schema = contract["config_schema"]
     assert schema["additionalProperties"] is False
     assert "random_seed" in schema["properties"]
@@ -140,8 +143,9 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
             )
             assert saved["success"] is True
             listed = asyncio.run(server.call_tool("list_strategies", {}))
-            assert isinstance(listed, tuple)
-            entries = listed[1]["result"]
+            assert isinstance(listed, CallToolResult)
+            assert listed.structured_content is not None
+            entries = listed.structured_content["result"]
             assert isinstance(entries, list)
             assert any(item["kind"] == "bundled" for item in entries)
             draft = next(
@@ -290,12 +294,12 @@ def test_strategy_tool_annotations_describe_actual_effects(tmp_path: Path) -> No
         annotations = tools[name].annotations
         assert annotations is not None
         assert (
-            annotations.readOnlyHint,
-            annotations.destructiveHint,
-            annotations.idempotentHint,
-            annotations.openWorldHint,
+            annotations.read_only_hint,
+            annotations.destructive_hint,
+            annotations.idempotent_hint,
+            annotations.open_world_hint,
         ) == flags
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is not None
         assert schema.get("type") == "object"
         definitions = schema.get("$defs", {})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.research import (
@@ -17,20 +17,20 @@ from tradingdev.app.contracts.research import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.run_service import RunService
 
 
-def register(mcp: FastMCP, service: RunService) -> None:
+def register(mcp: MCPServer, service: RunService) -> None:
     """Register run tools."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def list_runs() -> list[RunRecord]:
@@ -39,10 +39,10 @@ def register(mcp: FastMCP, service: RunService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_run(run_id: str) -> RunResponse | ErrorResponse:
@@ -54,10 +54,10 @@ def register(mcp: FastMCP, service: RunService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def compare_runs(
@@ -80,10 +80,10 @@ def register(mcp: FastMCP, service: RunService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_metric_catalog(
@@ -101,10 +101,10 @@ def register(mcp: FastMCP, service: RunService) -> None:
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_run_metrics(

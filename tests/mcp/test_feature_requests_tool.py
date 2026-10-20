@@ -1,11 +1,12 @@
-"""Feature request MCP tool tests using in-process FastMCP dispatch."""
+"""Feature request MCP tool tests using in-process MCPServer dispatch."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.research import RecordFeatureRequestResponse
@@ -20,7 +21,7 @@ def test_record_feature_request_returns_success(tmp_path: Path) -> None:
     service = FeatureRequestService(
         workspace=WorkspacePaths(tmp_path / "workspace"),
     )
-    mcp = FastMCP("feature-request-test")
+    mcp = MCPServer("feature-request-test")
     feature_requests.register(mcp, service)
 
     async def check() -> None:
@@ -32,12 +33,15 @@ def test_record_feature_request_returns_success(tmp_path: Path) -> None:
                 "source_tool": "start_live_trading",
             },
         )
-        assert isinstance(result, tuple)
-        response = RecordFeatureRequestResponse.model_validate(result[1])
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        response = RecordFeatureRequestResponse.model_validate(
+            result.structured_content
+        )
         assert response.success is True
         assert response.feature_request.success is True
         assert response.feature_request.request_id
-        assert "unsupported" not in result[1]
+        assert "unsupported" not in result.structured_content
 
     asyncio.run(check())
     metadata = service.list_requests()[0]["metadata"]

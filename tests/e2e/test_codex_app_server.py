@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
 from jsonschema import ValidationError
-from mcp.types import ElicitResult
+from mcp_types import ElicitResult
 
 from tests.e2e.codex_app_server import CodexAppServer
 
 if TYPE_CHECKING:
-    from mcp.types import ElicitRequestParams
+    from mcp_types import ElicitRequestParams
 
     from tests.e2e.codex_app_server import ElicitationCallback
 
@@ -379,7 +379,9 @@ def test_form_preserves_callback_decision_and_request(
 
         async def callback(form: ElicitRequestParams) -> ElicitResult:
             forms.append(form)
-            return ElicitResult(action=action, content=content)
+            return ElicitResult(
+                action=action, content=content, meta={"fixture": "decision"}
+            )
 
         request = _form()
         peer = _Peer([request, _completed()], early_events=early_events)
@@ -388,11 +390,13 @@ def test_form_preserves_callback_decision_and_request(
         )
         assert len(forms) == 1
         assert forms[0].message == _MESSAGE
-        assert forms[0].model_dump()["requestedSchema"] == _SCHEMA
+        assert forms[0].model_dump(by_alias=True)["requestedSchema"] == _SCHEMA
         reply = peer.sent[-1]
         assert reply["id"] == request["id"]
         assert reply["result"]["action"] == action
         assert reply["result"]["content"] == content
+        assert reply["result"]["_meta"] == {"fixture": "decision"}
+        assert "meta" not in reply["result"]
         assert "error" not in reply
 
     asyncio.run(run())

@@ -41,6 +41,21 @@ uv sync --locked --all-extras --python 3.14
 原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
 直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
 
+### 依賴相容性限制
+
+FLAML 2.7 的安裝 metadata 接受 Python `>=3.10`，但
+[上游 README](https://github.com/microsoft/FLAML/blob/v2.7.0/README.md)
+宣告的範圍仍為 `>=3.10,<3.14`；
+[AutoML extra](https://github.com/microsoft/FLAML/blob/v2.7.0/pyproject.toml)
+另限制 XGBoost `<3.0.0`。本專案安裝 FLAML 基礎套件並明列所需的模型依賴，
+採 Python 3.14 與 XGBoost 3；可成功解析依賴不代表此組合獲得上游完整支援。
+
+專案離線測試逐一強制使用 LightGBM、XGBoost、Random Forest 與 Extra Trees，
+驗證真實訓練、holdout、預測及機率，另驗證 CatBoost 搜尋與檔案清理。
+這些測試涵蓋本專案使用的分類流程，不代表所有 FLAML 功能、平台或模型皆相容。
+更新此組合時須保留各 learner 的獨立驗證，避免單次搜尋由其他 learner 成功而
+掩蓋相容性問題；實際版本以 `pyproject.toml` 與 `uv.lock` 為準。
+
 ## 更新文件
 
 文件分工與審查判準見 [AGENTS.md 的政策與溝通](../AGENTS.md#政策與溝通)。

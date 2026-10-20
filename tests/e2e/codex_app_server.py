@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import validate
-from mcp.types import ElicitRequestFormParams, ElicitRequestParams, ElicitResult
+from mcp_types import ElicitRequestFormParams, ElicitRequestParams, ElicitResult
 
 if TYPE_CHECKING:
     import asyncio
@@ -163,11 +163,14 @@ class CodexAppServer:
             )
             answer = await self.elicitation_callback(form)
             if answer.action == "accept":
-                validate(answer.content, form.requestedSchema)
+                validate(answer.content, form.requested_schema)
             else:
                 assert answer.content is None, "Declined/cancelled form has content"
             await self.send(
-                {"id": request_id, "result": answer.model_dump(mode="json")}
+                {
+                    "id": request_id,
+                    "result": answer.model_dump(mode="json", by_alias=True),
+                }
             )
         except Exception:
             await self.send(
