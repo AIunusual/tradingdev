@@ -96,7 +96,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "get_artifact",
         } <= tools.keys()
         assert {"strategy_id", "code", "yaml_config"} <= set(
-            tools["save_strategy"].inputSchema["required"]
+            tools["save_strategy"].input_schema["required"]
         )
         assert all(
             item["kind"] == "bundled" for item in await client.call("list_strategies")
@@ -473,7 +473,7 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         malformed = await client.session.call_tool(
             "save_strategy", {"strategy_id": STRATEGY_ID}
         )
-        assert malformed.isError
+        assert malformed.is_error
         assert (await client.call("get_strategy", strategy_id=STRATEGY_ID))["metadata"][
             "status"
         ] == "draft"

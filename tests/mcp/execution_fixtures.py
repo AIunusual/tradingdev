@@ -20,7 +20,7 @@ from tradingdev.domain.preflight import (
     PreflightRequest,
     PreflightWindow,
 )
-from tradingdev.mcp.strict_server import StrictFastMCP
+from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import execution
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class FixedPreflight(PreflightService):
 
 @dataclass
 class PlanContext:
-    server: StrictFastMCP
+    server: StrictMCPServer
     service: ExecutionPlanService
     runner: RecordingRunner
     preflight: FixedPreflight
@@ -109,7 +109,7 @@ def plan_context(root: Path) -> PlanContext:
         process_runner=runner,
         preflight=preflight,
     )
-    server = StrictFastMCP("plan-contracts")
+    server = StrictMCPServer("plan-contracts")
     execution.register(server, service)
     return PlanContext(
         server,

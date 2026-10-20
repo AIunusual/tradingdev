@@ -258,7 +258,7 @@ async def run_local_model(
                     "function": {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "parameters": tool.inputSchema,
+                        "parameters": tool.input_schema,
                     },
                 }
                 for tool in (await client.session.list_tools()).tools
@@ -405,10 +405,10 @@ async def run_local_model(
                     _progress(f"{stage}: started")
                     started = time.monotonic()
                     result = await client.session.call_tool(name, arguments)
-                    payload = result.model_dump(mode="json")
+                    payload = result.model_dump(mode="json", by_alias=True)
                     call = ToolCall(name, arguments, tool_payload(payload))
                     calls.append(call)
-                    summary = f"{_tool_summary(call)}; mcp_error={result.isError}"
+                    summary = f"{_tool_summary(call)}; mcp_error={result.is_error}"
                     recent_results.append(summary)
                     _progress(
                         f"{stage}: finished in {time.monotonic() - started:.2f}s; "

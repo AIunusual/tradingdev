@@ -1,4 +1,4 @@
-"""build_panel through in-process MCP dispatch with FastMCP."""
+"""build_panel through in-process MCP dispatch with MCPServer."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import BuildPanelResponse, MlContractResponse
@@ -47,12 +48,13 @@ def _write_bars(
 
 
 def _dispatch(
-    mcp: FastMCP, name: str, arguments: dict[str, object]
+    mcp: MCPServer, name: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -84,7 +86,7 @@ def _arguments(**overrides: object) -> dict[str, object]:
 
 
 def test_build_panel_returns_a_typed_contract(service: MLService) -> None:
-    mcp = FastMCP("ml-panel-test")
+    mcp = MCPServer("ml-panel-test")
     ml.register(mcp, service)
     response = BuildPanelResponse.model_validate(
         _dispatch(mcp, "build_panel", _arguments())
@@ -97,7 +99,7 @@ def test_build_panel_returns_a_typed_contract(service: MLService) -> None:
 
 
 def test_build_panel_reports_the_forward_fill_audit(service: MLService) -> None:
-    mcp = FastMCP("ml-panel-ffill-test")
+    mcp = MCPServer("ml-panel-ffill-test")
     ml.register(mcp, service)
     response = BuildPanelResponse.model_validate(
         _dispatch(
@@ -112,7 +114,7 @@ def test_build_panel_reports_the_forward_fill_audit(service: MLService) -> None:
 
 
 def test_build_panel_rejects_a_gap_under_the_error_policy(service: MLService) -> None:
-    mcp = FastMCP("ml-panel-error-test")
+    mcp = MCPServer("ml-panel-error-test")
     ml.register(mcp, service)
     response = _dispatch(
         mcp, "build_panel", _arguments(calendar_mode="union", missing_policy="error")
@@ -124,7 +126,7 @@ def test_build_panel_rejects_a_gap_under_the_error_policy(service: MLService) ->
 
 
 def test_build_panel_rejects_a_single_symbol(service: MLService) -> None:
-    mcp = FastMCP("ml-panel-single-test")
+    mcp = MCPServer("ml-panel-single-test")
     ml.register(mcp, service)
     response = _dispatch(mcp, "build_panel", _arguments(symbols=["BTC/USDT"]))
     assert response["success"] is False
@@ -133,7 +135,7 @@ def test_build_panel_rejects_a_single_symbol(service: MLService) -> None:
 
 
 def test_contract_enumerates_the_calendar_options(tmp_path: Path) -> None:
-    mcp = FastMCP("ml-contract-calendar-test")
+    mcp = MCPServer("ml-contract-calendar-test")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
     assert contract.calendar_modes == ["intersection", "union"]

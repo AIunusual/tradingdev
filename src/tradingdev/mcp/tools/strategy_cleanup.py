@@ -4,29 +4,29 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
-# FastMCP resolves return types at runtime when registering its output schema.
+# MCPServer resolves return types at runtime when registering its output schema.
 from tradingdev.app.contracts.common import ErrorResponse  # noqa: TC001
 from tradingdev.app.contracts.strategy_cleanup import (
     StrategyCleanupResult,  # noqa: TC001
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 
 
-def register(mcp: FastMCP, service: StrategyCleanupService) -> None:
+def register(mcp: MCPServer, service: StrategyCleanupService) -> None:
     """Register a preview-first cleanup tool with an explicit apply selector."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def cleanup_strategy_drafts(

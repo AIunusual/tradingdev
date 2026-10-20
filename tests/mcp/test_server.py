@@ -8,12 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.mcp.server import create_server
+from tradingdev.mcp.server import HTTP_TRANSPORT_SECURITY, create_server, main
+from tradingdev.mcp.strict_server import StrictMCPServer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,6 +47,27 @@ def test_import_and_help_do_not_create_a_workspace(tmp_path: Path) -> None:
         assert not workspace.exists()
 
 
+@pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
+def test_main_passes_selected_transport_and_port_to_sdk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def run(_server: StrictMCPServer, transport: str = "stdio", **options: Any) -> None:
+        calls.append({"transport": transport, **options})
+
+    monkeypatch.setattr(StrictMCPServer, "run", run)
+    arguments = ["--workspace", str(tmp_path / "workspace")]
+    expected: dict[str, Any] = {"transport": transport}
+    if transport != "stdio":
+        arguments.extend(["--web", "--transport", transport, "--port", "18765"])
+        expected.update(port=18765, transport_security=HTTP_TRANSPORT_SECURITY)
+    if transport == "streamable-http":
+        expected["json_response"] = False
+    main(arguments)
+    assert calls == [expected]
+
+
 def test_server_instances_keep_generated_strategies_in_their_workspace(
     runtime_root: Path,
 ) -> None:
@@ -65,21 +88,24 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
                 ),
             },
         )
-        assert isinstance(saved_result, tuple)
-        assert isinstance(saved_result[1], dict)
-        assert saved_result[1]["result"]["success"] is True
+        assert isinstance(saved_result, CallToolResult)
+        assert saved_result.structured_content is not None
+        assert isinstance(saved_result.structured_content, dict)
+        assert saved_result.structured_content["result"]["success"] is True
         first_result = await first.call_tool(
             "get_strategy", {"strategy_id": "isolated_strategy"}
         )
         second_result = await second.call_tool(
             "get_strategy", {"strategy_id": "isolated_strategy"}
         )
-        assert isinstance(first_result, tuple)
-        assert isinstance(first_result[1], dict)
-        assert first_result[1]["result"]["success"] is True
-        assert isinstance(second_result, tuple)
-        assert isinstance(second_result[1], dict)
-        assert second_result[1]["result"]["success"] is False
+        assert isinstance(first_result, CallToolResult)
+        assert first_result.structured_content is not None
+        assert isinstance(first_result.structured_content, dict)
+        assert first_result.structured_content["result"]["success"] is True
+        assert isinstance(second_result, CallToolResult)
+        assert second_result.structured_content is not None
+        assert isinstance(second_result.structured_content, dict)
+        assert second_result.structured_content["result"]["success"] is False
 
     asyncio.run(check())
     assert list(
@@ -102,10 +128,10 @@ def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -
         "prepare_walk_forward",
         "prepare_optimization",
     ):
-        schema = tools[name].inputSchema
+        schema = tools[name].input_schema
         assert "revision_id" in schema["properties"]
         assert "revision_id" not in schema.get("required", [])
-    saved_schema = tools["save_strategy"].outputSchema
+    saved_schema = tools["save_strategy"].output_schema
     assert saved_schema is not None
     assert "revision_id" in saved_schema["$defs"]["StrategySaveSuccess"]["required"]
 
@@ -121,7 +147,7 @@ def test_execution_manifest_hash_is_required_for_prepared_and_accepted_plans(
         ("prepare_optimization", "PlanResponse"),
         ("submit_execution_decision", "PlanStarted"),
     ):
-        schema = tools[name].outputSchema
+        schema = tools[name].output_schema
         assert schema is not None
         accepted = schema["$defs"][contract]
         assert "manifest_hash" in accepted["required"]

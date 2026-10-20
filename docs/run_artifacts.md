@@ -38,6 +38,7 @@ workspace/
     <cache_key>.parquet
     <cache_key>.json
   models/
+    .<model_id>.lock
     <model_id>.json
     <model_id>.bin
   ml_leaderboard/
@@ -251,11 +252,27 @@ and full blob SHA-256. At build time, the ID is computed as a 16-character
 SHA-256 prefix over name, parameters, ordered features and blob hash. It
 identifies model content, not a training execution or saved validation result.
 
-Save and load verify the blob hash. Loads do not recompute the ID or compare
-metadata with the filename or serialized estimator. JSON is trusted workspace
-state: metadata-only edits may go undetected. The ID neither authenticates
-publishers nor proves metadata unchanged. Prediction additionally checks exact
-ordered dataset features before unpickling.
+Save and load verify the blob hash and recompute the ID from its identity fields.
+Loading also checks that the metadata ID matches the requested filename. Framework,
+kind, training-row count and feature importance are not identity fields; changes
+to those fields may still go undetected. Metadata is not compared with the
+serialized estimator, and the ID neither authenticates publishers nor proves all
+metadata unchanged. Prediction checks exact ordered dataset features and unpickles
+the same bytes that passed hash verification.
+
+Writers for one model ID hold `.<model_id>.lock`. A new blob is staged beside its
+destination and atomically published; an existing blob must have the same hash and
+is never truncated or replaced. Metadata is published last by atomic replacement,
+so concurrent readers see complete records and can continue using an existing model
+during repeated training. Temporary files are removed on success and failure; the
+lock file is retained. A failed first publication removes its newly created blob
+if no metadata was published. This is not a crash or power-loss transaction:
+an interrupted, unpublished blob can be recovered by retrying the same content.
+
+The schema 1 filenames remain unchanged. `ModelArtifactStore.load_with_bytes`
+returns the verified metadata and bytes together; `load` returns only metadata.
+Saving no longer accepts an alternate `model_id`, and the unchecked
+`load_model_bytes` helper is removed.
 
 CatBoost removes random `model_guid` and wall-clock `train_finish_time` metadata
 before serialization, avoiding identities driven by those incidental values.

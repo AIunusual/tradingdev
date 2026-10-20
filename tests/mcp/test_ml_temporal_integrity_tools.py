@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 from tests.app.test_ml_temporal_integrity import (
     DATA_ARGUMENTS,
     MODEL_ARGUMENTS,
@@ -39,17 +40,18 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
 
 
 @pytest.fixture
-def server(workspace: WorkspacePaths) -> FastMCP:
-    mcp = FastMCP("ml-temporal-integrity")
+def server(workspace: WorkspacePaths) -> MCPServer:
+    mcp = MCPServer("ml-temporal-integrity")
     ml.register(mcp, MLService(workspace))
     return mcp
 
 
-def dispatch(server: FastMCP, name: str, **arguments: Any) -> dict[str, Any]:
+def dispatch(server: MCPServer, name: str, **arguments: Any) -> dict[str, Any]:
     async def call() -> dict[str, Any]:
         result = await server.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -59,7 +61,7 @@ def dispatch(server: FastMCP, name: str, **arguments: Any) -> dict[str, Any]:
 
 
 def test_panel_validation_and_prediction_require_single_asset_for_evaluation(
-    server: FastMCP, workspace: WorkspacePaths
+    server: MCPServer, workspace: WorkspacePaths
 ) -> None:
     panel = BuildPanelResponse.model_validate(
         dispatch(server, "build_panel", symbols=SYMBOLS, **DATA_ARGUMENTS)
@@ -128,7 +130,7 @@ def test_panel_validation_and_prediction_require_single_asset_for_evaluation(
 
 
 def test_forward_filled_panel_validation_is_rejected_before_model_publication(
-    server: FastMCP, workspace: WorkspacePaths
+    server: MCPServer, workspace: WorkspacePaths
 ) -> None:
     panel = BuildPanelResponse.model_validate(
         dispatch(
@@ -158,7 +160,7 @@ def test_forward_filled_panel_validation_is_rejected_before_model_publication(
 
 @pytest.mark.parametrize("tamper", [None, "returns", "horizon", "row_count"])
 def test_readonly_dataset_evaluation_enforces_saved_returns_and_horizon(
-    server: FastMCP, workspace: WorkspacePaths, tamper: str | None
+    server: MCPServer, workspace: WorkspacePaths, tamper: str | None
 ) -> None:
     dataset = BuildDatasetResponse.model_validate(
         dispatch(server, "build_dataset", symbol="BTC/USDT", **DATA_ARGUMENTS)
@@ -201,7 +203,7 @@ def test_readonly_dataset_evaluation_enforces_saved_returns_and_horizon(
 
 
 def test_array_evaluation_uses_nonoverlapping_horizon_compounding(
-    server: FastMCP,
+    server: MCPServer,
 ) -> None:
     response = SignalEvaluationResponse.model_validate(
         dispatch(

@@ -6,10 +6,16 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import socket
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from pathlib import Path
+from textwrap import dedent
+from threading import current_thread, main_thread
 from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib as mpl
@@ -73,6 +79,8 @@ def test_native_html_is_deterministic_offline_and_restores_plot_state(
     scope["metadata"]["settings"]["risk_free_rate"] = 0.02
     scope["metadata"]["settings"]["periods_per_year"] = periods
     original = copy.deepcopy(scope)
+    original_backend = mpl.get_backend(auto_select=False)
+    plt.switch_backend("svg")
     existing = plt.figure()
     before_figures = set(plt.get_fignums())
     try:
@@ -133,8 +141,83 @@ def test_native_html_is_deterministic_offline_and_restores_plot_state(
         )
         assert scope == original
         assert set(plt.get_fignums()) == before_figures
+        assert mpl.get_backend(auto_select=False) == "svg"
     finally:
         plt.close(existing)
+        if original_backend is not None:
+            plt.switch_backend(original_backend)
+
+
+def test_native_report_renders_in_worker_with_unselected_backend(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "matplotlib"
+    config.mkdir()
+    matplotlibrc = config / "matplotlibrc"
+    matplotlibrc.write_text("", encoding="utf-8")
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    source = tmp_path / "scope.json"
+    source.write_text(json.dumps(_scope()), encoding="utf-8")
+    environment = os.environ.copy()
+    environment.pop("MPLBACKEND", None)
+    environment.update(
+        MPLCONFIGDIR=str(config),
+        MATPLOTLIBRC=str(matplotlibrc),
+        TMPDIR=str(temporary),
+    )
+    script = dedent(
+        """
+        import json
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import current_thread, main_thread
+
+        import matplotlib as mpl
+        from matplotlib import pyplot as plt
+
+        from tradingdev.adapters.reporting.quantstats_report import (
+            build_quantstats_report,
+        )
+
+        assert mpl.get_backend(auto_select=False) is None
+        assert plt.get_fignums() == []
+        mpl.rcParams["axes.facecolor"] = "orange"
+        mpl.rcParams["svg.hashsalt"] = "caller"
+        plt.ion()
+        with open(sys.argv[1], encoding="utf-8") as source:
+            scope = json.load(source)
+
+        def render():
+            assert current_thread() is not main_thread()
+            assert mpl.get_backend(auto_select=False) is None
+            return build_quantstats_report(scope)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            report = executor.submit(render).result(timeout=90)
+        assert report["available"] is True
+        assert "<svg" in report["html"]
+        assert "Cumulative Return" in report["tables_html"]
+        assert mpl.get_backend(auto_select=False) == "agg"
+        assert mpl.rcParams["axes.facecolor"] == "orange"
+        assert mpl.rcParams["svg.hashsalt"] == "caller"
+        assert plt.isinteractive()
+        assert plt.get_fignums() == []
+        print("worker report rendered and plot state restored")
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(source)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "worker report rendered and plot state restored" in completed.stdout
+    assert list(temporary.iterdir()) == []
 
 
 def test_utc_daily_compounding_preserves_first_return_and_missing_days(
@@ -277,14 +360,20 @@ def test_negative_risk_free_rate_is_rejected_because_provider_ignores_it() -> No
         SystemExit("exit requested"),
     ],
 )
-def test_native_output_and_new_figures_are_cleaned_even_on_failure(
-    monkeypatch: pytest.MonkeyPatch, failure: BaseException | None
+@pytest.mark.parametrize("backend", ["agg", "svg"])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_worker_render_restores_plot_state_and_cleans_output_even_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException | None,
+    backend: str,
+    interactive: bool,
 ) -> None:
     outputs: list[Path] = []
-    existing = plt.figure()
-    figures_before = set(plt.get_fignums())
 
     def native(*args: Any, **kwargs: Any) -> None:
+        assert current_thread() is not main_thread()
+        assert mpl.get_backend(auto_select=False) == "agg"
+        assert not plt.isinteractive()
         output = Path(kwargs["output"])
         outputs.append(output)
         plt.figure()
@@ -293,27 +382,40 @@ def test_native_output_and_new_figures_are_cleaned_even_on_failure(
             raise failure
 
     monkeypatch.setattr(reports, "html", native)
+    original_backend = mpl.get_backend(auto_select=False)
+    plt.switch_backend(backend)
+    existing = plt.figure()
+    existing_canvas = existing.canvas
+    figures_before = set(plt.get_fignums())
     try:
-        with mpl.rc_context({"axes.facecolor": "orange"}):
-            if failure is None:
-                assert build_quantstats_report(_scope())["available"] is True
-            else:
-                expected = (
-                    QuantStatsReportError
-                    if isinstance(failure, Exception)
-                    else type(failure)
-                )
-                with pytest.raises(expected, match=str(failure)) as error:
-                    build_quantstats_report(_scope())
-                if isinstance(failure, Exception):
-                    assert error.value.__cause__ is failure
+        with mpl.rc_context({"axes.facecolor": "orange", "interactive": interactive}):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                rendered = executor.submit(build_quantstats_report, _scope())
+                if failure is None:
+                    assert rendered.result(timeout=10)["available"] is True
+                else:
+                    expected = (
+                        QuantStatsReportError
+                        if isinstance(failure, Exception)
+                        else type(failure)
+                    )
+                    with pytest.raises(expected, match=str(failure)) as error:
+                        rendered.result(timeout=10)
+                    if isinstance(failure, Exception):
+                        assert error.value.__cause__ is failure
+            assert mpl.get_backend(auto_select=False) == backend
+            assert plt.isinteractive() is interactive
             assert mpl.rcParams["axes.facecolor"] == "orange"
         assert len(outputs) == 1
         assert not outputs[0].exists()
         assert not outputs[0].parent.exists()
         assert set(plt.get_fignums()) == figures_before
+        assert existing.canvas is existing_canvas
+        assert plt.figure(existing.number) is existing
     finally:
         plt.close(existing)
+        if original_backend is not None:
+            plt.switch_backend(original_backend)
 
 
 @pytest.mark.parametrize("include_source", [False, True])

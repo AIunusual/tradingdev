@@ -9,10 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -145,11 +142,6 @@ def content_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def load_model_bytes(path: Path) -> bytes:
-    """Read a model blob verbatim for hashing or transport."""
-    return path.read_bytes()
-
-
 def feature_importance_from_gain(
     feature_names: list[str],
     importance: list[float] | Any,
@@ -172,5 +164,4 @@ __all__ = [
     "compute_model_id",
     "content_sha256",
     "feature_importance_from_gain",
-    "load_model_bytes",
 ]

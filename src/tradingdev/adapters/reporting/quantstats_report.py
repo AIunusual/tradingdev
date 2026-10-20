@@ -158,15 +158,20 @@ def _native_html(daily: pd.Series, periods: int | float, rate: float) -> str:
     import matplotlib.pyplot as plt
 
     with _RENDER_LOCK, mpl.rc_context(), plt.ioff():
-        import quantstats.plots  # noqa: F401
-        from quantstats import reports
-
-        # Reset inside the context so the caller's styling and first-import
-        # effects cannot change the artifact. rc_context restores caller state.
-        mpl.rcdefaults()
-        mpl.rcParams.update({"svg.hashsalt": "tradingdev-quantstats-v1"})
+        # Resolving an unset backend can select a GUI, which cannot create
+        # figures in MCP worker threads. Matplotlib >=3.10 preserves existing
+        # figures when switching backends; rc_context does not restore backend.
+        backend = mpl.get_backend(auto_select=False)
         existing_figures = set(plt.get_fignums())
         try:
+            plt.switch_backend("agg")
+            import quantstats.plots  # noqa: F401
+            from quantstats import reports
+
+            # Reset inside the context so the caller's styling and first-import
+            # effects cannot change the artifact. rc_context restores styling.
+            mpl.rcdefaults()
+            mpl.rcParams.update({"svg.hashsalt": "tradingdev-quantstats-v1"})
             with TemporaryDirectory(prefix="tradingdev-quantstats-") as directory:
                 output = Path(directory) / "report.html"
                 native_html = cast("Callable[..., Any]", reports.html)
@@ -183,8 +188,13 @@ def _native_html(daily: pd.Series, periods: int | float, rate: float) -> str:
                 )
                 rendered = output.read_text(encoding="utf-8")
         finally:
-            for number in set(plt.get_fignums()) - existing_figures:
-                plt.close(number)
+            try:
+                for number in set(plt.get_fignums()) - existing_figures:
+                    plt.close(number)
+            finally:
+                # Leave Agg selected when the caller had no backend yet.
+                if backend is not None:
+                    plt.switch_backend(backend)
     # Matplotlib adds wall-clock SVG metadata; it is not result evidence.
     rendered = re.sub(r"<dc:date>[^<]*</dc:date>", "", rendered)
     # The native template otherwise consists of embedded styles/SVGs. Its favicon

@@ -1,4 +1,4 @@
-"""leaderboard and record=True through in-process MCP dispatch with FastMCP."""
+"""leaderboard and record=True through in-process MCP dispatch with MCPServer."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import LeaderboardResponse, MlContractResponse
@@ -52,17 +53,18 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
 
 
 @pytest.fixture
-def mcp(workspace: WorkspacePaths) -> FastMCP:
-    server = FastMCP("test-ml")
+def mcp(workspace: WorkspacePaths) -> MCPServer:
+    server = MCPServer("test-ml")
     ml.register(server, MLService(workspace=workspace))
     return server
 
 
-def _dispatch(mcp: FastMCP, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _dispatch(mcp: MCPServer, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     async def call() -> dict[str, Any]:
         result = await mcp.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -72,7 +74,7 @@ def _dispatch(mcp: FastMCP, name: str, arguments: dict[str, Any]) -> dict[str, A
 
 
 @pytest.fixture
-def recorded(mcp: FastMCP, workspace: WorkspacePaths) -> str:
+def recorded(mcp: MCPServer, workspace: WorkspacePaths) -> str:
     """Build a dataset and record two evaluations of opposite quality."""
     built = _dispatch(
         mcp,
@@ -104,7 +106,7 @@ def recorded(mcp: FastMCP, workspace: WorkspacePaths) -> str:
     return str(dataset_id)
 
 
-def test_contract_lists_the_rankable_metrics(mcp: FastMCP) -> None:
+def test_contract_lists_the_rankable_metrics(mcp: MCPServer) -> None:
     payload = _dispatch(mcp, "get_ml_contract", {})
     contract = MlContractResponse.model_validate(payload)
     assert "rank_icir" in contract.leaderboard_metrics
@@ -112,7 +114,7 @@ def test_contract_lists_the_rankable_metrics(mcp: FastMCP) -> None:
 
 
 def test_evaluate_signal_record_returns_the_stored_entry(
-    mcp: FastMCP, workspace: WorkspacePaths, recorded: str
+    mcp: MCPServer, workspace: WorkspacePaths, recorded: str
 ) -> None:
     frame = pd.read_parquet(workspace.ml_datasets / recorded / "dataset.parquet")
     realized = frame["forward_return"].astype(float).tolist()
@@ -132,7 +134,7 @@ def test_evaluate_signal_record_returns_the_stored_entry(
 
 
 def test_recording_a_signal_that_is_not_the_dataset_is_refused(
-    mcp: FastMCP, recorded: str
+    mcp: MCPServer, recorded: str
 ) -> None:
     """A record must not be able to claim a dataset it was not measured on."""
     payload = _dispatch(
@@ -151,7 +153,7 @@ def test_recording_a_signal_that_is_not_the_dataset_is_refused(
 
 
 def test_recording_with_a_wrong_horizon_is_refused(
-    mcp: FastMCP, workspace: WorkspacePaths, recorded: str
+    mcp: MCPServer, workspace: WorkspacePaths, recorded: str
 ) -> None:
     frame = pd.read_parquet(workspace.ml_datasets / recorded / "dataset.parquet")
     realized = frame["forward_return"].astype(float).tolist()
@@ -171,7 +173,9 @@ def test_recording_with_a_wrong_horizon_is_refused(
     assert "does not match the dataset's horizon" in payload["error"]
 
 
-def test_leaderboard_ranks_the_recorded_candidates(mcp: FastMCP, recorded: str) -> None:
+def test_leaderboard_ranks_the_recorded_candidates(
+    mcp: MCPServer, recorded: str
+) -> None:
     payload = _dispatch(
         mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded}
     )
@@ -183,7 +187,7 @@ def test_leaderboard_ranks_the_recorded_candidates(mcp: FastMCP, recorded: str) 
 
 
 def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
-    mcp: FastMCP, workspace: WorkspacePaths
+    mcp: MCPServer, workspace: WorkspacePaths
 ) -> None:
     records: dict[str, str] = {}
     for version in (1, 2):
@@ -238,7 +242,7 @@ def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
 
 @pytest.mark.parametrize("dataset_id", ["", "invalid", "ds_" + "0" * 16])
 def test_leaderboard_dataset_filter_refuses_invalid_ids(
-    mcp: FastMCP, recorded: str, dataset_id: str
+    mcp: MCPServer, recorded: str, dataset_id: str
 ) -> None:
     payload = _dispatch(
         mcp,
@@ -251,25 +255,25 @@ def test_leaderboard_dataset_filter_refuses_invalid_ids(
 
 
 def test_leaderboard_refuses_a_metric_without_a_direction(
-    mcp: FastMCP, recorded: str
+    mcp: MCPServer, recorded: str
 ) -> None:
     payload = _dispatch(mcp, "leaderboard", {"metric": "n_periods"})
     assert payload["success"] is False
     assert "no optimisation direction" in payload["error"]
 
 
-def test_leaderboard_reports_an_empty_store(mcp: FastMCP) -> None:
+def test_leaderboard_reports_an_empty_store(mcp: MCPServer) -> None:
     payload = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
     assert payload["success"] is False
     assert "no recorded evaluations" in payload["error"]
 
 
-def test_leaderboard_is_advertised_read_only(mcp: FastMCP) -> None:
+def test_leaderboard_is_advertised_read_only(mcp: MCPServer) -> None:
     async def tools() -> list[Any]:
         return list(await mcp.list_tools())
 
     entries = {tool.name: tool for tool in asyncio.run(tools())}
     assert entries["leaderboard"].annotations is not None
-    assert entries["leaderboard"].annotations.readOnlyHint is True
-    assert "dataset_id" in entries["leaderboard"].inputSchema["properties"]
-    assert "dataset_id" not in entries["leaderboard"].inputSchema["required"]
+    assert entries["leaderboard"].annotations.read_only_hint is True
+    assert "dataset_id" in entries["leaderboard"].input_schema["properties"]
+    assert "dataset_id" not in entries["leaderboard"].input_schema["required"]

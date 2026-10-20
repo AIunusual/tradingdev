@@ -6,8 +6,9 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import UnexpectedToolError
+from mcp_types import CallToolResult
 from pydantic import TypeAdapter, ValidationError
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -37,7 +38,7 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
-    mcp = FastMCP("research-contract-test")
+    mcp = MCPServer("research-contract-test")
     runs.register(mcp, RunService(workspace=workspace, store=store))
     artifacts.register(mcp, ArtifactService(workspace=workspace, store=store))
     feature_service = FeatureRequestService(workspace=workspace, store=store)
@@ -71,8 +72,9 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
 
     async def call(name: str, arguments: dict[str, object]) -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         return payload
 
@@ -142,10 +144,14 @@ def test_research_tool_rejects_schema_drift_instead_of_returning_a_dict(
 ) -> None:
     service = RunService(workspace=WorkspacePaths(tmp_path / "workspace"))
     monkeypatch.setattr(service, "get_run", lambda _: {"success": True, "run": {}})
-    mcp = FastMCP("research-drift-test")
+    mcp = MCPServer("research-drift-test")
     runs.register(mcp, service)
-    with pytest.raises(ToolError, match="run_id"):
+    with pytest.raises(
+        UnexpectedToolError, match="^Error executing tool get_run$"
+    ) as caught:
         asyncio.run(mcp.call_tool("get_run", {"run_id": "malformed"}))
+    assert isinstance(caught.value.__cause__, ValidationError)
+    assert "run_id" in str(caught.value.__cause__)
 
 
 def test_artifact_metadata_cannot_hide_unexpected_fixed_fields() -> None:
@@ -168,7 +174,12 @@ def test_research_tool_rejects_service_response_without_success(
 ) -> None:
     service = RunService(workspace=WorkspacePaths(tmp_path / "workspace"))
     monkeypatch.setattr(service, "compare_runs", lambda *_, **__: {"runs": []})
-    mcp = FastMCP("research-missing-success-test")
+    mcp = MCPServer("research-missing-success-test")
     runs.register(mcp, service)
-    with pytest.raises(ToolError, match=r"success\s+Field required"):
+    with pytest.raises(
+        UnexpectedToolError, match="^Error executing tool compare_runs$"
+    ) as caught:
         asyncio.run(mcp.call_tool("compare_runs", {"run_ids": ["first", "second"]}))
+    cause = caught.value.__cause__
+    assert isinstance(cause, ValidationError)
+    assert any(error["loc"] == ("success",) for error in cause.errors())

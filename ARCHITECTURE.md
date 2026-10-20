@@ -459,6 +459,8 @@ registered artifacts，重試時核對檔案及登錄完整性。報告是離線
 衍生分析的套件版本、設定、輸入雜湊及原生 HTML 也參與內容身分。
 QuantStats 繪圖以程序內鎖及局部樣式隔離，固定 SVG 身分並移除產生時間；
 暫存輸出與新增圖形在成功及例外路徑都清除，不關閉呼叫端原有圖形。
+報表在非互動式 Agg 後端繪製，以支援 MCP 的執行緒呼叫；結束時恢復呼叫端
+已選定的繪圖後端，尚未選定後端的程序則保留 Agg。
 選取核對章節時，完整事件資料供本機表格篩選、排序、欄位選擇及 CSV／JSON 匯出；
 畫面篩選與兩位小數顯示不裁減或捨入下載資料。
 完整性核對不代表封存全部外部執行環境。
@@ -481,7 +483,7 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 ### MCP 回覆契約
 
-MCP 使用 StrictFastMCP 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
+MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
 MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受固定欄位白名單截斷。
@@ -496,6 +498,15 @@ MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受�
 `get_job_status` 的 `status: not_found` 表示查無工作，`status: failed` 則表示
 找到已失敗的工作。參數格式錯誤、未預期的例外或無效回覆使用 MCP
 `isError: true`；客戶端不能只依 `isError` 判斷應用操作是否成功。
+內部例外或回覆 DTO 驗證失敗只向客戶端提供通用的工具執行錯誤，
+完整原因留在 server 日誌；輸入參數驗證與明確的 `ToolError` 仍提供可修正的訊息。
+
+SDK 的 Python 模型使用 snake_case 屬性，MCP JSON wire 欄位維持 camelCase；
+模型客戶端序列化 SDK 回覆時須使用別名，避免遺失 `structuredContent` 等欄位。
+同步工具由 SDK 在線程中執行；application services 不持有跨呼叫共用的 SQLite
+connection，每次儲存操作各自建立連線。
+模型 store 以逐 ID writer lock、不可變 blob 與原子 metadata 發布支援並發讀取；
+預測使用同一次讀取且已驗證雜湊的 bytes，避免重新訓練期間讀到部分寫入內容。
 
 工具同時標註唯讀、破壞性、冪等及外部互動提示。這些標註描述實際副作用，
 不提供授權或隔離保證。例如 `get_job_status` 可能更新失去 worker 的工作狀態，

@@ -1,23 +1,21 @@
-"""Reject misspelled MCP arguments before FastMCP's permissive parsing."""
+"""Reject misspelled MCP arguments before MCPServer's permissive parsing."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from mcp.server.mcpserver import Context
+    from mcp_types import CallToolResult, InputRequiredResult, Tool
 
-    from mcp.types import ContentBlock, Tool
 
-
-class StrictFastMCP(FastMCP):
+class StrictMCPServer(MCPServer):
     """Keep the advertised argument names and dispatch boundary in agreement.
 
-    FastMCP's generated argument models ignore extra fields, and its protocol
-    handler disables JSON Schema input validation. These public method overrides
+    MCPServer's generated argument models ignore extra fields. These public overrides
     reject unknown top-level arguments while preserving SDK type conversion,
     optional defaults, and the declared contents of dynamic parameter maps.
     """
@@ -27,19 +25,22 @@ class StrictFastMCP(FastMCP):
         return [
             tool.model_copy(
                 update={
-                    "inputSchema": tool.inputSchema | {"additionalProperties": False}
+                    "input_schema": tool.input_schema | {"additionalProperties": False}
                 }
             )
             for tool in await super().list_tools()
         ]
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context[Any, Any] | None = None,
+    ) -> CallToolResult | InputRequiredResult:
         """Reject unknown keys before business logic or worker creation runs."""
         for tool in await self.list_tools():
             if tool.name == name:
-                properties = tool.inputSchema.get("properties", {})
+                properties = tool.input_schema.get("properties", {})
                 unknown = sorted(arguments.keys() - properties.keys())
                 if unknown:
                     allowed = ", ".join(sorted(properties)) or "(none)"
@@ -48,4 +49,4 @@ class StrictFastMCP(FastMCP):
                         f"Allowed arguments: {allowed}"
                     )
                 break
-        return await super().call_tool(name, arguments)
+        return await super().call_tool(name, arguments, context)

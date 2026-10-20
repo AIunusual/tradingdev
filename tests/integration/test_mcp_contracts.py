@@ -11,7 +11,7 @@ from mcp import ClientSession
 from tests.integration.execution_fixtures import execution_options
 
 if TYPE_CHECKING:
-    from mcp.types import ListToolsResult, PaginatedRequestParams
+    from mcp_types import ListToolsResult, PaginatedRequestParams
 
     from tests.integration.mcp_harness import MCPWorkspace
 
@@ -110,7 +110,7 @@ async def test_discovery_collects_output_schemas_across_pages(
                 "tools": result.tools[:midpoint]
                 if first_page
                 else result.tools[midpoint:],
-                "nextCursor": "next-page" if first_page else None,
+                "next_cursor": "next-page" if first_page else None,
             }
         )
 
@@ -152,19 +152,19 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
         assert tools.keys() == expected_hints.keys() == client.output_schemas.keys()
         for name, tool in tools.items():
             assert tool.description and tool.description.strip(), name
-            Draft202012Validator.check_schema(tool.inputSchema)
-            assert tool.inputSchema.get("additionalProperties") is False, name
+            Draft202012Validator.check_schema(tool.input_schema)
+            assert tool.input_schema.get("additionalProperties") is False, name
             assert tool.annotations is not None, name
             annotations = tool.annotations
             assert (
-                annotations.readOnlyHint,
-                annotations.destructiveHint,
-                annotations.idempotentHint,
-                annotations.openWorldHint,
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+                annotations.open_world_hint,
             ) == expected_hints[name], name
 
             schema = client.output_schemas[name]
-            assert schema == tool.outputSchema
+            assert schema == tool.output_schema
             Draft202012Validator.check_schema(schema)
             assert schema["type"] == "object", name
             assert schema.get("properties"), name
@@ -277,15 +277,15 @@ async def test_missing_required_inputs_are_mcp_errors_without_side_effects(
 ) -> None:
     async with mcp_workspace.connect() as client:
         tools = (await client.session.list_tools()).tools
-        required_tools = [tool for tool in tools if tool.inputSchema.get("required")]
+        required_tools = [tool for tool in tools if tool.input_schema.get("required")]
         assert {"save_strategy", "prepare_backtest", "record_feature_request"} <= {
             tool.name for tool in required_tools
         }
         for tool in required_tools:
             result = await client.session.call_tool(tool.name, {})
-            assert result.isError, (tool.name, result)
+            assert result.is_error, (tool.name, result)
             assert result.content, tool.name
-            assert result.structuredContent is None, tool.name
+            assert result.structured_content is None, tool.name
         assert await client.call("list_jobs") == []
         assert await client.call("list_runs") == []
         assert await client.call("list_feature_requests") == []

@@ -1,13 +1,11 @@
-"""TradingDev FastMCP server."""
+"""TradingDev MCPServer server."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from mcp.server.fastmcp.server import (  # type: ignore[attr-defined]
-    TransportSecuritySettings,
-)
+from mcp.server.transport_security import TransportSecuritySettings
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import get_sqlite_store
@@ -24,7 +22,7 @@ from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.app.trade_history_service import TradeHistoryService
 from tradingdev.mcp.prompts import SERVER_INSTRUCTIONS
-from tradingdev.mcp.strict_server import StrictFastMCP
+from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import (
     artifacts,
     data,
@@ -39,19 +37,17 @@ from tradingdev.mcp.tools import (
 )
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+HTTP_TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+)
 
 
-def create_server(workspace: WorkspacePaths | None = None) -> StrictFastMCP:
+def create_server(workspace: WorkspacePaths | None = None) -> StrictMCPServer:
     """Compose an MCP server with one explicitly shared runtime workspace."""
     workspace = workspace or WorkspacePaths()
     store = get_sqlite_store(workspace)
-    mcp = StrictFastMCP(
+    mcp = StrictMCPServer(
         name="tradingdev",
-        # Preserve the standard streaming channel for server-to-client messages.
-        json_response=False,
-        transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=False,
-        ),
         instructions=SERVER_INSTRUCTIONS,
     )
     strategy_service = StrategyService(workspace, store=store)
@@ -112,9 +108,20 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     mcp = create_server(WorkspacePaths(args.workspace))
 
-    if args.web:
-        mcp.settings.port = args.port
-        mcp.run(transport=args.transport)
+    if args.web and args.transport == "streamable-http":
+        mcp.run(
+            transport="streamable-http",
+            port=args.port,
+            # Preserve SSE streaming for clients using the legacy protocol.
+            json_response=False,
+            transport_security=HTTP_TRANSPORT_SECURITY,
+        )
+    elif args.web:
+        mcp.run(
+            transport="sse",
+            port=args.port,
+            transport_security=HTTP_TRANSPORT_SECURITY,
+        )
     else:
         mcp.run()
 

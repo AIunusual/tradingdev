@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
@@ -26,12 +27,13 @@ if TYPE_CHECKING:
 
 
 def _dispatch(
-    server: FastMCP, name: str, arguments: dict[str, object]
+    server: MCPServer, name: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await server.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -63,7 +65,7 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
 def test_record_rejects_forged_returns_without_overwriting_the_leaderboard(
     workspace: WorkspacePaths, tamper: str
 ) -> None:
-    server = FastMCP("ml-return-integrity-test")
+    server = MCPServer("ml-return-integrity-test")
     ml.register(server, MLService(workspace=workspace))
     built = BuildDatasetResponse.model_validate(
         _dispatch(

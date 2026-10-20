@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.strategy import (
@@ -30,20 +30,20 @@ from tradingdev.mcp.schemas import SaveStrategyInput
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.strategy_service import StrategyService
 
 
-def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None:
+def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> None:
     """Register strategy lifecycle tools."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_strategy_contract() -> StrategyContractResponse:
@@ -54,10 +54,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def list_strategies() -> list[
@@ -75,10 +75,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def get_strategy(
@@ -111,10 +111,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=False,
         )
     )
     def save_strategy(
@@ -152,10 +152,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=True,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
         )
     )
     def validate_strategy(
@@ -183,10 +183,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=True,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
         )
     )
     def dry_run_strategy(
@@ -215,10 +215,10 @@ def register(mcp: FastMCP, service: StrategyService, package_root: Path) -> None
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def promote_strategy(

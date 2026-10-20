@@ -10,6 +10,7 @@ import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.registry import ModelArtifact, ModelArtifactStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -197,3 +198,27 @@ class TestPredictRejectsBadInput:
         blob.write_bytes(b"not the model that was registered")
         with pytest.raises(ValueError, match="tampered"):
             service.predict(model_id=model_id, dataset_id=dataset_id)
+
+
+def test_predict_uses_the_exact_verified_bytes(
+    service: MLService,
+    trained: tuple[str, str],
+    workspace: WorkspacePaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_id, dataset_id = trained
+    expected = service.predict(model_id=model_id, dataset_id=dataset_id)
+    original_load = ModelArtifactStore.load_with_bytes
+
+    def load_and_replace(
+        store: ModelArtifactStore, identifier: str
+    ) -> tuple[ModelArtifact, bytes]:
+        verified = original_load(store, identifier)
+        store.path_for(identifier).write_bytes(b"changed after integrity verification")
+        return verified
+
+    monkeypatch.setattr(ModelArtifactStore, "load_with_bytes", load_and_replace)
+    assert service.predict(model_id=model_id, dataset_id=dataset_id) == expected
+    assert (workspace.models / f"{model_id}.bin").read_bytes() == (
+        b"changed after integrity verification"
+    )

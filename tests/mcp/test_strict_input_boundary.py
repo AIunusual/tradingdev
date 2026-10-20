@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.shared.memory import create_connected_server_and_client_session
-from mcp.types import TextContent
+from mcp import Client
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context  # noqa: TC002 — SDK resolves tool annotations.
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import CallToolResult, TextContent
 from tests.integration.execution_fixtures import execution_options
 from tests.mcp.execution_fixtures import plan_context
 
@@ -18,7 +19,7 @@ from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.job_store import JobStore
 from tradingdev.mcp.server import create_server
-from tradingdev.mcp.strict_server import StrictFastMCP
+from tradingdev.mcp.strict_server import StrictMCPServer
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,9 +35,11 @@ _START_ARGUMENTS = {
 }
 
 
+@pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
 def test_revision_typo_is_protocol_error_before_job_or_worker_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    protocol_mode: str,
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     server = create_server(workspace)
@@ -47,29 +50,31 @@ def test_revision_typo_is_protocol_error_before_job_or_worker_creation(
     monkeypatch.setattr(ProcessRunner, "spawn_module", unexpected_spawn)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(server) as client:
+        async with Client(server, mode=protocol_mode) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
             arguments = _START_ARGUMENTS | {"revisions_id": "wrong-spelling"}
             with pytest.raises(ValidationError, match="revisions_id"):
-                Draft202012Validator(tools["prepare_backtest"].inputSchema).validate(
+                Draft202012Validator(tools["prepare_backtest"].input_schema).validate(
                     arguments
                 )
             result = await client.call_tool("prepare_backtest", arguments)
-            assert result.isError
+            assert result.is_error
             text = " ".join(
                 item.text for item in result.content if isinstance(item, TextContent)
             )
             assert "Unknown arguments for prepare_backtest: revisions_id" in text
             assert "revision_id" in text
-            assert result.structuredContent is None
+            assert result.structured_content is None
 
     asyncio.run(check())
     assert JobStore(workspace=workspace).list_all_jobs() == []
     assert not list(workspace.runs.iterdir())
 
 
+@pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
 def test_unknown_read_arguments_fail_in_direct_and_protocol_dispatch(
     tmp_path: Path,
+    protocol_mode: str,
 ) -> None:
     server = create_server(WorkspacePaths(tmp_path / "workspace"))
     with pytest.raises(ToolError, match="metrc_ids"):
@@ -80,37 +85,39 @@ def test_unknown_read_arguments_fail_in_direct_and_protocol_dispatch(
         )
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(server) as client:
+        async with Client(server, mode=protocol_mode) as client:
             for name, arguments in (
                 ("get_run_metrics", {"run_id": "absent", "metrc_ids": ["total_pnl"]}),
                 ("list_runs", {"unexpected": True}),
             ):
                 result = await client.call_tool(name, arguments)
-                assert result.isError
+                assert result.is_error
                 assert any(
                     isinstance(item, TextContent) and "Unknown arguments" in item.text
                     for item in result.content
                 )
             # Omitting optional arguments remains valid and reaches the service.
             result = await client.call_tool("get_run_metrics", {"run_id": "absent"})
-            assert not result.isError
-            assert result.structuredContent is not None
-            assert result.structuredContent["result"]["code"] == "run_not_found"
+            assert not result.is_error
+            assert result.structured_content is not None
+            assert result.structured_content["result"]["code"] == "run_not_found"
 
     asyncio.run(check())
 
 
+@pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
 def test_revision_omission_prepares_bundled_strategy_without_launching(
     tmp_path: Path,
+    protocol_mode: str,
 ) -> None:
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode=protocol_mode) as client:
             result = await client.call_tool("prepare_backtest", context.arguments)
-            assert not result.isError
-            assert result.structuredContent is not None
-            prepared = result.structuredContent["result"]
+            assert not result.is_error
+            assert result.structured_content is not None
+            prepared = result.structured_content["result"]
             assert prepared["success"] and prepared["status"] == "ready"
             assert context.runner.calls == []
             assert context.service.jobs.list_all_jobs() == []
@@ -118,14 +125,45 @@ def test_revision_omission_prepares_bundled_strategy_without_launching(
                 "submit_execution_decision",
                 {"plan_id": prepared["plan_id"], "decision": "approve"},
             )
-            assert not started.isError
-            assert started.structuredContent is not None
-            assert started.structuredContent["result"]["success"] is True
+            assert not started.is_error
+            assert started.structured_content is not None
+            assert started.structured_content["result"]["success"] is True
 
     asyncio.run(check())
     assert len(context.runner.calls) == 1
     jobs = context.service.jobs.list_all_jobs()
     assert len(jobs) == 1 and jobs[0]["revision_id"] is None
+
+
+@pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
+def test_strict_dispatch_forwards_request_context_and_dynamic_maps(
+    protocol_mode: str,
+) -> None:
+    server = StrictMCPServer("context-forwarding")
+
+    @server.tool()
+    async def inspect_request(
+        parameters: dict[str, Any], ctx: Context
+    ) -> dict[str, Any]:
+        return {
+            "parameters": parameters,
+            "method": ctx.request_context.method,
+            "protocol_version": ctx.request_context.protocol_version,
+        }
+
+    async def check() -> None:
+        async with Client(server, mode=protocol_mode) as client:
+            result = await client.call_tool(
+                "inspect_request", {"parameters": {"custom": {"nested": 3}}}
+            )
+            assert not result.is_error
+            assert result.structured_content == {
+                "parameters": {"custom": {"nested": 3}},
+                "method": "tools/call",
+                "protocol_version": client.protocol_version,
+            }
+
+    asyncio.run(check())
 
 
 def test_all_advertised_argument_objects_are_closed_and_sdk_schema_unchanged(
@@ -137,29 +175,31 @@ def test_all_advertised_argument_objects_are_closed_and_sdk_schema_unchanged(
         tools = await server.list_tools()
         assert tools
         for tool in tools:
-            schema = tool.inputSchema
+            schema = tool.input_schema
             Draft202012Validator.check_schema(schema)
             assert schema["additionalProperties"] is False, tool.name
         backtest = next(tool for tool in tools if tool.name == "prepare_backtest")
-        assert "revision_id" not in backtest.inputSchema["required"]
+        assert "revision_id" not in backtest.input_schema["required"]
         optimization = next(
             tool for tool in tools if tool.name == "prepare_optimization"
         )
         assert isinstance(
-            optimization.inputSchema["properties"]["param_ranges"][
+            optimization.input_schema["properties"]["param_ranges"][
                 "additionalProperties"
             ],
             dict,
         )
         # list_tools is a public projection, not a mutation of SDK internals.
-        sdk_tools = await FastMCP.list_tools(server)
-        assert all("additionalProperties" not in tool.inputSchema for tool in sdk_tools)
+        sdk_tools = await MCPServer.list_tools(server)
+        assert all(
+            "additionalProperties" not in tool.input_schema for tool in sdk_tools
+        )
 
     asyncio.run(check())
 
 
 def test_dynamic_parameter_maps_and_late_tool_registration_remain_supported() -> None:
-    server = StrictFastMCP("dynamic-input-test")
+    server = StrictMCPServer("dynamic-input-test")
 
     @server.tool()
     def echo(parameters: dict[str, Any], optional: str | None = None) -> dict[str, Any]:
@@ -175,11 +215,18 @@ def test_dynamic_parameter_maps_and_late_tool_registration_remain_supported() ->
         result = await server.call_tool(
             "echo", {"parameters": {"custom_strategy_parameter": 3}}
         )
-        assert isinstance(result, tuple)
-        assert result[1]["parameters"] == {"custom_strategy_parameter": 3}
-        assert result[1]["optional"] is None
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        assert result.structured_content["parameters"] == {
+            "custom_strategy_parameter": 3
+        }
+        assert result.structured_content["optional"] is None
         result = await server.call_tool("added_later", {"value": 7})
-        assert isinstance(result, tuple) and result[1]["result"] == 7
+        assert isinstance(result, CallToolResult)
+        assert (
+            result.structured_content is not None
+            and result.structured_content["result"] == 7
+        )
         with pytest.raises(ToolError, match="extra"):
             await server.call_tool("added_later", {"value": 7, "extra": True})
         with pytest.raises(ToolError, match="Unknown tool"):

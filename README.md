@@ -446,6 +446,8 @@ uv run --locked tradingdev-mcp \
 
 HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
 執行前的確認仍在一般對話中完成。
+Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
+傳送大型策略程式或設定時，請縮小單次內容。
 
 ## 常見問題
 

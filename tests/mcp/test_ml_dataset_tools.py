@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import (
@@ -43,12 +44,13 @@ def _write_cached_bars(workspace: WorkspacePaths, rows: int = 300) -> None:
 
 
 def _dispatch(
-    mcp: FastMCP, name: str, arguments: dict[str, object]
+    mcp: MCPServer, name: str, arguments: dict[str, object]
 ) -> dict[str, object]:
     async def call() -> dict[str, object]:
         result = await mcp.call_tool(name, arguments)
-        assert isinstance(result, tuple)
-        payload = result[1]
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload = result.structured_content
         assert isinstance(payload, dict)
         response = payload.get("result", payload)
         assert isinstance(response, dict)
@@ -66,7 +68,7 @@ def service(tmp_path: Path) -> MLService:
 
 
 def test_build_dataset_then_train_model_through_mcp(service: MLService) -> None:
-    mcp = FastMCP("ml-dataset-test")
+    mcp = MCPServer("ml-dataset-test")
     ml.register(mcp, service)
 
     built = BuildDatasetResponse.model_validate(
@@ -105,7 +107,7 @@ def test_build_dataset_then_train_model_through_mcp(service: MLService) -> None:
 
 
 def test_build_train_predict_through_mcp(service: MLService) -> None:
-    mcp = FastMCP("ml-loop-test")
+    mcp = MCPServer("ml-loop-test")
     ml.register(mcp, service)
 
     built = BuildDatasetResponse.model_validate(
@@ -165,7 +167,7 @@ def test_build_train_predict_through_mcp(service: MLService) -> None:
 
 
 def test_predict_rejects_a_mismatched_dataset(service: MLService) -> None:
-    mcp = FastMCP("ml-mismatch-test")
+    mcp = MCPServer("ml-mismatch-test")
     ml.register(mcp, service)
 
     returns_dataset = BuildDatasetResponse.model_validate(
@@ -220,7 +222,7 @@ def test_predict_rejects_a_mismatched_dataset(service: MLService) -> None:
 
 
 def test_predict_rejects_a_malformed_model_id(service: MLService) -> None:
-    mcp = FastMCP("ml-bad-model-id")
+    mcp = MCPServer("ml-bad-model-id")
     ml.register(mcp, service)
     dataset_id = BuildDatasetResponse.model_validate(
         _dispatch(
@@ -246,7 +248,7 @@ def test_predict_rejects_a_malformed_model_id(service: MLService) -> None:
 def test_build_dataset_reports_missing_cache(tmp_path: Path) -> None:
     paths = WorkspacePaths(tmp_path / "empty")
     paths.ensure()
-    mcp = FastMCP("ml-missing-cache")
+    mcp = MCPServer("ml-missing-cache")
     ml.register(mcp, MLService(workspace=paths))
     payload = _dispatch(
         mcp,
@@ -264,7 +266,7 @@ def test_build_dataset_reports_missing_cache(tmp_path: Path) -> None:
 
 
 def test_train_model_rejects_an_unknown_kind(service: MLService) -> None:
-    mcp = FastMCP("ml-bad-kind")
+    mcp = MCPServer("ml-bad-kind")
     ml.register(mcp, service)
     payload = _dispatch(
         mcp,
@@ -275,7 +277,7 @@ def test_train_model_rejects_an_unknown_kind(service: MLService) -> None:
     assert payload["code"] == "invalid_training_request"
 
 
-def _train(mcp: FastMCP, dataset_id: str, **overrides: object) -> TrainModelResponse:
+def _train(mcp: MCPServer, dataset_id: str, **overrides: object) -> TrainModelResponse:
     arguments: dict[str, object] = {
         "dataset_id": dataset_id,
         "model_kind": "xgboost_direction",
@@ -286,7 +288,7 @@ def _train(mcp: FastMCP, dataset_id: str, **overrides: object) -> TrainModelResp
 
 
 def _build(
-    mcp: FastMCP, feature_set: str = "returns", horizon: int = 5
+    mcp: MCPServer, feature_set: str = "returns", horizon: int = 5
 ) -> BuildDatasetResponse:
     return BuildDatasetResponse.model_validate(
         _dispatch(
@@ -305,7 +307,7 @@ def _build(
 
 
 def test_train_model_returns_a_purged_validation_block(service: MLService) -> None:
-    mcp = FastMCP("ml-validation-test")
+    mcp = MCPServer("ml-validation-test")
     ml.register(mcp, service)
     dataset_id = _build(mcp).dataset.dataset_id
 
@@ -334,14 +336,14 @@ def test_train_model_returns_a_purged_validation_block(service: MLService) -> No
 def test_train_model_without_a_scheme_reports_no_validation(
     service: MLService,
 ) -> None:
-    mcp = FastMCP("ml-no-validation-test")
+    mcp = MCPServer("ml-no-validation-test")
     ml.register(mcp, service)
     trained = _train(mcp, _build(mcp).dataset.dataset_id)
     assert trained.model.validation is None
 
 
 def test_every_scheme_the_contract_offers_is_accepted(service: MLService) -> None:
-    mcp = FastMCP("ml-scheme-menu-test")
+    mcp = MCPServer("ml-scheme-menu-test")
     ml.register(mcp, service)
     contract = MlContractResponse.model_validate(_dispatch(mcp, "get_ml_contract", {}))
     advertised = [item.name for item in contract.validation_schemes]
@@ -354,7 +356,7 @@ def test_every_scheme_the_contract_offers_is_accepted(service: MLService) -> Non
 
 
 def test_train_model_rejects_an_unknown_scheme(service: MLService) -> None:
-    mcp = FastMCP("ml-bad-scheme")
+    mcp = MCPServer("ml-bad-scheme")
     ml.register(mcp, service)
     payload = _dispatch(
         mcp,
@@ -372,7 +374,7 @@ def test_train_model_rejects_an_unknown_scheme(service: MLService) -> None:
 
 
 def test_train_model_rejects_a_zero_fold_count(service: MLService) -> None:
-    mcp = FastMCP("ml-zero-folds")
+    mcp = MCPServer("ml-zero-folds")
     ml.register(mcp, service)
     payload = _dispatch(
         mcp,
@@ -391,7 +393,7 @@ def test_train_model_rejects_a_zero_fold_count(service: MLService) -> None:
 
 
 def test_build_dataset_reports_feature_reuse(service: MLService) -> None:
-    mcp = FastMCP("ml-cache-test")
+    mcp = MCPServer("ml-cache-test")
     ml.register(mcp, service)
     arguments = {
         "symbol": "BTC/USDT",

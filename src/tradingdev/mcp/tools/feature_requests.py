@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mcp.types import ToolAnnotations
+from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.research import (
     FeatureRequestArtifact,
@@ -13,23 +13,23 @@ from tradingdev.app.contracts.research import (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from tradingdev.app.feature_request_service import FeatureRequestService
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     service: FeatureRequestService,
 ) -> None:
     """Register feature-request tools."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
         )
     )
     def record_feature_request(
@@ -54,10 +54,10 @@ def register(
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         )
     )
     def list_feature_requests() -> list[FeatureRequestArtifact]:

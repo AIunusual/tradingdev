@@ -5,29 +5,26 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from jsonschema import ValidationError, validate
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.app.preflight_service import PreflightError
 
-if TYPE_CHECKING:
-    from mcp import ClientSession
 
-
-async def _call(client: ClientSession, name: str, **arguments: Any) -> dict[str, Any]:
+async def _call(client: Client, name: str, **arguments: Any) -> dict[str, Any]:
     result = await client.call_tool(name, arguments)
-    assert not result.isError, result
-    assert result.structuredContent is not None
+    assert not result.is_error, result
+    assert result.structured_content is not None
     schema = next(
         tool for tool in (await client.list_tools()).tools if tool.name == name
-    ).outputSchema
+    ).output_schema
     assert schema is not None
-    validate(result.structuredContent, schema)
-    payload = result.structuredContent
+    validate(result.structured_content, schema)
+    payload = result.structured_content
     return dict(payload["result"] if set(payload) == {"result"} else payload)
 
 
@@ -48,7 +45,7 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
 
     async def check() -> None:
         # Product decisions use ordinary tools, without an elicitation callback.
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             assert prepared["success"] and prepared["status"] == "ready", prepared
             assert prepared["preflight"]["manifest_hash"] == prepared["manifest_hash"]
@@ -104,7 +101,7 @@ def test_decline_or_revision_cancels_original_plan_without_a_job(
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             result = await _call(
                 client,
@@ -157,12 +154,12 @@ def test_missing_or_invalid_decision_cannot_consume_or_launch_plan(
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             result = await client.call_tool(
                 "submit_execution_decision", {"plan_id": prepared["plan_id"], **content}
             )
-            assert result.isError
+            assert result.is_error
             assert (
                 await _call(client, "get_execution_plan", plan_id=prepared["plan_id"])
             )["status"] == "ready"
@@ -176,7 +173,7 @@ def test_cancelled_plan_rejects_later_approval(tmp_path: Path) -> None:
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             cancelled = await _call(
                 client, "cancel_execution_plan", plan_id=prepared["plan_id"]
@@ -200,8 +197,8 @@ def test_concurrent_decisions_cannot_duplicate_a_launch(tmp_path: Path) -> None:
 
     async def check() -> None:
         async with (
-            create_connected_server_and_client_session(context.server) as client,
-            create_connected_server_and_client_session(context.server) as contender,
+            Client(context.server, mode="legacy") as client,
+            Client(context.server, mode="legacy") as contender,
         ):
             prepared = await _call(client, "prepare_backtest", **context.arguments)
             results = await asyncio.gather(
@@ -237,7 +234,7 @@ def test_prepare_failure_is_structured_through_real_mcp(
     monkeypatch.setattr(context.preflight, "prepare", failed_sample)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             result = await _call(client, "prepare_backtest", **context.arguments)
             assert result["success"] is False
             assert result["code"] == "invalid_execution_request"
@@ -252,10 +249,10 @@ def test_decision_tool_schema_requires_one_explicit_choice(tmp_path: Path) -> No
     context = plan_context(tmp_path)
 
     async def check() -> None:
-        async with create_connected_server_and_client_session(context.server) as client:
+        async with Client(context.server, mode="legacy") as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
             assert "request_execution_confirmation" not in tools
-            schema = tools["submit_execution_decision"].inputSchema
+            schema = tools["submit_execution_decision"].input_schema
             assert set(schema["required"]) == {"plan_id", "decision"}
             assert set(schema["properties"]) == {"plan_id", "decision"}
             for decision in ("approve", "decline", "revise"):
