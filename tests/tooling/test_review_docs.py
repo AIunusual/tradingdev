@@ -594,8 +594,11 @@ def test_one_invalid_batch_cannot_be_hidden_by_other_passing_batches(
     _assert_reviewer_cleanup(records)
 
 
+@pytest.mark.parametrize("review_timeout", [180, 600])
 def test_queued_and_running_batches_share_one_absolute_deadline(
-    repository: tuple[Path, str, str], monkeypatch: MonkeyPatch
+    repository: tuple[Path, str, str],
+    monkeypatch: MonkeyPatch,
+    review_timeout: int,
 ) -> None:
     repo, base, tree = repository
     workers = review_docs.MAX_PARALLEL_REVIEWS
@@ -608,7 +611,7 @@ def test_queued_and_running_batches_share_one_absolute_deadline(
     calls: list[tuple[int, float, float, Path]] = []
 
     def advance_clock() -> None:
-        clock.now += 90.5
+        clock.now += review_timeout / 2 + 0.5
 
     ready = Barrier(workers, action=advance_clock)
 
@@ -620,7 +623,7 @@ def test_queued_and_running_batches_share_one_absolute_deadline(
         deadline: float,
         cancelled: Event,
     ) -> None:
-        assert timeout_seconds == 180
+        assert timeout_seconds == review_timeout
         assert not cancelled.is_set()
         index = _prompt_evidence(prompt)["batch"]["index"]
         calls.append((index, deadline, clock.now, root))
@@ -635,11 +638,11 @@ def test_queued_and_running_batches_share_one_absolute_deadline(
 
     monkeypatch.setattr(review_docs, "_run", controlled_run)
     with pytest.raises(review_docs.ReviewError, match="timed out"):
-        review_docs.review(base, tree, repo=repo, timeout_seconds=180)
+        review_docs.review(base, tree, repo=repo, timeout_seconds=review_timeout)
     assert len(calls) == batch_count
-    assert {deadline for _, deadline, _, _ in calls} == {280.0}
+    assert {deadline for _, deadline, _, _ in calls} == {100.0 + review_timeout}
     assert [started for _, _, started, _ in sorted(calls)] == (
-        [100.0] * workers + [190.5] * workers
+        [100.0] * workers + [100.0 + review_timeout / 2 + 0.5] * workers
     )
     assert all(not root.exists() for _, _, _, root in calls)
 

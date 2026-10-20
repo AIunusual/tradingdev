@@ -20,6 +20,7 @@ from tooling.process_guard import terminate_tree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Any
 
     from pytest import CaptureFixture, MonkeyPatch
 
@@ -110,6 +111,70 @@ def _assert_cleaned(scenario: Scenario) -> None:
     assert all(not path.exists() for path in scenario.temporary_paths)
 
 
+def _forbid_check_side_effects(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
+    )
+    for module in (check_pr, gate, candidates):
+        monkeypatch.setattr(module, "git", lambda *_: pytest.fail("Git called"))
+    monkeypatch.setattr(
+        candidates, "run", lambda *_, **__: pytest.fail("Review called")
+    )
+    monkeypatch.setattr(
+        candidates,
+        "TemporaryDirectory",
+        lambda **_: pytest.fail("Temporary files created"),
+    )
+
+
+@pytest.mark.parametrize("runner", ["pr", "full"])
+@pytest.mark.parametrize(
+    "seconds, outer_timeout", [(1, 900), (600, 900), (3600, 3660), (86_400, 86_460)]
+)
+def test_documentation_timeout_reaches_reviewer_and_preserves_snapshot_budget(
+    scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    runner: str,
+    seconds: int,
+    outer_timeout: int,
+) -> None:
+    before = _source_state(scenario.source)
+    calls: list[str] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
+    ) -> None:
+        if command[0] == "bash":
+            assert timeout == 3600
+            calls.append("full")
+        else:
+            assert timeout == outer_timeout
+            assert command[command.index("--timeout-seconds") + 1] == str(seconds)
+            calls.append("docs")
+
+    monkeypatch.setattr(candidates, "run", run)
+    if runner == "pr":
+        check_pr.check_pr(
+            7, snapshot_timeout_seconds=3600, documentation_timeout_seconds=seconds
+        )
+    else:
+        gate.check_full(
+            "main",
+            "feature/work",
+            snapshot_timeout_seconds=3600,
+            documentation_timeout_seconds=seconds,
+        )
+    assert calls == ["docs", "full"]
+    assert f"Documentation timeout: {seconds} seconds" in capsys.readouterr().out
+    assert _source_state(scenario.source) == before
+    _assert_cleaned(scenario)
+
+
 @pytest.mark.parametrize("runner", ["pr", "full"])
 @pytest.mark.parametrize("budget", [None, 1_000_000, 2_000_000])
 @pytest.mark.parametrize("snapshot_timeout", [900, 3600])
@@ -142,7 +207,7 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
             (temporary_root / "model-output.txt").write_text("temporary output")
         else:
             assert timeout == 900
-            assert "--timeout-seconds" not in command
+            assert command[command.index("--timeout-seconds") + 1] == "180"
             calls.append("docs")
             assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
             assert cwd == Path(review_docs.__file__).resolve().parents[1]
@@ -177,15 +242,24 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
 
 
 @pytest.mark.parametrize("runner", ["pr", "full"])
-@pytest.mark.parametrize("budget", [None, 1_000_000, 2_000_000])
-@pytest.mark.parametrize("snapshot_timeout", [None, 3600])
-def test_check_cli_forwards_evidence_budget(
+@pytest.mark.parametrize(
+    "budget, snapshot_timeout, documentation_timeout",
+    [
+        (None, None, None),
+        (1_000_000, None, None),
+        (2_000_000, 3600, None),
+        (None, 3600, 600),
+        (1_000_000, None, 600),
+    ],
+)
+def test_check_cli_forwards_review_options(
     monkeypatch: MonkeyPatch,
     runner: str,
     budget: int | None,
     snapshot_timeout: int | None,
+    documentation_timeout: int | None,
 ) -> None:
-    calls: list[tuple[int | None, int]] = []
+    calls: list[tuple[int | None, int, int]] = []
 
     def check(
         first: int | str,
@@ -193,11 +267,18 @@ def test_check_cli_forwards_evidence_budget(
         *,
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
+        documentation_timeout_seconds: int,
     ) -> None:
         assert (first, second) == (
             (7, "upstream") if runner == "pr" else ("main", "HEAD")
         )
-        calls.append((max_evidence_bytes, snapshot_timeout_seconds))
+        calls.append(
+            (
+                max_evidence_bytes,
+                snapshot_timeout_seconds,
+                documentation_timeout_seconds,
+            )
+        )
 
     module = check_pr if runner == "pr" else gate
     monkeypatch.setattr(module, "git", lambda *_: str(Path.cwd()))
@@ -209,9 +290,13 @@ def test_check_cli_forwards_evidence_budget(
         arguments.extend(["--max-evidence-bytes", str(budget)])
     if snapshot_timeout is not None:
         arguments.extend(["--snapshot-timeout-seconds", str(snapshot_timeout)])
+    if documentation_timeout is not None:
+        arguments.extend(
+            ["--documentation-timeout-seconds", str(documentation_timeout)]
+        )
     monkeypatch.setattr(sys, "argv", ["check", *arguments])
     module.main()
-    assert calls == [(budget, snapshot_timeout or 900)]
+    assert calls == [(budget, snapshot_timeout or 900, documentation_timeout or 180)]
 
 
 @pytest.mark.parametrize("budget", [0, -1])
@@ -219,14 +304,7 @@ def test_check_cli_forwards_evidence_budget(
 def test_invalid_budget_fails_before_git_or_review(
     monkeypatch: MonkeyPatch, budget: int, entry: str
 ) -> None:
-    monkeypatch.setattr(
-        check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
-    )
-    monkeypatch.setattr(check_pr, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(
-        candidates, "run", lambda *_, **__: pytest.fail("Review called")
-    )
+    _forbid_check_side_effects(monkeypatch)
     with pytest.raises(RuntimeError, match="budget must be positive"):
         if entry == "pr":
             check_pr.check_pr(7, max_evidence_bytes=budget)
@@ -349,24 +427,48 @@ def test_ineligible_pr_never_fetches_or_checks(
     assert not scenario.temporary_paths
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("failed"), KeyboardInterrupt()])
-def test_verifier_failure_or_interrupt_cleans_up_and_preserves_source(
-    scenario: Scenario, monkeypatch: MonkeyPatch, failure: BaseException
+@pytest.mark.parametrize("runner", ["pr", "full"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.CalledProcessError(1, "docs"),
+        KeyboardInterrupt(),
+        subprocess.TimeoutExpired("docs", 900),
+    ],
+)
+def test_reviewer_failure_skips_snapshot_and_cleans_candidate(
+    scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    runner: str,
+    failure: BaseException,
 ) -> None:
     before = _source_state(scenario.source)
 
     def fail(
-        candidate: candidates.MergeCandidate,
+        command: list[str],
         *,
-        max_evidence_bytes: int | None,
-        snapshot_timeout_seconds: int,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
     ) -> None:
-        (candidate.repository / "partial-model-output").write_text("temporary result")
+        assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
+        repository = Path(command[command.index("--repo") + 1])
+        (repository / "partial-model-output").write_text("temporary result")
         raise failure
 
-    monkeypatch.setattr(check_pr, "verify_candidate", fail)
+    monkeypatch.setattr(candidates, "run", fail)
+    monkeypatch.setattr(
+        candidates,
+        "check_snapshot",
+        lambda *_, **__: pytest.fail("Snapshot ran after reviewer failure"),
+    )
     with pytest.raises(type(failure)):
-        check_pr.check_pr(7)
+        if runner == "pr":
+            check_pr.check_pr(7, documentation_timeout_seconds=600)
+        else:
+            gate.check_full("main", "feature/work", documentation_timeout_seconds=600)
+    assert "checks passed" not in capsys.readouterr().out
     assert _source_state(scenario.source) == before
     _assert_cleaned(scenario)
 
@@ -419,6 +521,7 @@ def test_runner_changes_during_pr_check_are_detected(
         *,
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
+        documentation_timeout_seconds: int,
     ) -> None:
         if mutation == "new_file":
             (scenario.source / "user-work.txt").write_text("keep this")
@@ -457,6 +560,7 @@ def test_manual_full_rejects_ref_movement(
         *,
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
+        documentation_timeout_seconds: int,
     ) -> None:
         replacement = (
             scenario.request.head_sha if ref == "main" else scenario.request.base_sha
@@ -533,6 +637,7 @@ def test_actual_remote_ref_movement_invalidates_unchanged_api_response(
         *,
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
+        documentation_timeout_seconds: int,
     ) -> None:
         if change == "delete":
             _git(scenario.source, "update-ref", "-d", ref)
@@ -614,19 +719,7 @@ def test_remote_ref_verification_failure_hides_credential_bearing_command(
 def test_invalid_snapshot_timeout_fails_before_git_or_review(
     monkeypatch: MonkeyPatch, timeout: int, entry: str
 ) -> None:
-    monkeypatch.setattr(
-        check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
-    )
-    for module in (check_pr, gate, candidates):
-        monkeypatch.setattr(module, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(
-        candidates, "run", lambda *_, **__: pytest.fail("Review called")
-    )
-    monkeypatch.setattr(
-        candidates,
-        "TemporaryDirectory",
-        lambda **_: pytest.fail("Temporary files created"),
-    )
+    _forbid_check_side_effects(monkeypatch)
     with pytest.raises(
         RuntimeError, match="Snapshot timeout must be a positive integer"
     ):
@@ -649,16 +742,53 @@ def test_invalid_snapshot_timeout_fails_before_git_or_review(
             (check_pr if entry == "pr_cli" else gate).main()
 
 
-@pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "1.5", "text"])
-@pytest.mark.parametrize("entry", ["pr", "full"])
-def test_snapshot_timeout_cli_rejects_noninteger_before_git(
-    monkeypatch: MonkeyPatch, timeout: str, entry: str
+@pytest.mark.parametrize(
+    "timeout", [0, -1, 86_401, True, 1.5, float("nan"), float("inf")]
+)
+@pytest.mark.parametrize("entry", ["pr", "full", "verify"])
+def test_invalid_documentation_timeout_fails_before_git_or_review(
+    monkeypatch: MonkeyPatch, timeout: Any, entry: str
 ) -> None:
-    module = check_pr if entry == "pr" else gate
-    monkeypatch.setattr(module, "git", lambda *_: pytest.fail("Git called"))
+    _forbid_check_side_effects(monkeypatch)
+    with pytest.raises(RuntimeError, match="Documentation timeout must be"):
+        if entry == "pr":
+            check_pr.check_pr(7, documentation_timeout_seconds=timeout)
+        elif entry == "full":
+            gate.check_full("main", "HEAD", documentation_timeout_seconds=timeout)
+        else:
+            candidate = candidates.MergeCandidate(Path.cwd(), "base", "head", "tree")
+            candidates.verify_candidate(
+                candidate, documentation_timeout_seconds=timeout
+            )
+
+
+@pytest.mark.parametrize("timeout", [0, -1, 86_401])
+@pytest.mark.parametrize("entry", ["pr", "full"])
+def test_documentation_timeout_cli_rejects_out_of_range_before_git(
+    monkeypatch: MonkeyPatch, timeout: int, entry: str
+) -> None:
+    _forbid_check_side_effects(monkeypatch)
     arguments = ["7"] if entry == "pr" else ["full", "--base", "main"]
     monkeypatch.setattr(
-        sys, "argv", ["check", *arguments, f"--snapshot-timeout-seconds={timeout}"]
+        sys,
+        "argv",
+        ["check", *arguments, "--documentation-timeout-seconds", str(timeout)],
+    )
+    with pytest.raises(RuntimeError, match="Documentation timeout must be"):
+        (check_pr if entry == "pr" else gate).main()
+
+
+@pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "1.5", "text"])
+@pytest.mark.parametrize("entry", ["pr", "full"])
+@pytest.mark.parametrize("option", ["snapshot", "documentation"])
+def test_timeout_cli_rejects_noninteger_before_git(
+    monkeypatch: MonkeyPatch, timeout: str, entry: str, option: str
+) -> None:
+    module = check_pr if entry == "pr" else gate
+    _forbid_check_side_effects(monkeypatch)
+    arguments = ["7"] if entry == "pr" else ["full", "--base", "main"]
+    monkeypatch.setattr(
+        sys, "argv", ["check", *arguments, f"--{option}-timeout-seconds={timeout}"]
     )
     with pytest.raises(SystemExit) as failure:
         module.main()
@@ -666,12 +796,16 @@ def test_snapshot_timeout_cli_rejects_noninteger_before_git(
 
 
 @pytest.mark.parametrize("action", ["commit", "push"])
-def test_snapshot_timeout_option_is_rejected_for_other_git_actions(
-    monkeypatch: MonkeyPatch, action: str, capsys: CaptureFixture[str]
+@pytest.mark.parametrize("option", ["snapshot", "documentation"])
+def test_timeout_option_is_rejected_for_other_git_actions(
+    monkeypatch: MonkeyPatch,
+    action: str,
+    option: str,
+    capsys: CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
     monkeypatch.setattr(
-        sys, "argv", ["gate", action, "--snapshot-timeout-seconds", "3600"]
+        sys, "argv", ["gate", action, f"--{option}-timeout-seconds", "3600"]
     )
     with pytest.raises(SystemExit) as failure:
         gate.main()

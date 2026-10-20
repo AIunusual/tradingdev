@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 DEFAULT_SNAPSHOT_TIMEOUT_SECONDS = 900
+DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS = 180
+MAX_DOCUMENTATION_TIMEOUT_SECONDS = 86_400
+_DOCUMENTATION_CLEANUP_SECONDS = 60
 
 
 def git(*arguments: str) -> str:
@@ -216,16 +219,31 @@ def validate_snapshot_timeout(timeout_seconds: int) -> None:
         )
 
 
+def validate_documentation_timeout(timeout_seconds: int) -> None:
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= MAX_DOCUMENTATION_TIMEOUT_SECONDS
+    ):
+        raise RuntimeError(
+            "Documentation timeout must be a positive integer number of seconds "
+            f"no greater than {MAX_DOCUMENTATION_TIMEOUT_SECONDS}."
+        )
+
+
 def verify_candidate(
     candidate: MergeCandidate,
     *,
     max_evidence_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
+    documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     """Always run a fresh review and full suite for an explicit candidate."""
     validate_evidence_budget(max_evidence_bytes)
     validate_snapshot_timeout(snapshot_timeout_seconds)
+    validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
+    print(f"Documentation timeout: {documentation_timeout_seconds} seconds", flush=True)
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     command = [
         sys.executable,
@@ -237,11 +255,20 @@ def verify_candidate(
         candidate.base,
         "--tree",
         candidate.tree,
+        "--timeout-seconds",
+        str(documentation_timeout_seconds),
     ]
     if max_evidence_bytes is not None:
         print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
         command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
-    run(command, cwd=Path(__file__).resolve().parents[2])
+    # Preserve setup time and allow the review's own deadline/cleanup to finish.
+    run(
+        command,
+        cwd=Path(__file__).resolve().parents[2],
+        timeout=max(
+            900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
+        ),
+    )
     check_snapshot(
         candidate.tree,
         "full",

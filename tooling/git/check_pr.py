@@ -11,10 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from tooling.git.candidates import (
+    DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
     DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     execution_environment,
     git,
     merge_candidate,
+    validate_documentation_timeout,
     validate_evidence_budget,
     validate_snapshot_timeout,
     verify_candidate,
@@ -64,9 +66,11 @@ def check_pr(
     *,
     max_evidence_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
+    documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     validate_evidence_budget(max_evidence_bytes)
     validate_snapshot_timeout(snapshot_timeout_seconds)
+    validate_documentation_timeout(documentation_timeout_seconds)
     request = get_pull_request(number, remote)
     primary = subprocess.check_output(
         [
@@ -101,6 +105,7 @@ def check_pr(
             candidate,
             max_evidence_bytes=max_evidence_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
+            documentation_timeout_seconds=documentation_timeout_seconds,
         )
         current = get_pull_request(number, remote)
         # API base metadata can lag the advertised main ref, and GitHub computes
@@ -144,6 +149,11 @@ def main() -> None:
         help="Override the documentation reviewer byte limit for this PR check",
     )
     parser.add_argument(
+        "--documentation-timeout-seconds",
+        type=int,
+        help="Set this documentation review deadline (1–86400 seconds; default: 180)",
+    )
+    parser.add_argument(
         "--snapshot-timeout-seconds",
         type=int,
         help="Set a positive timeout for this full snapshot check (default: 900)",
@@ -156,12 +166,19 @@ def main() -> None:
         else args.snapshot_timeout_seconds
     )
     validate_snapshot_timeout(snapshot_timeout_seconds)
+    documentation_timeout_seconds = (
+        DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS
+        if args.documentation_timeout_seconds is None
+        else args.documentation_timeout_seconds
+    )
+    validate_documentation_timeout(documentation_timeout_seconds)
     os.chdir(git("rev-parse", "--show-toplevel"))
     check_pr(
         args.number,
         args.remote,
         max_evidence_bytes=args.max_evidence_bytes,
         snapshot_timeout_seconds=snapshot_timeout_seconds,
+        documentation_timeout_seconds=documentation_timeout_seconds,
     )
 
 
