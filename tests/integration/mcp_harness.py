@@ -146,36 +146,38 @@ class MCPWorkspace:
         log_path = self.root / "server.log"
         try:
             with log_path.open("a", encoding="utf-8") as errlog:
-                async with stdio_client(params, errlog=errlog) as (read, write):
-                    async with ClientSession(
+                async with (
+                    stdio_client(params, errlog=errlog) as (read, write),
+                    ClientSession(
                         read,
                         write,
                         read_timeout_seconds=timedelta(seconds=100),
                         elicitation_callback=elicitation_callback,
-                    ) as session:
-                        initialized = await session.initialize()
-                        assert initialized.serverInfo.name == "tradingdev"
-                        assert "save_strategy" in (initialized.instructions or "")
-                        try:
-                            output_schemas: dict[str, dict[str, Any]] = {}
-                            cursor = None
-                            while True:
-                                listed = await session.list_tools(
-                                    params=PaginatedRequestParams(cursor=cursor)
-                                )
-                                for tool in listed.tools:
-                                    assert tool.outputSchema is not None, tool.name
-                                    output_schemas[tool.name] = tool.outputSchema
-                                cursor = listed.nextCursor
-                                if cursor is None:
-                                    break
-                            yield MCPClient(
-                                session,
-                                initialized.instructions or "",
-                                output_schemas,
+                    ) as session,
+                ):
+                    initialized = await session.initialize()
+                    assert initialized.serverInfo.name == "tradingdev"
+                    assert "save_strategy" in (initialized.instructions or "")
+                    try:
+                        output_schemas: dict[str, dict[str, Any]] = {}
+                        cursor = None
+                        while True:
+                            listed = await session.list_tools(
+                                params=PaginatedRequestParams(cursor=cursor)
                             )
-                        finally:
-                            self.stop_workers()
+                            for tool in listed.tools:
+                                assert tool.outputSchema is not None, tool.name
+                                output_schemas[tool.name] = tool.outputSchema
+                            cursor = listed.nextCursor
+                            if cursor is None:
+                                break
+                        yield MCPClient(
+                            session,
+                            initialized.instructions or "",
+                            output_schemas,
+                        )
+                    finally:
+                        self.stop_workers()
         except BaseException:
             # Capture the failure log before successful workspace cleanup.
             print(log_path.read_text(encoding="utf-8"))
