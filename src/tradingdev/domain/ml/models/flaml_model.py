@@ -20,8 +20,6 @@ reproducible, auditable estimator should pick a named zoo kind instead.
 
 from __future__ import annotations
 
-import contextlib
-import tempfile
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -116,13 +114,6 @@ class FLAMLAutoMLDirectionModel(BaseModel):
         """
         from flaml import AutoML
 
-        # FLAML's CatBoost learner hard-codes ``train_dir=f"catboost_{...}"``
-        # and hands it to CatBoost, so every CatBoost trial writes a log tree
-        # into the *current working directory* — the caller's project root
-        # when a strategy runs here. Run the search from a scratch directory
-        # so a fit never leaves anything behind in the caller's tree.
-        search_directory = tempfile.TemporaryDirectory(prefix="flaml_direction_")
-
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
         self._feature_names = feature_cols
 
@@ -135,6 +126,16 @@ class FLAMLAutoMLDirectionModel(BaseModel):
             "estimator_list": list(self._estimator_list),
             "time_budget": self._time_budget,
             "verbose": self._verbosity,
+            "log_file_name": "",
+            # CatBoost output is a constructor setting, so fix it in the
+            # search space rather than forwarding it to estimator.fit().
+            # Disabling output avoids changing the process-wide cwd when
+            # independent callers train concurrently.
+            "custom_hp": {
+                "catboost": {
+                    "allow_writing_files": {"domain": False, "init_value": False},
+                },
+            },
         }
         if self._n_jobs is not None:
             fit_kwargs["n_jobs"] = self._n_jobs
@@ -145,11 +146,7 @@ class FLAMLAutoMLDirectionModel(BaseModel):
             fit_kwargs["y_val"] = eval_df["target"]
 
         automl = AutoML()
-        with (
-            search_directory as scratch,
-            contextlib.chdir(scratch),
-        ):
-            automl.fit(X_train=x_train, y_train=y_train, **fit_kwargs)
+        automl.fit(X_train=x_train, y_train=y_train, **fit_kwargs)
 
         if automl.model is None:  # pragma: no cover - defensive
             msg = "FLAML search finished without a model"

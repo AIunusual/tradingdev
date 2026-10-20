@@ -87,12 +87,10 @@ if outcome == "ml_failure":
     from tradingdev.domain.ml.models.flaml_model import FLAMLAutoMLDirectionModel
 
     class FailingAutoML:
-        # Mimics a learner that spills a ``catboost_<ts>`` log tree into the
-        # temp tree before dying. The wrapper removes the scratch directory
-        # it runs the search in, so this spill is placed the way a library
-        # that writes to TMPDIR would: it outlives the failed search and is
-        # left for the supervisor to clean up, which is what this outcome
-        # exists to cover.
+        # Mimics a third-party learner that writes to TMPDIR before dying.
+        # The spill outlives the failed search and is left for the supervisor
+        # to clean up, even when the wrapper disables its known learners'
+        # diagnostic output.
         classes_ = (0, 1)
         model = None
 
@@ -258,8 +256,8 @@ def _check_preflight_cleanup(
     }
     if outcome == "ml_failure":
         assert record["training_rows"] == 3
-        # The CatBoost-style spill must have happened inside the search's
-        # scratch directory, so it sits under the supervised temp tree.
+        # The learner's own temporary directory must sit under the
+        # supervised temp tree.
         assert any(path.name.startswith("catboost_") for path in artifacts)
         assert any(
             part.startswith("flaml_direction_")

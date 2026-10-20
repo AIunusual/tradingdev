@@ -3,15 +3,18 @@
 The search is driven through a stand-in ``flaml`` module so these tests
 assert the contract the wrapper must honour — which columns reach the
 search, how ``eval_df`` is forwarded, and what ``predict_proba`` looks
-like — without spending a real time budget. One smoke test at the end
-does run FLAML for real to prove the wrapper is wired to the library.
+like — without spending a real time budget. Smoke tests at the end run
+FLAML for real, including CatBoost's file output settings.
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
 import types
 from pathlib import Path
+from queue import SimpleQueue
+from threading import Barrier, Event, Thread
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -85,6 +88,8 @@ class _FakeAutoML:
 
 def _install_fake_flaml(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    automl_type: type[_FakeAutoML] = _FakeAutoML,
     **kwargs: Any,
 ) -> list[_FakeAutoML]:
     """Put a fake ``flaml`` module in place and return the AutoMLs it makes."""
@@ -92,7 +97,7 @@ def _install_fake_flaml(
     module = types.ModuleType("flaml")
 
     def factory() -> _FakeAutoML:
-        instance = _FakeAutoML(**kwargs)
+        instance = automl_type(**kwargs)
         created.append(instance)
         return instance
 
@@ -127,6 +132,14 @@ def _train(
     model = subject or FLAMLAutoMLDirectionModel()
     model.train(_frame(), eval_df=eval_df)
     return model, created[0]
+
+
+@pytest.fixture
+def isolated_search_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Contain both working-directory output and library temporary files."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return tmp_path
 
 
 class TestTrainContract:
@@ -201,45 +214,145 @@ class TestTrainContract:
         assert call["n_jobs"] == 2
         assert call["seed"] == 7
 
-    def test_learner_spills_are_contained_and_removed(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize("outcome", ["success", "exception", "timeout", "no_model"])
+    def test_search_outcomes_leave_no_files_or_directory_changes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_search_directory: Path,
+        outcome: str,
     ) -> None:
-        # FLAML's CatBoost learner hard-codes a ``catboost_<ts>`` log tree in
-        # the current working directory; the search must not let that reach
-        # the caller's tree.
-        monkeypatch.chdir(tmp_path)
-        seen: dict[str, Path] = {}
-
-        class SpillingAutoML(_FakeAutoML):
+        class OutcomeAutoML(_FakeAutoML):
             def fit(
                 self,
                 X_train: pd.DataFrame,  # noqa: N803
                 y_train: pd.Series,  # noqa: N803
                 **kwargs: Any,
             ) -> None:
-                seen["cwd"] = Path.cwd()
-                (Path.cwd() / "catboost_1.0" / "learn").mkdir(parents=True)
+                assert Path.cwd() == isolated_search_directory
+                assert list(isolated_search_directory.iterdir()) == []
+                assert kwargs["log_file_name"] == ""
+                assert (
+                    kwargs["custom_hp"]["catboost"]["allow_writing_files"]["domain"]
+                    is False
+                )
+                super().fit(X_train=X_train, y_train=y_train, **kwargs)
+                if outcome == "exception":
+                    raise ValueError("search failed")
+                if outcome == "timeout":
+                    raise TimeoutError("search timed out")
+                if outcome == "no_model":
+                    self.model = None
+
+        _install_fake_flaml(monkeypatch, automl_type=OutcomeAutoML)
+        subject = FLAMLAutoMLDirectionModel()
+        if outcome == "success":
+            subject.train(_frame())
+        else:
+            error_type, message = {
+                "exception": (ValueError, "search failed"),
+                "timeout": (TimeoutError, "search timed out"),
+                "no_model": (RuntimeError, "without a model"),
+            }[outcome]
+            with pytest.raises(error_type, match=message) as caught:
+                subject.train(_frame())
+            # Keep the traceback alive: cleanup must not depend on garbage
+            # collection releasing the failed train() frame.
+            assert caught.traceback
+        assert Path.cwd() == isolated_search_directory
+        assert list(isolated_search_directory.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "missing_column", ["training_target", "validation_feature", "validation_target"]
+    )
+    def test_data_preparation_failure_leaves_no_temporary_files(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_search_directory: Path,
+        missing_column: str,
+    ) -> None:
+        created = _install_fake_flaml(monkeypatch)
+        training = _frame()
+        validation = _frame()
+        if missing_column == "training_target":
+            training = training.drop(columns=["target"])
+        elif missing_column == "validation_feature":
+            validation = validation.drop(columns=["f1"])
+        else:
+            validation = validation.drop(columns=["target"])
+
+        with pytest.raises(KeyError) as caught:
+            FLAMLAutoMLDirectionModel().train(training, eval_df=validation)
+
+        assert caught.traceback
+        assert all(not automl.fit_calls for automl in created)
+        assert Path.cwd() == isolated_search_directory
+        assert list(isolated_search_directory.iterdir()) == []
+
+    def test_concurrent_searches_preserve_caller_relative_file_access(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_search_directory: Path,
+    ) -> None:
+        entered_fit = Barrier(3, timeout=5)
+        finish_fit = Event()
+        failures: SimpleQueue[BaseException] = SimpleQueue()
+        caller_file = isolated_search_directory / "caller.txt"
+        caller_file.write_text("before training", encoding="utf-8")
+
+        class ConcurrentAutoML(_FakeAutoML):
+            def fit(
+                self,
+                X_train: pd.DataFrame,  # noqa: N803
+                y_train: pd.Series,  # noqa: N803
+                **kwargs: Any,
+            ) -> None:
+                entered_fit.wait()
+                assert finish_fit.wait(timeout=5), "Caller did not release training"
+                assert Path.cwd() == isolated_search_directory
+                assert (
+                    Path("caller.txt").read_text(encoding="utf-8") == "during training"
+                )
                 super().fit(X_train=X_train, y_train=y_train, **kwargs)
 
-        module = types.ModuleType("flaml")
-        monkeypatch.setattr(module, "AutoML", SpillingAutoML, raising=False)
-        monkeypatch.setitem(sys.modules, "flaml", module)
+        _install_fake_flaml(monkeypatch, automl_type=ConcurrentAutoML)
+        subjects = [FLAMLAutoMLDirectionModel(), FLAMLAutoMLDirectionModel()]
 
-        FLAMLAutoMLDirectionModel().train(_frame())
+        def train(subject: FLAMLAutoMLDirectionModel) -> None:
+            try:
+                subject.train(_frame())
+            except BaseException as error:
+                failures.put(error)
 
-        scratch = seen["cwd"]
-        assert scratch != tmp_path
-        assert scratch.name.startswith("flaml_direction_")
-        assert not scratch.exists()
-        assert list(tmp_path.iterdir()) == []
+        threads: list[Thread] = []
+        all_searches_entered = False
+        try:
+            for subject in subjects:
+                thread = Thread(target=train, args=(subject,))
+                thread.start()
+                threads.append(thread)
+            entered_fit.wait()
+            all_searches_entered = True
+            assert Path.cwd() == isolated_search_directory
+            assert Path("caller.txt").read_text(encoding="utf-8") == "before training"
+            Path("caller.txt").write_text("during training", encoding="utf-8")
+        finally:
+            finish_fit.set()
+            if not all_searches_entered:
+                entered_fit.abort()
+            for thread in threads:
+                thread.join(timeout=10)
+            assert all(not thread.is_alive() for thread in threads), (
+                "Training did not exit"
+            )
 
-    def test_a_search_that_returns_no_model_is_reported(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # `model is None` is what FLAML reports when nothing could be fitted.
-        _install_fake_flaml(monkeypatch, model=None)
-        with pytest.raises(RuntimeError, match="without a model"):
-            FLAMLAutoMLDirectionModel().train(_frame())
+        errors = []
+        while not failures.empty():
+            errors.append(failures.get_nowait())
+        assert not errors, errors
+        assert Path.cwd() == isolated_search_directory
+        assert list(isolated_search_directory.iterdir()) == [caller_file]
+        for subject in subjects:
+            assert len(subject.predict_proba(_frame())) == len(_frame())
 
 
 class TestPredictContract:
@@ -332,8 +445,8 @@ class TestFeatureImportance:
         assert FLAMLAutoMLDirectionModel().feature_importance() == ()
 
 
-def test_real_search_produces_a_usable_model() -> None:
-    """Smoke test: the wrapper really drives FLAML, not just the stand-in."""
+def _real_training_frame() -> pd.DataFrame:
+    """Give real learners a reproducible binary classification problem."""
     rng = np.random.default_rng(0)
     n = 200
     frame = pd.DataFrame(
@@ -345,25 +458,56 @@ def test_real_search_produces_a_usable_model() -> None:
     )
     logit = 1.8 * frame["f1"] - 1.2 * frame["f2"]
     frame["target"] = (rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
+    return frame
+
+
+def test_real_search_produces_a_usable_model(isolated_search_directory: Path) -> None:
+    """Smoke test: the wrapper really drives FLAML, not just the stand-in."""
+    frame = _real_training_frame()
 
     subject = FLAMLAutoMLDirectionModel(
         time_budget=20.0,
         estimator_list=["lgbm", "xgboost", "catboost", "rf", "extra_tree"],
         n_jobs=1,
     )
-    cwd = Path.cwd()
-    before = set(cwd.iterdir())
     subject.train(frame)
-    # CatBoost in the estimator list is exactly the case that used to leave
-    # ``catboost_<ts>`` directories behind in the working directory.
-    assert set(cwd.iterdir()) == before, sorted(set(cwd.iterdir()) - before)
+    assert Path.cwd() == isolated_search_directory
+    assert list(isolated_search_directory.iterdir()) == []
 
     proba = subject.predict_proba(frame)
     np.testing.assert_array_equal(proba.columns.to_numpy(), [0, 1])
-    assert len(proba) == n
+    assert len(proba) == len(frame)
     assert np.allclose(proba.sum(axis=1).to_numpy(), 1.0)
     assert subject.get_parameters()["selected_estimator"]
 
     predicted = subject.predict(frame)
-    assert len(predicted) == n
+    assert len(predicted) == len(frame)
     assert set(predicted.unique()) <= {0.0, 1.0}
+
+
+def test_real_catboost_search_disables_file_output(
+    isolated_search_directory: Path,
+) -> None:
+    """Force CatBoost to run so another winning learner cannot hide spills."""
+    from catboost import CatBoostClassifier
+
+    frame = _real_training_frame()
+    subject = FLAMLAutoMLDirectionModel(
+        time_budget=5.0, estimator_list=["catboost"], n_jobs=1
+    )
+    subject.train(frame)
+
+    assert subject.get_parameters()["selected_estimator"] == "catboost"
+    estimator = subject._require_trained().model.estimator
+    assert isinstance(estimator, CatBoostClassifier)
+    assert estimator.is_fitted()
+    assert estimator.get_param("allow_writing_files") is False
+    proba = subject.predict_proba(frame)
+    np.testing.assert_array_equal(proba.columns.to_numpy(), [0, 1])
+    assert len(proba) == len(frame)
+    assert np.allclose(proba.sum(axis=1).to_numpy(), 1.0)
+    predicted = subject.predict(frame)
+    assert len(predicted) == len(frame)
+    assert set(predicted.unique()) <= {0.0, 1.0}
+    assert Path.cwd() == isolated_search_directory
+    assert list(isolated_search_directory.iterdir()) == []
