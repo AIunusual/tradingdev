@@ -21,6 +21,12 @@ from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
+    QuantileStrategyConfig,
+)
+from tradingdev.domain.strategies.bundled.quantile_strategy.strategy import (
+    QuantileStrategy,
+)
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
@@ -501,3 +507,46 @@ def test_bundled_manifest_source_is_independent_of_working_directory(
     )
     monkeypatch.chdir(tmp_path.parent)
     assert service.run_manifest(manifest).pipeline.execution_manifest == manifest
+
+
+def test_simple_backtest_refuses_an_untrained_quantile_strategy(
+    tmp_path: Path,
+) -> None:
+    """The simple path must surface the refusal, not leaky metrics (issue #24 C).
+
+    Bundled strategies skip the generated-code contract probe, so the refusal
+    reaches the caller from ``generate_signals`` itself.
+    """
+
+    class _BundledLoader(_StrategyLoaderStub):
+        def resolve_execution(self, strategy_cfg: dict[str, Any]) -> StrategyExecution:
+            return StrategyExecution(kind="bundled", constructor_kwargs={})
+
+    rows = 80
+    closes = [100.0 + (index % 7) for index in range(rows)]
+    frame = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=rows, freq="h", tz="UTC"),
+            "open": closes,
+            "high": [value + 1.0 for value in closes],
+            "low": [value - 1.0 for value in closes],
+            "close": closes,
+            "volume": [1000.0] * rows,
+        }
+    )
+    dataset = LoadedDataset(
+        frame=frame,
+        processed_path=tmp_path / "processed.parquet",
+        dataset_id="dataset-fixture",
+    )
+    strategy = QuantileStrategy(config=QuantileStrategyConfig(horizon=3))
+    source_path = tmp_path / "fixture.py"
+    source_path.write_text("# fixture strategy\n", encoding="utf-8")
+    service = BacktestService(
+        data_service=cast("DataService", _DataServiceStub(dataset)),
+        strategy_loader=cast("StrategyLoader", _BundledLoader(strategy)),
+        strategy_gate=_GateStub(str(source_path)),
+    )
+
+    with pytest.raises(RuntimeError, match="no trained regime model"):
+        service.run_raw_config(_raw_config())

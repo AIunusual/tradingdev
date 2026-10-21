@@ -29,9 +29,47 @@ one direction has a clear edge.
 
 - `fit()` trains regime classifiers for candidate horizons and searches entry
   edge plus sizing parameters.
+- `generate_signals()` requires a completed `fit()`. Without a trained model it
+  raises `RuntimeError` rather than training on the frame it is about to score:
+  training on the evaluation segment would let earlier signals use later data.
+  A `fit()` call without a backtest engine skips training, so it does not
+  satisfy this requirement.
 - The state machine skips regimes where `P(both)` or `P(neither)` is too high.
 - Dynamic sizing scales exposure by directional edge when enabled.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
+
+## Running
+
+A simple backtest cannot train this strategy. `generate_signals()` has no
+training pass of its own, so a config without a `validation` block fails with
+`RuntimeError` instead of reporting metrics; it does not silently fall back to
+training on the frame it is scoring.
+
+Walk-forward validation is the supported entry point: each fold calls `fit()` on
+its training window and then scores the test window with the model that fold
+trained. The bundled config already declares a `validation` block, so it runs
+as-is:
+
+```bash
+uv run python -m tradingdev \
+  --config src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml \
+  --walk-forward
+```
+
+The split settings (`train_start`, `test_start`, `purged_split`,
+`label_horizon`, ...) are documented in
+[Strategy Walk-Forward Settings](../strategy_contract.md#strategy-walk-forward-settings).
+A config that declares `validation` cannot be run as a simple backtest, and
+`--walk-forward` against a config without it fails with `Config has no
+validation section for walk-forward.`
+
+The MCP optimization tool cannot prepare a search for this strategy. Before it
+creates a plan or a job it runs a preflight on a sample window using the first
+value of every parameter range, and that run reaches `generate_signals()`
+without a `fit()`. Preparation therefore fails with the same `RuntimeError` and
+no optimization job starts. Optimization also rejects any config that declares
+`validation`, so the bundled config is not an optimization target even with a
+trained model.
 
 ## Data Requirements
 
