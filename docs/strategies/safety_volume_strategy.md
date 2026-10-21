@@ -26,6 +26,11 @@ Risk Gate 放行後決定做多或做空。
 - **預設**: SMA 快線 > 慢線 → 做多，反之做空
 - **可選**: 切換為 ML 方向模型（`use_ml_direction: true`）
 
+ML 方向模型只在特徵齊備後才有預測。`FeatureEngineer.transform` 會丟掉暖機段
+（特徵尚未齊備的前段 bar），這些 bar 的方向固定為 0，與 SMA 路徑的 NaN 區間一致；
+FLAT 狀態下 `direction == 0` 不會進場。暖機段之後，每根 bar 的預測都對應回產生它
+的那根 bar，不會被提前使用。
+
 ### Layer 3: Holding Manager (狀態機)
 
 管理持倉生命週期，確保符合交易所規則。
