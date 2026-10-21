@@ -288,6 +288,10 @@ git push -u origin feature/my-task
 
 Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模型。
 
+本機 hook 的主線推送保護僅適用於 GitHub（網址主機為 `github.com` 或
+`ssh.github.com`），拒絕直接更新或刪除主線，包含 `--force`。
+主線變更須透過 GitHub PR 合併；GitHub remote 請使用上述主機名稱。
+
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
 從開發分支向主線建立 PR。編號取自 PR 標題的 `#編號` 或網址 `/pull/編號`；

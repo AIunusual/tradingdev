@@ -142,8 +142,8 @@
 
 - 唯讀分析不建立 branch；修改前用 `scripts/detect-primary-branch.sh` 判定
   主線。從主線開始工作時建立 task branch；已在適合目前任務的開發／PR
-  分支時沿用，不另拆分支。主線透過 GitHub PR 合併，不可直接 commit、
-  push 或 rebase。
+  分支時沿用，不另拆分支。主線不可直接 commit 或 rebase；推往 GitHub
+  的主線變更須透過 PR 合併。
 - 不得 stash、reset、clean、覆寫或混入既有使用者修改。若工作樹包含與任務
   無關的修改，使用獨立 worktree，不擅自搬移那些修改。
 - 開始實作時辨識可獨立檢查的開發階段；每完成一個有意義的階段，執行
@@ -175,9 +175,10 @@
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
 - 每次 commit 只跑快速檢查與提交格式檢查。快速檢查驗證暫存內容的獨立
   snapshot，不能用尚未暫存的修正掩蓋待提交版本的錯誤。
-- 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 拒絕直接推送
-  或刪除主線；本機 hook 不能攔截 GitHub 網頁合併，也不能攔截不建立
-  commit 的本機 fast-forward。不得把 hook 描述為遠端強制門禁。
+- 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
+  僅限 GitHub，依 Git 傳入的實際目的地拒絕直接推送或刪除主線；本機 hook
+  不能攔截 GitHub 網頁合併，也不能攔截不建立 commit 的本機 fast-forward。
+  不得把 hook 描述為遠端強制門禁。
 - 準備決定合併的審閱者，明確執行 `scripts/check-pr.sh <PR編號>`。
   不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR，以及已登入的
   Codex CLI；檢查本身不建立 PR、發送評論、push 或合併。

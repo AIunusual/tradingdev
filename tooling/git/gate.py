@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from tooling.git.candidates import (
     DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
@@ -70,7 +72,36 @@ def check_full(
         print(f"Full checks passed. Base: {base} Head: {head} Tree: {candidate.tree}")
 
 
-def check_push() -> None:
+def _is_github_destination(destination: str) -> bool:
+    if "://" in destination:
+        try:
+            parsed = urlsplit(destination)
+            if parsed.scheme in {"ssh", "git", "git+ssh", "ssh+git"}:
+                # Git decodes native transport URLs before splitting user/host/port.
+                parsed = urlsplit(unquote(destination))
+                host = parsed.hostname
+            else:
+                host = unquote(parsed.hostname) if parsed.hostname else None
+        except ValueError as error:
+            raise RuntimeError("Cannot determine the push destination host.") from error
+        if parsed.scheme not in {"http", "https", "ssh", "git", "git+ssh", "ssh+git"}:
+            return False
+    else:
+        # Git also accepts SCP-style SSH URLs, with an optional username.
+        match = re.match(r"(?:[^/@:]+@)?([^/:]+):", destination)
+        host = match[1] if match else None
+    return host is not None and host.rstrip(".").casefold() in {
+        "github.com",
+        "ssh.github.com",
+    }
+
+
+def check_push(destination: str) -> None:
+    if not _is_github_destination(destination):
+        # Drain Git's ref updates before exiting, including large multi-ref pushes.
+        for _ in sys.stdin:
+            pass
+        return
     primary = subprocess.check_output(
         ["bash", "scripts/detect-primary-branch.sh"], text=True
     ).strip()
@@ -87,6 +118,7 @@ def main() -> None:
     parser.add_argument("action", choices=["commit", "full", "push"])
     parser.add_argument("--base", help="Explicit local comparison base for full checks")
     parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--destination", help="Actual push URL supplied by Git")
     parser.add_argument(
         "--max-evidence-bytes",
         type=int,
@@ -106,6 +138,10 @@ def main() -> None:
     action = args.action
     if action == "full" and not args.base:
         parser.error("full requires --base; use scripts/check-pr.sh for a remote PR")
+    if action == "push" and not args.destination:
+        parser.error("push requires --destination from the pre-push hook")
+    if args.destination is not None and action != "push":
+        parser.error("--destination is only valid for push checks")
     if args.max_evidence_bytes is not None and action != "full":
         parser.error("--max-evidence-bytes is only valid for full checks")
     if args.snapshot_timeout_seconds is not None and action != "full":
@@ -129,7 +165,7 @@ def main() -> None:
     if action == "commit":
         check_commit()
     elif action == "push":
-        check_push()
+        check_push(args.destination)
     else:
         check_full(
             args.base,

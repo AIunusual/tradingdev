@@ -326,9 +326,10 @@ def test_budget_option_is_not_silently_ignored_by_other_git_actions(
     monkeypatch: MonkeyPatch, action: str, capsys: CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(
-        sys, "argv", ["gate", action, "--max-evidence-bytes", "1000000"]
-    )
+    arguments = ["gate", action, "--max-evidence-bytes", "1000000"]
+    if action == "push":
+        arguments.extend(["--destination", "git@github.com:owner/project.git"])
+    monkeypatch.setattr(sys, "argv", arguments)
     with pytest.raises(SystemExit) as failure:
         gate.main()
     assert failure.value.code == 2
@@ -804,9 +805,10 @@ def test_timeout_option_is_rejected_for_other_git_actions(
     capsys: CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(gate, "git", lambda *_: pytest.fail("Git called"))
-    monkeypatch.setattr(
-        sys, "argv", ["gate", action, f"--{option}-timeout-seconds", "3600"]
-    )
+    arguments = ["gate", action, f"--{option}-timeout-seconds", "3600"]
+    if action == "push":
+        arguments.extend(["--destination", "git@github.com:owner/project.git"])
+    monkeypatch.setattr(sys, "argv", arguments)
     with pytest.raises(SystemExit) as failure:
         gate.main()
     assert failure.value.code == 2

@@ -10,14 +10,19 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 import pytest
+from tooling.git import gate
+from tooling.process_guard import run_captured
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from pytest import CaptureFixture, MonkeyPatch
 
 _PROJECT = Path(__file__).resolve().parents[2]
 _CHECKER = """import json
@@ -68,13 +73,10 @@ class GitRepository:
     record: Path
 
     def run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        result = subprocess.run(
-            args,
+        result = run_captured(
+            list(args),
             cwd=self.root,
             env=self.environment,
-            capture_output=True,
-            text=True,
-            check=False,
             timeout=30,
         )
         if check:
@@ -469,18 +471,51 @@ def test_task_branch_rebase_can_synchronize_primary() -> None:
         assert not repo.events("docs")
 
 
-def _add_remote(repo: GitRepository) -> Path:
+def _add_remote(
+    repo: GitRepository,
+    *,
+    primary: str = "main",
+    github: bool = False,
+    empty: bool = False,
+) -> Path:
     remote = repo.root.parent / "remote.git"
-    repo.run("git", "init", "--bare", "--initial-branch=main", str(remote))
-    repo.run("git", "-C", str(remote), "fetch", str(repo.root), "main:refs/heads/main")
+    repo.run("git", "init", "--bare", f"--initial-branch={primary}", str(remote))
+    if not empty:
+        repo.run(
+            "git",
+            "-C",
+            str(remote),
+            "fetch",
+            str(repo.root),
+            f"{primary}:refs/heads/{primary}",
+        )
     repo.run("git", "-C", str(remote), "config", "receive.denyDeleteCurrent", "ignore")
     repo.git("remote", "add", "origin", str(remote))
+    if github:
+        # Exercise Git's real pre-push URL argument without contacting GitHub.
+        transport = repo.root.parent / "github-ssh.py"
+        arguments = repo.root.parent / "ssh-arguments.jsonl"
+        transport.write_text(
+            "import json, os, shlex, sys\n"
+            f"with open({str(arguments)!r}, 'a', encoding='utf-8') as record:\n"
+            "    record.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "command = shlex.split(sys.argv[-1])\n"
+            "assert command[0] in {'git-receive-pack', 'git-upload-pack'}\n"
+            f"os.execvp(command[0], [command[0], {str(remote)!r}])\n",
+            encoding="utf-8",
+        )
+        repo.environment["GIT_SSH_COMMAND"] = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(transport))}"
+        )
+        repo.environment["GIT_SSH_VARIANT"] = "ssh"
+        repo.git("remote", "set-url", "origin", "git@github.com:owner/project.git")
     return remote
 
 
-def test_task_push_does_not_run_checks_or_require_a_receipt() -> None:
+@pytest.mark.parametrize("github", [False, True])
+def test_task_push_does_not_run_checks_or_require_a_receipt(github: bool) -> None:
     with _repository() as repo:
-        _add_remote(repo)
+        _add_remote(repo, github=github)
         task = repo.commit_task()
         checks = repo.record.read_text()
         repo.environment["HOOK_TEST_FAIL"] = "full"
@@ -494,41 +529,232 @@ def test_task_push_does_not_run_checks_or_require_a_receipt() -> None:
         assert repo.record.read_text() == checks
 
 
-@pytest.mark.parametrize("refspec", ["HEAD:main", ":main"])
-def test_primary_push_or_deletion_is_blocked_by_destination(refspec: str) -> None:
-    with _repository() as repo:
-        remote = _add_remote(repo)
-        before = repo.git("rev-parse", "main")
+@pytest.mark.parametrize("primary", ["main", "master", "trunk"])
+@pytest.mark.parametrize("operation", ["update", "force", "delete"])
+def test_github_primary_push_or_deletion_is_blocked_by_destination(
+    primary: str, operation: str
+) -> None:
+    with _repository(primary) as repo:
+        remote = _add_remote(repo, primary=primary, github=True)
+        before = repo.git("rev-parse", primary)
         repo.commit_task()
         checks = repo.record.read_text()
-        result = repo.run("git", "push", "origin", refspec, check=False)
+        refspec = f":{primary}" if operation == "delete" else f"HEAD:{primary}"
+        options = ["--force"] if operation == "force" else []
+        result = repo.run("git", "push", *options, "origin", refspec, check=False)
         assert result.returncode != 0
         assert (
-            "Direct pushes/deletions of main are blocked"
+            f"Direct pushes/deletions of {primary} are blocked"
             in result.stdout + result.stderr
         )
         assert (
-            repo.run("git", "-C", str(remote), "rev-parse", "main").stdout.strip()
+            repo.run("git", "-C", str(remote), "rev-parse", primary).stdout.strip()
             == before
         )
         assert repo.record.read_text() == checks
 
 
-def test_initial_primary_push_is_also_blocked() -> None:
+@pytest.mark.parametrize("refspec", ["HEAD:main", ":main"])
+def test_non_github_primary_push_and_deletion_are_allowed(refspec: str) -> None:
     with _repository() as repo:
-        remote = repo.root.parent / "empty-remote.git"
-        repo.run("git", "init", "--bare", str(remote))
-        repo.git("remote", "add", "origin", str(remote))
-        repo.commit_task()
+        remote = _add_remote(repo)
+        task = repo.commit_task()
         checks = repo.record.read_text()
+        repo.run("git", "push", "origin", refspec)
+        expected = "" if refspec == ":main" else f"{task}\trefs/heads/main"
+        assert repo.git("ls-remote", str(remote), "refs/heads/main") == expected
+        assert repo.record.read_text() == checks
+
+
+@pytest.mark.parametrize("github", [False, True])
+def test_initial_primary_push_is_blocked_only_on_github(github: bool) -> None:
+    with _repository() as repo:
+        remote = _add_remote(repo, github=github, empty=True)
+        task = repo.commit_task()
+        checks = repo.record.read_text()
+        result = repo.run("git", "push", "origin", "HEAD:main", check=False)
+        assert (result.returncode != 0) is github
+        if github:
+            assert (
+                "Direct pushes/deletions of main are blocked"
+                in result.stdout + result.stderr
+            )
+        expected = "" if github else f"{task}\trefs/heads/main"
+        assert repo.git("ls-remote", str(remote), "refs/heads/main") == expected
+        assert repo.record.read_text() == checks
+
+
+def test_shared_origin_push_urls_apply_protection_to_each_destination() -> None:
+    with _repository() as repo:
+        github = _add_remote(repo, github=True)
+        nas = repo.root.parent / "NAS 備份.git"
+        repo.run("git", "clone", "--bare", str(github), str(nas))
+        before = repo.git("rev-parse", "main")
+        task = repo.commit_task()
+        checks = repo.record.read_text()
+        repo.git("config", "--add", "remote.origin.pushurl", str(nas))
+        repo.git(
+            "config",
+            "--add",
+            "remote.origin.pushurl",
+            "git@github.com:owner/project.git",
+        )
         result = repo.run("git", "push", "origin", "HEAD:main", check=False)
         assert result.returncode != 0
         assert (
             "Direct pushes/deletions of main are blocked"
             in result.stdout + result.stderr
         )
-        assert repo.git("ls-remote", "origin", "refs/heads/main") == ""
+        assert repo.git("ls-remote", str(nas), "refs/heads/main") == (
+            f"{task}\trefs/heads/main"
+        )
+        assert repo.git("ls-remote", str(github), "refs/heads/main") == (
+            f"{before}\trefs/heads/main"
+        )
         assert repo.record.read_text() == checks
+
+
+@pytest.mark.parametrize(
+    ("destination", "ssh_target", "protected"),
+    [
+        ("ssh://git@github%2ecom/owner/project.git", "git@github.com", True),
+        ("ssh://git@%67ithub.com/owner/project.git", "git@github.com", True),
+        ("ssh://git%40github.com/owner/project.git", "git@github.com", True),
+        ("ssh://git@github.com%3a443/owner/project.git", "git@github.com", True),
+        (
+            "ssh://github%2ecom@nas.local/owner/project.git",
+            "github.com@nas.local",
+            False,
+        ),
+        (
+            "ssh://git@github.com%2eevil.test/owner/project.git",
+            "git@github.com.evil.test",
+            False,
+        ),
+        ("git@github%2ecom:owner/project.git", "git@github%2ecom", False),
+    ],
+)
+def test_encoded_ssh_destinations_follow_git_transport_identity(
+    destination: str, ssh_target: str, protected: bool
+) -> None:
+    with _repository() as repo:
+        remote = _add_remote(repo, github=True)
+        repo.git("remote", "set-url", "origin", destination)
+        before = repo.git("rev-parse", "main")
+        task = repo.commit_task()
+        checks = repo.record.read_text()
+        result = repo.run("git", "push", "origin", "HEAD:main", check=False)
+        assert (result.returncode != 0) is protected
+        if protected:
+            assert "Direct pushes/deletions of main are blocked" in result.stderr
+        expected = before if protected else task
+        assert repo.git("ls-remote", str(remote), "refs/heads/main") == (
+            f"{expected}\trefs/heads/main"
+        )
+        calls = [
+            json.loads(line)
+            for line in (repo.root.parent / "ssh-arguments.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(calls) == 1
+        assert calls[0][-2] == ssh_target
+        assert repo.record.read_text() == checks
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "git@github.com:owner/project.git",
+        "github.com:owner/project.git",
+        "git@GITHUB.COM.:owner/project.git",
+        "https://github.com/owner/project.git",
+        "HTTPS://GITHUB.COM./owner/project.git",
+        "http://github.com/owner/project.git",
+        "git://github.com/owner/project.git",
+        "ssh://git@github.com/owner/project.git",
+        "git+ssh://git@github.com/owner/project.git",
+        "ssh+git://git@github.com/owner/project.git",
+        "ssh://git@ssh.github.com:443/owner/project.git",
+        "git@SSH.GITHUB.COM.:owner/project.git",
+    ],
+)
+def test_github_url_forms_protect_primary(
+    monkeypatch: MonkeyPatch, destination: str
+) -> None:
+    def detect_primary(*args: object, **kwargs: object) -> str:
+        return "main\n"
+
+    monkeypatch.setattr(subprocess, "check_output", detect_primary)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO(f"refs/heads/task {'a' * 40} refs/heads/main {'b' * 40}\n"),
+    )
+    with pytest.raises(RuntimeError, match="Direct pushes/deletions of main"):
+        gate.check_push(destination)
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "ssh://ownnas@192.168.0.169:47198/volume1/工作/repo.git",
+        "ownnas@nas.local:backup/repo.git",
+        "https://gitlab.com/owner/project.git",
+        "https://github.com.evil.test/owner/project.git",
+        "https://github.com@nas.local/owner/project.git",
+        "git@notgithub.com:owner/project.git",
+        "/backup/github.com/project.git",
+        "./github.com:project.git",
+        "C:/backup/github.com/project.git",
+        "file://github.com/backup/project.git",
+    ],
+)
+def test_non_github_destinations_do_not_require_primary_detection(
+    monkeypatch: MonkeyPatch, destination: str
+) -> None:
+    def detect_primary(*args: object, **kwargs: object) -> str:
+        pytest.fail("Non-GitHub pushes must not require primary-branch detection")
+
+    monkeypatch.setattr(subprocess, "check_output", detect_primary)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO(f"refs/heads/task {'a' * 40} refs/heads/main {'b' * 40}\n"),
+    )
+    gate.check_push(destination)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["push"], "push requires --destination"),
+        (["push", "--destination", ""], "push requires --destination"),
+        (
+            ["commit", "--destination", "git@github.com:owner/project.git"],
+            "--destination is only valid for push checks",
+        ),
+        (
+            ["full", "--base", "main", "--destination", "nas:backup.git"],
+            "--destination is only valid for push checks",
+        ),
+    ],
+)
+def test_invalid_destination_options_fail_before_git_operations(
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    arguments: list[str],
+    message: str,
+) -> None:
+    def unexpected_git(*args: str) -> str:
+        pytest.fail("Invalid options must fail before invoking Git")
+
+    monkeypatch.setattr(gate, "git", unexpected_git)
+    monkeypatch.setattr(sys, "argv", ["gate", *arguments])
+    with pytest.raises(SystemExit) as error:
+        gate.main()
+    assert error.value.code == 2
+    assert message in capsys.readouterr().err
 
 
 def test_installer_migrates_only_the_old_main_merge_option() -> None:
