@@ -357,13 +357,7 @@ class TestSafetyVolumeStrategy:
 
 
 class TestMLDirectionAlignment:
-    """Predictions must land on the bar whose features produced them.
-
-    ``FeatureEngineer.transform`` drops the warm-up rows and resets the index,
-    so a positional copy starting at row zero moves every prediction ``offset``
-    bars into the past. The direction used at bar ``t`` would then come from
-    data up to ``t + offset`` - the look-ahead reported in issue #24.
-    """
+    """Predictions stay on their source bars despite warm-up or interior gaps."""
 
     def test_predictions_land_on_the_bars_their_features_came_from(
         self,
@@ -397,41 +391,84 @@ class TestMLDirectionAlignment:
         # The first predicted bar is the first row that survived the drop.
         assert df["timestamp"].iloc[offset] == feat["timestamp"].iloc[0]
 
-    def test_predictions_must_cover_every_feature_row(
+    @pytest.mark.parametrize("mismatch", ["count", "order"])
+    def test_predictions_must_match_feature_rows(
         self,
         large_ohlcv_df: pd.DataFrame,
+        mismatch: str,
     ) -> None:
         df = large_ohlcv_df.iloc[:100].reset_index(drop=True)
-        feat = FeatureEngineer(lookback=12, target_horizon=1).transform(
-            df, include_target=False
-        )
-        short = pd.Series(np.zeros(len(feat) - 1, dtype=float))
+
+        class _MismatchedDirectionModel:
+            def predict(self, frame: pd.DataFrame) -> pd.Series[float]:
+                index = frame.index[:-1] if mismatch == "count" else frame.index[::-1]
+                return pd.Series(1.0, index=index)
+
+        strategy = SafetyVolumeStrategy(config=_make_config())
+        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
+        strategy._dir_model = cast("XGBoostDirectionModel", _MismatchedDirectionModel())
         with pytest.raises(RuntimeError, match="do not match the feature rows"):
-            SafetyVolumeStrategy._align_predictions(df, feat, short)
+            strategy._compute_ml_directions(df)
 
-    def test_interior_dropped_rows_are_rejected(
+    @pytest.mark.parametrize("rows", [0, 15])
+    def test_no_complete_features_returns_zero_without_calling_model(
         self,
         large_ohlcv_df: pd.DataFrame,
+        rows: int,
     ) -> None:
-        df = large_ohlcv_df.iloc[:100].reset_index(drop=True)
-        # A hole in the middle, not a warm-up prefix: an offset cannot express it.
-        feat = df.drop(index=[10]).reset_index(drop=True)
-        preds = pd.Series(np.zeros(len(feat), dtype=float))
-        with pytest.raises(RuntimeError, match="not the trailing block"):
-            SafetyVolumeStrategy._align_predictions(df, feat, preds)
+        class _UnexpectedDirectionModel:
+            def predict(self, frame: pd.DataFrame) -> pd.Series[float]:
+                pytest.fail("No feature rows should reach the direction model")
 
-    def test_a_frame_without_timestamps_aligns_by_offset(
-        self,
-        large_ohlcv_df: pd.DataFrame,
+        strategy = SafetyVolumeStrategy(config=_make_config())
+        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
+        strategy._dir_model = cast("XGBoostDirectionModel", _UnexpectedDirectionModel())
+
+        directions = strategy._compute_ml_directions(large_ohlcv_df.iloc[:rows])
+        np.testing.assert_array_equal(directions, np.zeros(rows))
+
+    @pytest.mark.parametrize("time_layout", ["column", "datetime_index", "none"])
+    def test_interior_missing_features_do_not_change_past_directions(
+        self, time_layout: str
     ) -> None:
-        df = (
-            large_ohlcv_df.iloc[:100].drop(columns=["timestamp"]).reset_index(drop=True)
+        close = 100.0 + np.arange(180) % 7
+        close[70:110] = 100.0
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": np.full(180, 1000.0),
+            }
         )
-        feat = FeatureEngineer(lookback=12, target_horizon=1).transform(
-            df, include_target=False
-        )
-        offset = len(df) - len(feat)
-        preds = pd.Series(np.ones(len(feat), dtype=float))
-        directions = SafetyVolumeStrategy._align_predictions(df, feat, preds)
-        np.testing.assert_array_equal(directions[:offset], 0.0)
-        np.testing.assert_array_equal(directions[offset:], 1.0)
+        timestamps = pd.date_range("2024-01-01", periods=len(df), freq="h")
+        if time_layout == "column":
+            df["timestamp"] = timestamps
+        elif time_layout == "datetime_index":
+            df.index = timestamps
+        else:
+            df.index = pd.RangeIndex(1000, 1180)
+        original = df.copy(deep=True)
+
+        class _CloseDirectionModel:
+            def predict(self, frame: pd.DataFrame) -> pd.Series[float]:
+                return pd.Series(
+                    np.where(frame["close"] >= 103.0, 1.0, -1.0), index=frame.index
+                )
+
+        strategy = SafetyVolumeStrategy(config=_make_config())
+        strategy._dir_fe = FeatureEngineer(lookback=12, target_horizon=1)
+        strategy._dir_model = cast("XGBoostDirectionModel", _CloseDirectionModel())
+
+        directions = strategy._compute_ml_directions(df)
+        prefix = strategy._compute_ml_directions(df.iloc[:60])
+
+        # Warm-up ends at 33; a later flat period makes Bollinger width zero
+        # and removes feature rows 89:110, without changing earlier rows.
+        expected = np.where(close >= 103.0, 1.0, -1.0)
+        expected[:33] = 0.0
+        expected[89:110] = 0.0
+        np.testing.assert_array_equal(directions, expected)
+        np.testing.assert_array_equal(directions[:60], prefix)
+        pd.testing.assert_frame_equal(df, original)

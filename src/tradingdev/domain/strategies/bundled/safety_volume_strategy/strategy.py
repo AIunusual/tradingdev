@@ -429,46 +429,25 @@ class SafetyVolumeStrategy(BaseStrategy):
         """ML direction using the trained direction model."""
         if self._dir_model is None or self._dir_fe is None:
             return self._compute_sma_directions(df)
-        feat = self._dir_fe.transform(df, include_target=False)
+        out = np.zeros(len(df), dtype=np.float64)
+        if df.empty:
+            return out
+        # Preserve source positions through dropna, including interior gaps.
+        # The copied RangeIndex is metadata, never an input feature for the model.
+        feat = self._dir_fe.transform(
+            df.reset_index(drop=True), include_target=False, preserve_index=True
+        )
+        if feat.empty:
+            return out
         preds = self._dir_model.predict(feat)
-        return self._align_predictions(df, feat, preds)
-
-    @staticmethod
-    def _align_predictions(
-        df: pd.DataFrame,
-        feat: pd.DataFrame,
-        preds: pd.Series[float],
-    ) -> npt.NDArray[np.floating[Any]]:
-        """Put each prediction back on the bar whose features produced it.
-
-        ``FeatureEngineer.transform`` drops rows with incomplete features and
-        then resets the index, so ``feat`` describes the *tail* of ``df`` and
-        ``preds[k]`` belongs to bar ``offset + k``. Writing them from position
-        zero instead shifts every prediction ``offset`` bars into the past: the
-        direction used at bar ``t`` would be computed from data up to
-        ``t + offset``. Warm-up bars keep a zero direction, which the state
-        machine reads as no direction rather than a guess.
-        """
-        values = preds.to_numpy(dtype=float)
-        offset = len(df) - len(feat)
-        if offset < 0 or len(values) != len(feat):
+        if len(preds) != len(feat) or not preds.index.equals(feat.index):
             msg = (
                 "Direction predictions do not match the feature rows: "
-                f"{len(values)} predictions for {len(feat)} rows "
-                f"({len(df)} bars)"
+                f"{len(preds)} predictions for {len(feat)} rows; "
+                "row count and source indices must match"
             )
             raise RuntimeError(msg)
-        if offset and "timestamp" in df.columns and "timestamp" in feat.columns:
-            expected = df["timestamp"].iloc[offset:].reset_index(drop=True)
-            actual = feat["timestamp"].reset_index(drop=True)
-            if not expected.equals(actual):
-                msg = (
-                    "Feature rows are not the trailing block of the input bars; "
-                    "dropping interior rows makes a positional offset unsafe"
-                )
-                raise RuntimeError(msg)
-        out = np.zeros(len(df), dtype=np.float64)
-        out[offset:] = values
+        out[feat.index.to_numpy(dtype=np.intp)] = preds.to_numpy(dtype=float)
         return out
 
     def _fit_direction_model(

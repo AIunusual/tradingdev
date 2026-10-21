@@ -65,8 +65,9 @@ class FeatureEngineer:
         df: pd.DataFrame,
         *,
         include_target: bool = True,
+        preserve_index: bool = False,
     ) -> pd.DataFrame:
-        """Transform OHLCV into a feature DataFrame."""
+        """Transform OHLCV, optionally retaining source indices after dropping NaNs."""
         close = df["close"].astype(float)
         volume = df["volume"].astype(float)
         log_ret = close.apply(np.log).diff()
@@ -92,7 +93,9 @@ class FeatureEngineer:
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
+        if not preserve_index:
+            result = result.reset_index(drop=True)
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result
