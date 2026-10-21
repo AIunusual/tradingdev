@@ -248,6 +248,8 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 本機 hook 的主線推送保護僅適用於 GitHub（網址主機為 `github.com` 或
 `ssh.github.com`），拒絕直接更新或刪除主線，包含 `--force`。
 主線變更須透過 GitHub PR 合併；GitHub remote 請使用上述主機名稱。
+保護規則依各實際推送網址分別判斷。同一 remote 有多個 `pushurl` 時，推送可能
+部分成功，失敗也不會回復已完成的更新；重試前須逐一確認各目的地結果。
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
