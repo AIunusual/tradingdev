@@ -429,11 +429,25 @@ class SafetyVolumeStrategy(BaseStrategy):
         """ML direction using the trained direction model."""
         if self._dir_model is None or self._dir_fe is None:
             return self._compute_sma_directions(df)
-        feat = self._dir_fe.transform(df, include_target=False)
-        preds = self._dir_model.predict(feat)
-        # Map back to full df length (NaN rows dropped)
         out = np.zeros(len(df), dtype=np.float64)
-        out[: len(preds)] = np.asarray(preds.values, dtype=float)
+        if df.empty:
+            return out
+        # Preserve source positions through dropna, including interior gaps.
+        # The copied RangeIndex is metadata, never an input feature for the model.
+        feat = self._dir_fe.transform(
+            df.reset_index(drop=True), include_target=False, preserve_index=True
+        )
+        if feat.empty:
+            return out
+        preds = self._dir_model.predict(feat)
+        if len(preds) != len(feat) or not preds.index.equals(feat.index):
+            msg = (
+                "Direction predictions do not match the feature rows: "
+                f"{len(preds)} predictions for {len(feat)} rows; "
+                "row count and source indices must match"
+            )
+            raise RuntimeError(msg)
+        out[feat.index.to_numpy(dtype=np.intp)] = preds.to_numpy(dtype=float)
         return out
 
     def _fit_direction_model(

@@ -1,14 +1,27 @@
 """Tests for the feature engineering module."""
 
-from typing import TYPE_CHECKING
+import pandas as pd
 
 from tradingdev.domain.ml.features.features import FeatureEngineer
 
-if TYPE_CHECKING:
-    import pandas as pd
-
 
 class TestFeatureEngineer:
+    def test_preserve_index_keeps_source_identity_without_changing_features(
+        self, large_ohlcv_df: pd.DataFrame
+    ) -> None:
+        df = large_ohlcv_df.set_index("timestamp")
+        original = df.copy(deep=True)
+        fe = FeatureEngineer(lookback=12)
+        indexed = fe.transform(df, include_target=False, preserve_index=True)
+        indexed_names = fe.get_feature_names()
+        default = fe.transform(df, include_target=False)
+
+        assert 0 < len(indexed) < len(df)
+        pd.testing.assert_index_equal(indexed.index, df.index[-len(indexed) :])
+        pd.testing.assert_frame_equal(indexed.reset_index(drop=True), default)
+        assert indexed_names == fe.get_feature_names()
+        pd.testing.assert_frame_equal(df, original)
+
     def test_transform_produces_features(self, large_ohlcv_df: pd.DataFrame) -> None:
         fe = FeatureEngineer(lookback=12)
         result = fe.transform(large_ohlcv_df, include_target=True)
