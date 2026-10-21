@@ -28,18 +28,13 @@ uv sync --locked --all-extras --python 3.14
 `tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
 `tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
 
-`tooling/git/candidates.py` 管理獨立的 snapshot／合併候選與驗證；`gate.py`、
-`check_pr.py`、`cleanup_pr.py` 分別協調 hook／本機 full、PR 檢查與分支清理，
-`pr_context.py` 共用 GitHub PR 身分讀取。文件審查位於 `tooling/review_docs.py`，
-與測試共用 `tooling/` 的程序管理及 Codex 執行檔定位，不依賴 `tests/`。
-候選驗證使用執行檢查的 checkout 內的 reviewer 讀取候選 Git 內容，再執行
-候選 snapshot 內的品質檢查與離線測試。
+Git 檢查與分支清理位於 `tooling/git/`，文件審查位於 `tooling/review_docs.py`。
+候選驗證先由目前 checkout 的 reviewer 讀取候選 Git 內容，再執行候選
+snapshot 內的品質檢查與離線測試。
 
 `tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
 研究原型，用法見 [MAE 研究原型](#mae-研究原型)。`tooling/` 與 `research/`
 不隨產品 wheel 發佈，Python 程式仍使用相同的 Ruff／strict Mypy 政策。
-原有 `scripts/*.py` 路徑已移除，不保留相容轉接；操作時使用既有 Shell 入口，
-直接呼叫 Python 工具則在 repository 根目錄使用新的模組命令。
 
 ### 依賴相容性限制
 
@@ -52,23 +47,21 @@ FLAML 2.7 的安裝 metadata 接受 Python `>=3.10`，但
 
 專案離線測試逐一強制使用 LightGBM、XGBoost、Random Forest 與 Extra Trees，
 驗證真實訓練、holdout、預測及機率，另驗證 CatBoost 搜尋與檔案清理。
-這些測試涵蓋本專案使用的分類流程，不代表所有 FLAML 功能、平台或模型皆相容。
-更新此組合時須保留各 learner 的獨立驗證，避免單次搜尋由其他 learner 成功而
-掩蓋相容性問題；實際版本以 `pyproject.toml` 與 `uv.lock` 為準。
+驗證範圍限於本專案使用的分類流程；其他 FLAML 功能、平台或模型須另行驗證。
+更新此組合時須保留各 learner 的獨立驗證；實際版本以 `pyproject.toml` 與 `uv.lock` 為準。
 
 ## 更新文件
 
 文件分工與審查判準見 [AGENTS.md 的政策與溝通](../AGENTS.md#政策與溝通)。
-準備變更時，先列出使用者操作是否改變，再決定要更新哪份既有文件。例如報告新增下載功能：
+依變更影響更新既有文件：
 
-- README 說明如何下載、匯出是否包含畫面外的資料，以及分享或解讀時的限制。
-- 執行產物契約說明 CSV／JSON 欄位、格式與相容性；涉及服務分工時才更新架構文件。
-- 若新增檢查命令或開發步驟，在本指南說明。
+- [README](../README.md)：使用者的安裝、設定、操作結果及必要限制。
+- [架構](../ARCHITECTURE.md)、[策略契約](strategy_contract.md)與[執行產物](run_artifacts.md)：服務分工、介面、格式及相容性。
+- 本指南：開發環境、檢查命令與 Git／PR 操作。
 
-提交前查看文件差異，確認沒有把完整 API 參數、內部渲染流程或版本變更紀錄追加到
-使用者操作段落。已由契約文件承接的細節，用連結引導；必要操作與資料限制仍需留下。
-PR 文件審查也會檢查本次修改的讀者與內容歸屬。審查器將文件宣告的用途當作比對資料，
-不執行文件內的指令；這項語意判斷仍可能漏判，不能代替提交前的人工檢視。
+直接描述目前操作與適用範圍；同一事項集中說明，其他位置以連結引導。
+提交前依文件讀者檢查差異，保留必要操作與資料限制。PR 文件審查也會檢查
+內容歸屬，結果仍需人工核實。
 
 ## MAE 研究原型
 
@@ -90,41 +83,35 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 
 ## 選擇性 LLM 測試
 
-兩個入口共用均線、動量、參數實驗、歷史查詢與報告、錯誤草稿修復與舊格式策略恢復情境，要求模型完成策略生成、
-計畫準備、確認請求、回測及結果查詢；腳本獨立核對訊號與結果，並清理臨時檔案及程序。
-證據檢查串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID，以及相同 manifest hash
-的工作與結果，不能用模型聲稱「完成」代替實際工具回覆。
-Local 與 Codex harness 使用真實模型與 stdio MCP；回測情境另啟動受監督的試跑與正式 worker。
-測試使用者在模型結束回合後才回覆；Local 沿用相同 messages，Codex app-server
-沿用相同 thread 再啟動下一個 turn，不以兩次獨立對話冒充多回合流程。
-第一回合核對已呈現短摘要與 HTML 連結、計畫 ready、尚無正式工作或結果，
-再注入明確同意；後續回合才允許 `submit_execution_decision` 提交同一計畫。
-修改情境先取消原計畫，準備新計畫並再次停下，收到新同意後才能提交。
-測試 callback 是模擬使用者，不代表已驗證真人操作；後端也不能自行證明回覆來源。
-整段對話共用情境逾時與工具呼叫預算，不因新回合重設。
-Codex 測試停用其他 MCP server、外掛與 hooks，在臨時工作區啟動獨立 MCP server，
-保留原有登入，不修改個人設定。初始化、模型與使用者回合共用同一逾時上限。
-流程不再依賴 MCP elicitation；拒絕、修改、無效決策、來源異動與過期另有回歸測試。
-另有內建 KD 最佳化與自建策略 walk-forward 情境，核對巢狀參數說明、搜尋或折數、
-確認前狀態及執行產物，不能用模型聲稱完成取代保存的證據。
-Walk-forward 情境使用兩折 purged 分段、前視 5 根及額外隔離 2 根，保留不生效的
-日期／比例／擴展設定；驗證確認單的 `1 / 2` 試跑覆蓋、正式兩折的隔離區間及
-原 revision／隨機種子未變。純離線版本執行相同 MCP／worker 與證據檢查，但不呼叫模型。
-離線 HTTP 回歸測試啟動 localhost Streamable HTTP 端點，以正式 server 組裝及真實
-MCP client 驗證準備、讀取確認單與決策提交；行情試跑及 worker 使用替代實作隔離。
-此測試不代表已驗證桌面客戶端的檔案呈現或對話按鈕。
-一般策略建立、修復與歷史查詢情境的回測須沿用已驗證 YAML 基礎設定，
-`prepare_backtest` 的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，
-即使覆寫值等於基礎設定，也不符合這些情境的要求。
-參數實驗情境要求沿用同一 runnable revision，以 `parameters` 提交不同於基礎 YAML
-的設定，並核對執行結果與基礎設定未被改寫。
-另有明確授權的草稿清理情境：先預覽再指定可刪版本，並逐檔確認 current、
-歷史可執行版本及回測產物仍保留；可用 `-k cleanup` 單獨執行。
-入口即時顯示進度與耗時，第一個失敗就停止並顯示原因；要跑完全部情境可加
-`--maxfail=0`。
+`local` 與 `codex` 入口共用策略生成、修復、參數實驗、歷史查詢與報告、舊格式恢復
+及草稿清理情境。兩者使用真實模型與 stdio MCP；回測情境啟動受監督的試跑與正式
+worker，結束後清理臨時檔案及程序。Harness 以實際工具回覆與保存的產物驗證結果，
+串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID 及工作／結果的 manifest hash。
 
-兩個入口也涵蓋 `test_llm_ml_pipeline`，可用 `-k ml_pipeline` 單獨驗證模型驅動的
-ML 研究流程。例如指定本地 provider：
+多回合情境沿用同一對話：Local 保留 messages，Codex app-server 保留 thread。
+第一回合須呈現短摘要與 HTML 連結，計畫 ready 且尚無正式工作或結果；模擬使用者
+於回合結束後明確同意，後續回合才可用 `submit_execution_decision` 提交同一計畫。
+修改計畫時先取消原計畫、準備新計畫，再等待新的同意。拒絕、無效決策、來源異動
+與過期另有回歸測試。使用者由 callback 模擬，未涵蓋真人操作；後端也無法自行證明回覆來源。
+初始化與所有回合共用情境期限及工具呼叫預算。工具 approval 設定不等於計畫同意。
+
+Codex 測試在臨時工作區啟動獨立 MCP server，停用其他 server、外掛與 hooks；
+沿用原有登入，個人設定維持不變。所選 provider 缺少必要能力時，情境直接失敗。
+
+KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折數、確認前狀態及
+執行產物。Walk-forward 另核對部分折數的試跑覆蓋、正式 purged 隔離區間，以及
+原 revision／隨機種子未變。離線版本使用相同 MCP／worker 與證據檢查，不呼叫模型。
+離線 HTTP 回歸測試以 localhost Streamable HTTP、正式 server 及真實 MCP client
+驗證準備、確認單讀取與決策提交；行情試跑及 worker 使用替代實作。
+桌面客戶端的檔案呈現與對話按鈕須另行驗證。
+
+一般策略建立、修復及歷史查詢情境須沿用已驗證 YAML 基礎設定：`prepare_backtest`
+的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，覆寫相同值也不符合要求。
+參數實驗則沿用同一 runnable revision，以 `parameters` 提交不同設定，並核對結果
+及基礎 YAML 未被改寫。入口即時顯示進度與耗時，第一個失敗即停止；
+加 `--maxfail=0` 可跑完全部情境。
+
+以本地 provider 單獨執行 ML 研究流程：
 
 ```bash
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b \
@@ -132,27 +119,22 @@ ML 研究流程。例如指定本地 provider：
   -k ml_pipeline
 ```
 
-此情境在獨立臨時工作區預放固定種子的行情，要求模型依序探索 ML 契約、建置完整
-資料集、訓練含 purged walk-forward 驗證的 LightGBM、預測、原值轉交全部訊號與
-報酬、記錄評估並查詢排行榜。它不下載行情，也不建立策略或啟動回測 worker。
-Harness 串接實際回覆中的 dataset／model／entry ID、參數與驗證摘要，另外讀取
-Parquet、模型及排行榜檔案，重算標籤與命中率，並確認模型回覆區分訓練集預測與
-fold 驗證。模型聲稱完成、截短陣列或只有工具呼叫名稱都不足以通過。
-檔案與 MCP 程序沿用共用臨時工作區的清理流程。
+ML 情境在獨立臨時工作區預放固定種子的行情，要求模型探索契約、建置資料集、
+訓練含 purged walk-forward 驗證的 LightGBM、預測、原值轉交全部訊號與報酬，
+再記錄評估及查詢排行榜。Harness 串接 dataset／model／entry ID、參數與驗證摘要，
+讀取 Parquet、模型及排行榜檔案，重算標籤與命中率，核對完整訊號與報酬陣列，
+並確認回覆區分訓練集預測與 fold 驗證。檔案與 MCP 程序使用共用清理流程。
 
-離線 ML domain／service／MCP 測試檢查數學、身分、儲存及回覆契約；離線的
-workflow evidence 回歸測試檢查上述證據判定本身，不會呼叫 LLM。
-只有明確執行此真實 LLM 情境，才涵蓋所選 provider 對 ML 工具的理解與串接；
-它不驗證真實行情下載、所有模型種類或實際交易獲利。PR 文件審查也不能取代此情境。
+離線 ML domain／service／MCP 測試涵蓋數學、身分、儲存及回覆契約；workflow evidence
+回歸測試涵蓋證據判定。真實 LLM 情境另驗證所選 provider 的工具理解與串接，
+範圍限於上述流程，不含行情下載、策略回測 worker、所有模型種類或實際交易獲利。
 
-Codex 與 local 入口都涵蓋完整情境，不需排除執行計畫測試：
+以 Codex 執行完整情境：
 
 ```bash
 ./scripts/check-llm.sh codex --llm-model gpt-5.6-luna \
   --llm-timeout 1800
 ```
-
-各情境仍須具備其要求的模型及客戶端能力，能力不足會失敗，不會默默略過。
 
 本地測試已驗證支援 Ollama 的 Qwen3.8 27B。模型可用 `ollama pull qwen3.8:27b` 安裝。
 Local 使用支援工具呼叫的 Chat Completions 服務，預設
@@ -189,86 +171,61 @@ Local 每輪固定傳送模型採樣 `seed=42`，與策略執行的 `random_seed
 這不保證跨模型版本或硬體的結果完全相同。不支援此參數的服務會明確失敗。
 僅針對已確認的 Ollama `parameter`／`function` XML 工具解析 HTTP 500，
 測試 client 會把錯誤回饋模型，要求重新產生下一個工具呼叫，整段對話最多兩次。
-恢復時保留已完成工具的歷史，不重新派發、不切換 provider，也不重設時間或工具次數上限。
+恢復時保留工具歷史，沿用原 provider、期限與呼叫預算；已完成的工具不重派。
 其他 HTTP 錯誤及逾時仍會失敗。失敗輸出附保存的設定與執行規格，之後照常清理臨時工作區。
-Pytest 在收集測試前將 Matplotlib 快取導向獨立暫存目錄，工作階段結束時還原
-環境並清理，包含測試失敗與可處理的中斷；不將字型快取寫入一般使用者目錄。
-快速檢查可加 `-k sma`，只跑均線的生成、回測與查詢；移除此選項才涵蓋全部情境。
-`-k history` 驗證模型查回指定參數、翻頁交易、讀取權益與章節目錄，並請後端產生
-自選章節及 LLM 評語的 HTML；對照保存的原始交易，確認沒有再次啟動回測。
-同一情境也讀取原生成交與逐根帳戶頁，並選用總覽、績效、統一核對表 `ledger`
-與配對交易 `trades` 報告章節；回覆逐欄對照
-保存的 observations，驗證模型沒有把配對交易當作逐次成交。
-`-k legacy` 驗證模型先探索及讀取舊格式策略，再另存、驗證新 revision 並執行回測，
-同時確認原有檔案未變。
+Pytest 將 Matplotlib 快取導向獨立暫存目錄，結束、失敗或可處理的中斷後
+還原環境並清理。
+
+兩個入口皆可用 `-k` 篩選情境；省略時執行全部情境：
+
+| 篩選 | 涵蓋情境 |
+| --- | --- |
+| `-k sma` | 均線策略生成、回測與查詢。 |
+| `-k ml_pipeline` | 上述完整 ML 研究流程。 |
+| `-k history` | 查詢指定參數、交易分頁、權益及章節目錄，產生自選章節與 LLM 評語的 HTML，並確認未重跑回測。 |
+| `-k legacy` | 探索及讀取舊格式策略，另存、驗證新 revision 並回測，保留原檔。 |
+| `-k cleanup` | 授權後先預覽，再指定可刪草稿並執行刪除；逐檔確認 current、歷史可執行版本與回測產物仍保留。 |
+
+歷史查詢另讀取原生成交與逐根帳戶頁，核對總覽、績效、`ledger` 及 `trades` 報告
+與保存的 observations，確認模型正確區分原生成交與配對交易。
 `--llm-timeout` 是每個模型情境的秒數上限，不是預期執行時間；簡例可用 900 秒，
 包含歷史查詢與報告的長流程建議預留 1800 秒，並依硬體調整。
-Codex 入口使用 CLI 的 MCP 客戶端能力；工具 approval 設定不等於使用者已同意執行計畫。
-所選 provider 無法完成多回合確認時須明確失敗，不得跳過使用者回合或切換 provider。
 
 ## 開發階段的程式碼審查
 
 審查責任、時機與 findings 處理以
 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 為準。代理開發時，由主代理
-主動安排獨立 reviewer 或另啟本機審查工作階段；使用者不必每次手動輸入命令。
-這個流程不會透過 `check-full.sh`、commit 或 push 自動呼叫模型，也沒有額外
-的 repository 審查腳本。
+安排獨立 reviewer 或另啟本機審查工作階段；`check-full.sh`、commit 與 push
+不會自動呼叫模型審查。
 
-代理有獨立 reviewer 可用時，提供任務目的、基準與受查版本、差異範圍，以及
-相關契約的位置。Reviewer 直接檢視差異及相關使用端，只回報 findings；主代理
-負責核實與修正。開始審查後暫停修改受查內容，修正 findings 後再複查受影響範圍。
+提供 reviewer 任務目的、基準與受查版本、差異範圍及相關契約位置，審查期間
+保持內容穩定。Reviewer 唯讀檢視差異及使用端；主代理核實 findings、修正並複查，
+回報處理結果與未涵蓋範圍。
 
-改用 Codex CLI，或由開發者手動審查時，在 repository 根目錄選擇符合範圍的
-一個入口即可。若修改已提交，要審查目前分支相對本機主線的完整差異，
-先確認工作樹乾淨，再執行：
+使用 Codex CLI 審查時，依範圍選擇命令：
 
-```bash
-codex review --base main
-```
+| 命令 | 審查範圍與前提 |
+| --- | --- |
+| `codex review --base main` | 目前分支相對本機主線的差異；先確認工作樹乾淨。命令不會更新本機主線。 |
+| `codex review --uncommitted` | 已暫存、未暫存及未追蹤的修改；先排除其他任務內容。工作樹乾淨時無差異可查。 |
+| `codex review --commit HEAD` | 最新一次提交引入的修改；可將 `HEAD` 換成指定 SHA。 |
 
-`main` 指本機主線，此命令不會自動更新它。分階段 commit 後，仍可用這個入口
-審查整個分支；不需要取消 commit。
-
-階段修改尚未提交時：
-
-```bash
-codex review --uncommitted
-```
-
-這只審查已暫存、未暫存及未追蹤的修改，需先確認範圍沒有混入其他任務。
-工作樹乾淨時會回報沒有差異，不代表已審查分支上的 commits。
-
-若只要審查最新一個 commit：
-
-```bash
-codex review --commit HEAD
-```
-
-可將 `HEAD` 換成指定 commit 的 SHA；此入口只涵蓋該次提交引入的修改。
-若要以最新遠端主線為基準審查完整分支，先確認工作樹乾淨，再執行：
+以最新遠端主線為基準時，先確認工作樹乾淨，再執行：
 
 ```bash
 git fetch origin main
 codex review --base origin/main
 ```
 
-`main`、`origin/main` 是範例，使用實際的 remote 與主線。Fetch 更新遠端追蹤
-分支 `origin/main`，不更新本機 `main`。上述命令不推送或建立 PR；審查前記錄
-所選基準與受查版本，結束後確認版本及工作樹內容未變。未提交內容也要在交付時
-說明所涵蓋的範圍，不能把舊結果套用到後續修改。已由獨立 reviewer 涵蓋的相同
-內容不需要再跑一次 CLI review。
-
-例如 reviewer 指出某個預期的 service 拒絕會在 MCP 邊界變成未處理例外，
-先核對呼叫鏈與例外型別，再用能重現該失敗的測試驗證；修正後測試應通過。
-若原行為已符合契約，記錄不採納的程式／測試證據。最後回報受查範圍、findings
-處理與未涵蓋項目，不只列出命令的 exit code。
+請代入實際的 remote 與主線。Fetch 只更新遠端追蹤分支 `origin/main`。
+審查前記錄基準與受查版本，結束後核對版本及工作樹內容；結果僅適用於受查內容。
+已由獨立 reviewer 涵蓋且無未解疑慮的相同內容，可沿用審查結果。
 
 Codex CLI 審查會呼叫模型，需可用的 CLI、登入與額度；用法可用
 `codex review --help` 核對，功能說明見
 [OpenAI 官方文件](https://learn.chatgpt.com/docs/codex/cli)。
-此審查用來找程式缺陷；`check-full.sh` 執行品質檢查與離線測試，
-`check-pr.sh` 另外檢查合併候選的文件一致性及遠端版本。Code review 不會取代
-這些檢查，也不代表真實模型策略流程已驗證。
+Code review 尋找程式缺陷；`check-full.sh` 驗證品質與離線行為；`check-pr.sh`
+另查合併候選文件及遠端版本。模型策略流程由 `check-llm.sh` 驗證，這些檢查各有範圍。
 
 ## 從開發到合併
 
@@ -294,81 +251,67 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
-從開發分支向主線建立 PR。編號取自 PR 標題的 `#編號` 或網址 `/pull/編號`；
-例如 `/pull/27` 的編號就是 `27`。以下 `27` 均為範例，請換成實際 PR 編號：
+從開發分支向主線建立 PR，再以網址中的編號執行檢查；以下用 `/pull/27` 示範：
 
 ```bash
 ./scripts/check-pr.sh 27
 ```
 
-審閱者可留在目前開發分支執行；腳本會自動檢查合併候選、執行 Codex 文件
-一致性與讀者定位審查，再執行完整離線 pytest，並清理臨時產物；
+審閱者可留在目前開發分支。腳本驗證合併候選，先執行 Codex 文件一致性與讀者定位
+審查，再執行快速品質檢查及完整離線 pytest，最後清理臨時產物。
 真實模型策略測試由審閱者視變更另行執行。
 
-長時間執行時，使用既有 `check-pr.sh` 入口即可，無須另寫一份腳本重複串接
-文件審查、測試與遠端版本核對。執行前建立任務專用的臨時日誌，將完整
-stdout／stderr 導向該檔，並記錄指令、期限與執行環境回傳的 session 識別。
-透過該 session 的等待功能接續同一次執行，採工具允許的較長等待間隔；
-不因暫時沒有輸出而再次啟動檢查。
+長時間檢查保留完整 stdout／stderr 日誌，記錄指令、期限及 session，透過原 session
+等待完成。結束後確認退出碼與摘要，按需讀取診斷日誌；確認程序停止後再清理。
+代理執行細節見 [AGENTS.md](../AGENTS.md#執行時機)。
 
-正常等待期間不反覆讀取未完成日誌、程序清單或產物目錄。結束後先查看退出碼
-與結果摘要；失敗、逾時或有具體異常跡象時，再讀取相關日誌段落。
-保留日誌供必要診斷，確認檢查啟動的程序已停止、必要結果已記錄後才刪除。
-清理失敗時保留相關目錄並回報；完成狀態、版本核對或清理結果不能由日誌安靜
-或等待時間推定。代理執行政策見 [AGENTS.md](../AGENTS.md#執行時機)。
-
-完整 snapshot 的快速檢查與離線測試合計預設限時 900 秒。若已量測完整套件
-需要更久，可明確指定當次正整數秒數；例如 3,600 秒：
+以下參數適用於 PR 與本機 full 檢查。完整 snapshot 的快速檢查與離線測試合計
+預設限時 900 秒；可依實測耗時指定當次期限，單位為正整數秒：
 
 ```bash
 ./scripts/check-pr.sh 27 --snapshot-timeout-seconds 3600
 ```
 
-這只調整該次完整 snapshot 的期限，檢查輸出會列出實際值；不改變文件審查
-期限、測試範圍、遠端版本核對或程序清理。未指定時仍使用 900 秒，
-commit／push hook 不接受此選項。逾時仍視為失敗，先停止程序再清理暫存。
+檢查輸出會列出期限；逾時視為失敗，先停止程序再清理暫存。
 
-文件審查預設接受最多 600,000 bytes 的完整證據，超過時會在呼叫模型前失敗，
-不截斷檔案或差異。確認所用模型可容納完整內容後，可針對這次檢查明確提高上限：
+文件審查預設接受最多 600,000 bytes 的完整證據，超過時於呼叫模型前失敗。
+確認模型容量足夠後，可指定當次上限，單位為正整數 bytes：
 
 ```bash
 ./scripts/check-pr.sh 27 --max-evidence-bytes 1000000
 ```
 
-參數必須是正整數，只調整原始完整證據的 UTF-8 byte 預算，不會提高 Codex 的
-單次輸入或模型 token 上限。腳本另限制每次完整 prompt 最多 1,024,000 字元，
-包含審查指示與批次資訊，低於已觀察到的 Codex `turn/start` 1,048,576 字元限制。
+此值是完整證據的 UTF-8 byte 預算；Codex 單次輸入及模型 token 上限仍各自適用。
+腳本另限制完整 prompt 為 1,024,000 字元，包含審查指示與批次資訊，
+低於已觀察到的 Codex `turn/start` 1,048,576 字元限制。
 
-放不進單次請求時，腳本按完整檔案分批。每批都包含全部 diff、Markdown 文件及
-候選檔案清單，其餘候選原始檔逐批完整涵蓋，不裁切或以摘要取代。所有批次先完成
-容量檢查；若共同證據或單一檔案連同共同證據仍放不下，會在呼叫模型前失敗，
-此時須拆分變更，提高 `--max-evidence-bytes` 無法解決單次輸入限制。
+超過單次容量時，腳本按完整檔案分批。每批均包含全部 diff、Markdown 文件及
+候選檔案清單，其餘原始檔分批完整涵蓋。所有批次先檢查容量；共同證據或單一檔案
+連同共同證據仍放不下時，須拆分變更，提高 byte 預算無法解決單次輸入限制。
 
 最多八批並行，各自使用唯讀、無工具的 Codex 與獨立臨時目錄；所有批次共用
-預設 180 秒文件審查期限，排隊也計時，程序清理另計。分批會增加模型呼叫與重複
-context 的用量。每批必須完成且通過；任何 finding、缺少必要跨檔脈絡、容量不足、
-執行失敗或逾時都令整體失敗。全部 diff 提供跨檔變更脈絡，但分批不等於所有
-原始檔同時放在單一上下文，也不能保證模型不漏判。
+預設 180 秒期限，包含排隊時間，程序清理另計。分批會增加呼叫及重複 context 的用量。
+每批均須完成且通過；finding、缺少必要跨檔脈絡、容量不足、執行失敗或逾時皆令
+整體失敗。原始檔分散於多個上下文，模型仍可能漏判跨檔問題。
 
-若已量測大量批次無法在預設期限完成，可指定當次 1–86400 秒期限並說明需求：
+可依批次數與實測耗時，指定當次文件審查期限（1–86400 秒）：
 
 ```bash
 ./scripts/check-pr.sh 27 --documentation-timeout-seconds 600
 ```
 
-這只調整所有批次共用的期限，完整證據、每批容量及判準不變。外層程序期限為
-900 秒與「指定期限加 60 秒」的較大值，保留準備與清理空間；不變更 snapshot 期限。
-Commit／push hook 不接受此選項。
+此期限由所有文件批次共用，與 snapshot 分開計時。外層程序期限為 900 秒與
+「文件期限加 60 秒」的較大值，保留準備與清理空間。
 
-若要單獨執行文件審查，從本 repository 根目錄呼叫模組；`--repo` 指定要讀取
-Git 證據的 repository，`--base` 與 `--tree` 在該 repository 內解析：
+單獨執行文件審查時，`--repo` 指定 Git 證據所在 repository，
+`--base` 與 `--tree` 在該 repository 內解析：
 
 ```bash
 uv run --no-sync python -m tooling.review_docs \
   --repo /absolute/path/to/repository --base main --tree HEAD
 ```
 
-此命令僅執行文件審查；PR 檢查仍須使用上述入口完成離線測試及遠端版本核對。
+PR 檢查仍須透過 `check-pr.sh` 完成離線測試及遠端版本核對。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -378,6 +321,8 @@ uv run --no-sync python -m tooling.review_docs \
 git ls-remote origin refs/heads/main refs/pull/27/head
 ```
 
+主線或 PR 有新提交就重新檢查；本機檢查不能攔截 GitHub 網頁合併。
+
 ### 4. 合併後更新 main、清理本機分支
 
 ```bash
@@ -386,18 +331,19 @@ git pull --ff-only origin main
 ./scripts/cleanup-pr.sh 27 --branch feature/my-task
 ```
 
-腳本核對合併狀態後，只刪除符合條件的本機分支；無法確認時會保留並說明原因。
+腳本核對合併狀態後，只刪除符合條件的本機分支；無法確認時保留並說明原因。
+Squash／rebase 合併可能需要人工確認；遠端分支、worktree 與 branch config 會保留。
 
 ## 尚未建立 PR 的本機檢查
+
+在乾淨且已提交的工作樹執行：
 
 ```bash
 uv run --no-sync python -m tooling.git.gate full --base main
 ```
 
-此命令檢查指定本機主線與目前提交的合併候選。
-同樣可加 `--max-evidence-bytes 1000000`，只調整這次文件審查的證據上限；
-或加 `--snapshot-timeout-seconds 3600`、`--documentation-timeout-seconds 600`，
-分別明確調整這次完整 snapshot 與文件審查的期限。
+此命令檢查指定本機主線與目前提交的合併候選，可使用上述證據上限與期限參數。
+結果僅涵蓋本機指定版本；遠端 PR 須另行檢查。
 
 ## 注意事項
 
@@ -420,9 +366,5 @@ uv run --no-sync python -m tooling.git.gate full --base main
   兩個 PR 腳本僅支援 `github.com` 的標準 HTTPS／SSH remote，預設為 `origin`；
   例如改用名為 `upstream` 的 remote，就加 `--remote upstream`。
   自訂主線使用 `git config tradingdev.primaryBranch 分支名稱`。
-- **合併前版本**：主線或 PR 有新提交就重新檢查。本機檢查不能攔截 GitHub 網頁
-  合併；尚未建立 PR 時的本機檢查，也不代表遠端 PR 已驗證。
-- **分支清理**：先在 GitHub 合併再清理；squash／rebase 合併可能需要人工確認。
-  遠端分支與 worktree 會保留。
 - **舊版遷移**：重新安裝 Git hooks；若客戶端仍註冊指向已刪除的
   `scripts/hooks/finalize-*` 或 `.Codex/hooks/` 的 Stop hooks，請移除這些註冊。
