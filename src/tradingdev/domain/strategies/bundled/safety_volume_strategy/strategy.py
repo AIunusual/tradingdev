@@ -431,9 +431,44 @@ class SafetyVolumeStrategy(BaseStrategy):
             return self._compute_sma_directions(df)
         feat = self._dir_fe.transform(df, include_target=False)
         preds = self._dir_model.predict(feat)
-        # Map back to full df length (NaN rows dropped)
+        return self._align_predictions(df, feat, preds)
+
+    @staticmethod
+    def _align_predictions(
+        df: pd.DataFrame,
+        feat: pd.DataFrame,
+        preds: pd.Series[float],
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Put each prediction back on the bar whose features produced it.
+
+        ``FeatureEngineer.transform`` drops rows with incomplete features and
+        then resets the index, so ``feat`` describes the *tail* of ``df`` and
+        ``preds[k]`` belongs to bar ``offset + k``. Writing them from position
+        zero instead shifts every prediction ``offset`` bars into the past: the
+        direction used at bar ``t`` would be computed from data up to
+        ``t + offset``. Warm-up bars keep a zero direction, which the state
+        machine reads as no direction rather than a guess.
+        """
+        values = preds.to_numpy(dtype=float)
+        offset = len(df) - len(feat)
+        if offset < 0 or len(values) != len(feat):
+            msg = (
+                "Direction predictions do not match the feature rows: "
+                f"{len(values)} predictions for {len(feat)} rows "
+                f"({len(df)} bars)"
+            )
+            raise RuntimeError(msg)
+        if offset and "timestamp" in df.columns and "timestamp" in feat.columns:
+            expected = df["timestamp"].iloc[offset:].reset_index(drop=True)
+            actual = feat["timestamp"].reset_index(drop=True)
+            if not expected.equals(actual):
+                msg = (
+                    "Feature rows are not the trailing block of the input bars; "
+                    "dropping interior rows makes a positional offset unsafe"
+                )
+                raise RuntimeError(msg)
         out = np.zeros(len(df), dtype=np.float64)
-        out[: len(preds)] = np.asarray(preds.values, dtype=float)
+        out[offset:] = values
         return out
 
     def _fit_direction_model(

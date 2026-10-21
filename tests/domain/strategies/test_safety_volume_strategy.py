@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,10 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
+from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
@@ -348,3 +351,87 @@ class TestSafetyVolumeStrategy:
 
         strategy.fit(fit_data)
         assert_no_look_ahead(strategy, test_data, check_points=[15, 39])
+
+
+# ── ML direction alignment ───────────────────────────────────
+
+
+class TestMLDirectionAlignment:
+    """Predictions must land on the bar whose features produced them.
+
+    ``FeatureEngineer.transform`` drops the warm-up rows and resets the index,
+    so a positional copy starting at row zero moves every prediction ``offset``
+    bars into the past. The direction used at bar ``t`` would then come from
+    data up to ``t + offset`` - the look-ahead reported in issue #24.
+    """
+
+    def test_predictions_land_on_the_bars_their_features_came_from(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        df = large_ohlcv_df.iloc[:200].reset_index(drop=True)
+        fe = FeatureEngineer(lookback=12, target_horizon=1)
+        feat = fe.transform(df, include_target=False)
+        offset = len(df) - len(feat)
+        assert offset > 0, "fixture must exercise a warm-up gap"
+
+        class _EchoDirectionModel:
+            """One distinct value per feature row, so a shift is visible."""
+
+            def predict(self, frame: pd.DataFrame) -> pd.Series[float]:
+                return pd.Series(
+                    np.arange(len(frame), dtype=float) + 100.0, index=frame.index
+                )
+
+        strategy = SafetyVolumeStrategy(config=_make_config())
+        strategy._dir_fe = fe
+        strategy._dir_model = cast("XGBoostDirectionModel", _EchoDirectionModel())
+
+        directions = strategy._compute_ml_directions(df)
+
+        assert len(directions) == len(df)
+        np.testing.assert_array_equal(directions[:offset], 0.0)
+        np.testing.assert_array_equal(
+            directions[offset:], np.arange(len(feat), dtype=float) + 100.0
+        )
+        # The first predicted bar is the first row that survived the drop.
+        assert df["timestamp"].iloc[offset] == feat["timestamp"].iloc[0]
+
+    def test_predictions_must_cover_every_feature_row(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        df = large_ohlcv_df.iloc[:100].reset_index(drop=True)
+        feat = FeatureEngineer(lookback=12, target_horizon=1).transform(
+            df, include_target=False
+        )
+        short = pd.Series(np.zeros(len(feat) - 1, dtype=float))
+        with pytest.raises(RuntimeError, match="do not match the feature rows"):
+            SafetyVolumeStrategy._align_predictions(df, feat, short)
+
+    def test_interior_dropped_rows_are_rejected(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        df = large_ohlcv_df.iloc[:100].reset_index(drop=True)
+        # A hole in the middle, not a warm-up prefix: an offset cannot express it.
+        feat = df.drop(index=[10]).reset_index(drop=True)
+        preds = pd.Series(np.zeros(len(feat), dtype=float))
+        with pytest.raises(RuntimeError, match="not the trailing block"):
+            SafetyVolumeStrategy._align_predictions(df, feat, preds)
+
+    def test_a_frame_without_timestamps_aligns_by_offset(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        df = (
+            large_ohlcv_df.iloc[:100].drop(columns=["timestamp"]).reset_index(drop=True)
+        )
+        feat = FeatureEngineer(lookback=12, target_horizon=1).transform(
+            df, include_target=False
+        )
+        offset = len(df) - len(feat)
+        preds = pd.Series(np.ones(len(feat), dtype=float))
+        directions = SafetyVolumeStrategy._align_predictions(df, feat, preds)
+        np.testing.assert_array_equal(directions[:offset], 0.0)
+        np.testing.assert_array_equal(directions[offset:], 1.0)
