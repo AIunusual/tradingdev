@@ -4,7 +4,7 @@ Source:
 `src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py`
 
 Config:
-`src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml`
+[Bundled YAML](../../src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml)
 
 ## Config Schema
 
@@ -45,10 +45,9 @@ training pass of its own, so a config without a `validation` block fails with
 `RuntimeError` instead of reporting metrics; it does not silently fall back to
 training on the frame it is scoring.
 
-Walk-forward validation is the supported entry point: each fold calls `fit()` on
-its training window and then scores the test window with the model that fold
-trained. The bundled config already declares a `validation` block, so it runs
-as-is:
+Use walk-forward validation to train on each fold's training window before
+scoring its test window. Prepare the market and feature data described below,
+and check the dates and paths in the linked bundled YAML before running:
 
 ```bash
 uv run python -m tradingdev \
@@ -63,13 +62,12 @@ A config that declares `validation` cannot be run as a simple backtest, and
 `--walk-forward` against a config without it fails with `Config has no
 validation section for walk-forward.`
 
-The MCP optimization tool cannot prepare a search for this strategy. Before it
-creates a plan or a job it runs a preflight on a sample window using the first
-value of every parameter range, and that run reaches `generate_signals()`
-without a `fit()`. Preparation therefore fails with the same `RuntimeError` and
-no optimization job starts. Optimization also rejects any config that declares
-`validation`, so the bundled config is not an optimization target even with a
-trained model.
+For MCP, use `prepare_walk_forward`. Simple backtests and MCP optimization do
+not support this strategy's training requirement; removing `validation` does
+not make an untrained strategy executable. A rejected preparation returns a
+failure message to the caller without starting a formal job. See the
+[training contract](../strategy_contract.md#training-before-scoring) for the
+failure semantics.
 
 ## Data Requirements
 
