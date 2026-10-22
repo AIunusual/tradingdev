@@ -4,7 +4,7 @@ Source:
 `src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py`
 
 Config:
-`src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml`
+[Bundled YAML](../../src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml)
 
 ## Config Schema
 
@@ -29,9 +29,45 @@ one direction has a clear edge.
 
 - `fit()` trains regime classifiers for candidate horizons and searches entry
   edge plus sizing parameters.
+- `generate_signals()` requires a completed `fit()`. Without a trained model it
+  raises `RuntimeError` rather than training on the frame it is about to score:
+  training on the evaluation segment would let earlier signals use later data.
+  A `fit()` call without a backtest engine skips training, so it does not
+  satisfy this requirement.
 - The state machine skips regimes where `P(both)` or `P(neither)` is too high.
 - Dynamic sizing scales exposure by directional edge when enabled.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
+
+## Running
+
+A simple backtest cannot train this strategy. `generate_signals()` has no
+training pass of its own, so a config without a `validation` block fails with
+`RuntimeError` instead of reporting metrics; it does not silently fall back to
+training on the frame it is scoring.
+
+Use walk-forward validation to train on each fold's training window before
+scoring its test window. Prepare the market and feature data described below,
+and check the dates and paths in the linked bundled YAML before running:
+
+```bash
+uv run python -m tradingdev \
+  --config src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml \
+  --walk-forward
+```
+
+The split settings (`train_start`, `test_start`, `purged_split`,
+`label_horizon`, ...) are documented in
+[Strategy Walk-Forward Settings](../strategy_contract.md#strategy-walk-forward-settings).
+A config that declares `validation` cannot be run as a simple backtest, and
+`--walk-forward` against a config without it fails with `Config has no
+validation section for walk-forward.`
+
+For MCP, use `prepare_walk_forward`. Simple backtests and MCP optimization do
+not support this strategy's training requirement; removing `validation` does
+not make an untrained strategy executable. A rejected preparation returns a
+failure message to the caller without starting a formal job. See the
+[training contract](../strategy_contract.md#training-before-scoring) for the
+failure semantics.
 
 ## Data Requirements
 

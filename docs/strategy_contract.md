@@ -146,6 +146,23 @@ from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
 ```
 
+### Training Before Scoring
+
+Strategies whose signals require a fitted model must establish that model from
+training history before scoring evaluation data. An untrained strategy must not
+fit on the entire evaluation frame and then replay signals over that frame:
+earlier signals would use information from later rows. Strategies that do not
+require training need no additional `fit()` step.
+
+The bundled `QuantileStrategy.generate_signals()` raises `RuntimeError` when
+its regime model or feature engineer is absent. Its `fit(train_df)` requires an
+injected backtest engine; calling it without one skips training and does not
+satisfy model readiness. This guard checks readiness, not the correctness of all
+training windows or predictions. Use the walk-forward execution path for this
+strategy; the simple-backtest and optimization paths do not fit it before scoring.
+See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
+data prerequisites and execution-mode restrictions.
+
 ## YAML Contract
 
 ```yaml

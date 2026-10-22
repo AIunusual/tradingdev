@@ -422,11 +422,23 @@ class QuantileStrategy(BaseStrategy):
         )
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate signals with chunked rolling retrain."""
+        """Generate signals with chunked rolling retrain.
+
+        Raises:
+            RuntimeError: If :meth:`fit` has not produced a regime model.
+                Training on the frame under evaluation would let earlier
+                signals use later data, so the call is refused instead of
+                silently reusing the frame as its own training set.
+        """
         cfg = self._config
 
         if self._regime_model is None or self._feature_eng is None:
-            return self._generate_signals_fixed(df)
+            msg = (
+                "QuantileStrategy has no trained regime model: call fit(train_df) "
+                "with a backtest engine before generate_signals(). Training on the "
+                "frame being evaluated would let earlier signals use later data."
+            )
+            raise RuntimeError(msg)
 
         if self._train_df is None:
             return self._generate_signals_with_model(df)
@@ -599,39 +611,6 @@ class QuantileStrategy(BaseStrategy):
         result["signal"] = all_signals[: len(df)]
         result["size_weight"] = all_weights[: len(df)]
         return result
-
-    def _generate_signals_fixed(
-        self,
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """Fallback: train once on df."""
-        cfg = self._config
-        horizon = self._best_horizon
-
-        self._feature_eng = QuantileFeatureEngineer(
-            horizon=horizon,
-            profit_target=cfg.profit_target,
-        )
-        feat_df = self._feature_eng.transform(
-            df,
-            include_target=True,
-            target_type="regime",
-        )
-        self._feature_names = [
-            f
-            for f in self._feature_eng.get_feature_names()
-            if f not in ("target_regime", "target_long", "target_short", "target")
-        ]
-        self._regime_model = _train_regime_classifier(
-            feat_df,
-            self._feature_names,
-            n_estimators=cfg.n_estimators,
-            max_depth=cfg.max_depth,
-            learning_rate=cfg.learning_rate,
-            subsample=cfg.subsample,
-            random_seed=cfg.random_seed,
-        )
-        return self._generate_signals_with_model(df)
 
     def _generate_signals_with_model(
         self,
