@@ -448,11 +448,21 @@ class QuantileStrategy(BaseStrategy):
         retrain_interval = cfg.retrain_interval
         train_window = cfg.train_window
 
+        # Only the part of the training frame that precedes the scored frame is
+        # history. ``walk_forward`` scores the training frame itself, so keeping
+        # overlapping rows would concatenate it with its own copy: the prediction
+        # context would span both copies, the duplicate timestamps would survive
+        # the chunk filter, and the state machine would read late bars while
+        # writing from bar 0.
+        history = self._train_df
+        if len(df) and "timestamp" in df.columns and "timestamp" in history.columns:
+            history = history[history["timestamp"] < df["timestamp"].iloc[0]]
+
         combined = pd.concat(
-            [self._train_df, df],
+            [history, df],
             ignore_index=True,
         )
-        test_offset = len(self._train_df)
+        test_offset = len(history)
         test_len = len(df)
 
         chunk_starts = list(range(0, test_len, retrain_interval))
