@@ -14,13 +14,17 @@ uv sync --locked --all-extras --python 3.14
 ```
 
 安裝器會調整本機 Git 設定，摘要見文末的[注意事項](#注意事項)。
+文件檢查也使用本 repository 的 `.venv` 與 `dev` 群組工具，不依賴全域安裝。
+純文件分流不要求 Dashboard extras 或 Codex 登入；其他品質與完整檢查仍需
+上述 `--all-extras` 環境。
 
 | 命令 | 用途 |
 | --- | --- |
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
-| `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與 Markdown。 |
-| `./scripts/check-full.sh` | 執行上述品質檢查與完整離線 pytest；不呼叫模型。 |
+| `./scripts/check-docs.sh` | 唯讀檢查 Markdown 與本機檔案／標題連結；不呼叫模型或執行 Python 品質檢查、pytest。 |
+| `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與上述文件品質。 |
+| `./scripts/check-full.sh` | 一律執行快速品質檢查與完整離線 pytest，不依變更類型縮減；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
 `scripts/` 保留 Shell 操作入口，`.githooks/` 保留 Git hook 入口；Python 實作
@@ -28,9 +32,10 @@ uv sync --locked --all-extras --python 3.14
 `tooling/quality.py` 共用格式化與唯讀檢查流程，Python 檢查範圍為 `src/`、
 `tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
 
-Git 檢查與分支清理位於 `tooling/git/`，文件審查位於 `tooling/review_docs.py`。
-候選驗證先由目前 checkout 的 reviewer 讀取候選 Git 內容，再執行候選
-snapshot 內的品質檢查與離線測試。
+Git 檢查與分支清理位於 `tooling/git/`，Codex 文件審查位於 `tooling/review_docs.py`。
+Commit 與候選檢查依不可變 Git tree 的差異分流；純文件執行文件 snapshot
+檢查，其他候選先由目前 checkout 的 reviewer 讀取候選 Git 內容，再執行
+候選 snapshot 內的品質檢查與離線測試。分流條件見[更新文件](#更新文件)。
 
 `tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
 研究原型，用法見 [MAE 研究原型](#mae-研究原型)。`tooling/` 與 `research/`
@@ -60,8 +65,20 @@ FLAML 2.7 的安裝 metadata 接受 Python `>=3.10`，但
 - 本指南：開發環境、檢查命令與 Git／PR 操作。
 
 直接描述目前操作與適用範圍；同一事項集中說明，其他位置以連結引導。
-提交前依文件讀者檢查差異，保留必要操作與資料限制。PR 文件審查也會檢查
-內容歸屬，結果仍需人工核實。
+提交前依文件讀者審閱差異，確認語意、命令正確性與內容歸屬，保留必要操作與
+資料限制。`check-docs.sh` 檢查 Markdown 與本機檔案、Markdown 標題連結，
+不執行文件中的命令，也不連線檢測外部 URL；通過不代表操作內容已實測。
+
+純文件分流的政策以 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查) 為準：
+只接受 `README.md`、`ARCHITECTURE.md`、`docs/**/*.md` 的非空變更，且變更前後
+仍存在的檔案須為 Git mode `100644` 的一般檔案。分類比較固定的 Git tree，
+改名須核對原路徑與新路徑；`AGENTS.md`、可執行檔、符號連結、其他檔案、
+混合變更、空差異與無法確認的差異都維持原流程。
+
+符合條件的 commit 只跑文件品質與提交格式檢查；PR 及本機候選只跑文件
+snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型策略測試。
+文件語意仍由差異審閱確認。政策、程式、依賴與測試基礎設施變更須依
+[執行時機](../AGENTS.md#執行時機) 完成相關測試、完整檢查與獨立階段審查。
 
 ## MAE 研究原型
 
@@ -251,7 +268,9 @@ Code review 尋找程式缺陷；`check-full.sh` 驗證品質與離線行為；`
 git push -u origin feature/my-task
 ```
 
-Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模型。
+Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件品質或快速檢查，並檢查
+提交格式；兩者都在獨立 snapshot 執行並核對暫存內容未變。未暫存的修正不能
+掩蓋待提交內容的錯誤。一般 push 不執行完整測試或呼叫模型。
 
 本機 hook 的主線推送保護僅適用於 GitHub（網址主機為 `github.com` 或
 `ssh.github.com`），拒絕直接更新或刪除主線，包含 `--force`。
@@ -267,16 +286,24 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 ./scripts/check-pr.sh 27
 ```
 
-審閱者可留在目前開發分支。腳本驗證合併候選，先執行 Codex 文件一致性與讀者定位
-審查，再執行快速品質檢查及完整離線 pytest，最後清理臨時產物。
-真實模型策略測試由審閱者視變更另行執行。
+審閱者可留在目前開發分支。腳本 fetch 主線與 PR head 至獨立臨時 Git repository，
+計算合併候選，再依候選相對主線的 tree 差異選擇檢查：
+
+- 純文件：執行 `check-docs.sh` 的文件 snapshot 檢查，跳過 Codex 與完整 pytest。
+- 其他變更：先執行 Codex 文件一致性與讀者定位審查，再執行快速品質檢查及完整離線 pytest。
+
+兩種流程都核對候選不可變性，結束時重新確認 PR 與實際遠端 base／head，
+輸出 PR URL、base／head SHA 與候選 tree，並清理臨時產物及啟動的程序。
+文件語意與操作命令仍須審閱差異；純文件不要求真實模型策略測試，其他變更
+由審閱者依受影響情境另行執行。每次明確檢查都重新執行，不重用先前結果。
 
 長時間檢查保留完整 stdout／stderr 日誌，記錄指令、期限及 session，透過原 session
 等待完成。結束後確認退出碼與摘要，按需讀取診斷日誌；確認程序停止後再清理。
 代理執行細節見 [AGENTS.md](../AGENTS.md#執行時機)。
 
-以下參數適用於 PR 與本機 full 檢查。完整 snapshot 的快速檢查與離線測試合計
-預設限時 900 秒；可依實測耗時指定當次期限，單位為正整數秒：
+以下參數適用於 PR 與本機候選檢查。每次 snapshot 預設限時 900 秒；完整分流
+涵蓋快速檢查與離線測試，純文件分流涵蓋文件檢查。可依實測耗時指定當次期限，
+單位為正整數秒：
 
 ```bash
 ./scripts/check-pr.sh 27 --snapshot-timeout-seconds 3600
@@ -284,7 +311,8 @@ Commit 會自動跑快速檢查；一般 push 不執行完整測試或呼叫模�
 
 檢查輸出會列出期限；逾時視為失敗，先停止程序再清理暫存。
 
-文件審查預設接受最多 600,000 bytes 的完整證據，超過時於呼叫模型前失敗。
+以下 Codex 證據與文件審查期限設定適用於非純文件分流，純文件不呼叫 Codex。
+Codex 文件審查預設接受最多 600,000 bytes 的完整證據，超過時於呼叫模型前失敗。
 確認模型容量足夠後，可指定當次上限，單位為正整數 bytes：
 
 ```bash
@@ -321,7 +349,7 @@ uv run --no-sync python -m tooling.review_docs \
   --repo /absolute/path/to/repository --base main --tree HEAD
 ```
 
-PR 檢查仍須透過 `check-pr.sh` 完成離線測試及遠端版本核對。
+PR 檢查仍須透過 `check-pr.sh` 完成對應分流的 snapshot 檢查及遠端版本核對。
 
 ### 3. 在 GitHub 審閱並合併
 
@@ -352,8 +380,10 @@ Squash／rebase 合併可能需要人工確認；遠端分支、worktree 與 bra
 uv run --no-sync python -m tooling.git.gate full --base main
 ```
 
-此命令檢查指定本機主線與目前提交的合併候選，可使用上述證據上限與期限參數。
-結果僅涵蓋本機指定版本；遠端 PR 須另行檢查。
+此命令檢查指定本機主線與目前提交的合併候選，採用與 PR 相同的純文件／完整
+分流，並核對本機 refs 與工作樹未變；可使用上述證據上限與期限參數。
+結果僅涵蓋本機指定版本；遠端 PR 須另行檢查。此處的 `gate full` 是候選驗證
+入口；手動 `scripts/check-full.sh` 則一律執行完整離線檢查，不採純文件分流。
 
 ## 注意事項
 
@@ -366,8 +396,9 @@ uv run --no-sync python -m tooling.git.gate full --base main
   保留其他自訂 merge options 與 `pull.rebase`。
 - **環境**：腳本使用 Bash，目前未保證原生 Windows 相容；Git 需支援
   `merge-tree --write-tree`。更新依賴時執行 `uv lock`，並提交 lockfile 與設定變更。
-- **模型與費用**：日常 pytest 不需模型服務。Codex 策略測試及 PR 文件審查
-  需要已登入的 Codex CLI、網路與額度；可用 `TRADINGDEV_CODEX_BIN` 指定 CLI。
+- **模型與費用**：日常 pytest 與純文件分流不需模型服務。Codex 策略測試、
+  非純文件候選的 Codex 文件審查需要已登入的 Codex CLI、網路與額度；
+  可用 `TRADINGDEV_CODEX_BIN` 指定 CLI。
   上方 Codex 範例明確指定 Luna，須有該模型的存取權限；可用 `--llm-model`
   指定其他模型。模型不可用時測試會失敗，不會自動改用其他模型。
   本地測試須自行安裝並啟動模型服務，不會自動下載模型或改用付費服務；本地
