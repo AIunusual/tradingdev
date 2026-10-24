@@ -3,7 +3,7 @@
 ``walk_forward`` calls ``fit(train_df)`` and then ``generate_signals(train_df)``
 to report training metrics. ``generate_signals`` prepends ``self._train_df`` to
 the frame it scores, so that call concatenated the training window with itself:
-the 60-bar prediction context spanned both copies, the timestamp mask kept the
+the 60-bar prediction context spanned both copies, the timestamp filter kept the
 duplicate rows, and the state machine started writing at bar 0 while reading
 from bar 940.
 """
@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+import pandas as pd
 
 from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
 from tradingdev.domain.strategies.bundled.quantile_strategy import strategy as quantile
@@ -21,24 +22,58 @@ from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
 )
 
 if TYPE_CHECKING:
-    import pandas as pd
     import pytest
     import xgboost as xgb
+
+_LONG_ONLY = (1.0, 0.0, 0.0, 0.0)
 
 
 class _RecordingModel:
     """Stand-in classifier that records how many rows it was asked to score."""
 
-    def __init__(self, calls: list[int]) -> None:
+    def __init__(
+        self,
+        calls: list[int],
+        probabilities: tuple[float, float, float, float] = (0.6, 0.0, 0.1, 0.3),
+    ) -> None:
         self.calls = calls
+        self.probabilities = probabilities
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         self.calls.append(len(features))
         probabilities = np.zeros((len(features), 4), dtype=np.float64)
-        probabilities[:, 0] = 0.6
-        probabilities[:, 2] = 0.1
-        probabilities[:, 3] = 0.3
+        for column, value in enumerate(self.probabilities):
+            probabilities[:, column] = value
         return probabilities
+
+
+class _GapFeatureEngineer(QuantileFeatureEngineer):
+    """Feature engineer that drops one fixed row from every context window.
+
+    Subclasses the real engineer so the strategy accepts it without a cast and
+    so a change to the ``transform`` signature fails type checking here.
+    """
+
+    def __init__(self, drop_position: int) -> None:
+        super().__init__(horizon=1, profit_target=0.0)
+        self.drop_position = drop_position
+
+    def transform(
+        self,
+        frame: pd.DataFrame,
+        *,
+        include_target: bool = True,
+        target_type: str = "path",
+        preserve_index: bool = False,
+    ) -> pd.DataFrame:
+        out = pd.DataFrame(
+            {"close": frame["close"].astype(float), "f1": 1.0},
+            index=frame.index,
+        )
+        out = out.drop(index=self.drop_position, errors="ignore")
+        if not preserve_index:
+            out = out.reset_index(drop=True)
+        return out
 
 
 def _fitted_strategy(
@@ -47,15 +82,25 @@ def _fitted_strategy(
     monkeypatch: pytest.MonkeyPatch,
     *,
     retrain_interval: int,
+    horizon: int = 3,
+    min_holding_bars: int = 5,
+    strategy_sl: float = 0.003,
+    dynamic_sizing: bool = True,
+    train_window: int = 20160,
+    probabilities: tuple[float, float, float, float] = (0.6, 0.0, 0.1, 0.3),
 ) -> quantile.QuantileStrategy:
     """A strategy that already ran ``fit(frame)``."""
     config = QuantileStrategyConfig(
-        horizon=3,
+        horizon=horizon,
         retrain_interval=retrain_interval,
+        train_window=train_window,
         min_entry_edge=0.0015,
+        min_holding_bars=min_holding_bars,
+        strategy_sl=strategy_sl,
+        dynamic_sizing=dynamic_sizing,
     )
     feature_eng = QuantileFeatureEngineer(
-        horizon=3,
+        horizon=horizon,
         profit_target=config.profit_target,
     )
     feature_eng.transform(frame, include_target=True, target_type="regime")
@@ -65,7 +110,7 @@ def _fitted_strategy(
         if name not in ("target_regime", "target_long", "target_short", "target")
     ]
 
-    model = _RecordingModel(calls)
+    model = _RecordingModel(calls, probabilities)
     monkeypatch.setattr(
         quantile, "_train_regime_classifier", lambda *args, **kwargs: model
     )
@@ -74,9 +119,19 @@ def _fitted_strategy(
     strategy._train_df = frame.copy()  # noqa: SLF001
     strategy._feature_eng = feature_eng  # noqa: SLF001
     strategy._feature_names = feature_names  # noqa: SLF001
-    strategy._best_horizon = 3  # noqa: SLF001
+    strategy._best_horizon = horizon  # noqa: SLF001
     strategy._regime_model = cast("xgb.XGBClassifier", model)  # noqa: SLF001
     return strategy
+
+
+def _expected_rows(frame: pd.DataFrame, strategy: quantile.QuantileStrategy) -> int:
+    """Bars of ``frame`` that have features at all, computed independently."""
+    return len(
+        QuantileFeatureEngineer(
+            horizon=strategy._best_horizon,  # noqa: SLF001
+            profit_target=strategy._config.profit_target,  # noqa: SLF001
+        ).transform(frame, include_target=False)
+    )
 
 
 def test_replaying_the_training_frame_scores_each_bar_once(
@@ -93,14 +148,7 @@ def test_replaying_the_training_frame_scores_each_bar_once(
 
     signals = strategy.generate_signals(frame)
 
-    # Independent expectation: how many bars of this frame have features at all.
-    expected = len(
-        QuantileFeatureEngineer(
-            horizon=3,
-            profit_target=strategy._config.profit_target,  # noqa: SLF001
-        ).transform(frame, include_target=False)
-    )
-    assert sum(calls) == expected, (
+    assert sum(calls) == _expected_rows(frame, strategy), (
         "each bar must be scored exactly once; the difference is duplicated context"
     )
     assert max(calls) <= retrain_interval, (
@@ -132,3 +180,61 @@ def test_scoring_the_training_frame_keeps_the_output_aligned(
     # strictly fewer rows than a full interval, never more.
     assert calls[0] < retrain_interval
     assert signals["signal"].iloc[0] == 0.0
+
+
+def test_a_datetime_index_frame_is_not_duplicated(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timestamps may arrive as the index instead of a ``timestamp`` column."""
+    retrain_interval = 60
+    frame = large_ohlcv_df.iloc[:320].set_index("timestamp")
+    calls: list[int] = []
+    strategy = _fitted_strategy(
+        frame, calls, monkeypatch, retrain_interval=retrain_interval
+    )
+
+    strategy.generate_signals(frame)
+
+    assert sum(calls) == _expected_rows(frame, strategy), (
+        "an index-only frame must be trimmed like a timestamp-column frame"
+    )
+    assert max(calls) <= retrain_interval
+
+
+def test_a_dropped_row_does_not_shift_the_bars_after_it(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Predictions are written back by row position, not by loop counter.
+
+    The fake feature engineer removes one row from the middle of the first
+    context window. The model is long on every bar, holds for the whole frame
+    (horizon 1000, no stop, one-bar minimum hold), so every scored bar must
+    carry signal 1 and the removed bar must stay flat. Writing predictions by
+    loop counter instead moved bar 30's signal to bar 29 and left bar 59 empty.
+    """
+    retrain_interval = 60
+    frame = large_ohlcv_df.iloc[:120]
+    calls: list[int] = []
+    strategy = _fitted_strategy(
+        frame,
+        calls,
+        monkeypatch,
+        retrain_interval=retrain_interval,
+        horizon=1000,
+        min_holding_bars=1,
+        strategy_sl=0.0,
+        dynamic_sizing=False,
+        train_window=1,
+        probabilities=_LONG_ONLY,
+    )
+    strategy._feature_eng = _GapFeatureEngineer(drop_position=30)  # noqa: SLF001
+    strategy._feature_names = ["f1"]  # noqa: SLF001
+
+    signals = strategy.generate_signals(frame)
+
+    assert signals["signal"].iloc[30] == 0.0, "the dropped bar has no signal"
+    assert signals["signal"].iloc[59] == 1.0, "the last bar of the chunk is scored"
+    assert (signals["signal"].iloc[:30] == 1.0).all()
+    assert (signals["signal"].iloc[31:60] == 1.0).all()

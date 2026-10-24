@@ -53,6 +53,25 @@ _BOTH = 2
 _NEITHER = 3
 
 
+def _timestamps(frame: pd.DataFrame) -> pd.Series | None:
+    """Return timestamps from the ``timestamp`` column or a DatetimeIndex."""
+    if "timestamp" in frame.columns:
+        return pd.Series(pd.to_datetime(frame["timestamp"]).to_numpy())
+    if isinstance(frame.index, pd.DatetimeIndex):
+        return pd.Series(frame.index.to_numpy())
+    return None
+
+
+def _first_timestamp(frame: pd.DataFrame) -> pd.Timestamp | None:
+    """First timestamp of ``frame``, or ``None`` when it carries none."""
+    if not len(frame):
+        return None
+    stamps = _timestamps(frame)
+    if stamps is None:
+        return None
+    return pd.Timestamp(stamps.iloc[0])
+
+
 def _train_regime_classifier(
     feat_df: pd.DataFrame,
     feature_names: list[str],
@@ -455,8 +474,11 @@ class QuantileStrategy(BaseStrategy):
         # the chunk filter, and the state machine would read late bars while
         # writing from bar 0.
         history = self._train_df
-        if len(df) and "timestamp" in df.columns and "timestamp" in history.columns:
-            history = history[history["timestamp"] < df["timestamp"].iloc[0]]
+        scored_start = _first_timestamp(df)
+        if scored_start is not None:
+            history_stamps = _timestamps(history)
+            if history_stamps is not None:
+                history = history[(history_stamps < scored_start).to_numpy()]
 
         combined = pd.concat(
             [history, df],
@@ -524,13 +546,19 @@ class QuantileStrategy(BaseStrategy):
 
             # Predict on chunk with context
             context_start = max(0, abs_start - 60)
-            predict_ctx = combined.iloc[context_start:abs_end].copy()
-            predict_feat = fe.transform(predict_ctx, include_target=False)
-
-            if "timestamp" in predict_feat.columns:
-                chunk_ts = combined.iloc[abs_start]["timestamp"]
-                mask = predict_feat["timestamp"] >= chunk_ts
-                predict_feat = predict_feat[mask].reset_index(drop=True)
+            predict_ctx = combined.iloc[context_start:abs_end].reset_index(drop=True)
+            predict_feat = fe.transform(
+                predict_ctx,
+                include_target=False,
+                preserve_index=True,
+            )
+            offset = abs_start - context_start
+            positions = predict_feat.index.to_numpy(dtype=np.intp) - offset
+            keep = positions >= 0
+            predict_feat = predict_feat.loc[keep]
+            positions = positions[keep]
+            if not len(predict_feat):
+                continue
 
             x: NDArray[np.float64] = predict_feat[fnames].to_numpy(dtype=np.float64)
             proba = regime_model.predict_proba(x)
@@ -541,7 +569,7 @@ class QuantileStrategy(BaseStrategy):
             # Run state machine for this chunk
             chunk_len = len(proba)
             for j in range(chunk_len):
-                out_idx = chunk_start + j
+                out_idx = chunk_start + int(positions[j])
                 if out_idx >= test_len:
                     break
 

@@ -84,6 +84,7 @@ class QuantileFeatureEngineer:
         *,
         include_target: bool = True,
         target_type: str = "path",
+        preserve_index: bool = False,
     ) -> pd.DataFrame:
         """Transform OHLCV (+ optional DVOL) into a feature DataFrame.
 
@@ -95,6 +96,8 @@ class QuantileFeatureEngineer:
             target_type: ``"path"`` for binary path targets
                 (``target_long``, ``target_short``), or
                 ``"endpoint"`` for log return at horizon.
+            preserve_index: Keep the source row positions after dropping rows
+                with NaN features, so callers can map results back to the input.
 
         Returns:
             DataFrame with original + feature + target columns.
@@ -210,7 +213,9 @@ class QuantileFeatureEngineer:
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
+        if not preserve_index:
+            result = result.reset_index(drop=True)
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result

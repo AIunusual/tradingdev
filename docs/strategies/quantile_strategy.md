@@ -71,8 +71,9 @@ validation section for walk-forward.`
 
 Each fold reports metrics for its test window and for its training window. The
 training window is scored with the fold's own bars only: the strategy uses the
-part of the training frame that precedes the scored frame as history, so every
-bar is scored once and its signal lands on its own row.
+part of the training frame that precedes the scored frame as history, whether
+the frame carries timestamps in a `timestamp` column or in its index. Every bar
+that has features is scored once, and its signal is written to its own row.
 
 For MCP, ask the assistant to use walk-forward validation. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
