@@ -216,6 +216,19 @@ injected backtest engine; calling it without one skips training and does not
 satisfy model readiness. This guard checks readiness, not the correctness of all
 training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
+
+Scoring a window that overlaps the training history must not duplicate that
+history or replay future bars into it. `QuantileStrategy.generate_signals()`
+treats only the training rows that strictly precede the scored frame as history,
+matched on timestamps taken from a `timestamp` column or a `DatetimeIndex`. Both
+frames must carry them: without timestamps the two frames can be neither matched
+nor ordered, so the whole training frame becomes context, which is valid only
+when that data is known to precede the scored frame.
+
+Predictions are mapped back by source row: rolling and Wilder-smoothed
+indicators drop every later row of a window after a gap, so a bar without
+features leaves its own row empty rather than shifting the signals after it.
+
 See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
 data prerequisites and execution-mode restrictions.
 

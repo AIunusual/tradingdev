@@ -70,10 +70,12 @@ A config that declares `validation` cannot be run as a simple backtest, and
 validation section for walk-forward.`
 
 Each fold reports metrics for its test window and for its training window. The
-training window is scored with the fold's own bars only: the strategy uses the
-part of the training frame that precedes the scored frame as history, whether
-the frame carries timestamps in a `timestamp` column or in its index. Every bar
-that has features is scored once, and its signal is written to its own row.
+training-window figures are in-sample: the strategy is fitted on that window and
+then scores the same bars, so they describe fit rather than out-of-sample
+performance. Only the test-window metrics are held out. Scoring keeps every
+usable bar on its own row when both frames carry timestamps; the
+[training contract](../strategy_contract.md#training-before-scoring) states that
+requirement and what happens without it.
 
 For MCP, ask the assistant to use walk-forward validation. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
