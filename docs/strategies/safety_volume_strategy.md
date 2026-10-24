@@ -111,6 +111,11 @@ FLAT ──(safe + direction)──► LONG/SHORT
 
 ## YAML 配置範例
 
+以下僅為設定節錄；執行時請以[完整 bundled 設定](../../src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml)
+為起點，保留必要的 `backtest` 與 `validation` 設定，並確認日期與資料路徑。
+訓練需求由內建註冊策略決定，修改執行 YAML 不會改變支援模式；詳見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
+
 ```yaml
 strategy:
   id: "safety_first_volume"

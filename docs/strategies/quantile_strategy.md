@@ -8,6 +8,13 @@ Config:
 
 ## Config Schema
 
+This is a partial snippet. Start from the [complete bundled
+config](../../src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml),
+including its `backtest` and `validation` settings, and check dates and data paths.
+Training requirements come from the registered strategy; editing an execution
+YAML does not change its supported modes. See the
+[training contract](../strategy_contract.md#training-before-scoring).
+
 ```yaml
 strategy:
   id: "quantile_volume"

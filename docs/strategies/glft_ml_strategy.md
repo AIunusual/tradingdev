@@ -88,6 +88,11 @@ DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
 
 ## YAML 配置範例
 
+以下僅為設定節錄；執行時請以[完整 bundled 設定](../../src/tradingdev/domain/strategies/bundled/glft_ml_strategy/config.yaml)
+為起點，依所選模式保留必要設定，並確認日期與資料路徑。
+訓練需求由內建註冊策略決定，修改執行 YAML 不會改變支援模式；詳見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
+
 ```yaml
 strategy:
   id: "glft_ml"
