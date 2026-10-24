@@ -42,7 +42,7 @@ if mode == 'docs':
     )
 else:
     base = tree = None
-    content = (root / 'src/app.py').read_text()
+    content = (root / ('README.md' if mode == 'markdown' else 'src/app.py')).read_text()
 record = {'mode': mode, 'root': str(root), 'content': content,
           'base': base, 'tree': tree}
 if mode != 'docs':
@@ -56,11 +56,12 @@ if mode != 'docs':
 with Path(os.environ['HOOK_TEST_RECORD']).open('a') as stream:
     stream.write(json.dumps(record) + '\\n')
 failure = os.environ.get('HOOK_TEST_FAIL')
-if mode == 'full' and failure in {'mutation', 'staged_mutation'}:
+if mode in {'full', 'markdown'} and failure in {'mutation', 'staged_mutation'}:
     (root / 'src/app.py').write_text("VALUE = 'modified by checker'\\n")
     if os.environ['HOOK_TEST_FAIL'] == 'staged_mutation':
         subprocess.run(['git', 'add', 'src/app.py'], check=True)
-if os.environ.get('HOOK_TEST_FAIL') == mode or 'REJECT_FAST' in content:
+if (os.environ.get('HOOK_TEST_FAIL') == mode
+        or 'REJECT_FAST' in content or 'REJECT_DOCS' in content):
     print(f'{mode} rejected candidate', file=sys.stderr)
     sys.exit(1)
 """
@@ -148,14 +149,15 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             "git/__init__.py",
             "git/gate.py",
             "git/candidates.py",
+            "git/change_scope.py",
         ):
             destination = root / "tooling" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(_PROJECT / "tooling" / name, destination)
         repo.write("scripts/test_checker.py", _CHECKER)
-        for mode in ("fast", "full"):
+        for profile, mode in (("fast", "fast"), ("full", "full"), ("docs", "markdown")):
             repo.write(
-                f"scripts/check-{mode}.sh",
+                f"scripts/check-{profile}.sh",
                 "#!/usr/bin/env bash\n"
                 f"exec {shlex.quote(sys.executable)} scripts/test_checker.py {mode}\n",
             )
@@ -256,6 +258,46 @@ def test_stage_commit_script_keeps_unrelated_edits_and_branch() -> None:
         assert repo.git("status", "--porcelain") == ""
         assert not repo.events("full")
         assert not repo.events("docs")
+        assert len(repo.events("fast")) == len(repo.events("markdown")) == 1
+
+
+def test_documentation_commit_uses_staged_snapshot_without_python_checks() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        before = repo.git("rev-parse", "HEAD")
+        repo.write("README.md", "# REJECT_DOCS staged\n")
+        repo.git("add", "README.md")
+        repo.write("README.md", "# Unstaged fix\n")
+        repo.write("src/app.py", "VALUE = 'REJECT_FAST unrelated user edit'\n")
+        result = repo.run("git", "commit", "-m", "docs: update guide", check=False)
+        assert result.returncode != 0
+        assert repo.git("rev-parse", "HEAD") == before
+        assert repo.git("diff", "--cached", "--name-only") == "README.md"
+        assert repo.events("markdown")[-1]["content"] == "# REJECT_DOCS staged\n"
+        repo.git("add", "README.md")
+        repo.write("README.md", "# REJECT_DOCS unstaged\n")
+        repo.run("scripts/git-flow-commit.sh", "docs: update guide")
+        assert repo.git("show", "HEAD:README.md") == "# Unstaged fix"
+        assert "unrelated user edit" in (repo.root / "src/app.py").read_text()
+        assert not repo.events("fast")
+        assert not repo.events("full")
+        assert not repo.events("docs")
+        assert all(
+            not Path(str(event["root"])).parent.exists()
+            for event in repo.events("markdown")
+        )
+
+
+def test_mixed_documentation_commit_keeps_fast_checks() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        repo.write("README.md", "# Updated guide\n")
+        repo.write("src/app.py", "VALUE = 'REJECT_FAST staged'\n")
+        repo.git("add", "README.md", "src/app.py")
+        result = repo.run("git", "commit", "-m", "fix: mixed change", check=False)
+        assert result.returncode != 0
+        assert len(repo.events("fast")) == 1
+        assert not repo.events("markdown")
 
 
 def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
@@ -292,34 +334,40 @@ def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
         assert (repo.root / "src/app.py").read_text() == "VALUE = 'unstaged changes'\n"
 
 
-@pytest.mark.parametrize("failure", ["full", "mutation", "staged_mutation"])
+@pytest.mark.parametrize("profile, mode", [("full", "full"), ("docs", "markdown")])
+@pytest.mark.parametrize("failure", ["rejection", "mutation", "staged_mutation"])
 def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
+    profile: str,
+    mode: str,
     failure: str,
 ) -> None:
     with _repository() as repo:
         before = repo.git("rev-parse", "HEAD")
         tree = repo.git("write-tree")
-        repo.environment["HOOK_TEST_FAIL"] = failure
+        repo.environment["HOOK_TEST_FAIL"] = mode if failure == "rejection" else failure
         result = repo.run(
             sys.executable,
             "-B",
             "-c",
             "import sys; from tooling.git.candidates import check_snapshot; "
-            "check_snapshot(sys.argv[1], 'full')",
+            "check_snapshot(sys.argv[1], sys.argv[2])",
             tree,
+            profile,
             check=False,
         )
         assert result.returncode != 0
         diagnostic = (
-            "full rejected candidate"
-            if failure == "full"
+            f"{mode} rejected candidate"
+            if failure == "rejection"
             else "A check modified the candidate snapshot."
         )
         assert diagnostic in result.stdout + result.stderr
-        events = repo.events("full")
+        events = repo.events(mode)
         assert len(events) == 1
         assert events[0]["head_tree"] == tree + "\n"
-        assert events[0]["content"] == "VALUE = 'initial'\n"
+        assert events[0]["content"] == (
+            "# Test repository\n" if profile == "docs" else "VALUE = 'initial'\n"
+        )
         assert not Path(str(events[0]["root"])).parent.exists()
         assert repo.git("rev-parse", "HEAD") == before
         assert repo.git("write-tree") == tree
@@ -351,7 +399,7 @@ def test_local_full_uses_runner_reviewer_and_candidate_checks() -> None:
         result = repo.run(
             sys.executable, "-m", "tooling.git.gate", "full", "--base", "main"
         )
-        assert "Full checks passed" in result.stdout
+        assert "Candidate checks passed" in result.stdout
         reviews = repo.events("docs")
         checks = repo.events("full")
         assert len(reviews) == len(checks) == 1
@@ -381,16 +429,18 @@ def test_local_primary_merge_commit_is_blocked(primary: str) -> None:
         assert repo.git("rev-parse", primary) == before
 
 
-def test_task_branch_can_merge_primary_with_only_fast_checks() -> None:
+def test_task_branch_can_merge_documentation_from_primary_with_docs_checks() -> None:
     with _repository() as repo:
         task = repo.commit_task()
         upstream = _advance_primary(repo, "README.md", "# Updated upstream\n")
         previous_checks = len(repo.events("fast"))
+        previous_docs = len(repo.events("markdown"))
         repo.run("git", "merge", "--no-edit", "main")
         assert repo.git("show", "-s", "--format=%P", "HEAD") == f"{task} {upstream}"
         assert repo.git("rev-parse", "main") == upstream
         assert repo.git("status", "--porcelain") == ""
-        assert len(repo.events("fast")) == previous_checks + 1
+        assert len(repo.events("fast")) == previous_checks
+        assert len(repo.events("markdown")) == previous_docs + 1
         assert not repo.events("full")
         assert not repo.events("docs")
 
@@ -399,17 +449,17 @@ def test_task_branch_merge_failure_preserves_commits_and_candidate() -> None:
     with _repository() as repo:
         task = repo.commit_task()
         upstream = _advance_primary(repo, "README.md", "# Updated upstream\n")
-        repo.environment["HOOK_TEST_FAIL"] = "fast"
+        repo.environment["HOOK_TEST_FAIL"] = "markdown"
         result = repo.run("git", "merge", "--no-edit", "main", check=False)
         assert result.returncode != 0
-        assert "fast rejected candidate" in result.stdout + result.stderr
+        assert "markdown rejected candidate" in result.stdout + result.stderr
         assert repo.git("rev-parse", "HEAD") == task
         assert repo.git("rev-parse", "MERGE_HEAD") == upstream
         assert repo.git("show", ":README.md") == "# Updated upstream"
         assert not repo.events("full")
         assert not repo.events("docs")
         assert all(
-            not Path(str(event["root"])).exists() for event in repo.events("fast")
+            not Path(str(event["root"])).exists() for event in repo.events("markdown")
         )
 
 

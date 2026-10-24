@@ -17,7 +17,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 - [研究機器學習訊號](#研究機器學習訊號)
 - [查看結果與圖表](#查看結果與圖表)
 - [資料與工作區](#資料與工作區)
-- [終端機與 HTTP 用法](#終端機與-http-用法)
+- [終端機用法](#終端機用法)
 - [常見問題](#常見問題)
 - [相關文件](#相關文件)
 
@@ -27,7 +27,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 
 你需要 macOS（Apple Silicon）或 Linux、Git、
 [uv](https://docs.astral.sh/uv/getting-started/installation/)，
-以及支援本機 MCP（stdio）的 AI 客戶端。專案使用 Python 3.14；
+以及支援 MCP stdio 或 Streamable HTTP 的 AI 客戶端。專案使用 Python 3.14；
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
@@ -50,7 +50,12 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 
 以下終端機命令皆在專案根目錄執行。
 
-### 2. 將 TradingDev 加入 AI 客戶端
+### 2. 啟動 MCP server 並連接助手
+
+依客戶端支援的連線方式，選擇以下其中一種：stdio 由客戶端自動啟動 server，
+HTTP 則由你在終端機手動啟動，再讓客戶端連線。
+
+#### 由客戶端啟動（stdio）
 
 在客戶端的 MCP 設定中新增一個本機 stdio server，名稱填 `tradingdev`，
 啟動命令填 `uv`。支援 `mcpServers` JSON 格式的客戶端可使用：
@@ -86,6 +91,30 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 
 儲存後重新載入 MCP 設定或重啟客戶端，並啟用 TradingDev 工具。
 客戶端會自行啟動 server，不需要另外開終端機常駐執行。
+
+#### 手動啟動並使用 HTTP 連接
+
+若客戶端支援 Streamable HTTP，在專案根目錄執行：
+
+```bash
+uv run --locked tradingdev-mcp \
+  --workspace /absolute/path/to/tradingdev-workspace \
+  --web --transport streamable-http --port 8000
+```
+
+將 `--workspace` 換成執行 server 的主機上用來保存策略、行情與回測結果的資料夾絕對路徑。
+將同一台電腦上的客戶端 MCP URL 設為 `http://127.0.0.1:8000/mcp`，
+並保持此終端機執行；停止 server 時按 `Ctrl+C`。
+這是 MCP 工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
+
+`127.0.0.1` 指向發起連線的設備本身，另一台設備不能直接用這個網址連到你的主機。
+跨設備測試需另行設定網路轉送及存取控制；目前啟動命令未提供 `--host` 參數。
+只支援雲端 URL 的客戶端也無法透過這個本機位址連接。
+
+HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
+執行前的確認仍在一般對話中完成。
+Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
+傳送大型策略程式或設定時，請縮小單次內容。
 
 ### 3. 確認助手能使用工具
 
@@ -395,7 +424,7 @@ MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
 清理舊草稿時，工具預設先預覽可刪版本，由你確認清單並授權刪除。
 目前版本、非草稿版本、被歷史工作或結果引用，以及無法確認完整性的版本都會保留。
 
-## 終端機與 HTTP 用法
+## 終端機用法
 
 ### 直接執行設定檔
 
@@ -437,25 +466,6 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 
 要比較多次結果，可重複加入 `--run-id`，最多 8 次；命令會輸出報告的本機路徑。
 自選章節與評語參數可用 `uv run --locked tradingdev-report --help` 查看。
-
-### 使用 HTTP 連接
-
-若客戶端使用本機 Streamable HTTP 連線，可手動啟動：
-
-```bash
-uv run --locked tradingdev-mcp \
-  --workspace /absolute/path/to/tradingdev-workspace \
-  --web --transport streamable-http --port 8000
-```
-
-將客戶端的 MCP URL 設為 `http://127.0.0.1:8000/mcp`，並保持此終端機執行。
-這是本機工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
-只支援雲端 URL 的客戶端無法透過這個本機位址連接。
-
-HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
-執行前的確認仍在一般對話中完成。
-Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413；
-傳送大型策略程式或設定時，請縮小單次內容。
 
 ## 常見問題
 

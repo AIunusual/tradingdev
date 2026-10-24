@@ -50,7 +50,7 @@ def main() -> None:
             f"--cache-dir={os.devnull}",
             *PYTHON_PATHS,
         )
-        run(*markdown_options, "scan", *markdown)
+        run("tooling.documentation")
 
 
 if __name__ == "__main__":

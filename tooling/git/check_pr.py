@@ -132,7 +132,6 @@ def check_pr(
         print(
             f"PR checks passed: {request.url}\n"
             f"Base: {candidate.base}\nHead: {candidate.head}\nTree: {candidate.tree}\n"
-            "Codex documentation review and full pytest passed.\n"
             "Before merging on GitHub, compare the current base/head with these SHAs. "
             "If either changed, rerun. This local result does not lock GitHub merging.",
             flush=True,

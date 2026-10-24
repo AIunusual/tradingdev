@@ -21,6 +21,7 @@ from tooling.git.candidates import (
     validate_snapshot_timeout,
     verify_candidate,
 )
+from tooling.git.change_scope import documentation_only
 
 
 def assert_index_unchanged(tree: str) -> None:
@@ -31,7 +32,18 @@ def assert_index_unchanged(tree: str) -> None:
 def check_commit() -> None:
     git("diff", "--cached", "--check")
     tree = git("write-tree")
-    check_snapshot(tree, "fast")
+    base = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD^{tree}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    docs_only = base.returncode == 0 and documentation_only(
+        Path.cwd(), base.stdout.strip(), tree
+    )
+    profile = "docs" if docs_only else "fast"
+    print(f"Commit checks: {profile}", flush=True)
+    check_snapshot(tree, profile)
     assert_index_unchanged(tree)
 
 
@@ -69,7 +81,9 @@ def check_full(
             != head
         ):
             raise RuntimeError("The checkout or compared refs changed during checks.")
-        print(f"Full checks passed. Base: {base} Head: {head} Tree: {candidate.tree}")
+        print(
+            f"Candidate checks passed. Base: {base} Head: {head} Tree: {candidate.tree}"
+        )
 
 
 def _is_github_destination(destination: str) -> bool:

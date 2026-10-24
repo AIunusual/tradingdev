@@ -111,6 +111,122 @@ def _assert_cleaned(scenario: Scenario) -> None:
     assert all(not path.exists() for path in scenario.temporary_paths)
 
 
+@pytest.fixture
+def documentation_scenario(scenario: Scenario, monkeypatch: MonkeyPatch) -> Scenario:
+    _git(
+        scenario.source,
+        "switch",
+        "--quiet",
+        "-c",
+        "feature/docs",
+        f"{scenario.request.base_sha}^",
+    )
+    head = _commit(scenario.source, "README.md", "# Documentation change\n")
+    _git(scenario.source, "update-ref", "refs/pull/7/head", head)
+    request = replace(scenario.request, head_sha=head, head_ref="feature/docs")
+    monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: request)
+    return replace(scenario, request=request)
+
+
+@pytest.mark.parametrize("runner", ["pr", "full"])
+@pytest.mark.parametrize("failure", [None, "rejection", "timeout", "interrupt"])
+def test_documentation_candidate_uses_merged_tree_and_only_document_checks(
+    documentation_scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    runner: str,
+    failure: str | None,
+) -> None:
+    scenario = documentation_scenario
+    before = _source_state(scenario.source)
+    calls: list[str] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
+    ) -> None:
+        assert command == ["bash", "scripts/check-docs.sh"]
+        assert timeout == 30
+        calls.append(command[1])
+        # The PR branched before this code change on main. Classification must
+        # compare main with the merge tree, not main with the divergent PR head.
+        assert (cwd / "base.txt").read_text() == "new main behavior\n"
+        assert (cwd / "README.md").read_text() == "# Documentation change\n"
+        assert temporary_root is not None
+        if failure:
+            temporary_root.mkdir()
+            (temporary_root / "partial.txt").write_text("partial check output")
+        if failure == "rejection":
+            raise subprocess.CalledProcessError(1, command)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, timeout)
+        if failure == "interrupt":
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(candidates, "run", run)
+
+    def check() -> None:
+        if runner == "pr":
+            check_pr.check_pr(7, snapshot_timeout_seconds=30)
+        else:
+            gate.check_full("main", "feature/docs", snapshot_timeout_seconds=30)
+
+    if failure:
+        error = {
+            "rejection": subprocess.CalledProcessError,
+            "timeout": subprocess.TimeoutExpired,
+            "interrupt": KeyboardInterrupt,
+        }[failure]
+        with pytest.raises(error):
+            check()
+    else:
+        check()
+    assert calls == ["scripts/check-docs.sh"]
+    output = capsys.readouterr().out
+    assert "Codex documentation review and full pytest passed" not in output
+    assert ("checks passed" in output) is (failure is None)
+    assert _source_state(scenario.source) == before
+    assert len(scenario.temporary_paths) == 2
+    _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("mutation", ["remote_ref", "checkout"])
+def test_documentation_pr_still_rejects_version_changes(
+    documentation_scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    mutation: str,
+) -> None:
+    scenario = documentation_scenario
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
+    ) -> None:
+        assert command == ["bash", "scripts/check-docs.sh"]
+        if mutation == "remote_ref":
+            _git(
+                scenario.source,
+                "update-ref",
+                "refs/heads/main",
+                scenario.request.head_sha,
+            )
+        else:
+            (scenario.source / "user-work.txt").write_text("keep this")
+
+    monkeypatch.setattr(candidates, "run", run)
+    with pytest.raises(RuntimeError, match="refs changed|checkout changed"):
+        check_pr.check_pr(7)
+    assert "PR checks passed" not in capsys.readouterr().out
+    _assert_cleaned(scenario)
+
+
 def _forbid_check_side_effects(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
         check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
@@ -237,7 +353,9 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
     _assert_cleaned(scenario)
     output = capsys.readouterr().out
     assert f"Snapshot timeout: {snapshot_timeout} seconds" in output
-    assert ("PR checks passed" if runner == "pr" else "Full checks passed") in output
+    assert (
+        "PR checks passed" if runner == "pr" else "Candidate checks passed"
+    ) in output
     assert scenario.request.base_sha in output and scenario.request.head_sha in output
 
 
@@ -815,15 +933,16 @@ def test_timeout_option_is_rejected_for_other_git_actions(
     assert "only valid for full checks" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("profile", ["full", "docs"])
 def test_snapshot_timeout_stops_children_and_removes_snapshot(
-    scenario: Scenario, monkeypatch: MonkeyPatch
+    scenario: Scenario, monkeypatch: MonkeyPatch, profile: str
 ) -> None:
     marker = scenario.source.parent / "timeout-processes.json"
     teardown = scenario.source.parent / "teardown.completed"
     (scenario.source / "scripts").mkdir()
     _commit(
         scenario.source,
-        "scripts/check-full.sh",
+        f"scripts/check-{profile}.sh",
         'exec "$TRADINGDEV_CHECK_PYTHON" timeout_probe.py\n',
     )
     _commit(
@@ -853,7 +972,7 @@ except KeyboardInterrupt:
     try:
         with pytest.raises(subprocess.TimeoutExpired) as failure:
             candidates.check_snapshot(
-                tree, "full", repo=scenario.source, timeout_seconds=1
+                tree, profile, repo=scenario.source, timeout_seconds=1
             )
         assert failure.value.timeout == 1
         assert teardown.read_text() == "complete"

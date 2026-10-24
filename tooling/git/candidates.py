@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
+from tooling.git.change_scope import documentation_only
 from tooling.process_guard import run_captured, run_checked
 
 if TYPE_CHECKING:
@@ -238,11 +239,25 @@ def verify_candidate(
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
-    """Always run a fresh review and full suite for an explicit candidate."""
+    """Check each immutable candidate with the profile required by its changes."""
     validate_evidence_budget(max_evidence_bytes)
     validate_snapshot_timeout(snapshot_timeout_seconds)
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
+    if documentation_only(candidate.repository, candidate.base, candidate.tree):
+        print(
+            "Documentation-only candidate: checking Markdown and local links. "
+            "Codex, Python quality checks and pytest are not run.",
+            flush=True,
+        )
+        check_snapshot(
+            candidate.tree,
+            "docs",
+            repo=candidate.repository,
+            timeout_seconds=snapshot_timeout_seconds,
+        )
+        print("Documentation-only checks passed.", flush=True)
+        return
     print(f"Documentation timeout: {documentation_timeout_seconds} seconds", flush=True)
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     command = [
@@ -275,3 +290,4 @@ def verify_candidate(
         repo=candidate.repository,
         timeout_seconds=snapshot_timeout_seconds,
     )
+    print("Codex documentation review and full pytest passed.", flush=True)
