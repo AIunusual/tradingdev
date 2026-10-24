@@ -76,6 +76,30 @@ class _GapFeatureEngineer(QuantileFeatureEngineer):
         return out
 
 
+class _WindowRecordingFeatureEngineer(QuantileFeatureEngineer):
+    """Records how many rows each prediction window contains."""
+
+    def __init__(self, windows: list[int]) -> None:
+        super().__init__(horizon=1, profit_target=0.0)
+        self.windows = windows
+
+    def transform(
+        self,
+        frame: pd.DataFrame,
+        *,
+        include_target: bool = True,
+        target_type: str = "path",
+        preserve_index: bool = False,
+    ) -> pd.DataFrame:
+        self.windows.append(len(frame))
+        return super().transform(
+            frame,
+            include_target=include_target,
+            target_type=target_type,
+            preserve_index=preserve_index,
+        )
+
+
 def _fitted_strategy(
     frame: pd.DataFrame,
     calls: list[int],
@@ -238,3 +262,37 @@ def test_a_dropped_row_does_not_shift_the_bars_after_it(
     assert signals["signal"].iloc[59] == 1.0, "the last bar of the chunk is scored"
     assert (signals["signal"].iloc[:30] == 1.0).all()
     assert (signals["signal"].iloc[31:60] == 1.0).all()
+
+
+def test_a_frame_without_timestamps_keeps_the_whole_training_frame(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The documented fallback when nothing can be matched or ordered.
+
+    `docs/strategy_contract.md` says a frame with neither a `timestamp` column
+    nor a `DatetimeIndex` cannot be matched against the training history, so the
+    whole training frame becomes context. The first prediction window therefore
+    holds one chunk of history plus one chunk of scored bars. With timestamps on
+    the same overlapping frame the history trims to nothing and that window
+    holds a single chunk, which the other tests in this module cover.
+    """
+    retrain_interval = 60
+    frame = large_ohlcv_df.iloc[:120].drop(columns=["timestamp"])
+    calls: list[int] = []
+    strategy = _fitted_strategy(
+        frame,
+        calls,
+        monkeypatch,
+        retrain_interval=retrain_interval,
+        train_window=1,
+    )
+    windows: list[int] = []
+    strategy._feature_eng = _WindowRecordingFeatureEngineer(windows)  # noqa: SLF001
+
+    strategy.generate_signals(frame)
+
+    assert windows[0] == 2 * retrain_interval, (
+        "without timestamps the training frame is not trimmed, so the first "
+        "prediction window carries a full chunk of history before the chunk"
+    )
