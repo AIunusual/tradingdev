@@ -177,6 +177,13 @@ FLAML 自動選模在此環境由專案測試驗證；Python 3.14 與所用 XGBo
 你可以描述希望的切分方式，由助手準備設定；自建策略修改切分設定時會另存新版本。
 指定切分日期會先換算為 UTC，再忽略時分秒並涵蓋整日；確認文件會列出實際使用的 UTC 區間。
 
+內建 Quantile（`quantile_volume`）、XGBoost Direction（`xgboost_direction`）與
+Safety Volume（`safety_first_volume`）必須先訓練，一般回測與參數最佳化會在載入資料前被拒絕。
+收到 `strategy_requires_training` 時，請助手確認策略支援的模式與有效的 `validation`
+訓練／測試設定，再以 `prepare_walk_forward` 準備新的確認單。這不是背景訓練中的通知；
+移除 `validation` 也不能讓未訓練策略執行。能力宣告與設定限制見
+[訓練前置條件](docs/strategy_contract.md#training-before-scoring)。
+
 若訓練標籤前看 5 根 K 線，可在策略 YAML 頂層設定：
 
 ```yaml
@@ -193,7 +200,8 @@ validation:
 完整限制見[策略 walk-forward 設定](docs/strategy_contract.md#strategy-walk-forward-settings)。
 
 **參數最佳化** 在訓練期間逐組回測指定的候選值，依目標指標選出參數，
-再以獨立的測試期間回測。這個搜尋流程不會額外訓練機器學習模型。例如：
+再以獨立的測試期間回測。這個搜尋流程不會額外訓練機器學習模型，僅適用於支援此模式的策略；
+上述必須訓練的內建策略請使用 walk-forward。請助手先確認策略能力，再準備最佳化，例如：
 
 > 請對內建 KD 交叉策略，搜尋回顧週期為 9、14、21 根 K 線、D 值平滑週期為 3、5 根 K 線的組合，
 > 以 BTC/USDT、1 小時 K 線、總損益為目標。

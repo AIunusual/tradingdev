@@ -2,6 +2,7 @@ strategy:
   id: "glft_market_making"
   version: "1.0.0"
   class_name: "GLFTStrategy"
+  training_requirement: "optional"
   source_path: "src/tradingdev/domain/strategies/bundled/glft_strategy/strategy.py"
   description: "GLFT market-making strategy — analytical spread-based entry/exit"
   parameters:

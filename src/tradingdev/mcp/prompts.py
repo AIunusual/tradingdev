@@ -24,7 +24,10 @@ funding_rate) are declared in data.requirements.features.
 
 Strategy development workflow
 -----------------------------
-1. Call list_strategies before writing new strategy code.
+1. Call list_strategies before writing new strategy code. Read execution_capabilities
+   in discovery/get_strategy: training_requirement is required, optional or unknown;
+   supported_execution_modes is null when unknown. These declarations describe
+   execution support, not fitted model state or proof that a configuration will run.
 2. Call get_strategy_contract before writing generated strategy code.
 3. Call save_strategy to store a draft under workspace/generated_strategies/.
 4. Call validate_strategy, then dry_run_strategy. Both run the same
@@ -43,6 +46,13 @@ Strategy development workflow
    ask the user to fill Python keys or YAML. The backend freezes all effective
    settings and runs a time-bounded market-data/engine trial before producing
    confirmation_summary and a complete HTML artifact. Repair preparation errors first.
+   A strategy_requires_training rejection includes execution_guidance and next_tool.
+   Use the returned next_tool only after satisfying required_configuration; a
+   walk-forward request needs valid validation training/test windows. Do not remove
+   validation to retry a simple backtest or optimization for a training-required
+   strategy. A Python fit() method is not an MCP tool, and train_model does not train
+   a bundled strategy instance. Preparing a replacement still requires a successful
+   trial and a new user confirmation before execution.
    Quote confirmation_summary verbatim, preferably as a Markdown blockquote with
    each original line prefixed by '> '. Preserve wording, field labels, values,
    units and train/test roles; do not paraphrase, rename, omit or recalculate them.

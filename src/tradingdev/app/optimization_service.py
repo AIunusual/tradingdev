@@ -27,6 +27,10 @@ from tradingdev.app.strategy_service import (
     StrategyService,
 )
 from tradingdev.domain.execution import ManifestError, OptimizationSpec
+from tradingdev.domain.strategies.capabilities import (
+    StrategyExecutionModeError,
+    ensure_execution_mode,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
@@ -168,6 +172,9 @@ class OptimizationService:
             if not isinstance(raw_config, dict):
                 raise ValueError("YAML config must be a mapping")
             bind_strategy_revision(raw_config, spec)
+            ensure_execution_mode(
+                spec.strategy_id, spec.execution_capabilities, "optimization"
+            )
             if raw_config.get("validation") is not None:
                 raise ValueError(
                     "Optimization config must not contain validation settings; "
@@ -207,6 +214,14 @@ class OptimizationService:
                 raise ManifestError(
                     f"Invalid strategy optimization settings: {exc}"
                 ) from exc
+        except StrategyExecutionModeError as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "total_combinations": 0,
+                "code": exc.code,
+                "execution_guidance": exc.guidance.model_dump(mode="json"),
+            }
         except (
             OSError,
             TypeError,

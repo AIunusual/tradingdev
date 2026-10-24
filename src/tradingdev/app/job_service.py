@@ -33,6 +33,10 @@ from tradingdev.app.strategy_service import (
     StrategyService,
 )
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.strategies.capabilities import (
+    StrategyExecutionModeError,
+    ensure_execution_mode,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.shared.utils.config import load_config
 
@@ -135,6 +139,17 @@ class JobService:
         try:
             raw_config = load_config(config_path)
             run_config = BacktestRunConfig.model_validate(raw_config)
+            ensure_execution_mode(
+                spec.strategy_id, spec.execution_capabilities, "backtest"
+            )
+        except StrategyExecutionModeError as exc:
+            return {
+                "job_id": "",
+                "message": str(exc),
+                "data_available": False,
+                "code": exc.code,
+                "execution_guidance": exc.guidance.model_dump(mode="json"),
+            }
         except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
             return self._invalid_execution_request(exc)
         if run_config.is_walk_forward:

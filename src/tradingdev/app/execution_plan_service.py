@@ -114,7 +114,12 @@ class ExecutionPlanService:
                 required_parameter_paths=exc.required_parameter_paths,
             )
         except PreflightError as exc:
-            return PlanRejected(success=False, code=exc.code, error=str(exc))
+            return PlanRejected(
+                success=False,
+                code=exc.code,
+                error=str(exc),
+                execution_guidance=exc.execution_guidance,
+            )
         except (OSError, ValueError, sqlite3.Error) as exc:
             return PlanRejected(
                 success=False, code="plan_preparation_failed", error=str(exc)

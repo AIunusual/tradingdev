@@ -23,6 +23,7 @@ from tradingdev.adapters.storage.strategy_revisions import (
     UnsupportedStrategyRevisionError,
 )
 from tradingdev.app.quality_policy import quality_config_path
+from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
@@ -217,6 +218,7 @@ class StrategyService:
             config_path=str(entry.config_path),
             status=StrategyStatus.PROMOTED,
             kind="bundled",
+            execution_capabilities=entry.execution_capabilities,
             metadata={
                 "version": entry.strategy_section.get("version"),
                 "declared_source_path": entry.declared_source_path,
@@ -498,6 +500,9 @@ class StrategyService:
                     "class_name": entry.class_name,
                     "description": strategy.get("description", ""),
                     "kind": "bundled",
+                    "execution_capabilities": entry.execution_capabilities.model_dump(
+                        mode="json"
+                    ),
                     "revision_id": None,
                     "status": "promoted",
                     "config_path": str(entry.config_path),
@@ -519,6 +524,9 @@ class StrategyService:
                     "revision_id": metadata.revision_id,
                     "class_name": metadata.class_name,
                     "kind": "generated",
+                    "execution_capabilities": StrategyCapabilities().model_dump(
+                        mode="json"
+                    ),
                     "status": metadata.status.value,
                     "source_path": metadata.source_path,
                     "config_path": metadata.config_path,
@@ -545,6 +553,7 @@ class StrategyService:
             "strategy_id": strategy_id,
             "revision_id": None,
             "kind": "legacy",
+            "execution_capabilities": StrategyCapabilities().model_dump(mode="json"),
             "status": "revision_required",
             "code": "strategy_revision_required",
             "message": (
@@ -587,6 +596,9 @@ class StrategyService:
                 "success": True,
                 "strategy_id": strategy_id,
                 "kind": "generated",
+                "execution_capabilities": StrategyCapabilities().model_dump(
+                    mode="json"
+                ),
                 "revision_id": metadata.revision_id,
                 "source_code": source_path.read_text(encoding="utf-8"),
                 "yaml_config": config_path.read_text(encoding="utf-8"),
@@ -600,6 +612,9 @@ class StrategyService:
                 "success": True,
                 "strategy_id": strategy_id,
                 "kind": "bundled",
+                "execution_capabilities": entry.execution_capabilities.model_dump(
+                    mode="json"
+                ),
                 "revision_id": None,
                 "source_code": entry.module_source_path.read_text(encoding="utf-8"),
                 "yaml_config": entry.config_path.read_text(encoding="utf-8"),

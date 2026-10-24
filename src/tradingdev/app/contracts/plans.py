@@ -7,6 +7,9 @@ from pydantic import Field
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.execution_plan import PlanState
 from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.strategies.capabilities import (
+    StrategyExecutionGuidance,  # noqa: TC001 — Pydantic resolves the nested schema.
+)
 
 type ExecutionDecision = Literal["approve", "decline", "revise"]
 
@@ -27,6 +30,8 @@ class PlanResponse(ContractModel):
 
 class PlanRejected(ErrorResponse):
     required_parameter_paths: list[str] | None = None
+    execution_guidance: StrategyExecutionGuidance | None = None
+    next_tool: Literal["prepare_walk_forward"] | None = None
 
 
 class PlanStarted(ContractModel):

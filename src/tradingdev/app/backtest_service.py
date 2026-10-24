@@ -26,6 +26,7 @@ from tradingdev.domain.execution import (
     OptimizationSpec,
 )
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.strategies.capabilities import ensure_execution_mode
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
     VALIDATE_FIXTURE_ROWS,
@@ -116,13 +117,14 @@ class BacktestService:
         """Bind the strategy and resolve application defaults before execution."""
         config = deepcopy(raw_config)
         run_config = BacktestRunConfig.model_validate(config)
+        spec = self.prepare_strategy(config)
+        ensure_execution_mode(spec.strategy_id, spec.execution_capabilities, kind)
         if run_config.is_walk_forward and kind == "backtest":
             msg = "Config contains validation settings; use prepare_walk_forward."
             raise ValueError(msg)
         if kind == "walk_forward" and not run_config.is_walk_forward:
             msg = "Config has no validation section for walk-forward."
             raise ValueError(msg)
-        self.prepare_strategy(config)
         config["data"] = self._data_service.execution_config(
             config, run_config.backtest
         )
@@ -190,7 +192,10 @@ class BacktestService:
         self, manifest: ExecutionManifest, raw_config: dict[str, Any]
     ) -> BacktestRun:
         """Construct and execute the strategy within its run's random context."""
-        self.prepare_strategy(raw_config)
+        spec = self.prepare_strategy(raw_config)
+        ensure_execution_mode(
+            spec.strategy_id, spec.execution_capabilities, manifest.kind
+        )
         self.check_execution(raw_config, manifest.strategy_execution)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
@@ -240,7 +245,7 @@ class BacktestService:
     def prepare_strategy(
         self,
         raw_config: dict[str, Any],
-    ) -> None:
+    ) -> StrategySpec:
         """Validate a pinned strategy before backtest or optimization loading."""
         strategy_cfg = raw_config.get("strategy")
         if not isinstance(strategy_cfg, dict):
@@ -256,6 +261,7 @@ class BacktestService:
             raise StrategyNotExecutableError(msg)
         spec = self._strategy_gate.resolve_executable(strategy_id, revision_id)
         bind_strategy_revision(raw_config, spec)
+        return spec
 
     def create_engine(self, config: BacktestConfig) -> BaseBacktestEngine:
         """Create a backtest engine from config."""

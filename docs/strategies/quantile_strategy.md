@@ -8,6 +8,13 @@ Config:
 
 ## Config Schema
 
+This is a partial snippet. Start from the [complete bundled
+config](../../src/tradingdev/domain/strategies/bundled/quantile_strategy/config.yaml),
+including its `backtest` and `validation` settings, and check dates and data paths.
+Training requirements come from the registered strategy; editing an execution
+YAML does not change its supported modes. See the
+[training contract](../strategy_contract.md#training-before-scoring).
+
 ```yaml
 strategy:
   id: "quantile_volume"
@@ -40,10 +47,10 @@ one direction has a clear edge.
 
 ## Running
 
-A simple backtest cannot train this strategy. `generate_signals()` has no
-training pass of its own, so a config without a `validation` block fails with
-`RuntimeError` instead of reporting metrics; it does not silently fall back to
-training on the frame it is scoring.
+A simple backtest cannot train this strategy. Preparation rejects that mode
+before loading market data and explains that walk-forward validation is required.
+Removing `validation` does not bypass this requirement. Direct Python calls to an
+untrained `generate_signals()` also fail instead of training on the frame being scored.
 
 Use walk-forward validation to train on each fold's training window before
 scoring its test window. Prepare the market and feature data described below,
@@ -62,10 +69,12 @@ A config that declares `validation` cannot be run as a simple backtest, and
 `--walk-forward` against a config without it fails with `Config has no
 validation section for walk-forward.`
 
-For MCP, use `prepare_walk_forward`. Simple backtests and MCP optimization do
-not support this strategy's training requirement; removing `validation` does
-not make an untrained strategy executable. A rejected preparation returns a
-failure message to the caller without starting a formal job. See the
+For MCP, ask the assistant to use walk-forward validation. Strategy discovery
+reports that training is required and walk-forward is the supported mode.
+If the assistant tries a simple backtest or optimization, preparation returns
+the reason and points it to `prepare_walk_forward`, with validation settings as a
+prerequisite. A rejected preparation starts no formal job. The assistant must
+still present a successful replacement plan for your confirmation. See the
 [training contract](../strategy_contract.md#training-before-scoring) for the
 failure semantics.
 

@@ -16,6 +16,7 @@ from pydantic import (
 
 from tradingdev.domain.data.requirements import FeatureSpec, MarketDataSpec
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.strategies.capabilities import TrainingRequirement
 from tradingdev.domain.validation.date_windows import utc_calendar_day
 from tradingdev.shared.utils.json_values import strict_json_value
 
@@ -186,6 +187,14 @@ class StrategyRunConfig(BaseModel):
     version: str | None = None
     class_name: str | None = None
     description: str | None = None
+    training_requirement: TrainingRequirement = Field(
+        default="unknown",
+        exclude=True,
+        description=(
+            "Bundled catalog declaration, not an execution override or model state. "
+            "Generated strategy capabilities remain unknown."
+        ),
+    )
     source_path: str | None = None
     source_hash: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)

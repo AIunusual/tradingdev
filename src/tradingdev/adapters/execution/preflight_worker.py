@@ -44,6 +44,10 @@ from tradingdev.domain.preflight import (
     PreflightWindow,
 )
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.strategies.capabilities import (
+    StrategyExecutionGuidance,
+    StrategyExecutionModeError,
+)
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
@@ -159,9 +163,15 @@ def execute_preflight(
         )
         prepared = prepare(**kwargs)
     if not isinstance(prepared, PreparedExecution):
+        guidance = prepared.get("execution_guidance")
         raise PreflightError(
             str(prepared.get("code", "invalid_execution_request")),
             str(prepared.get("message", "Preparation was rejected")),
+            execution_guidance=(
+                None
+                if guidance is None
+                else StrategyExecutionGuidance.model_validate(guidance)
+            ),
         )
     original = prepared.manifest
     expected_hash = original.manifest_hash
@@ -440,6 +450,15 @@ def main() -> None:
             "code": getattr(error, "code", "preflight_failed"),
             "message": str(error),
         }
+        guidance = (
+            error.execution_guidance
+            if isinstance(error, PreflightError)
+            else error.guidance
+            if isinstance(error, StrategyExecutionModeError)
+            else None
+        )
+        if guidance is not None:
+            response["execution_guidance"] = guidance.model_dump(mode="json")
     arguments.result_path.write_text(
         json.dumps(response, allow_nan=False), encoding="utf-8"
     )

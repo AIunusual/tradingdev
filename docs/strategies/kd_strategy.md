@@ -77,7 +77,10 @@
 
 ## Config Schema
 
-Bundled config 使用 MCP-first schema；策略識別、類別與資料需求都在 YAML 中明確宣告：
+以下僅節錄策略與資料需求；執行時請以[完整 bundled 設定](../../src/tradingdev/domain/strategies/bundled/kd_strategy/config.yaml)
+為起點，依所選模式保留必要設定，並確認日期與資料路徑。
+訓練需求由內建註冊策略決定，修改執行 YAML 不會改變支援模式；詳見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
 
 ```yaml
 strategy:

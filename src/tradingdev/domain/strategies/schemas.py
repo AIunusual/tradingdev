@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tradingdev.domain.strategies.capabilities import StrategyCapabilities
+
 
 class StrategyStatus(StrEnum):
     """Allowed lifecycle states for generated strategies."""
@@ -76,4 +78,7 @@ class StrategySpec(BaseModel):
     config_path: str
     status: StrategyStatus
     kind: Literal["generated", "bundled"] = "generated"
+    execution_capabilities: StrategyCapabilities = Field(
+        default_factory=StrategyCapabilities
+    )
     metadata: StrategyMetadata | dict[str, Any] | None = None

@@ -91,7 +91,8 @@ def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
 ) -> None:
     service, data, loader, _strategy = _service(tmp_path)
     events: list[tuple[str, int | None, float]] = []
-    monkeypatch.setattr(service, "prepare_strategy", lambda *args: None)
+    prepared_spec = service.prepare_strategy(_raw_config())
+    monkeypatch.setattr(service, "prepare_strategy", lambda *args: prepared_spec)
     monkeypatch.setattr(optimization, "BacktestService", lambda: service)
     monkeypatch.setattr(optimization, "StrategyLoader", lambda: loader)
     monkeypatch.setattr(

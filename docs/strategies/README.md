@@ -12,8 +12,13 @@
 | XGBoost Direction | [xgboost_strategy.md](xgboost_strategy.md) | XGBoost 方向預測 + rolling retrain，volume mode 交易量策略 |
 | Quantile Regime Volume | [quantile_strategy.md](quantile_strategy.md) | XGBoost regime classifier + DVOL/funding rate feature requirements |
 
-Bundled config 使用 `strategy.id`、`strategy.class_name`、`strategy.source_path`
-與 `data.requirements` schema。Generated strategies 不放在此目錄；它們由 MCP
+Quantile、XGBoost Direction 與 Safety-First Volume 需要先訓練，請使用含有效
+`validation` 設定的 walk-forward；一般回測與參數最佳化不支援這三個策略。
+KD、GLFT 與 GLFT ML 的訓練則為可選，各模式仍須符合設定與資料需求。
+能力說明不代表模型已訓練或績效已驗證；完整限制與宣告契約見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
+
+Generated strategies 不放在此目錄；它們由 MCP
 lifecycle 管理，每次保存都在
 `workspace/generated_strategies/<strategy_id>/revisions/<revision_id>/` 建立
 `strategy.py`、`config.yaml` 與 `metadata.json`。每個 revision 分別保存驗證證據與

@@ -7,8 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import TypeAdapter
+
+from tradingdev.domain.strategies.capabilities import (
+    StrategyCapabilities,
+    TrainingRequirement,
+)
 
 _DEFAULT_BUNDLED_ROOT = Path(__file__).resolve().parent / "bundled"
+_TRAINING_REQUIREMENT = TypeAdapter(TrainingRequirement)
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,14 @@ class BundledStrategyEntry:
     def strategy_section(self) -> dict[str, Any]:
         section = self.raw_config.get("strategy", {})
         return section if isinstance(section, dict) else {}
+
+    @property
+    def execution_capabilities(self) -> StrategyCapabilities:
+        """Read trusted bundled declarations without importing the strategy."""
+        declared = _TRAINING_REQUIREMENT.validate_python(
+            self.strategy_section.get("training_requirement", "unknown")
+        )
+        return StrategyCapabilities.from_training_requirement(declared)
 
 
 class BundledStrategyCatalog:

@@ -8,6 +8,13 @@ Config:
 
 ## Config Schema
 
+This is a partial snippet. Start from the [complete bundled
+config](../../src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml),
+including its `backtest` and `validation` settings, and check dates and data paths.
+Training requirements come from the registered strategy; editing an execution
+YAML does not change its supported modes. See the
+[training contract](../strategy_contract.md#training-before-scoring).
+
 ```yaml
 strategy:
   id: "xgboost_direction"
@@ -60,6 +67,28 @@ data:
 
 Use `inspect_dataset(config_path)` before running long validations to verify
 the workspace or `TRADINGDEV_DATA_ROOT` cache.
+
+## Usage
+
+Training is required before this strategy can produce signals. Simple backtests
+and parameter optimization are rejected before market data is loaded. Use
+walk-forward with a valid `validation` section defining training and test
+periods; removing that section does not enable the unsupported modes.
+
+The bundled config includes `validation`. Before running it, check the config
+path, symbol and timeframe, and ensure the loaded date range and cached OHLCV
+cover both training and test periods. From the repository root:
+
+```bash
+uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml --walk-forward
+```
+
+For MCP, use `get_strategy` and `inspect_dataset(config_path)` to inspect the
+configuration and data, then call `prepare_walk_forward`. A rejected simple
+backtest or optimization directs the client to this tool; valid configuration
+and sufficient data are still required before preparation can succeed. See
+[Training Before Scoring](../strategy_contract.md#training-before-scoring) for
+the execution contract.
 
 ## Lifecycle
 

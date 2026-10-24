@@ -14,6 +14,9 @@
 
 ## 信號邏輯
 
+以下 ML 方向條件適用於已完成訓練的模型；未訓練時保留純 GLFT 訊號路徑，
+不使用 ML 方向過濾。
+
 1. **ML 方向預測**：FLAML AutoML 在時間預算內搜尋 learner 與超參數，預測 N 分鐘後的價格方向
    - ML=1（看漲）：只允許做多
    - ML=-1（看跌）：只允許做空
@@ -85,6 +88,11 @@ DVOL 檔案路徑由 `data.requirements.features` 宣告。策略參數只控制
 
 ## YAML 配置範例
 
+以下僅為設定節錄；執行時請以[完整 bundled 設定](../../src/tradingdev/domain/strategies/bundled/glft_ml_strategy/config.yaml)
+為起點，依所選模式保留必要設定，並確認日期與資料路徑。
+訓練需求由內建註冊策略決定，修改執行 YAML 不會改變支援模式；詳見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
+
 ```yaml
 strategy:
   id: "glft_ml"
@@ -125,9 +133,20 @@ data:
 
 ## 使用方式
 
+此策略的訓練需求為可選（`optional`）：未訓練仍可使用純 GLFT 訊號。
+一般回測與參數最佳化支援此路徑，但不會執行 `fit()`，而且設定不得包含
+`validation`；可執行不代表 ML 模型已訓練或策略績效已獲驗證。
+
+在這三種執行模式中，walk-forward 才會依訓練區間執行 `fit()`。隨附設定含
+`validation`，請使用以下命令，並先確認訓練／測試日期、行情及 DVOL 資料路徑：
+
 ```bash
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/glft_ml_strategy/config.yaml --walk-forward
 ```
+
+若要研究未訓練的純 GLFT 路徑，請另使用不含 `validation` 的設定。訓練需求及
+執行模式的契約見
+[Training Before Scoring](../strategy_contract.md#training-before-scoring)。
 
 ## Walk-Forward 結果（2024 train / 2025 test）
 

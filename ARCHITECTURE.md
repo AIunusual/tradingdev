@@ -148,6 +148,11 @@ stateDiagram-v2
 bundled 策略由 Git 管理並以 promoted 身分提供，沒有生成策略的 revision ID。
 舊的平面生成策略檔案可供讀取與重新保存，其舊狀態不能授權執行。
 
+Bundled catalog 從註冊 YAML 讀取訓練需求宣告，不為探索能力匯入或執行策略。
+`StrategyCapabilities` 由同一宣告提供探索回覆及共用執行模式檢查；生成與舊格式策略
+維持未知，不由 `fit()` 方法或生命週期狀態猜測能力。支援模式不是模型已訓練或目前
+設定可執行的證明，設定前提與回覆欄位見[訓練契約](docs/strategy_contract.md#training-before-scoring)。
+
 `StrategyService` 先做靜態政策及共用品質檢查，再透過 `SignalContractChecker`
 檢查完整執行設定與訊號契約。驗證與 dry-run 共用 checker，使用不同長度的測試資料。
 固定設定欄位拒絕未知名稱；策略參數保留明確的動態結構。成功解析的設定會以
@@ -168,6 +173,12 @@ MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization
 準備執行計畫：套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成受限試跑，確認程序已停止並清理臨時內容後，
 才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
+
+JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載入前，依
+註冊策略的能力拒絕無法完成必要訓練的模式；呼叫端的 YAML 宣告不能覆寫註冊能力。
+`strategy_requires_training` 的模式與設定指引經 preflight worker、PreflightService
+及 ExecutionPlanService 保留，MCP adapter 再映射為 `next_tool`。這個回覆不會建立
+可執行計畫，也不免除後續試跑與使用者確認。
 
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService

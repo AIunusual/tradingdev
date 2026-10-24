@@ -20,15 +20,26 @@ from tradingdev.domain.preflight import (
     PreflightReceipt,
     PreflightRequest,
 )
+from tradingdev.domain.strategies.capabilities import (
+    StrategyExecutionGuidance,
+    StrategyExecutionModeError,
+)
 
 
 class PreflightError(RuntimeError):
     """A preparation failure that callers can expose as a structured rejection."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        execution_guidance: StrategyExecutionGuidance | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.execution_guidance = execution_guidance
 
 
 @dataclass(frozen=True)
@@ -99,7 +110,26 @@ class PreflightService:
                 if not isinstance(raw, dict):
                     raise ValueError("Preflight response must be an object")
                 if raw.get("success") is False:
-                    raise PreflightError(str(raw["code"]), str(raw["message"]))
+                    code = str(raw["code"])
+                    raw_guidance = raw.get("execution_guidance")
+                    guidance = None
+                    if code == StrategyExecutionModeError.code:
+                        guidance = StrategyExecutionGuidance.model_validate(
+                            raw_guidance
+                        )
+                        if guidance.strategy_id != request.arguments.get("strategy_id"):
+                            raise ValueError(
+                                "Execution guidance strategy must match the request"
+                            )
+                    elif raw_guidance is not None:
+                        raise ValueError(
+                            "Execution guidance requires a strategy training rejection"
+                        )
+                    raise PreflightError(
+                        code,
+                        str(raw["message"]),
+                        execution_guidance=guidance,
+                    )
                 payload = PreflightPayload.model_validate(raw["result"])
             except (OSError, ValueError, KeyError) as error:
                 raise PreflightError(

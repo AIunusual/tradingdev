@@ -111,6 +111,11 @@ FLAT ──(safe + direction)──► LONG/SHORT
 
 ## YAML 配置範例
 
+以下僅為設定節錄；執行時請以[完整 bundled 設定](../../src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml)
+為起點，保留必要的 `backtest` 與 `validation` 設定，並確認日期與資料路徑。
+訓練需求由內建註冊策略決定，修改執行 YAML 不會改變支援模式；詳見
+[訓練前置條件](../strategy_contract.md#training-before-scoring)。
+
 ```yaml
 strategy:
   id: "safety_first_volume"
@@ -153,9 +158,23 @@ data:
 
 ## 使用方式
 
+此策略需要先訓練才能產生訊號。一般回測與參數最佳化會在載入行情前拒絕；
+請使用含有效 `validation` 訓練／測試區間的 walk-forward。移除 `validation`
+不會讓這兩種模式變得可用。
+
+隨附設定已包含 `validation`。執行前請確認設定檔路徑、交易對、時間週期，
+以及載入日期範圍與行情快取是否涵蓋訓練和測試區間。以下命令從 repository
+根目錄執行：
+
 ```bash
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml --walk-forward
 ```
+
+透過 MCP 操作時，先使用 `get_strategy` 與 `inspect_dataset(config_path)`
+確認設定及 workspace 或 `TRADINGDEV_DATA_ROOT` 的行情，再呼叫
+`prepare_walk_forward`。一般回測或最佳化的拒絕回覆會引導至此工具；仍須滿足
+設定與資料需求才能完成準備。執行契約見
+[Training Before Scoring](../strategy_contract.md#training-before-scoring)。
 
 ## 與 XGBoost Direction Strategy 的比較
 
