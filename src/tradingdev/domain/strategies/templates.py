@@ -20,6 +20,16 @@ def strategy_contract_payload(package_root: Path) -> dict[str, Any]:
         "example_yaml_config": _EXAMPLE_YAML,
         "config_schema": BacktestRunConfig.model_json_schema(),
         "api_reference": (
+            "Read execution_capabilities from list_strategies/get_strategy before "
+            "choosing an execution mode. Bundled training_requirement declarations "
+            "are required or optional; generated/legacy capabilities remain unknown "
+            "with supported_execution_modes=null. Unknown is not permission or "
+            "evidence that a model is trained. Supported modes describe strategy "
+            "requirements, not configuration validity. A strategy_requires_training "
+            "preparation rejection provides execution_guidance and next_tool; "
+            "satisfy required_configuration before using that tool. Do not remove "
+            "validation to bypass training or call train_model to train a bundled "
+            "strategy instance. "
             "Generated strategies must inherit BaseStrategy, return a DataFrame "
             "with signal values limited to -1, 0, and 1, and avoid mutating the "
             "input DataFrame. Express configurable settings as constructor "

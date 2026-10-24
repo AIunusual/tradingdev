@@ -2,6 +2,7 @@ strategy:
   id: "glft_ml"
   version: "1.0.0"
   class_name: "GLFTMLStrategy"
+  training_requirement: "optional"
   source_path: "src/tradingdev/domain/strategies/bundled/glft_ml_strategy/strategy.py"
   description: "GLFT + FLAML AutoML direction prediction — limit-order market making"
   parameters:

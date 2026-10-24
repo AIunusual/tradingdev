@@ -154,7 +154,42 @@ fit on the entire evaluation frame and then replay signals over that frame:
 earlier signals would use information from later rows. Strategies that do not
 require training need no additional `fit()` step.
 
-The bundled `QuantileStrategy.generate_signals()` raises `RuntimeError` when
+`list_strategies` and `get_strategy` return `execution_capabilities` for bundled,
+generated and legacy strategies. `training_requirement` is `required`, `optional`
+or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
+training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
+training, and `null` for unknown capabilities. These describe intrinsic support,
+not model readiness, configuration validity, lifecycle permission or successful
+trial evidence. A supported walk-forward mode still requires valid `validation`
+settings; bundled strategies may provide a separate `walkforward_config.yaml`.
+Conversely, a config with `validation` still cannot be used for a simple backtest
+or optimization just because its strategy intrinsically supports those modes.
+
+The bundled catalog reads `strategy.training_requirement` from its registered
+YAML without importing strategy code. Quantile, XGBoost direction and Safety
+Volume require training; KD, GLFT and GLFT ML declare optional training. GLFT ML
+retains its existing pure-GLFT fallback when untrained. The declaration is
+discovery metadata, excluded from normalized execution configuration; caller YAML
+and parameter overrides cannot replace the registered capability. Generated and
+legacy source remains `unknown` even if it defines `fit()`, declares this YAML
+field or has passed validation/dry-run. No generated source is executed merely
+to discover its capabilities.
+
+Simple-backtest and optimization preparation reject registered strategies that
+require training before data loading or a formal job. The application error code
+is `strategy_requires_training`. The CLI uses the same mode check; MCP returns
+`success: false`, `error`, `execution_guidance` (strategy ID, capabilities,
+`recommended_mode: "walk_forward"`, `required_configuration: ["validation"]`)
+and `next_tool: "prepare_walk_forward"`. Guidance survives the supervised
+preflight response; it is not a ready plan or authorization to start a job.
+The MCP adapter adds the tool name while domain/application checks use execution
+modes. Satisfy the validation prerequisites, prepare the replacement, then obtain
+fresh user confirmation. Removing `validation`, waiting for an implicit background
+training job, or using the separate ML `train_model` tool does not prepare this
+strategy instance. Other preparation errors retain their own codes.
+
+As a final strategy-level guard, bundled `QuantileStrategy.generate_signals()`
+raises `RuntimeError` when
 its regime model or feature engineer is absent. Its `fit(train_df)` requires an
 injected backtest engine; calling it without one skips training and does not
 satisfy model readiness. This guard checks readiness, not the correctness of all

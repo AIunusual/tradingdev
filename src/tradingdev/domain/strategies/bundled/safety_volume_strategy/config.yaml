@@ -13,6 +13,7 @@ strategy:
   id: "safety_first_volume"
   version: "1.0.0"
   class_name: "SafetyVolumeStrategy"
+  training_requirement: "required"
   source_path: "src/tradingdev/domain/strategies/bundled/safety_volume_strategy/strategy.py"
   description: "Safety-first volume strategy — minimize loss, meet volume target"
   parameters:

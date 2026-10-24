@@ -87,6 +87,10 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
             "strategy_id": _LEGACY_ID,
             "revision_id": None,
             "kind": "legacy",
+            "execution_capabilities": {
+                "training_requirement": "unknown",
+                "supported_execution_modes": None,
+            },
             "status": "revision_required",
             "code": "strategy_revision_required",
             "message": legacy["message"],

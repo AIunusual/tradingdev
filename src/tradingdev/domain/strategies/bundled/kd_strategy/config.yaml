@@ -4,6 +4,7 @@ strategy:
   id: "kd_crossover"
   version: "1.0.0"
   class_name: "KDStrategy"
+  training_requirement: "optional"
   source_path: "src/tradingdev/domain/strategies/bundled/kd_strategy/strategy.py"
   description: "KD Stochastic Oscillator crossover strategy for BTC/USDT"
   parameters:

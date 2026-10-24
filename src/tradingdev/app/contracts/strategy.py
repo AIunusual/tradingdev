@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.schemas import StrategyStatus
 
 
@@ -100,6 +101,7 @@ class BundledStrategySummary(ContractModel):
     class_name: str
     description: str
     kind: Literal["bundled"]
+    execution_capabilities: StrategyCapabilities
     status: Literal["promoted"]
     config_path: str
     metadata: BundledStrategySummaryMetadata
@@ -116,6 +118,7 @@ class GeneratedStrategySummary(ContractModel):
     revision_id: str
     class_name: str
     kind: Literal["generated"]
+    execution_capabilities: StrategyCapabilities
     status: StrategyStatus
     source_path: str
     config_path: str
@@ -141,6 +144,7 @@ class LegacyStrategySummary(ContractModel):
     strategy_id: str
     revision_id: None
     kind: Literal["legacy"]
+    execution_capabilities: StrategyCapabilities
     status: Literal["revision_required"]
     code: Literal["strategy_revision_required"]
     message: str
@@ -161,6 +165,7 @@ class BundledStrategyResponse(ContractModel):
     strategy_id: str
     revision_id: None
     kind: Literal["bundled"]
+    execution_capabilities: StrategyCapabilities
     source_code: str
     yaml_config: str
     metadata: BundledStrategySourceMetadata
@@ -173,6 +178,7 @@ class GeneratedStrategyResponse(ContractModel):
     strategy_id: str
     revision_id: str
     kind: Literal["generated"]
+    execution_capabilities: StrategyCapabilities
     source_code: str
     yaml_config: str
     metadata: GeneratedStrategyMetadata

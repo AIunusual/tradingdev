@@ -2,6 +2,7 @@ strategy:
   id: "quantile_volume"
   version: "1.0.0"
   class_name: "QuantileStrategy"
+  training_requirement: "required"
   source_path: "src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py"
   description: "XGBoost regime-detection volume strategy"
   parameters:

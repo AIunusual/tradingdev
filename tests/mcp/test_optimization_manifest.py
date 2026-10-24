@@ -27,12 +27,26 @@ from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyCo
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 from tradingdev.mcp.workers import optimization
 from tradingdev.mcp.workers.optimization import ComboEvaluation, _run_optimization
 
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
+
+
+def _prepared_strategy(
+    _service: BacktestService, raw_config: dict[str, Any]
+) -> StrategySpec:
+    """Substitute source verification while retaining its typed return contract."""
+    return StrategySpec(
+        strategy_id=str(raw_config["strategy"]["id"]),
+        class_name="FixtureStrategy",
+        source_path="fixture.py",
+        config_path="fixture.yaml",
+        status=StrategyStatus.RUNNABLE,
+    )
 
 
 def _evaluation(
@@ -217,7 +231,7 @@ def test_optimization_worker_ignores_mutable_config_and_search_copies(
 
     # Stub only external data/strategy evaluation. The real worker still loads
     # the manifest, expands the grid, selects its winner, performs OOS and saves.
-    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
     monkeypatch.setattr(DataService, "load", capture_data_load)
     monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
     monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
@@ -270,7 +284,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
         "BaseBacktestEngine",
         SimpleNamespace(run=lambda frame: observed_result),
     )
-    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
     monkeypatch.setattr(BacktestService, "create_engine", lambda *args: engine)
     monkeypatch.setattr(KDStrategy, "generate_signals", capture_signals)
     config = BacktestConfig(
@@ -368,7 +382,7 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
         value = values[0 if params["direction"] == -1 else 1]
         return _evaluation(params, metric, value, frame, bt_cfg)
 
-    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
     monkeypatch.setattr(DataService, "load", load)
     monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
     monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
@@ -489,7 +503,7 @@ def test_optimization_failure_restores_alarm_without_partial_performance_files(
             evaluation.result.returns = np.array([0.0])
         return evaluation
 
-    monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+    monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
     monkeypatch.setattr(DataService, "load", load)
     monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
     monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
@@ -562,7 +576,7 @@ def test_real_trial_alarm_during_contract_execution_retains_timeout_status(
 
         # The fake class and data replace external inputs. The worker trial,
         # captured constructor inputs, contract fixture, alarm and SQLite are real.
-        monkeypatch.setattr(BacktestService, "prepare_strategy", lambda *args: None)
+        monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
         monkeypatch.setattr(DataService, "load", load)
         monkeypatch.setattr(StrategyLoader, "load_class", lambda *args: SlowStrategy)
         try:

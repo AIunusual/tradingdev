@@ -28,10 +28,9 @@ from tradingdev.domain.performance.sampling import (
     DAILY_EQUITY_METRICS,
     daily_observation_unavailable_reason,
 )
+from tradingdev.domain.strategies.capabilities import ExecutionKind as ExecutionKind
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.shared.utils.json_values import strict_json_value
-
-type ExecutionKind = Literal["backtest", "walk_forward", "optimization"]
 
 
 class ManifestError(ValueError):

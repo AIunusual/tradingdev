@@ -13,6 +13,7 @@ strategy:
   id: "xgboost_direction"
   version: "1.0.0"
   class_name: "XGBoostStrategy"
+  training_requirement: "required"
   source_path: "src/tradingdev/domain/strategies/bundled/xgboost_strategy/strategy.py"
   description: "Market-making volume strategy — maximize volume, minimize loss"
   parameters:

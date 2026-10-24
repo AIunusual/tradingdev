@@ -11,7 +11,7 @@ from pydantic import JsonValue, ValidationError  # noqa: TC002
 
 from tradingdev.app.contracts.plans import (
     ExecutionDecision,  # noqa: TC001
-    PlanRejected,  # noqa: TC001
+    PlanRejected,
     PlanResponse,  # noqa: TC001
     PlanStarted,  # noqa: TC001
 )
@@ -57,9 +57,21 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             )
         except ValidationError as exc:
             raise invalid_arguments(exc) from exc
-        return await anyio.to_thread.run_sync(
+        result = await anyio.to_thread.run_sync(
             partial(service.prepare, request, presentation)
         )
+        if isinstance(result, PlanRejected) and result.execution_guidance is not None:
+            return result.model_copy(
+                update={
+                    "next_tool": "prepare_walk_forward",
+                    "error": (
+                        f"{result.error} Use prepare_walk_forward after confirming "
+                        "the strategy has valid validation settings. Read "
+                        "get_strategy to inspect its configuration first."
+                    ),
+                }
+            )
+        return result
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_backtest(
