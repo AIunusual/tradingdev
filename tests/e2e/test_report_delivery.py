@@ -105,9 +105,69 @@ def test_report_delivery_requires_a_readable_registered_report(
     assert report.path.is_file(), "Delivery verification must not remove the report"
 
 
+def test_freely_worded_commentary_still_matches_the_delivered_manifest(
+    report: DeliveredReport,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def verify() -> str:
+        return verify_report_delivery(
+            report.workspace,
+            report.turn,
+            "run",
+            expected_sections=["overview", "ledger", "trades"],
+            expected_commentary=None,
+        )
+
+    assert verify()
+    logged = capsys.readouterr().out
+    evidence = json.loads(logged.split("semantic review: ", 1)[1])
+    assert evidence == {
+        "run_id": "run",
+        "report_id": report.result["report_id"],
+        "sections": ["overview", "ledger", "trades"],
+        "commentary": [{"title": "研究評語", "text": "僅為歷史模擬。"}],
+    }
+    report.turn.calls[0].arguments["commentary"] = [
+        {"title": "Changed", "text": "Not the saved interpretation"}
+    ]
+    with pytest.raises(AssertionError, match="manifest commentary"):
+        verify()
+    assert not capsys.readouterr().out, "Do not log unverified commentary as evidence"
+
+
 def test_report_delivery_accepts_sdk_encoded_arguments(report: DeliveredReport) -> None:
     report.turn.calls[0].arguments["run_ids"] = '["run"]'
     assert report.verify()
+
+
+@pytest.mark.parametrize(
+    "damage", ["commentary", "prose", "hidden_prose", "fenced_prose"]
+)
+def test_freely_worded_delivery_requires_interpretation_and_visible_prose(
+    report: DeliveredReport, damage: str
+) -> None:
+    arguments = dict(report.turn.calls[0].arguments)
+    if damage == "commentary":
+        arguments["commentary"] = []
+    result = ReportService(
+        workspace=report.workspace, store=report.store
+    ).generate_report(**arguments)
+    assert result["success"]
+    text = f"run [報告](<{result['path']}>)"
+    if damage == "commentary":
+        text += "。可在總覽選擇參數並查看交易。"
+    elif damage == "hidden_prose":
+        text += "\n\n<span hidden>可在總覽選擇參數並查看交易。</span>"
+    elif damage == "fenced_prose":
+        text += "\n```text\n可在總覽選擇參數並查看交易。\n```"
+    with pytest.raises(AssertionError, match="commentary|delivery prose"):
+        verify_report_delivery(
+            report.workspace,
+            ModelTurn(2, text, [ToolCall("generate_report", arguments, result)]),
+            "run",
+            expected_sections=["overview", "ledger", "trades"],
+            expected_commentary=None,
+        )
 
 
 def test_report_delivery_rejects_incomplete_replacement(

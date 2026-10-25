@@ -8,6 +8,7 @@ import math
 import re
 import sys
 from copy import deepcopy
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -132,12 +133,53 @@ def verify(root: Path) -> None:
             pd.testing.assert_frame_equal(frame, before)
 
 
+def verify_execution_snapshot(
+    snapshot: dict[str, Any],
+    verified_config: dict[str, Any],
+    *,
+    parameters: dict[str, int],
+    revision_id: str | None,
+) -> None:
+    """Bind actual execution settings to the independently checked requirements.
+
+    Normalize schema defaults and equivalent UTC date representations. Runtime
+    data paths and strategy metadata may be resolved by the backend; parameter
+    experiments must use their explicitly expected overrides. Neither permits a
+    change to any backtest assumption or the top-level random seed.
+    """
+    expected = BacktestConfig.model_validate(verified_config["backtest"])
+    actual = BacktestConfig.model_validate(snapshot["backtest"])
+    expected_fields = expected.model_dump(mode="python")
+    actual_fields = actual.model_dump(mode="python")
+    for fields in (expected_fields, actual_fields):
+        for name in ("start_date", "end_date"):
+            value = fields[name]
+            fields[name] = (
+                value.replace(tzinfo=UTC)
+                if value.tzinfo is None
+                else value.astimezone(UTC)
+            )
+    assert actual_fields == expected_fields, (
+        "Execution backtest snapshot differs from verified configuration: "
+        f"expected={expected_fields!r}, actual={actual_fields!r}"
+    )
+    assert snapshot.get("random_seed") == verified_config.get("random_seed"), (
+        "Execution random_seed differs from verified configuration"
+    )
+    assert snapshot["strategy"]["parameters"] == parameters, (
+        "Execution parameters differ from the requested scenario"
+    )
+    assert snapshot["strategy"]["revision_id"] == revision_id, (
+        "Execution revision differs from the verified revision"
+    )
+
+
 def verify_workflow(root: Path, scenario_name: str) -> None:
     """Compare generated signals and stored backtest metrics with independent inputs."""
     scenario = SCENARIOS[scenario_name]
     workspace = WorkspacePaths(root / "workspace")
     spec = StrategyService(workspace).resolve_executable(scenario.strategy_id)
-    assert spec.status.value == "runnable"
+    assert spec.status.value in {"runnable", "promoted"}
     config = load_config(Path(spec.config_path))
     assert config["strategy"]["parameters"] == scenario.parameters
     bt = BacktestConfig(**config["backtest"])
@@ -230,8 +272,9 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
         == Path(spec.source_path).read_bytes()
     )
     snapshot = load_config(Path(by_type["config_snapshot"]["path"]))
-    assert snapshot["strategy"]["parameters"] == run_parameters
-    assert snapshot["strategy"]["revision_id"] == spec.revision_id
+    verify_execution_snapshot(
+        snapshot, config, parameters=run_parameters, revision_id=spec.revision_id
+    )
 
 
 if __name__ == "__main__":

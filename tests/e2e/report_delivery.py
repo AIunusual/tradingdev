@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from markdown_it import MarkdownIt
+
 from tests.e2e.conversation import links_to_file, visible_text
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -27,7 +29,7 @@ def verify_report_delivery(
     run_id: str,
     *,
     expected_sections: list[str],
-    expected_commentary: list[dict[str, str]],
+    expected_commentary: list[dict[str, str]] | None,
 ) -> str:
     """Require a matching usable report link and return its verified HTML text.
 
@@ -68,9 +70,19 @@ def verify_report_delivery(
     assert selected_sections == expected_sections, (
         "Delivered report sections differ from the requested sections"
     )
-    assert (call.arguments.get("commentary") or []) == expected_commentary, (
-        "Delivered report commentary differs from the requested commentary"
-    )
+    commentary = call.arguments.get("commentary") or []
+    if expected_commentary is not None:
+        assert commentary == expected_commentary, (
+            "Delivered report commentary differs from the requested commentary"
+        )
+    else:
+        assert commentary and all(
+            item.get("title", "").strip() and item.get("text", "").strip()
+            for item in commentary
+        ), "A freely worded research report still requires nonempty commentary"
+        assert _has_delivery_prose(turn.text, run_id), (
+            "The final reply must include delivery prose beyond its run ID and links"
+        )
     path = Path(report.path)
     assert (workspace.root / "tradingdev.sqlite").is_file(), (
         "Report workspace was removed before final delivery verification"
@@ -104,13 +116,49 @@ def verify_report_delivery(
         "run_ids": [run_id],
         "scope_count": report.scope_count,
         "sections": expected_sections,
-        "commentary": expected_commentary,
+        "commentary": commentary,
     }
     for field, value in expected_manifest.items():
         assert manifest.get(field) == value, (
             f"Delivered report manifest {field} differs from the requested report"
         )
+    if expected_commentary is None:
+        print(
+            "[discovery] Verified report commentary for semantic review: "
+            + json.dumps(
+                {
+                    "run_id": run_id,
+                    "report_id": report.report_id,
+                    "sections": expected_sections,
+                    "commentary": manifest["commentary"],
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
     return content.decode("utf-8")
+
+
+def _has_delivery_prose(text: str, run_id: str) -> bool:
+    """Reject identifier/link-only replies; semantic correctness needs review.
+
+    Do not reward report link labels, hidden HTML or code blocks as explanation,
+    and do not prescribe wording or an arbitrary character-count threshold.
+    """
+    parts: list[str] = []
+    for block in MarkdownIt("commonmark").parse(text):
+        children = block.children or []
+        if any(child.type == "html_inline" for child in children):
+            continue
+        in_link = False
+        for token in children:
+            if token.type == "link_open":
+                in_link = True
+            elif token.type == "link_close":
+                in_link = False
+            elif not in_link and token.type in {"text", "code_inline"}:
+                parts.append(token.content)
+    return any(character.isalpha() for character in " ".join(parts).replace(run_id, ""))
 
 
 def _read_manifest(

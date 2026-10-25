@@ -201,10 +201,7 @@ async def run_codex(
                         "approvalsReviewer": "user",
                         "allowProviderModelFallback": False,
                         "developerInstructions": (
-                            "Use only the configured tradingdev MCP tools. "
-                            "Present the prepared summary and HTML link, then end "
-                            "the turn. Submit a decision only after the user replies "
-                            "explicitly in a later turn of this conversation."
+                            "Use only the configured tradingdev MCP tools."
                         ),
                     },
                     mcp_config=_mcp_config(root, enabled_tools),

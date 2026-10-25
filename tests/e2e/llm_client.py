@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from tooling.context_budget import RequestSizes, text_size
 
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS, successful_mcp_calls
 
@@ -238,6 +239,7 @@ async def run_local_model(
     stage = "MCP tool discovery"
     round_number = 0
     provider_tool_repairs = 0
+    request_sizes = RequestSizes()
     turn_number = 1
     turn_start = 0
     messages: list[dict[str, Any]] = [
@@ -284,10 +286,13 @@ async def run_local_model(
                     request["reasoning_effort"] = reasoning_effort
                 _progress(f"{stage}: request started after {len(calls)} MCP calls")
                 started = time.monotonic()
-                response = await http.post(
+                outbound = http.build_request(
+                    "POST",
                     base_url.rstrip("/") + "/chat/completions",
                     json=request,
                 )
+                _progress(f"{stage}: {request_sizes.observe(outbound.content)}")
+                response = await http.send(outbound)
                 elapsed = time.monotonic() - started
                 try:
                     response.raise_for_status()
@@ -414,13 +419,19 @@ async def run_local_model(
                         f"{stage}: finished in {time.monotonic() - started:.2f}s; "
                         f"{summary}"
                     )
+                    tool_content = json.dumps(
+                        compact_tool_result(payload), ensure_ascii=False
+                    )
+                    size = text_size(tool_content)
+                    _progress(
+                        f"{stage}: result_chars={size['characters']} "
+                        f"result_utf8_bytes={size['utf8_bytes']}"
+                    )
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": json.dumps(
-                                compact_tool_result(payload), ensure_ascii=False
-                            ),
+                            "content": tool_content,
                         }
                     )
                 # Avoid a tight polling loop while a real backtest worker starts.

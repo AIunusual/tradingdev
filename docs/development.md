@@ -123,6 +123,14 @@ worker，結束後清理臨時檔案及程序。Harness 以實際工具回覆與
 Codex 測試在臨時工作區啟動獨立 MCP server，停用其他 server、外掛與 hooks；
 沿用原有登入，個人設定維持不變。所選 provider 缺少必要能力時，情境直接失敗。
 
+自然需求情境只提供策略條件、資金、日期與交付需求，不提供工具名稱、順序或報告答案。
+它開放實際註冊的完整工具集合，由產品 instructions 與工具描述引導探索、讀取契約、
+確認及交付；Codex 整合層不另補產品操作規則。驗證會核對正式執行身分、保存的設定與
+訊號、標準報告、非空評語及最終連結，拒絕只含 ID 與連結的回覆。
+自動檢查不能證明自由文字已正確涵蓋績效、風險、限制及參數選列／明細導覽；
+審閱者須檢視測試保存的最終回覆與報告評語，才能宣稱語意交付通過。
+既有逐步情境仍用於定位特定生命週期問題，不能取代此情境。
+
 KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折數、確認前狀態及
 執行產物。Walk-forward 另核對部分折數的試跑覆蓋、正式 purged 隔離區間，以及
 原 revision／隨機種子未變。離線版本使用相同 MCP／worker 與證據檢查，不呼叫模型。
@@ -206,6 +214,7 @@ Pytest 將 Matplotlib 快取導向獨立暫存目錄，結束、失敗或可處�
 | 篩選 | 涵蓋情境 |
 | --- | --- |
 | `-k sma` | 均線策略生成、回測與查詢。 |
+| `-k natural_request` | 不透露工具操作的自然需求，使用完整工具集合驗證探索與報告交付。 |
 | `-k ml_pipeline` | 上述完整 ML 研究流程。 |
 | `-k strategy_execution_guidance` | 探索 Quantile 的訓練需求，診斷不支援的簡單回測／最佳化入口，再根據拒絕回覆說明下一步；不訓練或核准執行。 |
 | `-k history` | 查詢指定參數、交易分頁、權益及章節目錄，產生自選章節與 LLM 評語的 HTML，並確認未重跑回測。 |
@@ -216,6 +225,29 @@ Pytest 將 Matplotlib 快取導向獨立暫存目錄，結束、失敗或可處�
 與保存的 observations，確認模型正確區分原生成交與配對交易。
 `--llm-timeout` 是每個模型情境的秒數上限，不是預期執行時間；簡例可用 900 秒，
 包含歷史查詢與報告的長流程建議預留 1800 秒，並依硬體調整。
+
+### 量測模型上下文
+
+提示詞與回覆的設計原則集中在 [AGENTS.md](../AGENTS.md#模型上下文與提示詞)。
+以下命令只在獨立臨時工作區檢查實際工具註冊，結束即清理，不呼叫模型、啟動 worker
+或讀取一般使用者 workspace：
+
+```bash
+uv run --no-sync python -m tooling.context_budget
+uv run --no-sync python -m tooling.context_budget --tools list_strategies get_strategy_contract
+```
+
+輸出分別列出 server instructions、工具名稱／描述／輸入 schema 的 Chat Completions
+投影，以及包含輸出 schema 的 MCP wire metadata；每項提供字元與 UTF-8 bytes。
+這些不是 token 數，也不代表所有客戶端都將 wire metadata 放進模型上下文。
+指定 `--tools` 時須保留所選集合，不能把縮小集合的量測當成完整產品的成本。
+
+Local 真實模型測試另記錄每輪實際序列化 HTTP request 的字元、bytes、相對首輪增量
+與累積峰值，以及工具回覆大小。Provider 有回傳 usage 時保留其實際 token 計數；
+沒有 tokenizer 或 usage 時不以固定換算假裝精確。Request 大小包含歷史與請求設定，
+不能直接當成模型 token 用量；容量評估另須保留輸出空間。Codex 內部序列化與壓縮
+由客戶端處理，本量測不聲稱能觀察其完整上下文。前述 64K 是特定本地測試配置經驗，
+不是產品對所有模型的最低需求或成功保證。
 
 執行指引情境使用真實模型、stdio MCP 及受監督的 preflight worker，拒絕發生於
 行情取得與策略訓練之前，不替代 worker 或 service。Harness 核對探索與拒絕的策略

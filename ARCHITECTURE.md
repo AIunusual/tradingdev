@@ -498,6 +498,18 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 ### MCP 回覆契約
 
+`mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
+及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、configuration、
+example 章節提供，每個回覆列出可讀章節；ML 研究解讀集中在 `get_ml_contract`，
+資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由
+`get_report_sections` 提供。工具描述與輸入 schema 保留呼叫前需要的條件與參數說明，
+不另載入整份研究手冊。這些入口都是標準 MCP tools，不依賴客戶端能讀取伺服器檔案
+或自動載入 resource。
+
+`tooling/context_budget.py` 量測實際註冊的 instructions 與工具投影；Local 測試記錄
+序列化 request 的大小及峰值。這些開發量測不改變產品工具內容，也不推測其他客戶端
+如何選工具、壓縮歷史或預留輸出，使用方式見[開發指南](docs/development.md#量測模型上下文)。
+
 MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用

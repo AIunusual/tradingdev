@@ -82,6 +82,14 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         "    Path('ml_pipeline.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    (tmp_path / "tests/e2e/test_llm_discovery.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_natural_request_only():\n"
+        "    Path('natural_request.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     (tmp_path / "tests/e2e/test_llm_strategy_execution_guidance.py").write_text(
         "from pathlib import Path\n"
         "import pytest\n"
@@ -181,7 +189,13 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
 
 @pytest.mark.parametrize(
     "scenario",
-    ["cleanup", "execution_plan", "ml_pipeline", "strategy_execution_guidance"],
+    [
+        "cleanup",
+        "execution_plan",
+        "ml_pipeline",
+        "natural_request",
+        "strategy_execution_guidance",
+    ],
 )
 def test_script_selects_scenario_without_running_authoring_suite(
     script_workspace: Path,
@@ -210,6 +224,6 @@ def test_script_selects_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 6 deselected" in result.stdout
+    assert "1 passed, 7 deselected" in result.stdout
     assert (script_workspace / f"{scenario}.ran").read_text() == "done"
     assert not (script_workspace / "completed.ran").exists()
