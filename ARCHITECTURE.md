@@ -520,6 +520,12 @@ MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受�
 放在 `structuredContent.result`。舊自訂客戶端若直接從根層讀取 `success`、
 `job_id` 等欄位，須依目前 schema 調整；此回覆格式不會遷移或改寫工作區資料。
 
+會隨工作區成長的五項探索清單由 application services 篩選、排序並投影為共用
+`Page[T]`，MCP 回傳 `items` 與續頁資訊；內部 Python 全量查詢保留原用途。
+策略、執行與 artifact 清單只傳識別摘要，詳細 metadata、指標與原始碼由單筆查詢取得。
+這限制每次傳回的筆數及欄位，不限制後端儲存量，也不提供跨寫入的一致快照；
+欄位、篩選與排序見[探索分頁契約](docs/run_artifacts.md#discovery-pages)。
+
 預期的操作失敗保留 `success: false` 或空 `job_id` 等工具語意，並提供穩定的
 `code`；驗證失敗的 `diagnostics` 包含 `code`、`phase` 與 `fix`。
 `get_job_status` 的 `status: not_found` 表示查無工作，`status: failed` 則表示

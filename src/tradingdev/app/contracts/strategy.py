@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
@@ -112,26 +112,6 @@ class GeneratedStrategyMetadata(ContractModel):
     dry_run: StrategyValidationRecord | None
 
 
-class StrategyRecentRun(ContractModel):
-    """A recent run with extensible JSON metrics."""
-
-    revision_id: str | None
-    run_id: str
-    job_id: str
-    created_at: str
-    dataset_id: str | None
-    metrics: dict[str, JsonValue]
-
-
-class BundledStrategySummaryMetadata(ContractModel):
-    """Version, source, and configurable parameters of a bundled strategy."""
-
-    revision_id: None
-    version: str | None
-    source_path: str | None
-    parameters: dict[str, JsonValue]
-
-
 class BundledStrategySummary(ContractModel):
     """One bundled strategy discovery entry."""
 
@@ -142,12 +122,6 @@ class BundledStrategySummary(ContractModel):
     kind: Literal["bundled"]
     execution_capabilities: StrategyCapabilities
     status: Literal["promoted"]
-    config_path: str
-    metadata: BundledStrategySummaryMetadata
-    data_requirements: dict[str, JsonValue] | None = Field(
-        description="Unvalidated user config, preserved for inspection and repair."
-    )
-    recent_runs: list[StrategyRecentRun]
 
 
 class GeneratedStrategySummary(ContractModel):
@@ -159,13 +133,6 @@ class GeneratedStrategySummary(ContractModel):
     kind: Literal["generated"]
     execution_capabilities: StrategyCapabilities
     status: StrategyStatus
-    source_path: str
-    config_path: str
-    metadata: GeneratedStrategyMetadata
-    data_requirements: dict[str, JsonValue] | None = Field(
-        description="Unvalidated user config, preserved for inspection and repair."
-    )
-    recent_runs: list[StrategyRecentRun]
 
 
 class BundledStrategySourceMetadata(ContractModel):
@@ -195,6 +162,12 @@ class LegacyStrategyResponse(LegacyStrategySummary):
     success: Literal[True]
     source_code: str
     yaml_config: str
+
+
+type StrategyKind = Literal["bundled", "generated", "legacy"]
+type StrategySummary = (
+    BundledStrategySummary | GeneratedStrategySummary | LegacyStrategySummary
+)
 
 
 class BundledStrategyResponse(ContractModel):

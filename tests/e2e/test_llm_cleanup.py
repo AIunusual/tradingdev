@@ -299,7 +299,7 @@ async def verify_cleanup_history(workspace: MCPWorkspace, seed: CleanupSeed) -> 
         historical = await client.call("get_run", run_id=seed.run_id)
         assert historical["success"], historical
         assert historical["run"]["revision_id"] == seed.runnable_id
-        jobs = await client.call("list_jobs")
+        jobs = await client.read_all_pages("list_jobs")
         assert len(jobs) == 1 and jobs[0]["job_id"] == seed.run_id
 
 

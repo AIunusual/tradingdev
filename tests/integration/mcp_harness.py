@@ -74,6 +74,31 @@ class MCPClient:
         validate(instance=payload, schema=self.output_schemas[name])
         return payload["result"] if set(payload) == {"result"} else payload
 
+    async def read_all_pages(
+        self, name: str, *, limit: int = 20, **arguments: Any
+    ) -> list[dict[str, Any]]:
+        """Explicitly consume every list page while the test workspace is stable."""
+        items: list[dict[str, Any]] = []
+        offset = 0
+        total: int | None = None
+        while True:
+            page = await self.call(name, offset=offset, limit=limit, **arguments)
+            assert set(page) == {"items", "offset", "limit", "total", "next_offset"}
+            assert page["offset"] == offset and page["limit"] == limit
+            if total is None:
+                total = page["total"]
+            assert page["total"] == total, "Test inventory changed during pagination"
+            chunk = page["items"]
+            assert isinstance(chunk, list) and len(chunk) <= limit
+            items.extend(chunk)
+            next_offset = page["next_offset"]
+            if next_offset is None:
+                break
+            assert next_offset == offset + len(chunk) > offset
+            offset = next_offset
+        assert len(items) == total, "Pagination ended before returning every item"
+        return items
+
     async def wait_for_job(self, job_id: str, timeout: float = 120) -> dict[str, Any]:
         with anyio.fail_after(timeout):
             while True:

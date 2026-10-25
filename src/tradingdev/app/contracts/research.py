@@ -26,6 +26,17 @@ class MetricDiscovery(ContractModel):
     detail_error: ErrorResponse | None = None
 
 
+class RunSummary(ContractModel):
+    """Stable discovery identity; get_run retrieves metrics and scope discovery."""
+
+    run_id: str
+    job_id: str
+    strategy_id: str
+    revision_id: str | None
+    dataset_id: str | None
+    created_at: str
+
+
 class RunRecord(MetricDiscovery):
     """Run identity and a compact view of the persisted default metric scope."""
 

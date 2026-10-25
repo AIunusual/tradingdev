@@ -170,7 +170,7 @@ fit on the entire evaluation frame and then replay signals over that frame:
 earlier signals would use information from later rows. Strategies that do not
 require training need no additional `fit()` step.
 
-`list_strategies` and `get_strategy` return `execution_capabilities` for bundled,
+`list_strategies` page items and `get_strategy` return `execution_capabilities` for bundled,
 generated and legacy strategies. `training_requirement` is `required`, `optional`
 or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
 training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
@@ -190,6 +190,11 @@ and parameter overrides cannot replace the registered capability. Generated and
 legacy source remains `unknown` even if it defines `fit()`, declares this YAML
 field or has passed validation/dry-run. No generated source is executed merely
 to discover its capabilities.
+
+Strategy discovery uses the shared [discovery page contract](run_artifacts.md#discovery-pages).
+Its compact items omit full metadata, YAML requirements and recent runs; read
+`get_strategy` for a selected identity instead of assuming the list contains
+all configuration or validation evidence.
 
 Simple-backtest and optimization preparation reject registered strategies that
 require training before data loading or a formal job. The application error code

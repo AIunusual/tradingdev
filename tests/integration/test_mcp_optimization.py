@@ -120,7 +120,7 @@ async def test_optimization_rejects_walk_forward_config_through_mcp(
         assert rejected["success"] is False
         assert rejected["code"] == "invalid_optimization_request"
         assert "must not contain validation settings" in rejected["error"]
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
 
 
 async def test_optimization_confirmation_search_and_persisted_oos(
@@ -150,7 +150,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         )
         assert not overlapping["success"]
         assert "without overlap" in overlapping["error"]
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
         prepared = await client.call(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
@@ -171,8 +171,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert prepared["preflight"]
         retained = await client.call("get_execution_plan", plan_id=prepared["plan_id"])
         assert retained["manifest_hash"] == manifest_hash
-        assert await client.call("list_jobs") == []
-        assert await client.call("list_runs") == []
+        assert (await client.call("list_jobs"))["items"] == []
+        assert (await client.call("list_runs"))["items"] == []
         assert not list(mcp_workspace.workspace.rglob("result.json"))
         replacement = await client.call(
             "save_strategy",
@@ -193,7 +193,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 3
-        assert (await client.call("list_jobs"))[0]["completed"] == 3
+        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 3
         # warmup=2 is a captured constructor default, not a grid parameter.
         # The engine enters one
         # bar later (index 3), and training must include the entire last day.
@@ -212,7 +212,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
         )
         assert repeated["success"] and repeated["job_id"] == job_id
-        assert len(await client.call("list_jobs")) == 1
+        assert len(await client.read_all_pages("list_jobs")) == 1
         run = (await client.call("get_run", run_id=completed["run_id"]))["run"]
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
@@ -274,7 +274,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert flat["metadata"]["unavailable"]["win_rate"] == "no_trades"
         artifacts = {
             item["artifact_type"]: item
-            for item in await client.call("list_artifacts", run_id=job_id)
+            for item in await client.read_all_pages("list_artifacts", run_id=job_id)
         }
         specification = await client.read_artifact_text(
             artifacts["execution_manifest"]["artifact_id"]
@@ -357,4 +357,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             metric_ids=["total_return", "daily_pnl_median"],
         )
         assert reloaded_trial == losing
-        assert any(item["run_id"] == job_id for item in await client.call("list_runs"))
+        assert any(
+            item["run_id"] == job_id
+            for item in await client.read_all_pages("list_runs")
+        )

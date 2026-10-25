@@ -102,7 +102,17 @@ def _repair_evidence() -> list[ToolCall]:
                 },
             },
         ),
-        ToolCall("list_artifacts", {"run_id": "run"}, [{"artifact_id": "artifact"}]),
+        ToolCall(
+            "list_artifacts",
+            {"run_id": "run"},
+            {
+                "items": [{"artifact_id": "artifact"}],
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "next_offset": None,
+            },
+        ),
         ToolCall(
             "get_metric_catalog",
             {"mode": "signal"},
@@ -266,6 +276,14 @@ def test_contract_order_failure_explains_required_order() -> None:
     calls = _repair_evidence()
     calls[0], calls[3] = calls[3], calls[0]
     with pytest.raises(AssertionError, match="get_strategy_contract must precede"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
+def test_empty_artifact_page_is_not_completed_result_evidence() -> None:
+    calls = _repair_evidence()
+    artifacts = next(call for call in calls if call.name == "list_artifacts")
+    artifacts.result.update(items=[], total=0)
+    with pytest.raises(AssertionError, match="list_artifacts.*nonempty result"):
         assert_workflow(calls, SCENARIOS["repair"])
 
 

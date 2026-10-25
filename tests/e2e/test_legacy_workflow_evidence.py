@@ -25,7 +25,17 @@ def legacy_calls() -> list[ToolCall]:
     }
     return [
         ToolCall("get_strategy_contract", {}, {"example_strategy_code": "source"}),
-        ToolCall("list_strategies", {}, [legacy]),
+        ToolCall(
+            "list_strategies",
+            {},
+            {
+                "items": [legacy],
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "next_offset": None,
+            },
+        ),
         ToolCall(
             "get_strategy",
             {"strategy_id": strategy_id},
@@ -110,7 +120,17 @@ def legacy_calls() -> list[ToolCall]:
                 },
             },
         ),
-        ToolCall("list_artifacts", {"run_id": "run-1"}, [{"path": "result.json"}]),
+        ToolCall(
+            "list_artifacts",
+            {"run_id": "run-1"},
+            {
+                "items": [{"path": "result.json"}],
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "next_offset": None,
+            },
+        ),
         ToolCall(
             "get_metric_catalog",
             {"mode": "signal"},
@@ -159,10 +179,19 @@ def test_legacy_evidence_rejects_nonlegacy_responses(
 ) -> None:
     calls = deepcopy(legacy_calls)
     call = next(call for call in calls if call.name == name)
-    payload = call.result[0] if name == "list_strategies" else call.result
+    payload = call.result["items"][0] if name == "list_strategies" else call.result
     payload["status"] = "runnable"
     with pytest.raises(AssertionError, match="Missing required MCP step"):
         assert_workflow(calls, SCENARIOS["legacy"])
+
+
+def test_empty_strategy_page_does_not_identify_the_legacy_strategy(
+    legacy_calls: list[ToolCall],
+) -> None:
+    discovery = next(call for call in legacy_calls if call.name == "list_strategies")
+    discovery.result.update(items=[], total=0)
+    with pytest.raises(AssertionError, match="list_strategies identifying"):
+        assert_workflow(legacy_calls, SCENARIOS["legacy"])
 
 
 def test_legacy_evidence_rejects_reading_only_after_resaving(

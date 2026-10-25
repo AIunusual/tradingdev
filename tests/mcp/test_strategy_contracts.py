@@ -171,7 +171,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
 ) -> None:
     _server_instance, service = _server(tmp_path)
     _save(service)
-    entries = service.list_strategies()
+    entries = service.list_strategies_page().model_dump(mode="json")["items"]
     assert any(item["kind"] == "bundled" for item in entries)
     for item in entries:
         if item["kind"] == "bundled":
@@ -179,7 +179,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
             assert parsed.status == "promoted"
         else:
             generated = GeneratedStrategySummary.model_validate(item)
-            assert generated.metadata.source_hash
+            assert generated.revision_id
     response = GeneratedStrategyResponse.model_validate(
         service.get_strategy("contract_strategy")
     )
@@ -234,14 +234,14 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
             listed = asyncio.run(server.call_tool("list_strategies", {}))
             assert isinstance(listed, CallToolResult)
             assert listed.structured_content is not None
-            entries = listed.structured_content["result"]
+            entries = listed.structured_content["items"]
             assert isinstance(entries, list)
             assert any(item["kind"] == "bundled" for item in entries)
             draft = next(
                 item for item in entries if item["strategy_id"] == "repairable_draft"
             )
             assert draft["status"] == "draft"
-            assert draft["data_requirements"] == current
+            assert "data_requirements" not in draft
 
             retrieved = _call(
                 server, "get_strategy", {"strategy_id": "repairable_draft"}

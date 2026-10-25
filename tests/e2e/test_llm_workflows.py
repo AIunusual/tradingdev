@@ -139,12 +139,12 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 index
                 for index, call in enumerate(calls)
                 if call.name == "list_strategies"
-                and isinstance(call.result, list)
+                and isinstance(call.result, dict)
                 and any(
                     all(
                         item.get(key) == value for key, value in legacy_identity.items()
                     )
-                    for item in call.result
+                    for item in call.result.get("items", [])
                 )
             ),
         )
@@ -347,7 +347,8 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             for index, call in enumerate(calls)
             if index > done_index
             and call.name == "list_artifacts"
-            and call.result
+            and isinstance(call.result, dict)
+            and call.result.get("items")
             and call.arguments.get("run_id") == run_id
         ),
     )

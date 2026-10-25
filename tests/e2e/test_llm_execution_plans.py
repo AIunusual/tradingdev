@@ -355,7 +355,8 @@ def _assert_evidence(
         index > done_index
         and call.name == "list_artifacts"
         and call.arguments.get("run_id") == run_id
-        and call.result
+        and isinstance(call.result, dict)
+        and call.result.get("items")
         for index, call in enumerate(calls)
     )
 

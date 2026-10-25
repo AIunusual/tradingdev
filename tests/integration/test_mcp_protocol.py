@@ -101,7 +101,8 @@ async def test_generated_strategy_full_mcp_workflow(
             tools["save_strategy"].input_schema["required"]
         )
         assert all(
-            item["kind"] == "bundled" for item in await client.call("list_strategies")
+            item["kind"] == "bundled"
+            for item in await client.read_all_pages("list_strategies")
         )
         code, config_text, saved = await save_example(client)
         for key in ("py_path", "yaml_path"):
@@ -119,7 +120,7 @@ async def test_generated_strategy_full_mcp_workflow(
         assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
             "success"
         ]
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
         await make_runnable(client, saved["revision_id"])
         promoted = await client.call(
             "promote_strategy",
@@ -165,7 +166,7 @@ async def test_generated_strategy_full_mcp_workflow(
         assert detail["success"] and detail["scope"] == "full"
         assert set(detail["metrics"]) == {"daily_pnl_mean", "total_volume", "n_days"}
         assert detail["metadata"]["providers"]["quantstats"]
-        artifacts = await client.call("list_artifacts", run_id=run_id)
+        artifacts = await client.read_all_pages("list_artifacts", run_id=run_id)
         by_type = {item["artifact_type"]: item for item in artifacts}
         assert {
             "result_json",
@@ -292,7 +293,10 @@ async def test_generated_strategy_full_mcp_workflow(
         assert (await client.call("get_job_status", job_id=started["job_id"]))[
             "status"
         ] == "done"
-        assert any(item["run_id"] == run_id for item in await client.call("list_runs"))
+        assert any(
+            item["run_id"] == run_id
+            for item in await client.read_all_pages("list_runs")
+        )
         assert (await client.call("get_strategy", strategy_id=STRATEGY_ID))["metadata"][
             "status"
         ] == "promoted"
@@ -429,7 +433,7 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
         failed = await client.wait_for_job(started["job_id"])
         assert failed["status"] == "failed", failed
         assert failed["error"]
-        assert await client.call("list_runs") == []
+        assert (await client.call("list_runs"))["items"] == []
         mcp_workspace.seed_market(sample_ohlcv_with_kd)
         prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
         started = await confirm_prepared(client, prepared)
@@ -551,5 +555,7 @@ async def test_walk_forward_runs_through_real_worker(
             assert fold["metadata"]["observations"]["end_date"].startswith(
                 "2024-01-04T23:00:00"
             )
-        artifacts = await client.call("list_artifacts", run_id=completed["run_id"])
+        artifacts = await client.read_all_pages(
+            "list_artifacts", run_id=completed["run_id"]
+        )
         assert any(item["artifact_type"] == "pipeline_result" for item in artifacts)

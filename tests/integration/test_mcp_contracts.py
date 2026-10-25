@@ -118,7 +118,7 @@ async def test_discovery_collects_output_schemas_across_pages(
     async with mcp_workspace.connect() as client:
         assert cursors == [None, "next-page"]
         assert client.output_schemas.keys() == expected_names
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
 
 
 async def test_all_tools_advertise_constrained_output_schemas_and_hints(
@@ -268,8 +268,8 @@ async def test_application_errors_follow_advertised_output_schemas(
             assert response[field] == expected, (name, response)
             assert isinstance(response["code"], str) and response["code"], name
             assert response.get("error") or response.get("message"), name
-        assert await client.call("list_jobs") == []
-        assert await client.call("list_runs") == []
+        assert (await client.call("list_jobs"))["items"] == []
+        assert (await client.call("list_runs"))["items"] == []
 
 
 async def test_missing_required_inputs_are_mcp_errors_without_side_effects(
@@ -286,8 +286,8 @@ async def test_missing_required_inputs_are_mcp_errors_without_side_effects(
             assert result.is_error, (tool.name, result)
             assert result.content, tool.name
             assert result.structured_content is None, tool.name
-        assert await client.call("list_jobs") == []
-        assert await client.call("list_runs") == []
+        assert (await client.call("list_jobs"))["items"] == []
+        assert (await client.call("list_runs"))["items"] == []
         assert await client.call("list_feature_requests") == []
         assert not list(mcp_workspace.workspace.rglob("*.py"))
 

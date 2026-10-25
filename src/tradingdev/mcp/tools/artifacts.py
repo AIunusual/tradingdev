@@ -8,8 +8,14 @@ from mcp_types import ToolAnnotations
 from pydantic import Field
 
 from tradingdev.adapters.storage.artifact_text import DEFAULT_TEXT_LIMIT, MAX_TEXT_LIMIT
-from tradingdev.app.contracts.common import ErrorResponse
-from tradingdev.app.contracts.research import ArtifactRecord, ArtifactResponse
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    ErrorResponse,
+    Page,
+    PageLimit,
+    PageOffset,
+)
+from tradingdev.app.contracts.research import ArtifactIdentity, ArtifactResponse
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
@@ -28,11 +34,21 @@ def register(mcp: MCPServer, service: ArtifactService) -> None:
             open_world_hint=False,
         )
     )
-    def list_artifacts(run_id: str | None = None) -> list[ArtifactRecord]:
-        """List local artifact metadata; use get_artifact to retrieve text content."""
-        return [
-            ArtifactRecord.model_validate(row) for row in service.list_artifacts(run_id)
-        ]
+    def list_artifacts(
+        run_id: str | None = None,
+        artifact_type: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[ArtifactIdentity]:
+        """Discover artifact identities; get_artifact reads producer metadata/content.
+
+        Exact filters precede paging; order is created_at descending, artifact_id
+        ascending. total counts matches; follow next_offset. Restart at offset=0 after
+        inventory changes because pages do not retain a cross-call snapshot.
+        """
+        return service.list_artifacts_page(
+            run_id=run_id, artifact_type=artifact_type, offset=offset, limit=limit
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(

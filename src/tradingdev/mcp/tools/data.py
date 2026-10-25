@@ -9,6 +9,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import ValidationError
 
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    Page,
+    PageLimit,
+    PageOffset,
+)
 from tradingdev.app.contracts.data import (
     CachedDataset,
     DatasetInspection,
@@ -36,11 +42,21 @@ def register(mcp: MCPServer, service: DataService) -> None:
             open_world_hint=False,
         )
     )
-    def list_available_data() -> list[CachedDataset]:
-        """List cached OHLCV datasets; use inspect_dataset to inspect file contents."""
-        return [
-            CachedDataset.model_validate(row) for row in service.list_available_data()
-        ]
+    def list_available_data(
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[CachedDataset]:
+        """Discover cached OHLCV identities; inspect_dataset reads file details.
+
+        Filters are exact (symbol ignores case and '/'); order is symbol, timeframe.
+        total counts matches; follow next_offset. Restart at offset=0 after cache
+        changes because pages do not retain a cross-call snapshot. No files are read.
+        """
+        return service.list_available_data_page(
+            symbol=symbol, timeframe=timeframe, offset=offset, limit=limit
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(

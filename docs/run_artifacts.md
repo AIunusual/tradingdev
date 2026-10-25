@@ -105,8 +105,8 @@ Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
 `plan_id`; they do not create a job. `submit_execution_decision` with `approve`
 returns the job ID after the caller relays the user's explicit consent.
-Job status, job lists, and run
-records carry the same digest; historical entries without an execution manifest
+Job status, job-list items, and `get_run` records
+carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
@@ -115,7 +115,7 @@ specification. The old MCP `start_backtest`, `start_walk_forward`,
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
 `cancel_job` reject their responses at the MCP boundary; even one such record
-causes the entire `list_jobs` response to fail validation. Preparing another plan
+causes a `list_jobs` page containing that record to fail validation. Preparing another plan
 in the same workspace does not repair those records. After using the version that
 created the jobs to stop its workers and server and verify cleanup, preserve the
 old workspace at its original location and configure the new MCP server with a
@@ -620,6 +620,38 @@ and do not use this conversation workflow.
 - `list_artifacts` / `get_artifact`: result JSON and other artifact lookup.
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
+
+### Discovery Pages
+
+MCP `list_strategies`, `list_runs`, `list_jobs`, `list_available_data` and
+`list_artifacts` return an object with `items`, `offset`, `limit`, `total` and
+`next_offset`, rather than a bare list. `offset` is a nonnegative integer;
+`limit` defaults to 20 and accepts 1–100. Booleans and numeric strings are not
+valid page bounds. `total` counts all matching items before paging, while an
+offset at or beyond the total returns an empty page. Follow `next_offset` until
+it is `null`; do not treat a first page as the complete inventory.
+
+| Tool | Filters applied before paging | Order |
+| --- | --- | --- |
+| `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
+| `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
+| `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
+| `list_available_data` | `symbol`, `timeframe` | symbol, timeframe |
+| `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
+
+Filters are exact matches except cached-data symbols, which normalize case and
+remove `/`. Ordering is deterministic for unchanged data; separate page calls
+are not a snapshot across concurrent writes. Restart at offset zero if the
+inventory changes before claiming complete discovery.
+
+Strategy pages retain identities, lifecycle status and execution capabilities;
+`get_strategy` provides source, configuration and full metadata. Run pages
+contain identities, not metrics or growing scope catalogs; use `get_run` and
+scoped metric/history tools for details. Artifact pages omit producer metadata;
+`get_artifact` retrieves it. These are record-count bounds and deliberately
+small projections, not a universal byte or token budget for arbitrary fields.
+The internal Python service list APIs remain complete lists for their existing
+application callers; only the MCP discovery contract uses these pages.
 
 ### Reading Artifact Text
 
@@ -1133,7 +1165,7 @@ including values inside nested objects and arrays such as optimization metrics.
 
 Legacy results are also normalized in memory when `JobStore.load_result` reads a
 result file or `SQLiteStore` reads run metrics. These reads do not rewrite the
-stored file or database row. Consequently, `get_run`, `list_runs`, and completed
+stored file or database row. Consequently, `get_run` and completed
 `get_job_status` responses expose legacy non-finite metric values as `null`.
 
 In contrast, `get_artifact(include_content=true)` returns pages of the original

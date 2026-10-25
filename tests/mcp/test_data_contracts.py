@@ -14,6 +14,7 @@ from mcp_types import CallToolResult, TextContent
 from pydantic import TypeAdapter, ValidationError
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.contracts.common import Page
 from tradingdev.app.contracts.data import (
     CachedDataset,
     DatasetInspection,
@@ -88,10 +89,10 @@ def test_data_tools_validate_local_cache_and_inspection(tmp_path: Path) -> None:
         return payload
 
     async def check() -> None:
-        listed = TypeAdapter(list[CachedDataset]).validate_python(
-            (await call("list_available_data", {}))["result"]
+        listed = Page[CachedDataset].model_validate(
+            await call("list_available_data", {})
         )
-        assert listed[0].years_available == [2024]
+        assert listed.items[0].years_available == [2024]
         basic = DatasetInspection.model_validate(await call("inspect_dataset", {}))
         assert basic.requirements is None
         detailed = DatasetInspection.model_validate(

@@ -22,6 +22,9 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.research import ArtifactIdentity
+from tradingdev.app.pagination import paginate
 from tradingdev.app.run_lineage import (
     extract_random_seed,
     read_strategy_snapshot,
@@ -48,6 +51,31 @@ class ArtifactService:
     def list_artifacts(self, run_id: str | None = None) -> list[dict[str, Any]]:
         """List artifact metadata."""
         return self._store.list_artifacts(run_id)
+
+    def list_artifacts_page(
+        self,
+        *,
+        run_id: str | None = None,
+        artifact_type: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[ArtifactIdentity]:
+        """Page artifact identities without expanding producer metadata."""
+        rows = [
+            row
+            for row in self.list_artifacts(run_id)
+            if artifact_type is None or row["artifact_type"] == artifact_type
+        ]
+        rows.sort(key=lambda row: str(row["artifact_id"]))
+        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        return paginate(
+            rows,
+            project=lambda row: ArtifactIdentity.model_validate(
+                {name: row.get(name) for name in ArtifactIdentity.model_fields}
+            ),
+            offset=offset,
+            limit=limit,
+        )
 
     def get_artifact(
         self,
