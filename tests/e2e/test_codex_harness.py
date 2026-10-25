@@ -21,6 +21,8 @@ from tests.integration.mcp_harness import SimulatedUserApproval
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
+    from tests.e2e.conversation import ModelTurn
+
 _WAITING_CLIENT = """\
 import time
 from pathlib import Path
@@ -83,6 +85,9 @@ for line in sys.stdin:
             # Codex's never policy declines internally without contacting the client.
             mode = 'completed'
         if mode != 'timeout':
+            for item in json.loads(sys.argv[2]) if len(sys.argv) > 2 else []:
+                print(json.dumps({'method': 'item/completed', 'params': {
+                    'threadId': 'thread', 'turnId': 'turn', 'item': item}}), flush=True)
             print(json.dumps({'method': 'turn/completed', 'params': {
                 'threadId': 'thread', 'turn': {'id': 'turn', 'status': mode}}}),
                   flush=True)
@@ -192,6 +197,84 @@ def test_codex_explicit_model_takes_precedence_over_environment(
         requested = json.loads((root / "thread_request.json").read_text())
         assert requested["model"] == "explicit-model"
     assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    ("phase", "final_text", "tools_after_message", "expected"),
+    [
+        ("final_answer", "完成 run", False, "完成 run"),
+        (
+            "final_answer",
+            "完成 run\n[閱讀報告](</report.html>)",
+            False,
+            "完成 run\n[閱讀報告](</report.html>)",
+        ),
+        (None, "完成 run", False, "完成 run"),
+        ("commentary", "[閱讀報告](</report.html>)", False, ""),
+        ("partial_answer", "[閱讀報告](</report.html>)", False, ""),
+        (None, "[閱讀報告](</report.html>)", True, ""),
+        ("final_answer", "[閱讀報告](</report.html>)", True, ""),
+    ],
+)
+def test_codex_user_callback_reads_only_the_terminal_answer(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+    phase: str | None,
+    final_text: str,
+    tools_after_message: bool,
+    expected: str,
+) -> None:
+    """An interim report link must not satisfy final-turn delivery evidence."""
+    progress = {
+        "id": "progress",
+        "type": "agentMessage",
+        "phase": "commentary",
+        "text": "報告已生成：[閱讀報告](</report.html>)",
+    }
+    tool = {
+        "id": "tool",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "get_run_metrics",
+        "arguments": {"run_id": "run"},
+        "status": "completed",
+        "result": {"structuredContent": {"success": True, "run_id": "run"}},
+    }
+    answer = {
+        "id": "answer",
+        "type": "agentMessage",
+        "phase": phase,
+        "text": final_text,
+    }
+    items = (
+        [progress, answer, tool] if tools_after_message else [progress, tool, answer]
+    )
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "completed",
+            json.dumps(items),
+        ],
+    )
+    turns: list[ModelTurn] = []
+
+    async def observe(turn: ModelTurn) -> None:
+        turns.append(turn)
+
+    events = asyncio.run(
+        codex_harness.run_codex(tmp_path, "prompt", user_reply=observe)
+    )
+    assert len(turns) == 1
+    assert turns[0].number == 1
+    assert turns[0].text == expected
+    assert len(turns[0].calls) == 1
+    assert turns[0].calls[0].name == "get_run_metrics"
+    assert turns[0].calls[0].result == {"success": True, "run_id": "run"}
+    assert any(event.get("params", {}).get("item") == progress for event in events)
 
 
 def _fail_after_cleanup(

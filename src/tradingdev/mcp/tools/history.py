@@ -229,6 +229,10 @@ def register(
         trades is supplementary paired-trade PnL, not the reconciliation ledger.
         Returns a registered artifact and local path. Existing backtests remain
         unchanged. No strategy, model, external website, or market download runs.
+        Deliver the returned report link in the final user-facing answer with
+        its run IDs and directions for the selected detail sections. A successful
+        tool result or an intermediate link alone is not delivery. Preserve the
+        report and source runs; server shutdown does not authorize their deletion.
         """
         result = reports.generate_report(
             run_ids,

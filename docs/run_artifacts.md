@@ -897,6 +897,15 @@ the matching detail view (`#result-<run-index>-<scope-index>`); a return link br
 the reader back to the overview. This keeps all optimization training trials and
 the selected parameter's test result distinct. A report is generated explicitly
 after completed or historical result inspection, not automatically by execution.
+MCP instructions request a standard report when completing an execution with
+performance/risk interpretation, unless the user asks for summary/metrics only
+or opts out. This is a client workflow requirement, not an automatic worker step.
+The final user-facing response must deliver the returned report link, identify
+the runs/scopes and explain the selected detail views. Tool success and an
+intermediate link do not establish delivery. Reports and their source runs remain
+workspace artifacts after server shutdown; shutdown does not authorize cleanup.
+If report generation or delivery fails, the client should preserve those sources
+and retry reporting instead of running the strategy again.
 Without `overview`, a result chooser links to the selected detail sections.
 Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.

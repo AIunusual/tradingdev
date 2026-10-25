@@ -105,6 +105,14 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 worker，結束後清理臨時檔案及程序。Harness 以實際工具回覆與保存的產物驗證結果，
 串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID 及工作／結果的 manifest hash。
 
+報告情境另核對模型最終回覆的可點擊連結、執行身分及同一份報告的章節與評語，
+並在清理前讀取報告確認可用。只生成檔案、只在中途貼連結或最後只回答 run ID
+都不代表交付通過。最終回覆文字會留在當次測試輸出，供審閱明細查看指引的語意；
+測試不以固定中文詞判定解說是否正確。
+自動化情境使用模擬使用者，驗證完即清理；它不替真人保留報告，也不證明桌面客戶端
+能開啟檔案或互動表格可操作。對話中的實際驗收與成果保留遵守
+[代理政策](../AGENTS.md#測試與清理)，不要直接套用自動化 fixture 的刪除流程。
+
 多回合情境沿用同一對話：Local 保留 messages，Codex app-server 保留 thread。
 第一回合須呈現短摘要與 HTML 連結，計畫 ready 且尚無正式工作或結果；模擬使用者
 於回合結束後明確同意，後續回合才可用 `submit_execution_decision` 提交同一計畫。

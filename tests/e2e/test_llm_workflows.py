@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -13,13 +12,16 @@ import yaml
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.conversation_user import ObservedPlanUser
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.report_delivery import verify_report_delivery
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from tests.integration.mcp_harness import MCPWorkspace
 
@@ -415,20 +417,10 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             row["run_id"] == run_id and row["scope"] == "full"
             for row in found.result["runs"]
         )
-        report = next(call for call in calls if call.name == "generate_report")
-        assert report.arguments.get("sections") == [
-            "overview",
-            "metrics",
-            "ledger",
-            "trades",
-        ]
         for name, count in (("get_run_executions", 1), ("get_run_account_history", 2)):
             queried_history = next(call for call in calls if call.name == name)
             assert queried_history.arguments.get("limit") == count
             assert queried_history.result["availability"] == "available"
-        assert report.arguments.get("commentary") == [
-            {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
-        ]
         assert sum(call.name == "prepare_backtest" for call in calls) == 1
         assert sum(call.name == "submit_execution_decision" for call in calls) == 1
     if scenario.repair:
@@ -479,6 +471,7 @@ def test_llm_authors_backtests_and_queries_results(
     ):
         workspace.seed_market(market_frame())
         legacy_files: dict[Path, bytes] = {}
+        user = ObservedPlanUser(workspace)
 
         async def run() -> list[ToolCall]:
             if scenario.repair:
@@ -489,7 +482,6 @@ def test_llm_authors_backtests_and_queries_results(
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
             }
-            user = ObservedPlanUser(workspace)
             if provider == "codex":
                 calls = codex_calls(
                     await run_codex(
@@ -531,13 +523,20 @@ def test_llm_authors_backtests_and_queries_results(
             for metric_id in DETAIL_METRIC_IDS:
                 assert detail.result["metrics"][metric_id] == persisted[metric_id]
             if scenario.history:
-                report_call = next(
-                    call for call in reversed(calls) if call.name == "generate_report"
+                print(
+                    "[history] Final model reply (test evidence; temporary links "
+                    "expire at cleanup):\n" + user.turns[-1].text,
+                    flush=True,
                 )
-                report_path = Path(report_call.result["path"])
-                assert report_path.is_relative_to(workspace.workspace / "reports")
-                assert report_path.is_file()
-                report_html = report_path.read_text(encoding="utf-8")
+                report_html = verify_report_delivery(
+                    WorkspacePaths(workspace.workspace),
+                    user.turns[-1],
+                    detail.arguments["run_id"],
+                    expected_sections=["overview", "metrics", "ledger", "trades"],
+                    expected_commentary=[
+                        {"title": "研究評語", "text": "本次結果僅為歷史模擬。"}
+                    ],
+                )
                 assert detail.arguments["run_id"] in report_html
                 assert "<table" in report_html
                 assert "本次結果僅為歷史模擬。" in report_html

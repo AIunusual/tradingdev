@@ -90,8 +90,12 @@ Strategy development workflow
    balances; get_run_account_history reads close-marked end-of-bar account states.
    They are separate from paired trades. Check availability; never reconstruct
    absent legacy records. VectorBT generic balances are not exchange margin wallets.
-   For reports, discover get_report_sections and compose generate_report(run_ids,
-   sections, commentary) after inspecting completed or historical results.
+   When completing a requested backtest, walk-forward or optimization with
+   performance/risk interpretation, also produce an offline HTML report unless
+   the user explicitly requests only a summary/metrics or no report. Discover
+   get_report_sections and compose generate_report(run_ids, sections, commentary)
+   after inspecting completed or historical results. Omit sections for a complete
+   standard report unless the user requested specific sections.
    The overview compares all run/scopes. Detail links and result switching require
    settings, metrics, equity, ledger or trades; otherwise selected provenance and
    limitations appear in the main view.
@@ -108,7 +112,22 @@ Strategy development workflow
    recipe; overview, when selected, always belongs to the first navigation level.
    Do not claim omitted information is included. The backend labels
    commentary separately from calculations and renders HTML without client code.
-   Link the returned report file/artifact so users can inspect complete records.
+   Successful execution or report generation alone is not report delivery.
+   In the FINAL user-facing answer, include the report's run IDs/scopes, a
+   readable Markdown link to the returned report path or client-provided artifact,
+   and brief directions to select the relevant parameter/result row and inspect
+   its ledger/trades when those sections are present. A link only in a tool
+   result, delegated response or intermediate update is insufficient; an
+   orchestrating assistant must retain it in its own final answer. Do not replace
+   the report with a metrics table or only a run ID. Use a normal text link, not
+   a code block or a file:// URL. A remote client must retrieve the artifact
+   through its supported delivery mechanism; a server-local path is not public.
+   If generation or delivery fails, state the failure and preserve the saved
+   run so delivery can be retried without rerunning the strategy.
+   Keep the delivered report and saved research workspace available. Completing
+   the task or shutting down the MCP server does not authorize deleting them;
+   only an explicit user cleanup request does. Do not present a temporary path
+   as a usable deliverable and then delete it during cleanup.
 8. Optimization follows the same prepare/confirm flow. The approved search
    continues without a second confirmation after its first full-history trial.
 
