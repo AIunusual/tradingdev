@@ -17,6 +17,7 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.data import (
     CachedDataset,
     DatasetInspection,
+    DataSourceDescription,
     EnsureDataResponse,
 )
 from tradingdev.app.data_service import DataService
@@ -27,6 +28,27 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pytest import MonkeyPatch
+
+
+def test_source_discovery_provides_settings_without_fetching(tmp_path: Path) -> None:
+    server = MCPServer("source-discovery")
+    data.register(server, DataService(WorkspacePaths(tmp_path / "workspace")))
+    result = asyncio.run(server.call_tool("list_data_sources", {}))
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    sources = TypeAdapter(list[DataSourceDescription]).validate_python(
+        result.structured_content["result"]
+    )
+    choices = {item.source: item for item in sources}
+    vision = choices["binance_vision"]
+    assert vision.default_market_type == "futures/um"
+    assert set(vision.market_types) == {"futures/um", "spot"}
+    assert "BTC/USDT" in vision.symbol_examples
+    yahoo = choices["yahoo_finance"]
+    assert yahoo.timeframes is not None and "1h" in yahoo.timeframes
+    assert "2330.TW" in yahoo.symbol_examples
+    assert "futures" in yahoo.asset_classes
+    assert all(item.limitations for item in sources)
 
 
 def test_data_tools_validate_local_cache_and_inspection(tmp_path: Path) -> None:

@@ -31,12 +31,28 @@ These APIs do not seed arbitrary global RNG calls, third-party engines, or GPU
 operations. Separate concurrent strategy executions must each open a context;
 strategy-created threads or processes must explicitly initialize their own streams.
 
-`get_strategy_contract.config_schema` describes the complete YAML shape. Fixed
+`get_strategy_contract(section="core")` returns the required Python/signal rules,
+base interface and revision lifecycle. Each reply identifies its selected section
+and lists `available_sections` with their purposes. The `content` object contains
+only that complete section: request `section="example"` for the Python/YAML pair,
+or `section="configuration"` for the executable YAML schema and financial-setting
+notes. Unknown sections fail; a missing core reference does not produce an empty
+or partial contract. The default no longer embeds examples and the entire schema.
+
+`get_strategy_contract(section="configuration").content.config_schema` describes
+the complete YAML shape. Fixed
 configuration sections reject unknown fields; strategy parameters remain dynamic.
 Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+
+`list_data_sources` returns registered source descriptions, including asset classes,
+symbol examples, local timeframe choices, applicable `data.market_type` values and
+coverage limitations. Choose a name for `data.requirements.market.source` from that
+catalog. A `null` timeframe list means the adapter does not advertise an exhaustive
+local list, not that every interval is supported; sample preparation still checks
+availability. Discovery does not construct a crawler or download market data.
 
 Generated code must:
 

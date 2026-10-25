@@ -26,7 +26,9 @@ def test_quality_gates_ignore_working_directory_configuration(
         (root / "mypy.ini").write_text("[mypy]\nignore_errors = True\n")
         service = StrategyService(WorkspacePaths(root / "workspace"))
         source = root / "strategy.py"
-        code = strategy_contract_payload(root)["example_strategy_code"]
+        code = strategy_contract_payload(root, "example")["content"][
+            "example_strategy_code"
+        ]
         source.write_text(code)
 
         assert service._quality_gate_diagnostics(source) == []

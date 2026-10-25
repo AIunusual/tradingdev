@@ -118,6 +118,7 @@ def register(mcp: MCPServer, service: RunService) -> None:
         fold/0/test, test_summary, trial/0/train, and test when recorded.
         Response contains original definitions/settings and reasons for nulls.
         Unknown IDs/scopes return available choices. No strategy is rerun.
+        Fold summaries are distributions across folds, not whole-period returns.
         """
         payload = service.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:

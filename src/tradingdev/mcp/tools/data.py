@@ -12,9 +12,10 @@ from pydantic import ValidationError
 from tradingdev.app.contracts.data import (
     CachedDataset,
     DatasetInspection,
+    DataSourceDescription,
     EnsureDataResponse,
 )
-from tradingdev.domain.data.crawlers.registry import available_sources
+from tradingdev.domain.data.crawlers.registry import available_sources, describe_sources
 from tradingdev.domain.data.schemas import MarketDataRequest
 from tradingdev.mcp.tools.input_errors import invalid_arguments
 
@@ -49,9 +50,16 @@ def register(mcp: MCPServer, service: DataService) -> None:
             open_world_hint=False,
         )
     )
-    def list_data_sources() -> list[str]:
-        """List registered source names before selecting a source for ensure_data."""
-        return available_sources()
+    def list_data_sources() -> list[DataSourceDescription]:
+        """Discover source names, assets, symbols, intervals and market settings.
+
+        Select data.requirements.market.source in YAML. null timeframes means
+        upstream-dependent, not unrestricted support. Discovery performs no fetch;
+        preparation still checks whether the requested sample is available.
+        """
+        return [
+            DataSourceDescription.model_validate(item) for item in describe_sources()
+        ]
 
     @mcp.tool(
         annotations=ToolAnnotations(

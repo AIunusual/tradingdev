@@ -24,7 +24,10 @@ from tradingdev.app.contracts.strategy import (
     StrategyValidationFailure,
     StrategyValidationSuccess,
 )
-from tradingdev.domain.strategies.templates import strategy_contract_payload
+from tradingdev.domain.strategies.templates import (
+    StrategyContractTopic,  # noqa: TC001 — MCP resolves tool annotations.
+    strategy_contract_payload,
+)
 from tradingdev.mcp.schemas import SaveStrategyInput
 
 if TYPE_CHECKING:
@@ -46,10 +49,17 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
             open_world_hint=False,
         )
     )
-    def get_strategy_contract() -> StrategyContractResponse:
-        """Read source and YAML requirements before drafting a new strategy."""
+    def get_strategy_contract(
+        section: StrategyContractTopic = "core",
+    ) -> StrategyContractResponse:
+        """Read core authoring rules first; request example/configuration as needed.
+
+        Each response contains one complete content section and lists all available
+        sections. configuration is the executable YAML schema; example is a complete
+        Python/YAML pair. Missing reference files fail; no partial contract is returned.
+        """
         return StrategyContractResponse.model_validate(
-            strategy_contract_payload(package_root)
+            strategy_contract_payload(package_root, section)
         )
 
     @mcp.tool(

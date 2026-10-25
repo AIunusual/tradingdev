@@ -32,7 +32,9 @@ DETAIL_METRIC_IDS = {"daily_pnl_mean", "total_volume", "n_days"}
 
 async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None:
     async with workspace.connect() as client:
-        contract = await client.call("get_strategy_contract")
+        contract = (await client.call("get_strategy_contract", section="example"))[
+            "content"
+        ]
         code = contract["example_strategy_code"].replace(
             'result["signal"] = 0', 'result["signal"] = 7'
         )
@@ -53,7 +55,9 @@ async def seed_legacy_strategy(
 ) -> dict[Path, bytes]:
     """Create untouched pre-revision files solely inside the test workspace."""
     async with workspace.connect() as client:
-        contract = await client.call("get_strategy_contract")
+        contract = (await client.call("get_strategy_contract", section="example"))[
+            "content"
+        ]
     generated = workspace.workspace / "generated_strategies"
     configs = workspace.workspace / "configs"
     generated.mkdir(parents=True, exist_ok=True)

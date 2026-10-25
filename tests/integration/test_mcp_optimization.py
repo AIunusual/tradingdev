@@ -72,7 +72,9 @@ def _opposite_trends() -> pd.DataFrame:
 async def _save_runnable(
     client: MCPClient, *, walk_forward: bool = False
 ) -> dict[str, Any]:
-    contract = await client.call("get_strategy_contract")
+    contract = (await client.call("get_strategy_contract", section="example"))[
+        "content"
+    ]
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"].update(
         class_name="DirectionStrategy", parameters={"direction": -1}

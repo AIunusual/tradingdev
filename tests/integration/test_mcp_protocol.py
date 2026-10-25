@@ -36,7 +36,9 @@ PREPARE_ARGUMENTS = RUN_ARGUMENTS | execution_options(
 
 async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     """Replay deterministic LLM output using the advertised contract."""
-    contract = await client.call("get_strategy_contract")
+    contract = (await client.call("get_strategy_contract", section="example"))[
+        "content"
+    ]
     code = contract["example_strategy_code"]
     # Required YAML parameters catch workers silently using constructor defaults.
     code = code.replace(
@@ -125,7 +127,9 @@ async def test_generated_strategy_full_mcp_workflow(
             revision_id=saved["revision_id"],
         )
         assert promoted["success"] and promoted["status"] == "promoted"
-        assert "binance_vision" in await client.call("list_data_sources")
+        assert "binance_vision" in {
+            item["source"] for item in await client.call("list_data_sources")
+        }
         data = await client.call(
             "ensure_data",
             **{k: v for k, v in RUN_ARGUMENTS.items() if k != "strategy_id"},

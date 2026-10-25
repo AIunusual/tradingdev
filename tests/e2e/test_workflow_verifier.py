@@ -128,7 +128,7 @@ async def _complete_workflow(
             calls.append(ToolCall(name, arguments, result))
             return result
 
-        contract = await call("get_strategy_contract")
+        contract = (await call("get_strategy_contract", section="example"))["content"]
         config = yaml.safe_load(contract["example_yaml_config"])
         if scenario.name == "momentum":
             code = _MOMENTUM_CODE

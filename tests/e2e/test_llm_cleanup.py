@@ -70,7 +70,9 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
     """Create three revisions and a retained real backtest without model calls."""
     workspace.seed_market(market_frame())
     async with workspace.connect() as client:
-        contract = await client.call("get_strategy_contract")
+        contract = (await client.call("get_strategy_contract", section="example"))[
+            "content"
+        ]
         code = contract["example_strategy_code"]
         config = yaml.safe_load(contract["example_yaml_config"])
         config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
