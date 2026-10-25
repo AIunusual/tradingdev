@@ -290,7 +290,11 @@ its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
+signal from a verified saved model and single-symbol dataset, then records its
+evaluation. Preview pages are not persisted prediction artifacts and are never
+the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
+arrays and requires a verified dataset when recording.
 Whenever `dataset_id` is supplied, including without recording, the signal must
 cover all its rows, the supplied forward returns must exactly match the saved
 `forward_return` values in row order, and an explicit horizon must equal the
@@ -314,12 +318,15 @@ IDs fail. Other filters combine with this selector. Different IC windows or
 quantile counts require `allow_mixed=True`, which never bypasses dataset
 verification.
 
-The entry ID includes the dataset, evaluation context and caller-supplied model
-ID. With no model ID, it also includes a signal fingerprint computed from a
+The entry ID includes the dataset, evaluation context and model ID.
+With no model ID, it also includes a signal fingerprint computed from a
 canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. With a model ID, that ID is a caller-declared label:
-recording does not prove that this model produced the supplied signal or that
-the signal was generated out of sample. Repeating a model/dataset/context entry
+boundaries are preserved. MCP evaluation validates the model that generated its
+signal. Existing records and Python array callers may instead use a
+caller-declared model label: their ID alone does not prove signal origin. The
+stored format has no provenance discriminator, so a leaderboard must not label
+all historical rows as verified-origin. Neither path proves out-of-sample
+evaluation. Repeating a model/dataset/context entry
 replaces its earlier metrics, including when the caller supplies different
 signal values. Distinct unlabelled signals remain separate candidates.
 

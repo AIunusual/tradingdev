@@ -365,13 +365,17 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
 驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
 
-`predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，再載入
-pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
-單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
-時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
-leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
+`MLService.predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，
+再載入 pickle 產生完整訊號；MCP `predict` 經 `predict_page` 只回傳指定預覽頁。
+它不判斷資料是否曾用於訓練或選參。MCP `evaluate_signal` 以 model／dataset ID
+呼叫 `evaluate_prediction`，由後端對完整資料產生訊號並核對資料列、報酬、horizon
+及非重疊標籤區間，拒絕 panel。Python `MLService.evaluate_signal` 保留陣列計算入口；
+提供 dataset ID 時仍須符合完整資料集契約。指定記錄才將有限指標交 leaderboard store
+保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
+簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
+並提供候選數與多重比較限制。MCP 在完整候選集合完成比較與排序後分頁，拒絕時
+只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
 讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。

@@ -145,9 +145,9 @@ KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折
 ```
 
 ML 情境在獨立臨時工作區預放固定種子的行情，要求模型探索契約、建置資料集、
-訓練含 purged walk-forward 驗證的 LightGBM、預測、原值轉交全部訊號與報酬，
-再記錄評估及查詢排行榜。Harness 串接 dataset／model／entry ID、參數與驗證摘要，
-讀取 Parquet、模型及排行榜檔案，重算標籤與命中率，核對完整訊號與報酬陣列，
+訓練含 purged walk-forward 驗證的 LightGBM、分頁預覽，再以模型與資料集 ID
+評估完整資料、記錄結果並查詢排行榜。Harness 串接 dataset／model／entry ID、參數與驗證摘要，
+讀取 Parquet、模型及排行榜檔案，重算完整訊號、標籤與命中率，核對預覽切片及評估筆數，
 並確認回覆區分訓練集預測與 fold 驗證。檔案與 MCP 程序使用共用清理流程。
 
 離線 ML domain／service／MCP 測試涵蓋數學、身分、儲存及回覆契約；workflow evidence

@@ -12,12 +12,11 @@ from mcp.server import MCPServer
 from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
-    LeaderboardResponse,
-    SignalEvaluationResponse,
+    LeaderboardPageResponse,
+    PredictionEvaluationResponse,
 )
 from tradingdev.app.ml_service import MLService
 from tradingdev.mcp.tools import ml
@@ -61,8 +60,8 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
     return paths
 
 
-@pytest.mark.parametrize("tamper", ["negate", "reorder"])
-def test_record_rejects_forged_returns_without_overwriting_the_leaderboard(
+@pytest.mark.parametrize("tamper", ["model", "dataset"])
+def test_record_rejects_modified_artifacts_without_overwriting_the_leaderboard(
     workspace: WorkspacePaths, tamper: str
 ) -> None:
     server = MCPServer("ml-return-integrity-test")
@@ -81,42 +80,55 @@ def test_record_rejects_forged_returns_without_overwriting_the_leaderboard(
         )
     )
     dataset_id = built.dataset.dataset_id
-    frame, _ = MLDatasetStore(workspace.ml_datasets).load(dataset_id)
-    realized = [float(value) for value in frame["forward_return"]]
+    trained = _dispatch(
+        server,
+        "train_model",
+        {
+            "dataset_id": dataset_id,
+            "model_kind": "lightgbm_direction",
+            "parameters": {"n_estimators": 12, "max_depth": 3, "n_jobs": 1},
+        },
+    )
+    model = trained["model"]
+    assert isinstance(model, dict)
+    model_id = str(model["model_id"])
     arguments: dict[str, object] = {
-        "signal": realized,
-        "forward_returns": realized,
+        "model_id": model_id,
+        "dataset_id": dataset_id,
         "window": 20,
         "record": True,
-        "dataset_id": dataset_id,
     }
-    recorded = SignalEvaluationResponse.model_validate(
+    recorded = PredictionEvaluationResponse.model_validate(
         _dispatch(server, "evaluate_signal", arguments)
     )
     assert recorded.recorded is not None
     assert recorded.recorded.n_candidates == 1
     leaderboard_path = workspace.ml_leaderboard / "leaderboard.jsonl"
     before = leaderboard_path.read_bytes()
-    forged = [-value for value in realized] if tamper == "negate" else realized[::-1]
-    assert forged != realized
+    if tamper == "model":
+        blob = workspace.models / f"{model_id}.bin"
+        blob.write_bytes(blob.read_bytes() + b"modified")
+    else:
+        dataset = workspace.ml_datasets / dataset_id / "dataset.parquet"
+        frame = pd.read_parquet(dataset)
+        frame["forward_return"] *= -1
+        frame.to_parquet(dataset, index=False)
 
     rejected = ErrorResponse.model_validate(
         _dispatch(
             server,
             "evaluate_signal",
-            {**arguments, "forward_returns": forged},
+            arguments,
         )
     )
 
     assert rejected.success is False
     assert rejected.code == "invalid_signal"
-    assert "forward_returns do not match the stored dataset in row order" in (
-        rejected.error
-    )
+    assert "tampered" in rejected.error or "hash mismatch" in rejected.error
     assert leaderboard_path.read_bytes() == before
-    leaderboard = LeaderboardResponse.model_validate(
+    leaderboard = LeaderboardPageResponse.model_validate(
         _dispatch(server, "leaderboard", {"metric": "rank_ic_mean"})
     )
     assert leaderboard.n_candidates == leaderboard.n_ranked == 1
     assert leaderboard.ranked[0].entry_id == recorded.recorded.entry_id
-    assert leaderboard.ranked[0].value > 0.99
+    assert leaderboard.ranked[0].value == recorded.metrics["rank_ic_mean"]

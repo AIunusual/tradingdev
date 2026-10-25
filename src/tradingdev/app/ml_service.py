@@ -112,6 +112,64 @@ _OHLCV_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
 # Keep exact missing-date counts, but cap the response listing.
 _MAX_REPORTED_DATES = 50
 
+_ML_GUIDANCE = {
+    "datasets": (
+        "Datasets use cached market bars; acquire missing data with ensure_data. "
+        "Features and labels are computed separately per symbol before calendar "
+        "alignment. Labels are sign(close[t+horizon]/close[t]-1); warm-up and "
+        "unlabelled tail rows are dropped and reported. Identical request, data "
+        "and feature implementation share an immutable dataset ID."
+    ),
+    "panels": (
+        "intersection keeps dates all symbols traded; union includes every date "
+        "and applies missing_policy: drop, forward_fill or error. Forward fill "
+        "carries prior observations for at most max_staleness dates (None means "
+        "unbounded). Inspect coverage, dropped dates and forward-filled counts. "
+        "Forward-filled panels cannot use purged validation; use intersection "
+        "or missing_policy=drop."
+    ),
+    "training": (
+        "Model parameters override the selected kind's declared defaults; unknown "
+        "names are rejected. Artifact identity binds parameters, ordered features "
+        "and model bytes. Native feature-importance scales differ by framework. "
+        "The saved artifact is fitted on all dataset rows; in_sample_accuracy "
+        "does not measure out-of-sample performance."
+    ),
+    "validation": (
+        "Each fold fits a separate model after purging overlapping label intervals "
+        "and applying embargo. Symbols on one date stay in one fold; "
+        "min_train_bars counts distinct dates while fold counts describe rows. "
+        "Fold scores estimate the training procedure, not out-of-sample "
+        "predictions of the saved all-row artifact. purged_kfold can train on "
+        "later dates and is retrospective, not a past-only deployment simulation."
+    ),
+    "evaluation": (
+        "evaluate_signal loads the verified model and single-symbol dataset by ID "
+        "and evaluates every saved row internally, independent of predict previews. "
+        "Row order, realised returns and horizon come from that dataset. Window "
+        "must be at least 2, quantiles 2..10, with enough finite observations. "
+        "Both Pearson and Spearman IC families, hit rate, turnover and prediction "
+        "strata are reported; ties can produce fewer strata than requested. "
+        "Training-data evaluation remains in-sample. "
+        "Panel-trained models may be evaluated on a separate compatible "
+        "single-symbol dataset; panel datasets themselves are refused."
+    ),
+    "simulated_returns": (
+        "Position thresholds use earlier signals only; positions open after "
+        "warm-up on a non-overlapping horizon-bar grid. Returns exclude costs "
+        "and are holding-interval outcomes, not mark-to-market bar returns. "
+        "Quantile strata describe the entire sample and do not drive positions."
+    ),
+    "ranking": (
+        "record=True replaces only the same model/dataset/evaluation context. "
+        "leaderboard metrics have declared directions; never assume higher is "
+        "better. Filter by dataset_id to compare one verified dataset version. "
+        "allow_mixed permits incompatible contexts but does not make them "
+        "comparable. Ranking and selection caveats cover all candidates, even "
+        "when only one page is returned; a winner is not a profit guarantee."
+    ),
+}
+
 
 class MLService:
     """ML research over immutable datasets and disposable feature caches.
@@ -170,6 +228,7 @@ class MLService:
             "calendar_modes": [mode.value for mode in CalendarMode],
             "missing_policies": [policy.value for policy in MissingPolicy],
             "leaderboard_metrics": list(rankable_metrics()),
+            "guidance": dict(_ML_GUIDANCE),
         }
 
     def evaluate_signal(
@@ -529,6 +588,48 @@ class MLService:
             "caveats": list(result.caveats),
         }
 
+    def leaderboard_page(
+        self,
+        metric: str,
+        *,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        horizon: int | None = None,
+        feature_set: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        allow_mixed: bool = False,
+    ) -> dict[str, Any]:
+        """Page output only after ranking and comparing the full candidate set."""
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100")
+        result = self.leaderboard(
+            metric,
+            dataset_id=dataset_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            horizon=horizon,
+            feature_set=feature_set,
+            allow_mixed=allow_mixed,
+        )
+        ranked, skipped = result["ranked"], result["skipped"]
+        total = max(len(ranked), len(skipped))
+        if offset > total:
+            raise ValueError(f"offset exceeds leaderboard row count ({total})")
+        end = min(offset + limit, total)
+        return {
+            **result,
+            "ranked": ranked[offset:end],
+            "skipped": skipped[offset:end],
+            "n_skipped": len(skipped),
+            "offset": offset,
+            "limit": limit,
+            "next_offset": end if end < total else None,
+        }
+
     def build_dataset(
         self,
         *,
@@ -796,6 +897,68 @@ class MLService:
                 "forward_returns": realized,
             },
         }
+
+    def predict_page(
+        self,
+        *,
+        model_id: str,
+        dataset_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Expose a bounded preview; complete arrays stay in backend computation."""
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer between 1 and 500")
+        prediction = self.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        total = int(prediction["n_rows"])
+        if offset > total:
+            raise ValueError(f"offset exceeds prediction row count ({total})")
+        end = min(offset + limit, total)
+        return {
+            "success": True,
+            "prediction": {
+                **prediction,
+                "signal": prediction["signal"][offset:end],
+                "forward_returns": prediction["forward_returns"][offset:end],
+                "offset": offset,
+                "limit": limit,
+                "next_offset": end if end < total else None,
+            },
+        }
+
+    def evaluate_prediction(
+        self,
+        *,
+        model_id: str,
+        dataset_id: str,
+        window: int = 60,
+        n_quantiles: int = 5,
+        record: bool = False,
+    ) -> dict[str, Any]:
+        """Evaluate the entire verified model/dataset pair without an array relay.
+
+        The dataset fixes row order, realised returns and the label horizon.
+        Model identity establishes which saved model produced the signal; it
+        does not establish that the evaluation rows were held out of training.
+        """
+        prediction = self.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        result = self.evaluate_signal(
+            prediction["signal"],
+            prediction["forward_returns"],
+            horizon=prediction["horizon"],
+            window=window,
+            n_quantiles=n_quantiles,
+            record=record,
+            model_id=model_id,
+            dataset_id=dataset_id,
+        )
+        return {**result, "model_id": model_id, "dataset_id": dataset_id}
 
     def _load_dataset(self, dataset_id: str) -> tuple[pd.DataFrame, dict[str, Any]]:
         """Read the exact verified bytes of an immutable dataset version."""

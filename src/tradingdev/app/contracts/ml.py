@@ -54,6 +54,8 @@ class MlContractResponse(ContractModel):
     missing_policies: list[str]
     leaderboard_metrics: list[str]
     """Metrics a leaderboard may rank on; each declares a direction."""
+    guidance: dict[str, str]
+    """On-demand interpretation and workflow details for the advertised tools."""
 
 
 class StratumSummary(ContractModel):
@@ -99,6 +101,7 @@ class SignalEvaluationResponse(ContractModel):
     horizon: int
     window: int
     n_bins: int
+    """Requested quantile count; tied predictions can produce fewer strata."""
     ic_methods: list[str]
     metrics: dict[str, float | int | None]
     strata: list[StratumSummary]
@@ -107,6 +110,13 @@ class SignalEvaluationResponse(ContractModel):
     simulated: SimulatedReturnsSummary
     recorded: RecordedEvaluation | None = None
     """Present only when the evaluation was recorded for the leaderboard."""
+
+
+class PredictionEvaluationResponse(SignalEvaluationResponse):
+    """Complete evaluation of a verified saved model and dataset pair."""
+
+    model_id: str
+    dataset_id: str
 
 
 class LeaderboardRow(ContractModel):
@@ -151,6 +161,15 @@ class LeaderboardResponse(ContractModel):
     ranked: list[LeaderboardRow]
     skipped: list[LeaderboardSkipped]
     caveats: list[str]
+
+
+class LeaderboardPageResponse(LeaderboardResponse):
+    """A page from both ranked and unavailable candidates; counts are totals."""
+
+    n_skipped: int
+    offset: int
+    limit: int
+    next_offset: int | None
 
 
 class CalendarCoverageEntry(ContractModel):
@@ -342,7 +361,7 @@ class TrainModelResponse(ContractModel):
 
 
 class PredictionSummary(ContractModel):
-    """A stored model's signal on a stored dataset, ready for evaluate_signal."""
+    """A bounded preview; n_rows describes the complete saved dataset."""
 
     model_id: str
     dataset_id: str
@@ -350,9 +369,12 @@ class PredictionSummary(ContractModel):
     framework: str
     n_rows: int
     horizon: int
+    offset: int
+    limit: int
+    next_offset: int | None
     signal: list[float]
     forward_returns: list[float]
-    """Realised forward returns, aligned row-for-row with ``signal``."""
+    """Preview returns aligned with signal; evaluate_signal uses all saved rows."""
 
 
 class PredictionResponse(ContractModel):
