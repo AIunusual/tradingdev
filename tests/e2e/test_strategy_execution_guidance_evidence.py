@@ -60,7 +60,17 @@ def evidence() -> tuple[list[ToolCall], list[ModelTurn]]:
         "execution_capabilities": capabilities,
     }
     calls = [
-        ToolCall("list_strategies", {}, [deepcopy(strategy)]),
+        ToolCall(
+            "list_strategies",
+            {},
+            {
+                "items": [deepcopy(strategy)],
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "next_offset": None,
+            },
+        ),
         ToolCall(
             "get_strategy",
             guidance_arguments("get_strategy"),
@@ -141,6 +151,15 @@ def test_guidance_rejects_preparation_before_discovery(
         assert_guidance_workflow(calls, turns)
 
 
+def test_guidance_requires_the_target_in_the_strategy_page(
+    evidence: tuple[list[ToolCall], list[ModelTurn]],
+) -> None:
+    calls, turns = evidence
+    calls[0].result.update(items=[], total=0)
+    with pytest.raises(AssertionError, match="Discovery must identify"):
+        assert_guidance_workflow(calls, turns)
+
+
 @pytest.mark.parametrize("index", [1, 2, 3])
 def test_guidance_rejects_another_requested_strategy(
     evidence: tuple[list[ToolCall], list[ModelTurn]], index: int
@@ -158,7 +177,7 @@ def test_guidance_requires_consistent_capabilities(
     calls, turns = evidence
     result = calls[index].result
     capabilities = (
-        result[0]["execution_capabilities"]
+        result["items"][0]["execution_capabilities"]
         if index == 0
         else result["execution_capabilities"]
         if index == 1

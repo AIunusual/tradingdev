@@ -18,6 +18,7 @@ import httpx
 import pandas as pd
 
 from tradingdev.domain.data.crawlers.base import BaseCrawler
+from tradingdev.domain.data.crawlers.registry import YAHOO_INTERVALS
 from tradingdev.domain.data.crawlers.sampling import (
     SAMPLE_BATCH_ROWS,
     sample_frame,
@@ -34,21 +35,6 @@ logger = setup_logger(__name__)
 _BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
 _OHLCV_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"]
 _USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
-
-_INTERVALS = {
-    "1m": "1m",
-    "2m": "2m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "1h": "60m",
-    "60m": "60m",
-    "90m": "90m",
-    "1d": "1d",
-    "1w": "1wk",
-    "1wk": "1wk",
-    "1mo": "1mo",
-}
 
 # Calendar candles follow the exchange timezone. Use the shortest calendar
 # period, allowing a one-hour DST change, rather than interpreting 1mo as 30d.
@@ -69,9 +55,9 @@ _SAMPLE_INTERVAL_SECONDS = {
 
 def _to_yahoo_interval(timeframe: str) -> str:
     """Map a project timeframe to a Yahoo chart interval."""
-    interval = _INTERVALS.get(timeframe)
+    interval = YAHOO_INTERVALS.get(timeframe)
     if interval is None:
-        supported = ", ".join(sorted(_INTERVALS))
+        supported = ", ".join(sorted(YAHOO_INTERVALS))
         msg = (
             f"Timeframe {timeframe!r} is not supported by yahoo_finance. "
             f"Supported timeframes: {supported}"

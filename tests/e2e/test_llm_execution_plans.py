@@ -80,7 +80,9 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
 
 async def _seed_walk_forward(client: MCPClient) -> str:
     """Persist a genuinely validated/runnable fixture before involving the model."""
-    contract = await client.call("get_strategy_contract")
+    contract = (await client.call("get_strategy_contract", section="example"))[
+        "content"
+    ]
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"].update(
@@ -353,7 +355,8 @@ def _assert_evidence(
         index > done_index
         and call.name == "list_artifacts"
         and call.arguments.get("run_id") == run_id
-        and call.result
+        and isinstance(call.result, dict)
+        and call.result.get("items")
         for index, call in enumerate(calls)
     )
 

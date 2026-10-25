@@ -5,10 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-import pandas as pd
 import pytest
-from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult
 from tests.app.test_ml_temporal_integrity import (
     DATA_ARGUMENTS,
@@ -21,15 +19,18 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
     BuildPanelResponse,
+    PredictionEvaluationResponse,
     PredictionResponse,
-    SignalEvaluationResponse,
     TrainModelResponse,
 )
 from tradingdev.app.ml_service import MLService
+from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import ml
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mcp.server import MCPServer
 
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
@@ -41,7 +42,7 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
 
 @pytest.fixture
 def server(workspace: WorkspacePaths) -> MCPServer:
-    mcp = MCPServer("ml-temporal-integrity")
+    mcp = StrictMCPServer("ml-temporal-integrity")
     ml.register(mcp, MLService(workspace))
     return mcp
 
@@ -91,8 +92,7 @@ def test_panel_validation_and_prediction_require_single_asset_for_evaluation(
                 server,
                 "evaluate_signal",
                 dataset_id=panel.dataset_id,
-                signal=prediction.signal,
-                forward_returns=prediction.forward_returns,
+                model_id=trained.model_id,
                 record=record,
                 window=12,
                 n_quantiles=2,
@@ -111,14 +111,12 @@ def test_panel_validation_and_prediction_require_single_asset_for_evaluation(
         )
     ).prediction
     assert single_prediction.n_rows == single.rows
-    accepted = SignalEvaluationResponse.model_validate(
+    accepted = PredictionEvaluationResponse.model_validate(
         dispatch(
             server,
             "evaluate_signal",
             dataset_id=single.dataset_id,
             model_id=trained.model_id,
-            signal=single_prediction.signal,
-            forward_returns=single_prediction.forward_returns,
             record=True,
             window=12,
             n_quantiles=2,
@@ -158,65 +156,34 @@ def test_forward_filled_panel_validation_is_rejected_before_model_publication(
     assert not list(workspace.models.glob("*.bin"))
 
 
-@pytest.mark.parametrize("tamper", [None, "returns", "horizon", "row_count"])
-def test_readonly_dataset_evaluation_enforces_saved_returns_and_horizon(
-    server: MCPServer, workspace: WorkspacePaths, tamper: str | None
+@pytest.mark.parametrize("field", [None, "forward_returns", "horizon", "signal"])
+def test_readonly_evaluation_uses_saved_rows_and_horizon(
+    server: MCPServer, workspace: WorkspacePaths, field: str | None
 ) -> None:
     dataset = BuildDatasetResponse.model_validate(
         dispatch(server, "build_dataset", symbol="BTC/USDT", **DATA_ARGUMENTS)
     ).dataset
-    realized = pd.read_parquet(dataset.path)["forward_return"].tolist()
-    signal = np.arange(len(realized), dtype=float).tolist()
-    options: dict[str, Any] = {}
-    if tamper == "returns":
-        realized = [-value for value in realized]
-    elif tamper == "horizon":
-        options["horizon"] = 1
-    elif tamper == "row_count":
-        signal, realized = signal[:-1], realized[:-1]
-    response = dispatch(
-        server,
-        "evaluate_signal",
-        dataset_id=dataset.dataset_id,
-        signal=signal,
-        forward_returns=realized,
-        record=False,
-        window=12,
-        n_quantiles=2,
-        **options,
-    )
-    if tamper is None:
-        accepted = SignalEvaluationResponse.model_validate(response)
+    trained = TrainModelResponse.model_validate(
+        dispatch(
+            server, "train_model", dataset_id=dataset.dataset_id, **MODEL_ARGUMENTS
+        )
+    ).model
+    options: dict[str, Any] = {
+        "model_id": trained.model_id,
+        "dataset_id": dataset.dataset_id,
+        "record": False,
+        "window": 12,
+        "n_quantiles": 2,
+    }
+    if field is not None:
+        options[field] = 1 if field == "horizon" else [0.1]
+        with pytest.raises(ToolError, match="Unknown arguments"):
+            dispatch(server, "evaluate_signal", **options)
+    else:
+        accepted = PredictionEvaluationResponse.model_validate(
+            dispatch(server, "evaluate_signal", **options)
+        )
         assert accepted.horizon == dataset.horizon == 3
         assert accepted.recorded is None
         assert accepted.n_observations == dataset.rows
-    else:
-        rejected = ErrorResponse.model_validate(response)
-        assert rejected.code == "invalid_signal"
-        expected = {
-            "returns": "forward_returns do not match",
-            "horizon": "does not match the dataset's horizon",
-            "row_count": "would not describe this dataset",
-        }
-        assert expected[tamper] in rejected.error
     assert not (workspace.ml_leaderboard / "leaderboard.jsonl").exists()
-
-
-def test_array_evaluation_uses_nonoverlapping_horizon_compounding(
-    server: MCPServer,
-) -> None:
-    response = SignalEvaluationResponse.model_validate(
-        dispatch(
-            server,
-            "evaluate_signal",
-            signal=np.arange(10, dtype=float).tolist(),
-            forward_returns=[0.1] * 10,
-            horizon=3,
-            window=2,
-            n_quantiles=2,
-        )
-    )
-    assert response.horizon == 3
-    assert response.simulated.long_only_cumulative == pytest.approx(1.1**3 - 1)
-    assert response.simulated.long_short_cumulative == pytest.approx(1.1**3 - 1)
-    assert response.simulated.long_only_mean == pytest.approx(0.03)

@@ -38,10 +38,9 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "embargo": TypeAdapter(int),
         "min_train_bars": TypeAdapter(int | None),
     },
+    "predict": _PAGE,
+    "leaderboard": _PAGE,
     "evaluate_signal": {
-        "signal": TypeAdapter(list[float]),
-        "forward_returns": TypeAdapter(list[float]),
-        "horizon": TypeAdapter(int | None),
         "window": TypeAdapter(int),
         "n_quantiles": TypeAdapter(int),
         "record": TypeAdapter(bool),

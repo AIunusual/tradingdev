@@ -21,6 +21,8 @@ from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 Direction = Literal["maximize", "minimize"]
 
 _NORMAL = NormalDist()
+_MAX_CONTEXT_EXAMPLES = 3
+_MAX_CONTEXT_EXAMPLE_CHARACTERS = 240
 
 # Metrics whose significance the companion t-statistic actually speaks to.
 # ``ic_t_stat`` tests whether the mean IC differs from zero, so it backs the
@@ -284,14 +286,26 @@ def required_t_stat(n_candidates: int, *, alpha: float = 0.05) -> float:
 
 def comparability_error(entries: Sequence[LeaderboardEntry]) -> str | None:
     """Why these entries cannot be ranked together, or ``None`` if they can."""
-    contexts = sorted({entry.context.key for entry in entries})
+    contexts = {entry.context.key: entry for entry in entries}
     if len(contexts) <= 1:
         return None
-    described = sorted({entry.context.describe() for entry in entries})
+    examples = []
+    for key in sorted(contexts)[:_MAX_CONTEXT_EXAMPLES]:
+        entry = contexts[key]
+        description = entry.context.describe()
+        if len(description) > _MAX_CONTEXT_EXAMPLE_CHARACTERS:
+            description = (
+                description[:_MAX_CONTEXT_EXAMPLE_CHARACTERS] + "... [abbreviated]"
+            )
+        examples.append(description)
+    omitted = len(contexts) - len(examples)
     return (
-        f"entries were not measured on the same conditions "
-        f"({len(contexts)} distinct: {'; '.join(described)}); "
-        "rank them separately per context or pass allow_mixed to override"
+        "entries were not measured on the same conditions "
+        f"({len(contexts)} distinct contexts; showing {len(examples)} examples, "
+        f"{omitted} omitted): {'; '.join(examples)}. "
+        "Filter by dataset_id or symbol/timeframe/horizon/feature_set to rank "
+        "separately. allow_mixed=True permits ranking incompatible contexts "
+        "but does not make them comparable."
     )
 
 

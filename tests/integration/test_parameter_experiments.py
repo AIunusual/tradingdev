@@ -90,7 +90,7 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
         assert set((root / "revisions").iterdir()) == revisions
         assert {path: path.read_bytes() for path in originals} == originals
 
-        jobs_before = await client.call("list_jobs")
+        jobs_before = await client.read_all_pages("list_jobs")
         rejected = await client.call(
             tool,
             **RUN_ARGUMENTS,
@@ -100,7 +100,7 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
         )
         assert rejected["success"] is False, rejected
         assert rejected["code"] == "invalid_execution_request"
-        assert {job["job_id"] for job in await client.call("list_jobs")} == {
+        assert {job["job_id"] for job in await client.read_all_pages("list_jobs")} == {
             job["job_id"] for job in jobs_before
         }
         assert {path: path.read_bytes() for path in originals} == originals

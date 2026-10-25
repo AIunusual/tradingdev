@@ -5,6 +5,19 @@ from typing import Literal
 from tradingdev.app.contracts.common import ContractModel
 
 
+class DataSourceDescription(ContractModel):
+    """Registered source choices and limits available without a network request."""
+
+    source: str
+    description: str
+    asset_classes: list[str]
+    symbol_examples: list[str]
+    timeframes: list[str] | None
+    market_types: list[str]
+    default_market_type: str | None
+    limitations: list[str]
+
+
 class CachedDataset(ContractModel):
     """Available yearly cache files for one market and timeframe."""
 

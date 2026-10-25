@@ -183,13 +183,11 @@ def register(
 
     @mcp.tool(annotations=read_only)
     def get_report_sections() -> ReportSectionCatalog:
-        """Discover backend-rendered sections and suggested report recipes.
+        """Discover available report sections, their meanings and suggested recipes.
 
-        The client chooses sections and writes interpretation; the server renders
-        the HTML, tables, and charts. Recipes are optional, not enforced layouts.
-        ledger combines order attempts and bar-close balances; trades is the
-        supplementary paired-trade PnL view. Legacy section IDs executions and
-        account_history are no longer valid; the history query tools remain.
+        Recipes are optional. The client chooses sections and writes interpretation;
+        the backend renders saved evidence. Read section descriptions before choosing
+        ledger (order/account reconciliation) or trades (paired-trade PnL).
         """
         return ReportSectionCatalog.model_validate(reports.get_report_sections())
 
@@ -206,29 +204,17 @@ def register(
         sections: list[str] | None = None,
         commentary: list[ReportCommentary] | None = None,
     ) -> ReportResponse | ErrorResponse:
-        """Compose an offline HTML report from 1..8 saved runs and client prose.
+        """Render an offline HTML report from 1..8 saved runs and client commentary.
 
-        Discover section IDs/recipes with get_report_sections. Omit sections for
-        the standard recipe, provide IDs in desired detail order, or [] to render no
-        built-in sections while keeping source identity and supplied commentary.
-        overview always occupies the first navigation level when selected.
-        Every report embeds the complete loaded data for all scopes of the runs,
-        including saved trades, equity and execution configuration, even with [].
-        Section selection does not remove underlying data from the HTML.
-        The overview compares all run/scopes. Detail links and result switching
-        require settings, metrics, equity, ledger or trades; without these,
-        selected provenance and limitations appear in the main view.
-        metrics includes native QuantStats
-        performance analysis. ledger combines order attempts and bar-close
-        valuations with Bokeh status filters and column checkboxes. Static tables
-        remain readable without JavaScript; CSV/JSON download buttons require it
-        and preserve full precision.
-        Commentary contains plain-text title/text objects (at most 20, total
-        20,000 characters); HTML is escaped and text is
-        labelled client interpretation, distinct from recorded calculations.
-        trades is supplementary paired-trade PnL, not the reconciliation ledger.
-        Returns a registered artifact and local path. Existing backtests remain
-        unchanged. No strategy, model, external website, or market download runs.
+        Discover section IDs with get_report_sections. Omit sections for the complete
+        standard report, select detail order, or use [] for identity/commentary only.
+        overview is first when selected. Result switching requires a detail section.
+        Every report embeds all loaded scopes/config/trades/equity even with []; section
+        selection does not redact data. Commentary is escaped plain text, labelled
+        separately from calculations (at most 20 entries, 20,000 total characters).
+        Returns an artifact and local path; no strategy or market download runs. Deliver
+        the link with run IDs/scopes and detail directions in the final answer, not only
+        an intermediate message. Preserve report/source runs after server shutdown.
         """
         result = reports.generate_report(
             run_ids,

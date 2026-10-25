@@ -105,8 +105,8 @@ Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
 `plan_id`; they do not create a job. `submit_execution_decision` with `approve`
 returns the job ID after the caller relays the user's explicit consent.
-Job status, job lists, and run
-records carry the same digest; historical entries without an execution manifest
+Job status, job-list items, and `get_run` records
+carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
@@ -115,7 +115,7 @@ specification. The old MCP `start_backtest`, `start_walk_forward`,
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
 `cancel_job` reject their responses at the MCP boundary; even one such record
-causes the entire `list_jobs` response to fail validation. Preparing another plan
+causes a `list_jobs` page containing that record to fail validation. Preparing another plan
 in the same workspace does not repair those records. After using the version that
 created the jobs to stop its workers and server and verify cleanup, preserve the
 old workspace at its original location and configure the new MCP server with a
@@ -290,7 +290,11 @@ its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
+signal from a verified saved model and single-symbol dataset, then records its
+evaluation. Preview pages are not persisted prediction artifacts and are never
+the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
+arrays and requires a verified dataset when recording.
 Whenever `dataset_id` is supplied, including without recording, the signal must
 cover all its rows, the supplied forward returns must exactly match the saved
 `forward_return` values in row order, and an explicit horizon must equal the
@@ -314,12 +318,15 @@ IDs fail. Other filters combine with this selector. Different IC windows or
 quantile counts require `allow_mixed=True`, which never bypasses dataset
 verification.
 
-The entry ID includes the dataset, evaluation context and caller-supplied model
-ID. With no model ID, it also includes a signal fingerprint computed from a
+The entry ID includes the dataset, evaluation context and model ID.
+With no model ID, it also includes a signal fingerprint computed from a
 canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. With a model ID, that ID is a caller-declared label:
-recording does not prove that this model produced the supplied signal or that
-the signal was generated out of sample. Repeating a model/dataset/context entry
+boundaries are preserved. MCP evaluation validates the model that generated its
+signal. Existing records and Python array callers may instead use a
+caller-declared model label: their ID alone does not prove signal origin. The
+stored format has no provenance discriminator, so a leaderboard must not label
+all historical rows as verified-origin. Neither path proves out-of-sample
+evaluation. Repeating a model/dataset/context entry
 replaces its earlier metrics, including when the caller supplies different
 signal values. Distinct unlabelled signals remain separate candidates.
 
@@ -614,6 +621,67 @@ and do not use this conversation workflow.
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
 
+### Discovery Pages
+
+MCP `list_strategies`, `list_runs`, `list_jobs`, `list_available_data` and
+`list_artifacts` return an object with `items`, `offset`, `limit`, `total` and
+`next_offset`, rather than a bare list. `offset` is a nonnegative integer;
+`limit` defaults to 20 and accepts 1–100. Booleans and numeric strings are not
+valid page bounds. `total` counts all matching items before paging, while an
+offset at or beyond the total returns an empty page. Follow `next_offset` until
+it is `null`; do not treat a first page as the complete inventory.
+
+| Tool | Filters applied before paging | Order |
+| --- | --- | --- |
+| `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
+| `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
+| `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
+| `list_available_data` | `symbol`, `timeframe` | symbol, timeframe |
+| `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
+
+Filters are exact matches except cached-data symbols, which normalize case and
+remove `/`. Ordering is deterministic for unchanged data; separate page calls
+are not a snapshot across concurrent writes. Restart at offset zero if the
+inventory changes before claiming complete discovery.
+
+Strategy pages retain identities, lifecycle status and execution capabilities;
+`get_strategy` provides source, configuration and full metadata. Run pages
+contain identities, not metrics or growing scope catalogs; use `get_run` and
+scoped metric/history tools for details. Artifact pages omit producer metadata;
+`get_artifact` retrieves it. These are record-count bounds and deliberately
+small projections, not a universal byte or token budget for arbitrary fields.
+The internal Python service list APIs remain complete lists for their existing
+application callers; only the MCP discovery contract uses these pages.
+
+### Reading Artifact Text
+
+`get_artifact` returns metadata by default. With `include_content=true`, it
+returns one original UTF-8 text page: `offset` counts Unicode code points and
+`limit` defaults to 8192, with a maximum of 32768. `content_page` reports
+`offset`, `limit`, `total_characters`, `next_offset` and `content_sha256`.
+Follow `next_offset` until it is `null`; concatenate every page before parsing
+JSON or hashing a whole report. Use structured result/trade queries when only
+selected observations are needed, rather than reading the entire artifact.
+
+Every content request streams the complete file to validate UTF-8, count
+characters and hash its original bytes, while retaining only the requested
+page. `content_sha256` identifies the bytes observed by that read; it is not a
+claim that the file still matches the registered `artifact.sha256`. Send the
+first page's `content_sha256` as `expected_sha256` on subsequent requests to
+reject changed content. Reading pages does not rewrite files or normalize JSON.
+
+Unknown IDs return `artifact_not_found`; missing files return
+`artifact_file_missing`; other file I/O failures return
+`artifact_file_unreadable`. Invalid UTF-8 returns `artifact_not_text`, including
+invalid bytes outside the requested page. Observed mutation or a mismatched
+expected digest returns `artifact_content_changed`. Invalid page bounds or
+paging options without `include_content=true` return `invalid_artifact_request`;
+the MCP input schema may reject malformed arguments before service execution.
+Metadata lookup does not read file content and remains available for binary
+artifacts. A server-local path is not a public download URL.
+
+### Completed Run Files
+
 The generated revision's `config.yaml` holds its base settings;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
 `strategy.revision_id`. Runtime market/date and parameter experiments
@@ -897,6 +965,15 @@ the matching detail view (`#result-<run-index>-<scope-index>`); a return link br
 the reader back to the overview. This keeps all optimization training trials and
 the selected parameter's test result distinct. A report is generated explicitly
 after completed or historical result inspection, not automatically by execution.
+MCP instructions request a standard report when completing an execution with
+performance/risk interpretation, unless the user asks for summary/metrics only
+or opts out. This is a client workflow requirement, not an automatic worker step.
+The final user-facing response must deliver the returned report link, identify
+the runs/scopes and explain the selected detail views. Tool success and an
+intermediate link do not establish delivery. Reports and their source runs remain
+workspace artifacts after server shutdown; shutdown does not authorize cleanup.
+If report generation or delivery fails, the client should preserve those sources
+and retry reporting instead of running the strategy again.
 Without `overview`, a result chooser links to the selected detail sections.
 Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.
@@ -1088,11 +1165,11 @@ including values inside nested objects and arrays such as optimization metrics.
 
 Legacy results are also normalized in memory when `JobStore.load_result` reads a
 result file or `SQLiteStore` reads run metrics. These reads do not rewrite the
-stored file or database row. Consequently, `get_run`, `list_runs`, and completed
+stored file or database row. Consequently, `get_run` and completed
 `get_job_status` responses expose legacy non-finite metric values as `null`.
 
-In contrast, `get_artifact(include_content=true)` returns the original UTF-8 file
-text without parsing or normalizing its contents. A legacy `result.json` may
+In contrast, `get_artifact(include_content=true)` returns pages of the original
+UTF-8 file text without parsing or normalizing its contents. A legacy `result.json` may
 therefore still contain `NaN` or `Infinity` even when result lookup returns `null`;
 the content-equivalence statement above does not apply to these legacy artifacts.
 The CLI displays missing or non-finite metrics as `N/A`, while keeping finite zero

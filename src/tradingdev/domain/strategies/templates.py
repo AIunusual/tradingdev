@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 
@@ -10,97 +10,112 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def strategy_contract_payload(package_root: Path) -> dict[str, Any]:
-    """Return source and YAML templates for generated strategies."""
-    base_path = package_root / "domain" / "strategies" / "base.py"
-    base_source = base_path.read_text(encoding="utf-8") if base_path.exists() else ""
+type StrategyContractTopic = Literal["core", "example", "configuration"]
+
+_CONTRACT_SECTIONS = (
+    {
+        "id": "core",
+        "description": "Required Python/signal rules and revision lifecycle.",
+    },
+    {"id": "example", "description": "Complete Python and YAML example to adapt."},
+    {
+        "id": "configuration",
+        "description": "Full execution YAML schema and metric settings.",
+    },
+)
+
+
+def strategy_contract_payload(
+    package_root: Path, section: StrategyContractTopic = "core"
+) -> dict[str, Any]:
+    """Read one complete section; advertise the others without injecting them."""
+    content: dict[str, Any]
+    if section == "core":
+        content = {
+            "base_strategy_source": (
+                package_root / "domain" / "strategies" / "base.py"
+            ).read_text(encoding="utf-8"),
+            "requirements": [
+                "Inherit BaseStrategy. generate_signals(df) returns a new DataFrame "
+                "without mutating its input, with signal in {-1, 0, 1}: short, flat, "
+                "long. Preserve aligned rows. Never use future rows or backfill "
+                "indicators; keep signals flat until required values are finite.",
+                "Expose configurable values as constructor keyword parameters and "
+                "get_parameters(). YAML strategy.parameters supplies them. Defaults "
+                "must be finite JSON values. backtest_engine and parallel_config "
+                "are reserved application injections, not YAML overrides.",
+                "Read section=configuration for the executable YAML schema and "
+                "section=example when a complete starting example is needed. "
+                "Use list_data_sources for source-specific market settings.",
+                "Generated Python must pass the repository Ruff and strict Mypy "
+                "policy. Allowed import roots: __future__, collections, dataclasses, "
+                "datetime, enum, math, statistics, typing, typing_extensions, numpy, "
+                "pandas, talib, tradingdev. No network, subprocess, destructive "
+                "filesystem access, dynamic imports, eval or exec. These checks "
+                "and workspace paths are not a security sandbox.",
+                "Prefer tradingdev.domain.indicators: sma, ema, rsi, macd, "
+                "bollinger_bands, atr, adx, stochastic. It preserves TA-Lib warm-up, "
+                "NaNs and index alignment. Direct talib requires float64 NumPy "
+                "arrays; unpack MACD as line/signal/histogram, BBANDS as "
+                "upper/middle/lower, STOCH as k/d. pandas_ta is unsupported. "
+                "Separate first-party tradingdev imports from third-party imports.",
+                "Set random_seed at the YAML root, never in backtest. Use "
+                "tradingdev.domain.randomness.get_random() or get_numpy_rng() "
+                "inside the constructor, fit or generate_signals; get_seed() "
+                "supplies a third-party random_state. Do not call these at module "
+                "import. Global RNGs are not seeded; null uses independent entropy.",
+            ],
+            "lifecycle": [
+                "save_strategy creates an immutable source/base-config revision. "
+                "Use its revision_id for checks and execution; omitted revision_id "
+                "selects current once per operation. Saving repairs creates a new "
+                "draft; older validation evidence does not transfer.",
+                "validate_strategy runs static, import, Ruff, Mypy and short-fixture "
+                "signal/config checks. dry_run_strategy requires validated status "
+                "and repeats the contract on a longer fixture. Inspect diagnostics, "
+                "signal_analysis and effective_config against the user's request; "
+                "passing checks is not proof of every natural-language requirement.",
+                "Execution requires runnable or promoted status. Each execution "
+                "fixes effective constructor parameters and checks them again; "
+                "parameter experiments reuse the runnable revision rather than "
+                "rewriting its source or base validation evidence. Save a revision "
+                "only when source or base configuration changes.",
+                "Each validation, dry run and optimization trial/test starts a "
+                "fresh run-local random stream. A backtest or walk-forward run "
+                "shares one stream across constructor and folds. Contexts do not "
+                "seed arbitrary global or third-party RNGs.",
+            ],
+        }
+    elif section == "example":
+        content = {
+            "example_strategy_code": _EXAMPLE_CODE,
+            "example_yaml_config": _EXAMPLE_YAML,
+        }
+    elif section == "configuration":
+        content = {
+            "config_schema": BacktestRunConfig.model_json_schema(),
+            "notes": [
+                "Fixed configuration fields reject unknown names; "
+                "strategy.parameters and bundled strategy.fit are strategy-specific. "
+                "Use validation training/test windows for training-required "
+                "strategies. Capabilities describe requirements, not fitted state.",
+                "Set backtest.periods_per_year for observed UTC daily returns: "
+                "365 for continuously traded crypto, an appropriate calendar for "
+                "other markets. It is independent of bar timeframe. risk_free_rate "
+                "and required_return are annual decimal rates. Missing "
+                "annualization makes annualized metrics unavailable.",
+                "Performance uses QuantStats return/risk and VectorBT closed-trade "
+                "statistics. Volume mode has no capital return; use total_pnl and "
+                "max_drawdown_amount. Query saved definitions and unavailable "
+                "reasons through get_metric_catalog/get_run_metrics; null is not zero.",
+            ],
+        }
+    else:
+        raise ValueError(f"Unknown strategy contract section: {section!r}")
     return {
-        "base_strategy_source": base_source,
-        "example_strategy_code": _EXAMPLE_CODE,
-        "example_yaml_config": _EXAMPLE_YAML,
-        "config_schema": BacktestRunConfig.model_json_schema(),
-        "api_reference": (
-            "Read execution_capabilities from list_strategies/get_strategy before "
-            "choosing an execution mode. Bundled training_requirement declarations "
-            "are required or optional; generated/legacy capabilities remain unknown "
-            "with supported_execution_modes=null. Unknown is not permission or "
-            "evidence that a model is trained. Supported modes describe strategy "
-            "requirements, not configuration validity. A strategy_requires_training "
-            "preparation rejection provides execution_guidance and next_tool; "
-            "satisfy required_configuration before using that tool. Do not remove "
-            "validation to bypass training or call train_model to train a bundled "
-            "strategy instance. "
-            "Generated strategies must inherit BaseStrategy, return a DataFrame "
-            "with signal values limited to -1, 0, and 1, and avoid mutating the "
-            "input DataFrame. Express configurable settings as constructor "
-            "keyword arguments with finite JSON values, including any defaults. "
-            "Execution captures these values at submission. backtest_engine and "
-            "parallel_config are reserved application injections and cannot be "
-            "overridden in strategy.parameters. Use tradingdev.domain.indicators "
-            "for indicators. config_schema describes every execution configuration "
-            "section: unknown fixed fields are errors, while strategy.parameters "
-            "and bundled strategy.fit contain strategy-specific settings. Set "
-            "random_seed at the YAML root only, never in backtest. Each validation, "
-            "dry-run, normal run, optimization trial and test evaluation starts "
-            "isolated Python/NumPy generators with that seed; walk-forward folds "
-            "consume a single stream in fold order. Randomized strategies use "
-            "tradingdev.domain.randomness.get_random() or get_numpy_rng() inside "
-            "their constructor, fit, or generate_signals. Use get_seed() when a "
-            "third-party model requires an explicit random_state/seed. Do not read "
-            "these functions at module import time. Global random/NumPy RNG state "
-            "and arbitrary third-party RNGs are not seeded; null uses independent "
-            "entropy. Separate model parameters remain explicit model settings. "
-            "The available indicators include "
-            "(sma, ema, rsi, "
-            "macd, bollinger_bands, atr, adx, stochastic) for standard "
-            "indicators and tradingdev.shared.utils.logger for logging. "
-            "The indicator facade uses TA-Lib and preserves its warm-up and "
-            "NaN behavior; keep signals flat until all required values are "
-            "finite, and never backfill indicators from future rows. "
-            "Performance uses QuantStats daily return/risk statistics and "
-            "VectorBT closed-trade statistics. Set backtest.periods_per_year "
-            "explicitly for annualized daily-return metrics (365 for this crypto "
-            "example; choose the appropriate trading calendar for other markets). "
-            "Without it, annualized metrics are unavailable. Volume mode has no "
-            "capital return; use total_pnl and max_drawdown_amount. "
-            "Run and job responses show summaries, not all computed metrics. "
-            "Use get_metric_catalog to discover definitions and optimization "
-            "directions, then get_run_metrics(run_id, metric_ids, scope) to read "
-            "saved values, settings, and unavailable reasons. Use the returned "
-            "available_scopes for fold/trial results. Missing summary fields "
-            "do not mean the backend did not compute them. "
-            "talib may be imported directly: pass float64 NumPy arrays to its "
-            "Function API, unpack multi-output tuples (MACD: line, signal, "
-            "histogram; BBANDS: upper, middle, lower; STOCH: k, d), and align "
-            "returned arrays with the input index. Allowed imports are "
-            "restricted to a small Python/pandas/numpy/talib/tradingdev "
-            "allowlist; pandas_ta is no longer supported. Ruff treats "
-            "tradingdev as first-party: separate its imports from third-party "
-            "numpy, pandas, and talib imports with a blank line."
-        ),
-        "lifecycle": (
-            "save_strategy creates an immutable source/config revision and returns "
-            "revision_id. Pass that revision_id to validate_strategy, "
-            "dry_run_strategy, promote_strategy, get_strategy, and execution tools. "
-            "Saving a repair creates a new draft revision; earlier revisions and "
-            "their validation evidence remain available. Omitting revision_id "
-            "selects current once per operation. validate_strategy runs static checks, "
-            "restricted import checks, ruff, mypy, inheritance checks, and the "
-            "shared signal-contract gate on a short fixture with structured "
-            "diagnostics; both checks validate the full execution config before "
-            "constructing the strategy and return effective_config with resolved "
-            "backtest/parallel defaults and the canonical run seed. Data directory "
-            "defaults resolve at job submission. Check this response against the "
-            "user's requested settings before proceeding. dry_run_strategy "
-            "accepts only validated strategies and "
-            "re-runs the same signal-contract gate on a longer fixture, returns "
-            "signal_analysis, and marks the strategy runnable; promote_strategy "
-            "marks a runnable strategy promoted. validate_strategy and "
-            "dry_run_strategy currently execute generated Python code; sandboxed "
-            "execution isolation is required future work. Execution accepts only "
-            "runnable or promoted strategies and enforces this gate at execution "
-            "time on every entry point (MCP jobs, CLI, workers)."
-        ),
+        "section": section,
+        "available_sections": [dict(item) for item in _CONTRACT_SECTIONS],
+        "content": content,
     }
 
 

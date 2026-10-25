@@ -48,7 +48,9 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
             root = workspace.root
             workspace.seed_market(sample_ohlcv_with_kd)
             async with workspace.connect() as client:
-                contract = await client.call("get_strategy_contract")
+                contract = (
+                    await client.call("get_strategy_contract", section="example")
+                )["content"]
                 saved = await client.call(
                     "save_strategy",
                     strategy_id="cleanup_strategy",

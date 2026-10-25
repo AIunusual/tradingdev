@@ -31,12 +31,28 @@ These APIs do not seed arbitrary global RNG calls, third-party engines, or GPU
 operations. Separate concurrent strategy executions must each open a context;
 strategy-created threads or processes must explicitly initialize their own streams.
 
-`get_strategy_contract.config_schema` describes the complete YAML shape. Fixed
+`get_strategy_contract(section="core")` returns the required Python/signal rules,
+base interface and revision lifecycle. Each reply identifies its selected section
+and lists `available_sections` with their purposes. The `content` object contains
+only that complete section: request `section="example"` for the Python/YAML pair,
+or `section="configuration"` for the executable YAML schema and financial-setting
+notes. Unknown sections fail; a missing core reference does not produce an empty
+or partial contract. The default no longer embeds examples and the entire schema.
+
+`get_strategy_contract(section="configuration").content.config_schema` describes
+the complete YAML shape. Fixed
 configuration sections reject unknown fields; strategy parameters remain dynamic.
 Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+
+`list_data_sources` returns registered source descriptions, including asset classes,
+symbol examples, local timeframe choices, applicable `data.market_type` values and
+coverage limitations. Choose a name for `data.requirements.market.source` from that
+catalog. A `null` timeframe list means the adapter does not advertise an exhaustive
+local list, not that every interval is supported; sample preparation still checks
+availability. Discovery does not construct a crawler or download market data.
 
 Generated code must:
 
@@ -154,7 +170,7 @@ fit on the entire evaluation frame and then replay signals over that frame:
 earlier signals would use information from later rows. Strategies that do not
 require training need no additional `fit()` step.
 
-`list_strategies` and `get_strategy` return `execution_capabilities` for bundled,
+`list_strategies` page items and `get_strategy` return `execution_capabilities` for bundled,
 generated and legacy strategies. `training_requirement` is `required`, `optional`
 or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
 training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
@@ -174,6 +190,11 @@ and parameter overrides cannot replace the registered capability. Generated and
 legacy source remains `unknown` even if it defines `fit()`, declares this YAML
 field or has passed validation/dry-run. No generated source is executed merely
 to discover its capabilities.
+
+Strategy discovery uses the shared [discovery page contract](run_artifacts.md#discovery-pages).
+Its compact items omit full metadata, YAML requirements and recent runs; read
+`get_strategy` for a selected identity instead of assuming the list contains
+all configuration or validation evidence.
 
 Simple-backtest and optimization preparation reject registered strategies that
 require training before data loading or a formal job. The application error code
@@ -469,9 +490,13 @@ fits additional models for its folds; it does not replace the artifact with a
 fold model or persist an out-of-fold prediction stream. Preserve the returned
 validation evidence if it is needed later.
 
-`predict` verifies the saved dataset and model blob, requires an exact ordered
-feature-column match, then returns `signal` and `forward_returns` in dataset row
-order with their `model_id`, `dataset_id` and horizon. It does not establish
+MCP `predict` verifies the saved dataset and model blob, requires an exact ordered
+feature-column match, then returns one page of `signal` and `forward_returns` in
+dataset row order with their `model_id`, `dataset_id` and horizon. `offset` starts
+at zero; `limit` defaults to 100 and accepts 1–500. `n_rows` is the complete
+dataset count, not the page length; `next_offset=null` marks the final page.
+`MLService.predict` retains complete arrays for backend and Python callers.
+MCP evaluation does not require retrieving every preview page. Prediction does not establish
 whether the requested data or its label interval was used for fitting or
 parameter selection. Evaluating the final artifact on its training dataset is
 in-sample even when the training response includes validation scores. A separate
@@ -519,10 +544,13 @@ distinguishes the final artifact from the fold models. `leakage_audit_clean`
 describes the implemented split and label-overlap checks only; it cannot prove
 that features, research choices or external inputs are free of future knowledge.
 
-`evaluate_signal` takes one asset's chronological sequence of consecutive bars,
-as equal-length, finite numeric arrays in the same row order, with enough
-observations for the chosen IC `window` and `n_quantiles`
-(2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
+MCP `evaluate_signal(model_id, dataset_id, window=60, n_quantiles=5, record=False)`
+evaluates a verified saved model on the complete single-symbol dataset. The
+backend produces the signal, obtains saved forward returns in the same row
+order and adopts the dataset horizon; the MCP input does not accept arrays or
+a caller-selected horizon. A preview's `offset` or `limit` never restricts
+evaluation. There must be enough observations for the chosen IC `window` and
+`n_quantiles` (2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
 prediction strata and simplified return summaries. These signal statistics are
 separate from backtest performance metrics and do not model transaction costs,
 slippage or order execution. Full-sample strata and their quantile means are
@@ -539,20 +567,24 @@ holding intervals do not overlap. Other rows contribute zero. Cumulative values
 compound these holding-interval returns; means include the inactive rows.
 Returns are indexed by decision row, not realization time, and do not form a
 mark-to-market equity curve. A constant signal cannot form a long/short book and
-is rejected. With no dataset ID, the caller is responsible for chronological
-single-asset alignment and the correct horizon; omission defaults to one bar.
+is rejected.
 
-Whenever `dataset_id` is supplied, evaluation requires a single-symbol dataset,
+The separate Python `MLService.evaluate_signal` accepts equal-length, finite
+numeric signal and forward-return arrays. Without a dataset ID, that caller is
+responsible for chronological single-asset alignment and the correct horizon;
+omission defaults to one bar. Whenever `dataset_id` is supplied, including by
+the MCP backend, evaluation requires a single-symbol dataset,
 all of its rows, exact saved forward returns in order, and a matching horizon
 (or omission to adopt the saved value), including when `record=False`.
 Dataset rows must be strictly chronological, and saved label end times must
 show non-overlapping holding intervals on the simulation grid. Datasets without
 label intervals must be rebuilt for evaluation.
-Panel evaluation is rejected; build a single-symbol dataset and call `predict`
-on it before evaluation. Do not concatenate different assets into one time
-series. `record=True` additionally requires the dataset ID.
-`model_id` is a caller-declared label, not proof of signal origin or a held-out
-evaluation. Recording and candidate-replacement semantics are defined in the
+Panel evaluation is rejected; build a single-symbol dataset for evaluation.
+Do not concatenate different assets into one time series. `record=True`
+additionally requires the dataset ID for Python array callers.
+The MCP path verifies which saved model produced the signal; it does not prove
+a held-out evaluation. Python array callers and existing records may use a
+caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
 [artifact contract](run_artifacts.md#recorded-signal-evaluations).
 `leaderboard` ranks only a metric with a declared direction and, by default,
 only matching measurement contexts. Its optional `dataset_id` filter selects a
@@ -562,6 +594,14 @@ manifest; differences in evaluation settings still require compatible context.
 contexts and must not be presented as a controlled comparison. Retain its
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
+
+MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
+`top_k`. The complete filtered candidate set is compared and ranked before
+paging. `ranked` and `skipped` each return at most `limit` entries at the same
+offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
+shared `next_offset` until `null`, even if one list has no entries on a page.
+Mixed-context rejection reports the full context count, limited examples and
+filter guidance, not every context's text.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or

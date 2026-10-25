@@ -105,6 +105,27 @@ def _mcp_config(root: Path, tool_names: list[str]) -> dict[str, Any]:
     }
 
 
+def _final_turn_text(events: list[dict[str, Any]]) -> str:
+    """Read terminal assistant text without treating progress as delivery.
+
+    App-server MessagePhase is nullable because providers may omit it. A missing
+    phase is accepted only for the last message after all tool calls; explicitly
+    nonterminal commentary/partial answers never establish a final response.
+    """
+    for event in reversed(events):
+        if event.get("method") != "item/completed":
+            continue
+        item = event.get("params", {}).get("item", {})
+        if item.get("type") == "mcpToolCall":
+            return ""
+        if item.get("type") == "agentMessage":
+            text = item.get("text")
+            if item.get("phase") in {None, "final_answer"} and isinstance(text, str):
+                return text
+            return ""
+    return ""
+
+
 async def run_codex(
     root: Path,
     prompt: str,
@@ -128,13 +149,9 @@ async def run_codex(
         nonlocal turn_number
         turn_number += 1
         assert user_reply is not None
-        text = "\n".join(
-            str(event["params"]["item"].get("text", ""))
-            for event in events
-            if event.get("method") == "item/completed"
-            and event.get("params", {}).get("item", {}).get("type") == "agentMessage"
+        return await user_reply(
+            ModelTurn(turn_number, _final_turn_text(events), codex_calls(events))
         )
-        return await user_reply(ModelTurn(turn_number, text, codex_calls(events)))
 
     stderr_path = root / "codex_stderr.log"
     with stderr_path.open("w", encoding="utf-8") as stderr:
@@ -184,10 +201,7 @@ async def run_codex(
                         "approvalsReviewer": "user",
                         "allowProviderModelFallback": False,
                         "developerInstructions": (
-                            "Use only the configured tradingdev MCP tools. "
-                            "Present the prepared summary and HTML link, then end "
-                            "the turn. Submit a decision only after the user replies "
-                            "explicitly in a later turn of this conversation."
+                            "Use only the configured tradingdev MCP tools."
                         ),
                     },
                     mcp_config=_mcp_config(root, enabled_tools),

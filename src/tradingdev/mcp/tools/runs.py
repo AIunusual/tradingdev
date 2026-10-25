@@ -6,14 +6,20 @@ from typing import TYPE_CHECKING
 
 from mcp_types import ToolAnnotations
 
-from tradingdev.app.contracts.common import ErrorResponse
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    ErrorResponse,
+    Page,
+    PageLimit,
+    PageOffset,
+)
 from tradingdev.app.contracts.research import (
     CompareRunsResponse,
     MetricCatalogResponse,
     MetricQueryError,
     RunMetricsResponse,
-    RunRecord,
     RunResponse,
+    RunSummary,
 )
 
 if TYPE_CHECKING:
@@ -33,9 +39,21 @@ def register(mcp: MCPServer, service: RunService) -> None:
             open_world_hint=False,
         )
     )
-    def list_runs() -> list[RunRecord]:
-        """List run summaries and discovery fields; get_run_metrics reads detail."""
-        return [RunRecord.model_validate(row) for row in service.list_runs()]
+    def list_runs(
+        strategy_id: str | None = None,
+        revision_id: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[RunSummary]:
+        """Discover completed run identities; get_run reads metrics and scope choices.
+
+        Exact filters precede paging; order is created_at descending, run_id ascending.
+        total counts matches; follow next_offset. Restart at offset=0 after inventory
+        changes because pages do not retain a cross-call snapshot.
+        """
+        return service.list_runs_page(
+            strategy_id=strategy_id, revision_id=revision_id, offset=offset, limit=limit
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -118,6 +136,7 @@ def register(mcp: MCPServer, service: RunService) -> None:
         fold/0/test, test_summary, trial/0/train, and test when recorded.
         Response contains original definitions/settings and reasons for nulls.
         Unknown IDs/scopes return available choices. No strategy is rerun.
+        Fold summaries are distributions across folds, not whole-period returns.
         """
         payload = service.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:

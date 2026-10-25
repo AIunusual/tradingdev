@@ -58,7 +58,15 @@ class ConfirmationPresentation(_ConfirmationModel):
 
     title: NonemptyText
     summary: NonemptyText
-    parameter_descriptions: dict[str, ParameterDescription]
+    parameter_descriptions: dict[str, ParameterDescription] = Field(
+        description=(
+            "Human labels, meanings and units for every effective constructor "
+            "parameter, including defaults; never executable values. Keys are JSON "
+            "pointers into constructor arguments: /fast_period for generated "
+            "strategies, /config/k_period or /fit_config/... for bundled strategies. "
+            "Preparation returns required_parameter_paths for missing descriptions."
+        )
+    )
 
 
 class ConfirmationField(_ConfirmationModel):

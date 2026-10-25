@@ -9,10 +9,8 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import unquote, urlsplit
 
-from markdown_it import MarkdownIt
-
+from tests.e2e.conversation import links_to_file, visible_text
 from tradingdev.domain.execution_plan import ExecutionPlan
 
 if TYPE_CHECKING:
@@ -23,64 +21,14 @@ if TYPE_CHECKING:
 type TestDecision = Literal["approve", "decline", "revise", "ambiguous"]
 
 
-def _links_to(text: str, path: Path) -> bool:
-    """Require a rendered text link, not a path or Markdown example in code."""
-    for block in MarkdownIt("commonmark").parse(text):
-        children = block.children or []
-        for index, token in enumerate(children):
-            if token.type != "link_open":
-                continue
-            href = token.attrGet("href")
-            if not isinstance(href, str):
-                continue
-            destination = urlsplit(href)
-            if (
-                destination.scheme
-                or destination.netloc
-                or destination.query
-                or Path(unquote(destination.path)) != path
-            ):
-                continue
-            for label in children[index + 1 :]:
-                if label.type == "link_close":
-                    break
-                if label.type in {"text", "code_inline"} and label.content.strip():
-                    return True
-    return False
-
-
 def _content_key(text: str) -> str:
     """Compare saved wording across whitespace, emphasis and table formatting."""
     return re.sub(r"[\W_]", "", text)
 
 
-def _visible_text(text: str) -> str:
-    """Read Markdown wording without link targets, markup or raw HTML."""
-    blocks: list[str] = []
-    for block in MarkdownIt("commonmark").parse(text):
-        if block.type in {"fence", "code_block"}:
-            blocks.append(block.content)
-        elif block.type == "inline":
-            children = block.children or []
-            # Raw HTML may hide its contents; it is not summary evidence.
-            if any(child.type == "html_inline" for child in children):
-                continue
-            blocks.append(
-                "".join(
-                    child.content
-                    if child.type in {"text", "code_inline"}
-                    else " "
-                    if child.type in {"softbreak", "hardbreak"}
-                    else ""
-                    for child in children
-                )
-            )
-    return " ".join(" ".join(blocks).split())
-
-
 def _assert_summary(summary: str, text: str) -> None:
-    expected = _visible_text(summary)
-    assert expected and expected in _visible_text(text), (
+    expected = visible_text(summary)
+    assert expected and expected in visible_text(text), (
         "The completed turn must preserve the backend summary wording.\n"
         f"Expected backend summary (complete):\n{summary}"
     )
@@ -152,7 +100,7 @@ class ObservedPlanUser:
 
         _assert_summary(summary, turn.text)
         html_path = Path(prepared["html_path"])
-        assert _links_to(turn.text, html_path), (
+        assert links_to_file(turn.text, html_path), (
             "The user must receive a clickable Markdown link to this plan HTML"
         )
         with closing(self._database()) as conn:

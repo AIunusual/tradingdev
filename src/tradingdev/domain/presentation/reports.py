@@ -53,7 +53,10 @@ REPORT_SECTIONS = MappingProxyType(
                 "委託、成交與帳戶核對",
                 "One chronological ledger of order attempts and bar-close "
                 "valuations, with Bokeh status filters and selectable columns, "
-                "static HTML and full-precision CSV/JSON exports.",
+                "static HTML and full-precision CSV/JSON exports. Static tables "
+                "remain readable without JavaScript; interactive filters and "
+                "download buttons require it. Generic balances are not exchange "
+                "margin, funding or liquidation wallets.",
             ),
             ReportSectionDefinition(
                 "trades",

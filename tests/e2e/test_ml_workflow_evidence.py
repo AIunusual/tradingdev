@@ -12,6 +12,7 @@ import pytest
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.test_llm_ml import (
     DATASET_ARGUMENTS,
+    PREDICTION_ARGUMENTS,
     TRAINING_ARGUMENTS,
     assert_ml_artifacts,
     assert_ml_workflow,
@@ -48,17 +49,16 @@ def ml_workflow() -> Iterator[tuple[MCPWorkspace, list[ToolCall]]]:
                     "train_model", dataset_id=dataset_id, **TRAINING_ARGUMENTS
                 )
                 model_id = trained["model"]["model_id"]
-                predicted = await call(
-                    "predict", model_id=model_id, dataset_id=dataset_id
+                await call(
+                    "predict",
+                    model_id=model_id,
+                    dataset_id=dataset_id,
+                    **PREDICTION_ARGUMENTS,
                 )
-                prediction = predicted["prediction"]
                 await call(
                     "evaluate_signal",
-                    signal=prediction["signal"],
-                    forward_returns=prediction["forward_returns"],
                     window=12,
                     n_quantiles=2,
-                    horizon=1,
                     record=True,
                     model_id=model_id,
                     dataset_id=dataset_id,
@@ -105,25 +105,36 @@ def test_ml_rejects_request_from_another_dataset(
         assert_ml_workflow(calls)
 
 
-@pytest.mark.parametrize("key", ["signal", "forward_returns"])
-@pytest.mark.parametrize("mutation", ["truncate", "alter"])
-def test_ml_evaluation_must_use_exact_complete_prediction(
-    calls: list[ToolCall], key: str, mutation: str
+@pytest.mark.parametrize("key", ["signal", "forward_returns", "horizon"])
+def test_ml_evaluation_rejects_caller_arrays_and_horizon(
+    calls: list[ToolCall], key: str
 ) -> None:
-    values = list(calls[4].arguments[key])
-    if mutation == "truncate":
-        values.pop()
-    else:
-        values[0] += 0.00001
-    calls[4].arguments[key] = values
-    with pytest.raises(AssertionError, match="every exact predicted"):
+    calls[4].arguments[key] = 1 if key == "horizon" else [0.1]
+    with pytest.raises(AssertionError, match="saved identities"):
+        assert_ml_workflow(calls)
+
+
+@pytest.mark.parametrize("key", ["signal", "forward_returns"])
+def test_ml_requires_the_declared_preview_length(
+    calls: list[ToolCall], key: str
+) -> None:
+    calls[3].result["prediction"][key].pop()
+    with pytest.raises(AssertionError, match="preview must be bounded"):
+        assert_ml_workflow(calls)
+
+
+def test_ml_requires_full_evaluation_beyond_the_preview(calls: list[ToolCall]) -> None:
+    calls[4].result["n_observations"] = 20
+    with pytest.raises(AssertionError):
         assert_ml_workflow(calls)
 
 
 def test_ml_sdk_encoded_arguments_preserve_raw_evidence(calls: list[ToolCall]) -> None:
     for key in ("parameters", "n_folds", "embargo", "min_train_bars"):
         calls[2].arguments[key] = json.dumps(calls[2].arguments[key])
-    for key in ("signal", "forward_returns", "record", "window", "n_quantiles"):
+    for key in ("offset", "limit"):
+        calls[3].arguments[key] = json.dumps(calls[3].arguments[key])
+    for key in ("record", "window", "n_quantiles"):
         calls[4].arguments[key] = json.dumps(calls[4].arguments[key])
     original = deepcopy(calls)
     assert_ml_workflow(calls)

@@ -26,6 +26,15 @@ if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
 
 
+_EMPTY_LIST_PAGE = {
+    "items": [],
+    "offset": 0,
+    "limit": 20,
+    "total": 0,
+    "next_offset": None,
+}
+
+
 def _call(
     name: str = "list_strategies",
     arguments: str = "{}",
@@ -77,7 +86,7 @@ def _mock_client(
         ]
     )
     session.call_tool.return_value = CallToolResult(
-        content=[], structured_content={"result": []}
+        content=[], structured_content=deepcopy(_EMPTY_LIST_PAGE)
     )
     return MCPClient(session, "Use MCP tools."), session.call_tool
 
@@ -303,7 +312,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                             assert len(json.dumps(compact)) < 0.7 * len(
                                 json.dumps(original)
                             )
-                        listed = responses["list"]["structuredContent"]["result"]
+                        listed = responses["list"]["structuredContent"]["items"]
                         assert listed and all(
                             item["kind"] == "bundled" for item in listed
                         )
@@ -343,7 +352,7 @@ def test_local_model_receives_real_mcp_schemas_errors_and_repaired_result() -> N
                     transport=httpx.MockTransport(respond),
                 )
                 assert len(calls) == 5
-                assert isinstance(calls[0].result, list)
+                assert isinstance(calls[0].result["items"], list)
                 assert calls[1].result["success"] is False
                 assert calls[-1].arguments == {"strategy_id": repaired_id}
                 assert calls[-1].result["success"] is True
@@ -511,7 +520,7 @@ def test_explicit_temperature_is_preserved_across_model_tool_rounds(
         )
     )
     assert len(requests) == 2
-    assert calls == [ToolCall("list_strategies", {}, [])]
+    assert calls == [ToolCall("list_strategies", {}, _EMPTY_LIST_PAGE)]
     invoke.assert_awaited_once_with("list_strategies", {})
 
 
@@ -537,7 +546,7 @@ def test_explicit_reasoning_effort_is_preserved_across_model_tool_rounds() -> No
         )
     )
     assert len(requests) == 2
-    assert calls == [ToolCall("list_strategies", {}, [])]
+    assert calls == [ToolCall("list_strategies", {}, _EMPTY_LIST_PAGE)]
     invoke.assert_awaited_once_with("list_strategies", {})
 
 
@@ -1120,7 +1129,15 @@ def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> Non
                 "tool": "list_strategies",
                 "arguments": {},
                 "result": {
-                    "structuredContent": {"result": [{"strategy_id": "example"}]}
+                    "structuredContent": {
+                        "result": {
+                            "items": [{"strategy_id": "example"}],
+                            "offset": 0,
+                            "limit": 20,
+                            "total": 1,
+                            "next_offset": None,
+                        }
+                    }
                 },
             },
         },
@@ -1169,7 +1186,17 @@ def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> Non
             {"strategy_id": "example"},
             {"success": False, "error": "Repair"},
         ),
-        ToolCall("list_strategies", {}, [{"strategy_id": "example"}]),
+        ToolCall(
+            "list_strategies",
+            {},
+            {
+                "items": [{"strategy_id": "example"}],
+                "offset": 0,
+                "limit": 20,
+                "total": 1,
+                "next_offset": None,
+            },
+        ),
         ToolCall("get_job_status", {"job_id": "job-1"}, {"status": "done"}),
     ]
     assert events == original, "The adapter must retain raw app-server evidence"

@@ -17,7 +17,10 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.data import CachedDataset
 from tradingdev.app.market_sample import load_market_sample
+from tradingdev.app.pagination import paginate
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.registry import create_crawler
@@ -318,6 +321,29 @@ class DataService:
             }
             for (symbol, timeframe), years in sorted(grouped.items())
         ]
+
+    def list_available_data_page(
+        self,
+        *,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[CachedDataset]:
+        """Page cache identities in symbol/timeframe order without opening files."""
+        selected_symbol = (
+            symbol.upper().replace("/", "") if symbol is not None else None
+        )
+        rows = [
+            row
+            for row in self.list_available_data()
+            if (selected_symbol is None or row["symbol"] == selected_symbol)
+            and (timeframe is None or row["timeframe"] == timeframe)
+        ]
+        rows.sort(key=lambda row: (str(row["symbol"]), str(row["timeframe"])))
+        return paginate(
+            rows, project=CachedDataset.model_validate, offset=offset, limit=limit
+        )
 
     def data_available(
         self,

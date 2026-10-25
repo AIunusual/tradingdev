@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -73,6 +74,31 @@ class MCPClient:
         validate(instance=payload, schema=self.output_schemas[name])
         return payload["result"] if set(payload) == {"result"} else payload
 
+    async def read_all_pages(
+        self, name: str, *, limit: int = 20, **arguments: Any
+    ) -> list[dict[str, Any]]:
+        """Explicitly consume every list page while the test workspace is stable."""
+        items: list[dict[str, Any]] = []
+        offset = 0
+        total: int | None = None
+        while True:
+            page = await self.call(name, offset=offset, limit=limit, **arguments)
+            assert set(page) == {"items", "offset", "limit", "total", "next_offset"}
+            assert page["offset"] == offset and page["limit"] == limit
+            if total is None:
+                total = page["total"]
+            assert page["total"] == total, "Test inventory changed during pagination"
+            chunk = page["items"]
+            assert isinstance(chunk, list) and len(chunk) <= limit
+            items.extend(chunk)
+            next_offset = page["next_offset"]
+            if next_offset is None:
+                break
+            assert next_offset == offset + len(chunk) > offset
+            offset = next_offset
+        assert len(items) == total, "Pagination ended before returning every item"
+        return items
+
     async def wait_for_job(self, job_id: str, timeout: float = 120) -> dict[str, Any]:
         with anyio.fail_after(timeout):
             while True:
@@ -80,6 +106,41 @@ class MCPClient:
                 if status["status"] in {"done", "failed", "cancelled"}:
                     return dict(status)
                 await anyio.sleep(0.1)
+
+    async def read_artifact_text(self, artifact_id: str) -> str:
+        """Read every page of one unchanged artifact through the actual MCP API."""
+        chunks: list[str] = []
+        offset = 0
+        digest: str | None = None
+        total: int | None = None
+        while True:
+            result = await self.call(
+                "get_artifact",
+                artifact_id=artifact_id,
+                include_content=True,
+                offset=offset,
+                expected_sha256=digest,
+            )
+            assert result["success"], result
+            page = result["content_page"]
+            assert page["offset"] == offset
+            if digest is None:
+                digest = page["content_sha256"]
+                total = page["total_characters"]
+            assert page["content_sha256"] == digest
+            assert page["total_characters"] == total
+            chunk = result["content"]
+            assert isinstance(chunk, str)
+            chunks.append(chunk)
+            next_offset = page["next_offset"]
+            if next_offset is None:
+                break
+            assert next_offset == offset + len(chunk) > offset
+            offset = next_offset
+        content = "".join(chunks)
+        assert len(content) == total
+        assert hashlib.sha256(content.encode("utf-8")).hexdigest() == digest
+        return content
 
 
 @dataclass

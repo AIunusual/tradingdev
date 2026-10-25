@@ -26,6 +26,17 @@ class MetricDiscovery(ContractModel):
     detail_error: ErrorResponse | None = None
 
 
+class RunSummary(ContractModel):
+    """Stable discovery identity; get_run retrieves metrics and scope discovery."""
+
+    run_id: str
+    job_id: str
+    strategy_id: str
+    revision_id: str | None
+    dataset_id: str | None
+    created_at: str
+
+
 class RunRecord(MetricDiscovery):
     """Run identity and a compact view of the persisted default metric scope."""
 
@@ -133,12 +144,23 @@ class ArtifactRecord(ArtifactIdentity):
     metadata: dict[str, JsonValue]
 
 
+class ArtifactContentPage(ContractModel):
+    """A bounded code-point range tied to the observed raw file's SHA-256."""
+
+    offset: int
+    limit: int
+    total_characters: int
+    next_offset: int | None
+    content_sha256: str
+
+
 class ArtifactResponse(ContractModel):
-    """Successful artifact lookup with optional UTF-8 content."""
+    """Successful artifact lookup with an optional UTF-8 content page."""
 
     success: Literal[True]
     artifact: ArtifactRecord
     content: str | None = None
+    content_page: ArtifactContentPage | None = None
 
 
 class FeatureRequestMetadata(ContractModel):

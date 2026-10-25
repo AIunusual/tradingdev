@@ -222,3 +222,71 @@ def test_predict_uses_the_exact_verified_bytes(
     assert (workspace.models / f"{model_id}.bin").read_bytes() == (
         b"changed after integrity verification"
     )
+
+
+def test_prediction_pages_reassemble_all_verified_rows(
+    service: MLService, trained: tuple[str, str]
+) -> None:
+    model_id, dataset_id = trained
+    identity = {"model_id": model_id, "dataset_id": dataset_id}
+    complete = service.predict(**identity)["prediction"]
+    collected: dict[str, list[float]] = {"signal": [], "forward_returns": []}
+    offset = 0
+    while True:
+        page = service.predict_page(**identity, offset=offset, limit=37)["prediction"]
+        assert page["model_id"] == model_id and page["dataset_id"] == dataset_id
+        assert page["n_rows"] == complete["n_rows"]
+        assert page["offset"] == offset and page["limit"] == 37
+        for key, values in collected.items():
+            assert len(page[key]) <= 37
+            values.extend(page[key])
+        if page["next_offset"] is None:
+            break
+        assert page["next_offset"] == offset + 37
+        offset = page["next_offset"]
+    assert collected == {key: complete[key] for key in collected}
+    end = service.predict_page(
+        model_id=model_id, dataset_id=dataset_id, offset=complete["n_rows"]
+    )["prediction"]
+    assert end["signal"] == end["forward_returns"] == []
+    assert end["next_offset"] is None
+    with pytest.raises(ValueError, match="exceeds prediction row count"):
+        service.predict_page(
+            model_id=model_id, dataset_id=dataset_id, offset=complete["n_rows"] + 1
+        )
+
+
+@pytest.mark.parametrize(
+    ("offset", "limit"),
+    [(-1, 10), (True, 10), (0.5, 10), (0, 0), (0, 501), (0, True), (0, 1.5)],
+)
+def test_invalid_preview_bounds_fail_before_loading_a_model(
+    service: MLService, offset: Any, limit: Any
+) -> None:
+    with pytest.raises(ValueError, match="offset|limit"):
+        service.predict_page(
+            model_id="unknown", dataset_id="unknown", offset=offset, limit=limit
+        )
+
+
+def test_identity_evaluation_uses_all_rows_and_the_saved_horizon(
+    service: MLService,
+) -> None:
+    dataset = _build(service, horizon=3)["dataset"]
+    model_id = str(_train(service, dataset["dataset_id"])["model"]["model_id"])
+    identity = {"model_id": model_id, "dataset_id": dataset["dataset_id"]}
+    preview = service.predict_page(**identity, limit=5)["prediction"]
+    complete = service.predict(**identity)["prediction"]
+    evaluated = service.evaluate_prediction(**identity, window=20, n_quantiles=3)
+    expected = service.evaluate_signal(
+        complete["signal"],
+        complete["forward_returns"],
+        horizon=3,
+        window=20,
+        n_quantiles=3,
+        **identity,
+    )
+    assert len(preview["signal"]) == 5 < evaluated["n_observations"]
+    assert evaluated == {**expected, **identity}
+    assert evaluated["n_observations"] == dataset["rows"]
+    assert evaluated["horizon"] == 3

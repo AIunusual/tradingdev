@@ -31,7 +31,7 @@ def test_reserved_strategy_id_returns_a_structured_rejection(tmp_path: Path) -> 
             assert listed.structured_content is not None
             bundled = next(
                 item
-                for item in listed.structured_content["result"]
+                for item in listed.structured_content["items"]
                 if item["kind"] == "bundled"
             )
             strategy_id = bundled["strategy_id"]

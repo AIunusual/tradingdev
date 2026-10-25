@@ -51,7 +51,7 @@ def _call(
 
 
 def _save(service: StrategyService) -> None:
-    contract = strategy_contract_payload(_PACKAGE_ROOT)
+    contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     assert service.save_draft(
         "contract_strategy",
         contract["example_strategy_code"],
@@ -59,7 +59,7 @@ def _save(service: StrategyService) -> None:
     ).success
 
 
-def test_contract_advertises_seed_location_and_strict_config_schema(
+def test_contract_sections_are_discoverable_and_keep_required_rules(
     tmp_path: Path,
 ) -> None:
     server, _service = _server(tmp_path)
@@ -67,14 +67,103 @@ def test_contract_advertises_seed_location_and_strict_config_schema(
     assert isinstance(result, CallToolResult)
     assert result.structured_content is not None
     contract = result.structured_content
-    schema = contract["config_schema"]
+    assert contract["section"] == "core"
+    assert {item["id"] for item in contract["available_sections"]} == {
+        "core",
+        "example",
+        "configuration",
+    }
+    content = contract["content"]
+    assert set(content) == {"base_strategy_source", "requirements", "lifecycle"}
+    assert "class BaseStrategy" in content["base_strategy_source"]
+    assert "get_numpy_rng()" in " ".join(content["requirements"])
+    assert "effective_config" in " ".join(content["lifecycle"])
+    assert "security sandbox" in " ".join(content["requirements"])
+
+    sections = {}
+    for item in contract["available_sections"]:
+        assert item["description"]
+        response = asyncio.run(
+            server.call_tool("get_strategy_contract", {"section": item["id"]})
+        )
+        assert isinstance(response, CallToolResult)
+        assert response.structured_content is not None
+        selected = response.structured_content
+        assert selected["section"] == item["id"]
+        assert selected["available_sections"] == contract["available_sections"]
+        sections[item["id"]] = selected["content"]
+    schema = sections["configuration"]["config_schema"]
     assert schema["additionalProperties"] is False
     assert "random_seed" in schema["properties"]
     assert "random_seed" not in schema["$defs"]["BacktestConfig"]["properties"]
     assert schema["$defs"]["BacktestConfig"]["additionalProperties"] is False
-    assert yaml.safe_load(contract["example_yaml_config"])["random_seed"] == 42
-    assert "get_numpy_rng()" in contract["api_reference"]
-    assert "effective_config" in contract["lifecycle"]
+    assert set(sections["configuration"]) == {"config_schema", "notes"}
+    example = sections["example"]
+    assert set(example) == {"example_strategy_code", "example_yaml_config"}
+    assert yaml.safe_load(example["example_yaml_config"])["random_seed"] == 42
+
+
+def test_contract_rejects_unknown_sections_and_mismatched_payloads(
+    tmp_path: Path,
+) -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from tradingdev.app.contracts.strategy import StrategyContractResponse
+
+    server, _service = _server(tmp_path)
+    with pytest.raises(ToolError):
+        asyncio.run(server.call_tool("get_strategy_contract", {"section": "all"}))
+    wrong = strategy_contract_payload(_PACKAGE_ROOT, "example") | {"section": "core"}
+    with pytest.raises(ValidationError, match="does not match"):
+        StrategyContractResponse.model_validate(wrong)
+
+
+def test_core_contract_missing_reference_fails_without_partial_response(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        strategy_contract_payload(tmp_path)
+    # Examples do not pretend to contain the missing core reference.
+    example = strategy_contract_payload(tmp_path, "example")
+    assert example["section"] == "example"
+    assert "base_strategy_source" not in example["content"]
+
+
+def test_invalid_config_guidance_leads_to_the_configuration_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, service = _server(tmp_path)
+    example = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
+    config = yaml.safe_load(example["example_yaml_config"])
+    config["backtest"]["random_seed"] = 42
+    assert service.save_draft(
+        "invalid_config", example["example_strategy_code"], yaml.safe_dump(config)
+    ).success
+
+    def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
+        return []
+
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", quality_diagnostics)
+    result = _call(server, "validate_strategy", {"strategy_id": "invalid_config"})
+    response = StrategyValidationFailure.model_validate(result)
+    diagnostic = next(
+        item for item in response.diagnostics if item.code == "invalid_execution_config"
+    )
+    assert diagnostic.fix is not None
+    assert (
+        'get_strategy_contract(section="configuration").content.config_schema'
+        in diagnostic.fix
+    )
+
+    contract = asyncio.run(
+        server.call_tool("get_strategy_contract", {"section": "configuration"})
+    )
+    assert isinstance(contract, CallToolResult)
+    assert contract.structured_content is not None
+    schema = contract.structured_content["content"]["config_schema"]
+    assert "random_seed" in schema["properties"]
+    assert "random_seed" not in schema["$defs"]["BacktestConfig"]["properties"]
+    assert schema["$defs"]["BacktestConfig"]["additionalProperties"] is False
 
 
 def test_strategy_discovery_validates_bundled_and_generated_metadata(
@@ -82,7 +171,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
 ) -> None:
     _server_instance, service = _server(tmp_path)
     _save(service)
-    entries = service.list_strategies()
+    entries = service.list_strategies_page().model_dump(mode="json")["items"]
     assert any(item["kind"] == "bundled" for item in entries)
     for item in entries:
         if item["kind"] == "bundled":
@@ -90,7 +179,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
             assert parsed.status == "promoted"
         else:
             generated = GeneratedStrategySummary.model_validate(item)
-            assert generated.metadata.source_hash
+            assert generated.revision_id
     response = GeneratedStrategyResponse.model_validate(
         service.get_strategy("contract_strategy")
     )
@@ -145,14 +234,14 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
             listed = asyncio.run(server.call_tool("list_strategies", {}))
             assert isinstance(listed, CallToolResult)
             assert listed.structured_content is not None
-            entries = listed.structured_content["result"]
+            entries = listed.structured_content["items"]
             assert isinstance(entries, list)
             assert any(item["kind"] == "bundled" for item in entries)
             draft = next(
                 item for item in entries if item["strategy_id"] == "repairable_draft"
             )
             assert draft["status"] == "draft"
-            assert draft["data_requirements"] == current
+            assert "data_requirements" not in draft
 
             retrieved = _call(
                 server, "get_strategy", {"strategy_id": "repairable_draft"}
@@ -226,7 +315,7 @@ def test_save_rejections_preserve_context_and_report_specific_codes(
 
 def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) -> None:
     server, service = _server(tmp_path)
-    contract = strategy_contract_payload(_PACKAGE_ROOT)
+    contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     saved = service.save_draft(
         "contract_strategy",
         "import os\n",
@@ -355,7 +444,7 @@ def test_checking_an_older_revision_does_not_approve_current(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     server, service = _server(tmp_path)
-    contract = strategy_contract_payload(_PACKAGE_ROOT)
+    contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     saved = _call(
         server,
         "save_strategy",

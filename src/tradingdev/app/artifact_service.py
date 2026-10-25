@@ -9,6 +9,11 @@ from uuid import uuid4
 
 import yaml
 
+from tradingdev.adapters.storage.artifact_text import (
+    DEFAULT_TEXT_LIMIT,
+    ArtifactTextChangedError,
+    read_text_page,
+)
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
@@ -17,6 +22,9 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.research import ArtifactIdentity
+from tradingdev.app.pagination import paginate
 from tradingdev.app.run_lineage import (
     extract_random_seed,
     read_strategy_snapshot,
@@ -44,10 +52,49 @@ class ArtifactService:
         """List artifact metadata."""
         return self._store.list_artifacts(run_id)
 
+    def list_artifacts_page(
+        self,
+        *,
+        run_id: str | None = None,
+        artifact_type: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[ArtifactIdentity]:
+        """Page artifact identities without expanding producer metadata."""
+        rows = [
+            row
+            for row in self.list_artifacts(run_id)
+            if artifact_type is None or row["artifact_type"] == artifact_type
+        ]
+        rows.sort(key=lambda row: str(row["artifact_id"]))
+        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        return paginate(
+            rows,
+            project=lambda row: ArtifactIdentity.model_validate(
+                {name: row.get(name) for name in ArtifactIdentity.model_fields}
+            ),
+            offset=offset,
+            limit=limit,
+        )
+
     def get_artifact(
-        self, artifact_id: str, *, include_content: bool = False
+        self,
+        artifact_id: str,
+        *,
+        include_content: bool = False,
+        offset: int = 0,
+        limit: int = DEFAULT_TEXT_LIMIT,
+        expected_sha256: str | None = None,
     ) -> dict[str, Any]:
-        """Return artifact metadata and optional text content."""
+        """Return artifact metadata and an optional bounded UTF-8 content page."""
+        if not include_content and (
+            offset != 0 or limit != DEFAULT_TEXT_LIMIT or expected_sha256 is not None
+        ):
+            return {
+                "success": False,
+                "error": "Text paging options require include_content=true",
+                "code": "invalid_artifact_request",
+            }
         artifact = self._store.get_artifact(artifact_id)
         if artifact is None:
             return {
@@ -58,20 +105,48 @@ class ArtifactService:
         result: dict[str, Any] = {"success": True, "artifact": artifact}
         path = Path(str(artifact["path"]))
         if include_content:
-            if not path.exists():
+            try:
+                page = read_text_page(
+                    path, offset=offset, limit=limit, expected_sha256=expected_sha256
+                )
+            except FileNotFoundError:
                 return {
                     "success": False,
                     "error": f"Artifact file missing: {path}",
                     "code": "artifact_file_missing",
                 }
-            try:
-                result["content"] = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 return {
                     "success": False,
                     "error": f"Artifact is not UTF-8 text: {artifact_id}",
                     "code": "artifact_not_text",
                 }
+            except ArtifactTextChangedError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "code": "artifact_content_changed",
+                }
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "code": "invalid_artifact_request",
+                }
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "error": f"Artifact file could not be read: {exc}",
+                    "code": "artifact_file_unreadable",
+                }
+            result["content"] = page.content
+            result["content_page"] = {
+                "offset": page.offset,
+                "limit": page.limit,
+                "total_characters": page.total_characters,
+                "next_offset": page.next_offset,
+                "content_sha256": page.content_sha256,
+            }
         return result
 
     def load_pipeline_result(self, run_id: str) -> dict[str, Any]:

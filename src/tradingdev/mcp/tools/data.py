@@ -9,12 +9,19 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 from pydantic import ValidationError
 
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    Page,
+    PageLimit,
+    PageOffset,
+)
 from tradingdev.app.contracts.data import (
     CachedDataset,
     DatasetInspection,
+    DataSourceDescription,
     EnsureDataResponse,
 )
-from tradingdev.domain.data.crawlers.registry import available_sources
+from tradingdev.domain.data.crawlers.registry import available_sources, describe_sources
 from tradingdev.domain.data.schemas import MarketDataRequest
 from tradingdev.mcp.tools.input_errors import invalid_arguments
 
@@ -35,11 +42,21 @@ def register(mcp: MCPServer, service: DataService) -> None:
             open_world_hint=False,
         )
     )
-    def list_available_data() -> list[CachedDataset]:
-        """List cached OHLCV datasets; use inspect_dataset to inspect file contents."""
-        return [
-            CachedDataset.model_validate(row) for row in service.list_available_data()
-        ]
+    def list_available_data(
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[CachedDataset]:
+        """Discover cached OHLCV identities; inspect_dataset reads file details.
+
+        Filters are exact (symbol ignores case and '/'); order is symbol, timeframe.
+        total counts matches; follow next_offset. Restart at offset=0 after cache
+        changes because pages do not retain a cross-call snapshot. No files are read.
+        """
+        return service.list_available_data_page(
+            symbol=symbol, timeframe=timeframe, offset=offset, limit=limit
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -49,9 +66,16 @@ def register(mcp: MCPServer, service: DataService) -> None:
             open_world_hint=False,
         )
     )
-    def list_data_sources() -> list[str]:
-        """List registered source names before selecting a source for ensure_data."""
-        return available_sources()
+    def list_data_sources() -> list[DataSourceDescription]:
+        """Discover source names, assets, symbols, intervals and market settings.
+
+        Select data.requirements.market.source in YAML. null timeframes means
+        upstream-dependent, not unrestricted support. Discovery performs no fetch;
+        preparation still checks whether the requested sample is available.
+        """
+        return [
+            DataSourceDescription.model_validate(item) for item in describe_sources()
+        ]
 
     @mcp.tool(
         annotations=ToolAnnotations(
