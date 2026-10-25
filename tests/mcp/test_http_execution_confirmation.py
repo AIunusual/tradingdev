@@ -41,7 +41,20 @@ def test_http_plan_waits_for_decision_after_reading_summary_and_html(
                 include_content=True,
             )
             html = Path(prepared["html_path"]).read_text(encoding="utf-8")
-            assert artifact["success"] and artifact["content"] == html
+            assert artifact["success"]
+            content = artifact["content"]
+            content_sha256 = artifact["content_page"]["content_sha256"]
+            while artifact["content_page"]["next_offset"] is not None:
+                artifact = await client.call(
+                    "get_artifact",
+                    artifact_id=prepared["artifact_id"],
+                    include_content=True,
+                    offset=artifact["content_page"]["next_offset"],
+                    expected_sha256=content_sha256,
+                )
+                assert artifact["success"]
+                content += artifact["content"]
+            assert content == html
             assert "<html" in html
             retained = await client.call(
                 "get_execution_plan", plan_id=prepared["plan_id"]

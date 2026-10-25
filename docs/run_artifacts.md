@@ -614,6 +614,35 @@ and do not use this conversation workflow.
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
 
+### Reading Artifact Text
+
+`get_artifact` returns metadata by default. With `include_content=true`, it
+returns one original UTF-8 text page: `offset` counts Unicode code points and
+`limit` defaults to 8192, with a maximum of 32768. `content_page` reports
+`offset`, `limit`, `total_characters`, `next_offset` and `content_sha256`.
+Follow `next_offset` until it is `null`; concatenate every page before parsing
+JSON or hashing a whole report. Use structured result/trade queries when only
+selected observations are needed, rather than reading the entire artifact.
+
+Every content request streams the complete file to validate UTF-8, count
+characters and hash its original bytes, while retaining only the requested
+page. `content_sha256` identifies the bytes observed by that read; it is not a
+claim that the file still matches the registered `artifact.sha256`. Send the
+first page's `content_sha256` as `expected_sha256` on subsequent requests to
+reject changed content. Reading pages does not rewrite files or normalize JSON.
+
+Unknown IDs return `artifact_not_found`; missing files return
+`artifact_file_missing`; other file I/O failures return
+`artifact_file_unreadable`. Invalid UTF-8 returns `artifact_not_text`, including
+invalid bytes outside the requested page. Observed mutation or a mismatched
+expected digest returns `artifact_content_changed`. Invalid page bounds or
+paging options without `include_content=true` return `invalid_artifact_request`;
+the MCP input schema may reject malformed arguments before service execution.
+Metadata lookup does not read file content and remains available for binary
+artifacts. A server-local path is not a public download URL.
+
+### Completed Run Files
+
 The generated revision's `config.yaml` holds its base settings;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
 `strategy.revision_id`. Runtime market/date and parameter experiments
@@ -1100,8 +1129,8 @@ result file or `SQLiteStore` reads run metrics. These reads do not rewrite the
 stored file or database row. Consequently, `get_run`, `list_runs`, and completed
 `get_job_status` responses expose legacy non-finite metric values as `null`.
 
-In contrast, `get_artifact(include_content=true)` returns the original UTF-8 file
-text without parsing or normalizing its contents. A legacy `result.json` may
+In contrast, `get_artifact(include_content=true)` returns pages of the original
+UTF-8 file text without parsing or normalizing its contents. A legacy `result.json` may
 therefore still contain `NaN` or `Infinity` even when result lookup returns `null`;
 the content-equivalence statement above does not apply to these legacy artifacts.
 The CLI displays missing or non-finite metrics as `N/A`, while keeping finite zero

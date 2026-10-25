@@ -181,12 +181,10 @@ async def test_generated_strategy_full_mcp_workflow(
         values = performance["scopes"]["full"]["values"]
         assert detail["metrics"] == {key: values[key] for key in detail["metrics"]}
         assert json.loads(Path(by_type["result_json"]["path"]).read_text()) == values
-        raw = await client.call(
-            "get_artifact",
-            artifact_id=by_type["observations_json"]["artifact_id"],
-            include_content=True,
+        raw = await client.read_artifact_text(
+            by_type["observations_json"]["artifact_id"]
         )
-        observations = json.loads(raw["content"])["scopes"]["full"]
+        observations = json.loads(raw)["scopes"]["full"]
         assert len(observations["equity_curve"]) == len(observations["returns"])
         assert len(observations["returns"]) == len(observations["timestamps"])
         for artifact in artifacts:
@@ -237,35 +235,27 @@ async def test_generated_strategy_full_mcp_workflow(
             commentary=[{"title": "評語", "text": "這是模擬結果。"}],
         )
         assert report["success"], report
-        html = await client.call(
-            "get_artifact", artifact_id=report["artifact_id"], include_content=True
+        html = await client.read_artifact_text(report["artifact_id"])
+        assert "這是模擬結果。" in html
+        assert hashlib.sha256(html.encode()).hexdigest() == report["sha256"]
+        report_manifest = await client.read_artifact_text(
+            report["manifest_artifact_id"]
         )
-        assert "這是模擬結果。" in html["content"]
-        assert hashlib.sha256(html["content"].encode()).hexdigest() == report["sha256"]
-        report_manifest = await client.call(
-            "get_artifact",
-            artifact_id=report["manifest_artifact_id"],
-            include_content=True,
-        )
-        assert json.loads(report_manifest["content"])["sections"] == [
+        assert json.loads(report_manifest)["sections"] == [
             "overview",
             "metrics",
             "ledger",
             "trades",
         ]
-        assert json.loads(report_manifest["content"])["schema_version"] == 2
-        source = await client.call(
-            "get_artifact",
-            artifact_id=by_type["strategy_source"]["artifact_id"],
-            include_content=True,
+        assert json.loads(report_manifest)["schema_version"] == 2
+        source = await client.read_artifact_text(
+            by_type["strategy_source"]["artifact_id"]
         )
-        assert source["content"] == code
-        config_artifact = await client.call(
-            "get_artifact",
-            artifact_id=by_type["config_snapshot"]["artifact_id"],
-            include_content=True,
+        assert source == code
+        config_artifact = await client.read_artifact_text(
+            by_type["config_snapshot"]["artifact_id"]
         )
-        effective = yaml.safe_load(config_artifact["content"])
+        effective = yaml.safe_load(config_artifact)
         assert effective["strategy"]["revision_id"] == saved["revision_id"]
         assert effective["strategy"]["parameters"] == {
             "fast_period": 3,
@@ -274,12 +264,10 @@ async def test_generated_strategy_full_mcp_workflow(
         assert effective["backtest"]["symbol"] == "BTC/USDT"
         assert effective["backtest"]["end_date"].startswith("2024-01-08")
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
-        manifest_artifact = await client.call(
-            "get_artifact",
-            artifact_id=by_type["execution_manifest"]["artifact_id"],
-            include_content=True,
+        manifest_artifact = await client.read_artifact_text(
+            by_type["execution_manifest"]["artifact_id"]
         )
-        manifest = json.loads(manifest_artifact["content"])
+        manifest = json.loads(manifest_artifact)
         assert manifest["schema_version"] == 5
         assert manifest["strategy_execution"]["constructor_kwargs"] == {
             "fast_period": 3,

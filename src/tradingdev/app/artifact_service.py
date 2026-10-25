@@ -9,6 +9,11 @@ from uuid import uuid4
 
 import yaml
 
+from tradingdev.adapters.storage.artifact_text import (
+    DEFAULT_TEXT_LIMIT,
+    ArtifactTextChangedError,
+    read_text_page,
+)
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
@@ -45,9 +50,23 @@ class ArtifactService:
         return self._store.list_artifacts(run_id)
 
     def get_artifact(
-        self, artifact_id: str, *, include_content: bool = False
+        self,
+        artifact_id: str,
+        *,
+        include_content: bool = False,
+        offset: int = 0,
+        limit: int = DEFAULT_TEXT_LIMIT,
+        expected_sha256: str | None = None,
     ) -> dict[str, Any]:
-        """Return artifact metadata and optional text content."""
+        """Return artifact metadata and an optional bounded UTF-8 content page."""
+        if not include_content and (
+            offset != 0 or limit != DEFAULT_TEXT_LIMIT or expected_sha256 is not None
+        ):
+            return {
+                "success": False,
+                "error": "Text paging options require include_content=true",
+                "code": "invalid_artifact_request",
+            }
         artifact = self._store.get_artifact(artifact_id)
         if artifact is None:
             return {
@@ -58,20 +77,48 @@ class ArtifactService:
         result: dict[str, Any] = {"success": True, "artifact": artifact}
         path = Path(str(artifact["path"]))
         if include_content:
-            if not path.exists():
+            try:
+                page = read_text_page(
+                    path, offset=offset, limit=limit, expected_sha256=expected_sha256
+                )
+            except FileNotFoundError:
                 return {
                     "success": False,
                     "error": f"Artifact file missing: {path}",
                     "code": "artifact_file_missing",
                 }
-            try:
-                result["content"] = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 return {
                     "success": False,
                     "error": f"Artifact is not UTF-8 text: {artifact_id}",
                     "code": "artifact_not_text",
                 }
+            except ArtifactTextChangedError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "code": "artifact_content_changed",
+                }
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "code": "invalid_artifact_request",
+                }
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "error": f"Artifact file could not be read: {exc}",
+                    "code": "artifact_file_unreadable",
+                }
+            result["content"] = page.content
+            result["content_page"] = {
+                "offset": page.offset,
+                "limit": page.limit,
+                "total_characters": page.total_characters,
+                "next_offset": page.next_offset,
+                "content_sha256": page.content_sha256,
+            }
         return result
 
     def load_pipeline_result(self, run_id: str) -> dict[str, Any]:

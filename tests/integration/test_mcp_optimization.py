@@ -276,12 +276,10 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             item["artifact_type"]: item
             for item in await client.call("list_artifacts", run_id=job_id)
         }
-        specification = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["execution_manifest"]["artifact_id"],
-            include_content=True,
+        specification = await client.read_artifact_text(
+            artifacts["execution_manifest"]["artifact_id"]
         )
-        manifest = ExecutionManifest.model_validate_json(specification["content"])
+        manifest = ExecutionManifest.model_validate_json(specification)
         manifest.verify(manifest_hash)
         assert manifest.kind == "optimization"
         assert manifest.strategy_execution.constructor_kwargs == {
@@ -300,25 +298,21 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert search.trial_timeout_seconds == 300
         assert "confirmation_timeout_seconds" not in type(search).model_fields
         assert "confirmation_poll_interval" not in type(search).model_fields
-        stored = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["result_json"]["artifact_id"],
-            include_content=True,
+        stored = await client.read_artifact_text(
+            artifacts["result_json"]["artifact_id"]
         )
-        assert "Infinity" not in stored["content"]
-        assert "NaN" not in stored["content"]
-        result = json.loads(stored["content"])
+        assert "Infinity" not in stored
+        assert "NaN" not in stored
+        result = json.loads(stored)
         assert result["best_params"] == completed["best_params"]
         assert result["train_metrics"] == train_detail["metrics"]
         assert result["test_metrics"] == test_detail["metrics"]
         assert result["best_train_metric_value"] == pytest.approx(train_return)
         assert result["best_oos_metric_value"] == pytest.approx(oos_return)
-        original_observations = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["observations_json"]["artifact_id"],
-            include_content=True,
+        original_observations = await client.read_artifact_text(
+            artifacts["observations_json"]["artifact_id"]
         )
-        observations = json.loads(original_observations["content"])
+        observations = json.loads(original_observations)
         assert observations["manifest_hash"] == manifest_hash
         assert set(observations["scopes"]) == set(run["available_scopes"])
         for scope_id in ["trial/0/train", "trial/1/train", "trial/2/train"]:
