@@ -80,6 +80,40 @@ snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型�
 文件語意仍由差異審閱確認。政策、程式、依賴與測試基礎設施變更須依
 [執行時機](../AGENTS.md#執行時機) 完成相關測試、完整檢查與獨立階段審查。
 
+### 簡報的編輯與輸出
+
+[專案介紹簡報](talks/tradingdev-introduction/README.md)以 Marp Markdown 編輯，
+`theme.css` 保存版型，`index.html` 是提交至 Git 的瀏覽器產物。
+簡報建置工具不加入 Python 執行環境；編輯時另需 Node.js 與 npm。
+
+在 repository 根目錄使用固定版本的 Marp CLI 輸出：
+
+```bash
+npx --yes @marp-team/marp-cli@4.5.1 \
+  docs/talks/tradingdev-introduction/slides.md \
+  --theme docs/talks/tradingdev-introduction/theme.css \
+  --title 'TradingDev｜讓 AI 助手協助研究交易策略' \
+  --description '產品介紹、使用場景、分類比較與後續開發方向' \
+  -o docs/talks/tradingdev-introduction/index.html
+```
+
+首次執行會下載 npm 套件。HTML 已內含樣式與播放程式，閱讀者不需要安裝 Node.js。
+Markdown 開頭的註解保存 Marp directives；每頁末尾的註解是講者稿，
+`_footer` 則提供可點擊的來源。修改正文、來源或版型後，都應重新輸出 HTML，
+並同步檢查閱讀路線的頁碼與入口文件。
+
+本機 HTTP 預覽只服務簡報目錄，結束時按 `Ctrl+C`：
+
+```bash
+uv run python -m http.server 8765 --bind 127.0.0.1 \
+  --directory docs/talks/tradingdev-introduction
+```
+
+開啟 `http://127.0.0.1:8765/`，檢查全部投影片的換行、表格、頁尾、
+章節跳轉及講者模式。來源與 TODO 狀態須依對應程式及官方文件確認。
+目前的純文件分流不包含 HTML、CSS 與 `.nojekyll`，提交時會走快速檢查。
+GitHub Pages 的讀者操作與發布條件見簡報入口，不在此自動部署。
+
 ## MAE 研究原型
 
 Repository 另附獨立的 MAE（最大不利變動）Streamlit 研究原型，
