@@ -477,6 +477,10 @@ uv run --locked python -m tradingdev --config \
 自建策略須使用已通過程式與合成訊號檢查的版本。可複製該版本的 YAML 調整
 `strategy.parameters`，但保留其餘策略宣告與指向原版本的 `source_path`；
 交易對、日期與成本則在 `strategy` 區段以外調整。
+若手動修改研究設定，例如標的、K 棒頻率、日期、本金、成本或年化，請在執行用的
+YAML 副本移除整個頂層 `research` 區段，並繼續保留上述策略身分。
+CLI 直接讀取 YAML 不會重算或清除來源紀錄；留下原紀錄會讓新設定帶著過時的來源標籤。
+只修改執行用副本，保存的策略版本不變；詳見[研究設定與來源紀錄](docs/run_artifacts.md#research-settings-and-provenance)。
 修改策略程式或其他策略宣告時，請讓助手另存版本並重新驗證，
 完整規則見[策略生命週期](docs/strategy_contract.md#lifecycle)。
 

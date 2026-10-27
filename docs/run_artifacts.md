@@ -376,6 +376,13 @@ Direct Python override helpers remove research metadata from the effective confi
 when applying request-level market/date or backtest settings, since they cannot
 preserve the original field origins for that new execution. They do not rewrite
 the saved revision or its metadata.
+Direct YAML loading through CLI or `BacktestService.run_config` does not use these
+override helpers: it preserves supplied research metadata without rebuilding its
+origins. When manually editing research-owned settings in an execution YAML copy,
+remove the entire top-level `research` mapping to avoid recording stale origins.
+Keep the generated strategy identity and revision-bound declarations unchanged;
+the saved source revision remains intact. Only changing strategy parameters does
+not require removing research metadata.
 
 Strategy creation and revision publication share the per-strategy lifecycle lock.
 Omitted strategy IDs allocate a new `strategy_<uuid>` namespace; explicit IDs
@@ -465,10 +472,18 @@ Non-finite numbers in execution configuration or search values are rejected inst
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
 `invalid_optimization_request` for optimization, without creating a job.
-These codes also cover strategy identity mismatches, revision-file read failures
-during binding, and failures of the repeated executable-state check during
-preparation. Failure to select an executable strategy at the start of the request
-instead returns `strategy_not_executable`.
+MCP preflight maps `StrategyNotExecutableError` raised during research preparation
+to `strategy_not_executable`, including initial strategy selection, identity
+mismatches, revision-file read failures during binding, and repeated
+executable-state checks during capture. Caught configuration, type, YAML and I/O
+errors use the invalid-request codes above; execution-mode refusals retain their
+capability-specific codes and guidance.
+
+Direct Python `JobService` and `OptimizationService` preparation methods instead
+return `strategy_not_executable` for failed initial selection and their respective
+invalid-request code for binding or subsequent capture failures. The lower-level
+`BacktestService` direct YAML/config methods raise exceptions rather than returning
+these structured service codes.
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.
