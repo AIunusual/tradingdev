@@ -125,8 +125,8 @@ presentation 必須提供中文 title、summary，
 取得 success=true、status=ready 的 plan_id 後，將 confirmation_summary 逐行原文引用，
 建議每行加 > 作為 Markdown 引用；只可調整排版，
 不可改寫、刪除欄名、值、單位或訓練／測試角色。
-摘要已由後端完成，不要再摘要。引用外另行用 [閱讀確認單](<FULL_HTML_PATH>) 提供連結，
-把 FULL_HTML_PATH 替換為工具回覆 html_path 的實際完整值；角括號可保留空白路徑。
+摘要已由後端完成，不要再摘要。引用外另行逐字貼上工具回覆的 confirmation_link，
+核對連結目的地為 html_path；不要自行組合或改寫識別碼與路徑。
 連結放在一般 Markdown 文字行，不放 code block，不加 file:// 或自行創造其他 URI 前綴。
 然後結束本回合等待我回覆。一般解釋及回答問題可用自己的表達方式。
 現在尚未同意正式執行，不可在本回合呼叫 submit_execution_decision。

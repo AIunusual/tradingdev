@@ -12,6 +12,7 @@ from uuid import uuid4
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_html,
+    render_confirmation_link,
     render_confirmation_summary,
     render_confirmation_text,
 )
@@ -289,6 +290,7 @@ class ExecutionPlanService:
             job = self._bound_job(plan)
             if job is not None:
                 job_id = plan.plan_id
+        html_path = str(self.plans.directory(plan.plan_id) / "confirmation.html")
         return PlanResponse(
             plan_id=plan.plan_id,
             status=record["state"],
@@ -297,7 +299,8 @@ class ExecutionPlanService:
             confirmation_summary=render_confirmation_summary(
                 plan.document, mode=plan.manifest.config_copy()["backtest"]["mode"]
             ),
-            html_path=str(self.plans.directory(plan.plan_id) / "confirmation.html"),
+            confirmation_link=render_confirmation_link(html_path),
+            html_path=html_path,
             artifact_id=f"{plan.plan_id}:confirmation_html",
             preflight=plan.preflight,
             job_id=job_id,

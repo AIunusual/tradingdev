@@ -53,7 +53,7 @@ def _assert_short_review(text: str, html_path: Path, plan: ExecutionPlan) -> Non
 
 def _database(workspace: MCPWorkspace) -> sqlite3.Connection:
     database = workspace.workspace / "tradingdev.sqlite"
-    return sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    return sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
 
 
 def assert_no_execution(workspace: MCPWorkspace) -> None:
@@ -83,7 +83,8 @@ def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPl
     _assert_summary(summary, turn.text)
     html_path = Path(prepared["html_path"])
     assert links_to_file(turn.text, html_path), (
-        "The user must receive a clickable Markdown link to this plan HTML"
+        "The user must receive a clickable Markdown link to this plan HTML.\n"
+        f"Expected plan HTML path: {html_path}"
     )
     with closing(_database(workspace)) as conn:
         rows = conn.execute(
@@ -105,7 +106,7 @@ def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPl
     expected_path = (
         workspace.workspace / "execution_plans" / plan.plan_id / "confirmation.html"
     )
-    assert html_path == expected_path
+    assert html_path == expected_path, f"Expected saved plan HTML path: {expected_path}"
     html = html_path.read_bytes()
     assert hashlib.sha256(html).hexdigest() == rows[0][1]
     assert (
@@ -235,6 +236,4 @@ class ObservedPlanUser:
 
 def review_text(prepared: dict[str, Any]) -> str:
     """Supply a deterministic presentation only for offline fixture verification."""
-    return (
-        f"{prepared['confirmation_summary']}\n[閱讀確認單](<{prepared['html_path']}>)"
-    )
+    return f"{prepared['confirmation_summary']}\n{prepared['confirmation_link']}"

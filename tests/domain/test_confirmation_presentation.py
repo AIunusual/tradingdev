@@ -181,12 +181,16 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
         "10000",
         "0.06%",
         "0.05%",
+        "時間邊界：依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）",
         "完整 HTML",
         "於對話回覆",
     ):
         assert expected in summary
     assert "確認前僅檢查程式" in summary
     assert "閱讀本頁不會啟動回測" in html
+    assert "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）" in html
+    assert "純日期代表當日 00:00:00" in html
+    assert "結束日期不自動延伸至當日最後一刻" in html
     for detail in (
         "合成訊號檢查筆數",
         "實際可用日期、筆數與資料缺口尚未驗證",

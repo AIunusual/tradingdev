@@ -119,8 +119,11 @@ def strategy_contract_payload(
                 "identified generated revision; it is not a missing-value fallback. "
                 "Supply that exact revision_id when preparing, or expected_revision_id "
                 "when repairing. Bundled sample dates cannot supply missing choices.",
-                "Dates without timezone are interpreted as UTC; date-only values "
-                "mean midnight, not the whole final day. Review the exact resolved "
+                "Research periods select candle timestamps with "
+                "start_date <= timestamp <= end_date, including both endpoints "
+                "when matching candles exist. Dates without timezone are interpreted "
+                "as UTC; explicit offsets convert to UTC. Date-only values mean "
+                "00:00:00 UTC, not the whole final day. Review these exact resolved "
                 "bounds with the user. No history is read before approval, so actual "
                 "available bars and gaps are still unverified.",
                 "Use annualization='market' only when a supported market policy "

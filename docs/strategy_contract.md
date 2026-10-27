@@ -280,6 +280,9 @@ For new research, send `kind: "new"` and all five fields:
 Text must be nonempty. Dates accept ISO dates or timestamps, normalize to UTC,
 and interpret a missing timezone as UTC. A date without a time means midnight;
 ordinary backtest bounds do not automatically expand to cover the final day.
+Rows are selected by candle timestamp with `start_date <= timestamp <= end_date`,
+including either endpoint when matching data exists; this does not define the
+final candle's close or execution time.
 `end_date` must follow `start_date`. Unknown fields and explicit `null` choices
 are rejected. Optional fields must be omitted to request their defaults.
 

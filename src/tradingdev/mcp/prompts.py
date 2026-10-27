@@ -14,6 +14,7 @@ Strategy development workflow
      bar counts, a default timeframe or a bundled strategy's sample configuration.
    - An explicit request to reuse saved research may inherit its selected revision.
      Read it first; absence of a choice is not an instruction to inherit.
+   - Read get_strategy_contract(section="research") before explaining date boundaries.
    - Before proposing or asking about omitted capital, costs or annualization,
      read get_strategy_contract(section="research") and the relevant source's
      capabilities. Use applicable policy; omission does not mean zero costs or
@@ -65,8 +66,9 @@ Strategy development workflow
 6. Present the prepared plan for review.
    - Quote confirmation_summary verbatim, preferably as a Markdown blockquote.
      Preserve every label, value, unit and train/test role without recalculation.
-   - Provide [閱讀確認單](<FULL_HTML_PATH>) on a separate normal Markdown line,
-     using the exact returned html_path. No code block, file:// or invented URI.
+   - Copy confirmation_link verbatim on a separate normal Markdown line. Verify
+     its destination against html_path; do not assemble or edit IDs or paths.
+     No code block, file:// or invented URI.
      Remote clients must retrieve the artifact through their delivery mechanism;
      a server-local path is not a public URL. Do not paste the entire plan data.
    - End the turn after the user can read the HTML and wait for their response.

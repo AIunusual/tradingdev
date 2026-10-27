@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
+from tests.e2e.conversation import links_to_file
 from tests.integration.execution_fixtures import execution_options, research_input
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
@@ -73,6 +75,9 @@ async def test_omitted_finances_and_inherited_choices_survive_worker_round_trip(
                 **execution_options({"fast_period": 10, "slow_period": 30}),
             )
             assert prepared["success"], prepared
+            assert links_to_file(
+                prepared["confirmation_link"], Path(prepared["html_path"])
+            )
             assert prepared["preflight"]["signal_check"] == "synthetic_contract_passed"
             with closing(
                 sqlite3.connect(mcp_workspace.workspace / "tradingdev.sqlite")

@@ -54,8 +54,11 @@ def test_missing_choices_reject_unreported_artifacts(
         assert_missing_input_turn(workspace, turn, read_only_tools=set())
 
 
-def test_missing_user_stops_without_supplying_hidden_choices(tmp_path: Path) -> None:
-    workspace = _workspace(tmp_path)
+@pytest.mark.parametrize("directory", ["ordinary", "研究 (case) 100%20 ?#"])
+def test_missing_user_stops_without_supplying_hidden_choices(
+    tmp_path: Path, directory: str
+) -> None:
+    workspace = _workspace(tmp_path / directory)
     user = MissingInputUser(workspace, {"list_strategies"})
     turn = ModelTurn(
         1, "你要用每幾分鐘或幾小時一根 K 棒？", [ToolCall("list_strategies", {}, {})]

@@ -683,11 +683,16 @@ its manifest matches and it has a complete worker-control identity; it records
 queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
-Preparation and lookup return `confirmation_summary` and the complete HTML's
-`html_path`/`artifact_id`. Full confirmation text remains in the saved plan; it is
-not copied into ordinary tool responses. The short summary starts with the model's
+Preparation and lookup return `confirmation_summary`, `confirmation_link` and the
+complete HTML's `html_path`/`artifact_id`. The service derives the ready-to-copy
+Markdown `confirmation_link` from the same actual `html_path`, URL-encoding special
+path characters without adding a URI scheme. Clients should copy it verbatim and
+verify its destination instead of assembling plan IDs or paths. The raw `html_path`
+remains available to machine clients. Full confirmation text remains in the saved
+plan; it is not copied into ordinary tool responses. The short summary starts with the model's
 strategy explanation, omits the title and saved name, and includes capital/cost
-origins plus annualization settings and sampling basis. The assistant presents the
+origins plus annualization settings, sampling basis and the inclusive bar-timestamp
+boundaries of the research interval. The assistant presents the
 short summary and HTML link, ends the turn and waits for the user to review it. Reading the
 artifact does not submit a job. A local path must be made available through the
 client's file/artifact interface when the user is not on the server's machine.

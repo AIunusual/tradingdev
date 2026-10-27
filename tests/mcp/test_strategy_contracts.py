@@ -106,6 +106,12 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     example = sections["example"]
     assert set(example) == {"example_strategy_code", "example_yaml_config"}
     assert yaml.safe_load(example["example_yaml_config"])["random_seed"] == 42
+    research_notes = " ".join(sections["research"]["notes"])
+    assert "start_date <= timestamp <= end_date" in research_notes
+    assert "including both endpoints" in research_notes
+    assert "Date-only values mean 00:00:00 UTC, not the whole final day" in (
+        research_notes
+    )
 
 
 def test_contract_rejects_unknown_sections_and_mismatched_payloads(

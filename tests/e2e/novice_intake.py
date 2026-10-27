@@ -71,7 +71,9 @@ def assert_missing_input_turn(
             f"Research artifacts appeared before the missing choices: {directory}"
         )
     database = paths.root / "tradingdev.sqlite"
-    with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as connection:
+    with closing(
+        sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+    ) as connection:
         assert (
             connection.execute("SELECT COUNT(*) FROM execution_plans").fetchone()[0]
             == 0

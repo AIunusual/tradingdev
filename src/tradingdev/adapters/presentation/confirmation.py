@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from tradingdev.adapters.presentation.html import escape, render_html_document
 
@@ -38,13 +39,18 @@ def render_confirmation_text(document: ConfirmationDocument) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_confirmation_link(html_path: str) -> str:
+    """Provide a directly reusable Markdown link to the exact local HTML path."""
+    return f"[閱讀確認單](<{quote(html_path, safe='/')}>)"
+
+
 def render_confirmation_summary(
     document: ConfirmationDocument, *, mode: Literal["signal", "volume"]
 ) -> str:
     """Keep the chat review short; the HTML retains every setting and limitation."""
     labels = {
         "strategy": {"執行方式"},
-        "market": {"回測商品", "回測 K 線週期", "回測開始", "回測結束"},
+        "market": {"回測商品", "回測 K 線週期", "回測開始", "回測結束", "時間邊界"},
         "execution": {
             "計算方式",
             "單次投入金額",

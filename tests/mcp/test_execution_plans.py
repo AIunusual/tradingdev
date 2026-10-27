@@ -10,8 +10,10 @@ from typing import Any
 import pytest
 from jsonschema import ValidationError, validate
 from mcp import Client
+from tests.e2e.conversation import links_to_file
 from tests.mcp.execution_fixtures import plan_context
 
+from tradingdev.app.contracts.plans import PlanResponse
 from tradingdev.app.preflight_service import PreflightError
 
 
@@ -33,7 +35,7 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
     tmp_path: Path,
     json_arguments: bool,
 ) -> None:
-    context = plan_context(tmp_path)
+    context = plan_context(tmp_path / "研究 (case) 100% ?#")
     if json_arguments:
         context.arguments["presentation"] = json.dumps(
             context.arguments["presentation"]
@@ -48,6 +50,18 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
             assert prepared["success"] and prepared["status"] == "ready", prepared
             assert prepared["preflight"]["manifest_hash"] == prepared["manifest_hash"]
             assert prepared["confirmation_summary"]
+            assert links_to_file(
+                prepared["confirmation_link"], Path(prepared["html_path"])
+            )
+            assert not any(
+                character in prepared["confirmation_link"].split("<", 1)[1][:-2]
+                for character in (" ", "研", "(", ")", "?", "#")
+            )
+            assert "%25" in prepared["confirmation_link"]
+            response = PlanResponse.model_validate(prepared)
+            assert PlanResponse.model_validate_json(response.model_dump_json()) == (
+                response
+            )
             assert "confirmation_text" not in prepared
             assert "<html" in Path(prepared["html_path"]).read_text(encoding="utf-8")
             retained = await _call(

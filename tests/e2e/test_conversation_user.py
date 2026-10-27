@@ -188,6 +188,22 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
 
 
 @pytest.mark.parametrize(
+    "directory",
+    ["with spaces", "繁體中文", "literal%20space", "nested (a(b))", "query?#part"],
+)
+def test_backend_confirmation_link_is_directly_presentable_for_special_paths(
+    tmp_path: Path, directory: str
+) -> None:
+    root = tmp_path / directory
+    context = plan_context(root)
+    user = ObservedPlanUser(MCPWorkspace(root))
+    prepared = _prepare(context)
+    assert prepared.result["confirmation_link"] in review_text(prepared.result)
+    assert "同意" in str(asyncio.run(user(_present(prepared))))
+    assert not context.runner.calls
+
+
+@pytest.mark.parametrize(
     "style",
     [
         "bare",
@@ -199,6 +215,7 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
         "image",
         "empty_label",
         "wrong_destination",
+        "truncated_plan_id",
         "unescaped_space",
     ],
 )
@@ -223,12 +240,16 @@ def test_user_requires_a_clickable_markdown_link_to_this_html(
         "image": f"!{link}",
         "empty_label": f"[](<{path}>)",
         "wrong_destination": f"{path}\n[閱讀確認單](</other/confirmation.html>)",
+        "truncated_plan_id": link.replace(
+            prepared.result["plan_id"], prepared.result["plan_id"][:-1]
+        ),
         "unescaped_space": f"[閱讀確認單]({path})",
     }[style]
     text = prepared.result["confirmation_summary"] + "\n\n" + invalid
     with pytest.raises(AssertionError, match="clickable Markdown link") as error:
         asyncio.run(user(ModelTurn(1, text, [prepared])))
     assert text in "\n".join(error.value.__notes__)
+    assert f"Expected plan HTML path: {path}" in str(error.value)
     assert not user.replies and not context.runner.calls
 
 

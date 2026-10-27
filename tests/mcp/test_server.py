@@ -85,7 +85,16 @@ def test_server_instances_keep_generated_strategies_in_their_workspace(
                 "yaml_config": (
                     "strategy:\n  id: isolated_strategy\n"
                     "  class_name: IsolatedStrategy\n"
+                    "data:\n  source: binance_vision\n  market_type: futures/um\n"
                 ),
+                "research": {
+                    "kind": "new",
+                    "strategy_outline": "Workspace isolation fixture",
+                    "symbol": "BTC/USDT",
+                    "timeframe": "1h",
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-01-08",
+                },
             },
         )
         assert isinstance(saved_result, CallToolResult)
@@ -163,8 +172,10 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     assert "Quote confirmation_summary verbatim" in instructions
     assert "Preserve every label, value, unit and train/test role" in instructions
     assert "answer or clarify and wait" in instructions
-    assert "[閱讀確認單](<FULL_HTML_PATH>)" in instructions
-    assert "exact returned html_path" in instructions
+    assert "Copy confirmation_link verbatim" in instructions
+    assert "its destination against html_path" in instructions
+    assert "do not assemble or edit IDs or paths" in instructions
+    assert 'section="research") before explaining date boundaries' in instructions
     assert "No code block, file:// or invented URI" in instructions
     assert "not a public URL" in instructions
     assert "End the turn after the user can read the HTML" in instructions
@@ -177,12 +188,16 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     ):
         description = " ".join((tools[name].description or "").split())
         assert "confirmation_summary" in description and "verbatim" in description, name
+        assert "confirmation_link" in description, name
         assert "HTML" in description and "end the turn" in description, name
         schema = tools[name].output_schema
         assert schema is not None
-        assert {"plan_id", "confirmation_summary", "html_path"} <= set(
-            schema["$defs"]["PlanResponse"]["required"]
-        )
+        assert {
+            "plan_id",
+            "confirmation_summary",
+            "confirmation_link",
+            "html_path",
+        } <= set(schema["$defs"]["PlanResponse"]["required"])
     decision = " ".join((tools["submit_execution_decision"].description or "").split())
     assert "explicit later decision" in decision
     assert "questions and ambiguous replies are not consent" in decision

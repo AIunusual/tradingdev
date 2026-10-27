@@ -357,7 +357,13 @@ def _market_fields(
         _field("回測 K 線週期", _timeframe(backtest["timeframe"])),
         _field("回測開始", backtest["start_date"]),
         _field("回測結束", backtest["end_date"]),
-        _field("時間基準", "UTC（世界協調時間）", "未附時區的時間依 UTC 解讀。"),
+        _field("時間邊界", "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）"),
+        _field(
+            "時間基準",
+            "UTC（世界協調時間）",
+            "未附時區的時間依 UTC 解讀；純日期代表當日 00:00:00，"
+            "結束日期不自動延伸至當日最後一刻。",
+        ),
         _field("本次行情來源", _source(market["source"])),
         _field("行情商品", market["symbol"], detail=True),
         _field("行情 K 線週期", _timeframe(market["timeframe"]), detail=True),

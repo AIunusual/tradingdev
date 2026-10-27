@@ -96,8 +96,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         inheritance with an explicit generated revision_id.
         Costs belong only in research;
         backtest_overrides changes other execution settings.
-        Present the returned confirmation_summary verbatim and HTML link, end the turn,
-        and wait for a later explicit user decision before submitting this exact plan.
+        Present confirmation_summary verbatim and copy the HTML confirmation_link
+        verbatim; verify its destination against html_path. Then end the turn and
+        wait for a later explicit user decision before submitting this exact plan.
         """
         args = {
             "strategy_id": strategy_id,
@@ -126,7 +127,8 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         Omission keeps the selected configuration.
         Supply human parameter presentation as for prepare_backtest. Program checks
         do not prove training or folds will succeed. Present confirmation_summary
-        verbatim and its HTML link; end the turn and await the user's later decision.
+        verbatim and copy the HTML confirmation_link verbatim; verify its destination
+        against html_path, end the turn and await the user's later decision.
         """
         args = {
             "strategy_id": strategy_id,
@@ -159,8 +161,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         Research covers exactly train_start 00:00 through
         test_end 23:59:59.999999 UTC.
         Use human parameter descriptions. The HTML contains ranges, objective
-        direction, costs and program-check limits. Present its
-        link and verbatim confirmation_summary; end the turn and await a later decision.
+        direction, costs and program-check limits. Present confirmation_summary verbatim
+        and copy the HTML confirmation_link verbatim; verify its destination against
+        html_path, end the turn and await a later decision.
         An approved search has no second worker-side confirmation.
         """
         args = {
@@ -187,7 +190,11 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         )
     )
     def get_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
-        """Read saved confirmation and program-check evidence without rerunning code."""
+        """Read saved confirmation and program-check evidence without rerunning code.
+
+        Copy confirmation_link verbatim to deliver the HTML; its destination is
+        html_path, with special path characters encoded for Markdown.
+        """
         return service.get(plan_id)
 
     @mcp.tool(
