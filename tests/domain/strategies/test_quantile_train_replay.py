@@ -10,7 +10,7 @@ from bar 940.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,7 @@ from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
 )
 
 if TYPE_CHECKING:
-    import xgboost as xgb
+    from numpy.typing import NDArray
 
 _LONG_ONLY = (1.0, 0.0, 0.0, 0.0)
 
@@ -39,7 +39,7 @@ class _RecordingModel:
         self.calls = calls
         self.probabilities = probabilities
 
-    def predict_proba(self, features: np.ndarray) -> np.ndarray:
+    def predict_proba(self, features: NDArray[np.float64]) -> NDArray[np.float64]:
         self.calls.append(len(features))
         probabilities = np.zeros((len(features), 4), dtype=np.float64)
         for column, value in enumerate(self.probabilities):
@@ -139,7 +139,7 @@ def _fitted_strategy(
     strategy._feature_eng = feature_eng  # noqa: SLF001
     strategy._feature_names = feature_names  # noqa: SLF001
     strategy._best_horizon = horizon  # noqa: SLF001
-    strategy._regime_model = cast("xgb.XGBClassifier", model)  # noqa: SLF001
+    strategy._regime_model = model  # noqa: SLF001
     return strategy
 
 
@@ -363,3 +363,81 @@ def test_retraining_waits_for_mature_observations(
     assert len(signals) == len(large_ohlcv_df)
     assert sum(calls) == 970
     assert [len(frame) for frame in trained] == [170, 370, 570]
+
+
+class _SequenceModel:
+    """Return a specified sequence across prediction chunks."""
+
+    def __init__(self, probabilities: NDArray[np.float64]) -> None:
+        self.probabilities = probabilities
+        self.offset = 0
+
+    def predict_proba(self, features: NDArray[np.float64]) -> NDArray[np.float64]:
+        start = self.offset
+        self.offset += len(features)
+        return self.probabilities[start : self.offset]
+
+
+@pytest.mark.parametrize("gap_start,gap_length", [(30, 1), (59, 1), (60, 60)])
+def test_missing_features_flatten_before_rechecking_entry_conditions(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    gap_start: int,
+    gap_length: int,
+) -> None:
+    """A flat candle, chunk tail, or wholly unready chunk cannot retain a position."""
+    history = large_ohlcv_df.iloc[:120]
+    scored = large_ohlcv_df.iloc[120:300].copy()
+    missing_rows = scored.index[gap_start : gap_start + gap_length]
+    for column in ("open", "high", "low"):
+        scored.loc[missing_rows, column] = scored.loc[missing_rows, "close"]
+    original = scored.copy(deep=True)
+    strategy = _fitted_strategy(
+        history,
+        [],
+        monkeypatch,
+        retrain_interval=60,
+        horizon=1000,
+        min_holding_bars=1,
+        strategy_sl=0.0,
+        dynamic_sizing=False,
+        train_window=1,
+    )
+    probabilities = np.zeros((len(scored) - gap_length, 4), dtype=np.float64)
+    probabilities[:gap_start, 0] = 1.0
+    probabilities[gap_start:, 3] = 1.0
+    model = _SequenceModel(probabilities)
+    strategy._regime_model = model
+
+    signals = strategy.generate_signals(scored)
+
+    assert model.offset == len(probabilities)
+    assert (signals["signal"].iloc[:gap_start] == 1.0).all()
+    assert (signals["signal"].iloc[gap_start:] == 0.0).all()
+    assert (signals["size_weight"].iloc[gap_start:] == 1.0).all()
+    pd.testing.assert_frame_equal(scored, original)
+    pd.testing.assert_frame_equal(signals[scored.columns], scored)
+
+
+@pytest.mark.parametrize("invalid", ["columns", "rows", "nan", "infinity"])
+def test_malformed_model_probabilities_are_rejected(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    history = large_ohlcv_df.iloc[:120]
+    scored = large_ohlcv_df.iloc[120:180]
+    strategy = _fitted_strategy(
+        history, [], monkeypatch, retrain_interval=60, train_window=1
+    )
+    probabilities = np.zeros((len(scored), 4), dtype=np.float64)
+    if invalid == "columns":
+        probabilities = probabilities[:, :3]
+    elif invalid == "rows":
+        probabilities = probabilities[:-1]
+    else:
+        probabilities[0, 0] = np.nan if invalid == "nan" else np.inf
+    strategy._regime_model = _SequenceModel(probabilities)
+
+    with pytest.raises(ValueError, match="Regime classifier probabilities"):
+        strategy.generate_signals(scored)

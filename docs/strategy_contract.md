@@ -210,10 +210,10 @@ training job, or using the separate ML `train_model` tool does not prepare this
 strategy instance. Other preparation errors retain their own codes.
 
 As a final strategy-level guard, bundled `QuantileStrategy.generate_signals()`
-raises `RuntimeError` when
-its regime model or feature engineer is absent. Its `fit(train_df)` requires an
-injected backtest engine; calling it without one skips training and does not
-satisfy model readiness. This guard checks readiness, not the correctness of all
+raises `RuntimeError` when its regime model, feature engineer, or training history
+is absent. Its `fit(train_df)` requires an injected backtest engine; calling it
+without one skips training and does not satisfy model readiness. This guard
+checks readiness, not the correctness of all
 training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
 
@@ -227,9 +227,19 @@ identities are rejected rather than assuming the training frame precedes scoring
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 
-Predictions are mapped back by source row: rolling and Wilder-smoothed
-indicators drop every later row of a window after a gap, so a bar without
-features leaves its own row empty rather than shifting the signals after it.
+Predictions are mapped back by source row. Feature warm-up and missing indicator
+values may remove rows; recursive indicators can also leave subsequent rows
+unavailable. A bar without
+features emits `signal=0` and resets the position, holding count, entry price,
+and size weight. Once features become available, entry conditions are evaluated
+again. A single state machine processes every input row, including unscorable
+rows and chunk boundaries; output length and index match the input.
+Parameter-search evaluation uses the same gap handling on the full source frame.
+Its scoring features omit targets, so a missing future label does not prevent
+prediction on an otherwise usable tail bar.
+Model probability arrays must contain one finite four-class vector per scored
+feature row; malformed model output is rejected instead of treated as missing
+features. Float32 and float64 model outputs are normalized to float64.
 `QuantileFeatureEngineer.transform()` always preserves surviving input index
 labels; callers that need positional mapping supply a positional index.
 

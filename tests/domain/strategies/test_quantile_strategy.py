@@ -7,7 +7,7 @@ later bars. The strategy now refuses the call instead.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -20,7 +20,7 @@ from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
 
 if TYPE_CHECKING:
     import pandas as pd
-    import xgboost as xgb
+    from numpy.typing import NDArray
 
 
 def _untrained_strategy() -> quantile.QuantileStrategy:
@@ -54,7 +54,7 @@ def test_untrained_call_never_trains_on_the_frame_it_evaluates(
     class _RecordingTrainer:
         """Stands in for the classifier so the old flow could still finish."""
 
-        def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        def predict_proba(self, features: NDArray[np.float64]) -> NDArray[np.float64]:
             probabilities = np.zeros((len(features), 4), dtype=np.float64)
             probabilities[:, 0] = 1.0
             return probabilities
@@ -105,10 +105,12 @@ def test_fit_without_an_engine_still_counts_as_untrained(
         strategy.generate_signals(sample_ohlcv_df)
 
 
-def test_signals_are_generated_once_a_model_exists(
+@pytest.mark.parametrize("missing_state", ["model", "features", "history", None])
+def test_model_feature_engineer_and_history_are_required(
     large_ohlcv_df: pd.DataFrame,
+    missing_state: str | None,
 ) -> None:
-    """Guard against over-rejecting: a trained strategy still produces signals."""
+    """Only the complete fitted state can produce full-length signals."""
     feature_eng = QuantileFeatureEngineer(horizon=3)
     feature_eng.transform(large_ohlcv_df, include_target=True, target_type="regime")
     feature_names = [
@@ -120,7 +122,7 @@ def test_signals_are_generated_once_a_model_exists(
     class _FixedProbabilities:
         """Stand-in classifier: long-only regime dominates every bar."""
 
-        def predict_proba(self, features: np.ndarray) -> np.ndarray:
+        def predict_proba(self, features: NDArray[np.float64]) -> NDArray[np.float64]:
             probabilities = np.zeros((len(features), 4), dtype=np.float64)
             probabilities[:, 0] = 0.6
             probabilities[:, 2] = 0.1
@@ -128,18 +130,22 @@ def test_signals_are_generated_once_a_model_exists(
             return probabilities
 
     strategy = quantile.QuantileStrategy(
-        config=QuantileStrategyConfig(horizon=3, min_entry_edge=0.0015)
+        config=QuantileStrategyConfig(horizon=3, min_entry_edge=0.0015, train_window=1)
     )
-    strategy._feature_eng = feature_eng  # noqa: SLF001
+    strategy._feature_eng = None if missing_state == "features" else feature_eng
     strategy._feature_names = feature_names  # noqa: SLF001
     strategy._best_horizon = 3  # noqa: SLF001
-    strategy._regime_model = cast(  # noqa: SLF001
-        "xgb.XGBClassifier", _FixedProbabilities()
-    )
+    strategy._regime_model = None if missing_state == "model" else _FixedProbabilities()
+    strategy._train_df = None if missing_state == "history" else large_ohlcv_df.copy()
+    if missing_state is not None:
+        with pytest.raises(RuntimeError, match="call fit"):
+            strategy.generate_signals(large_ohlcv_df)
+        return
 
     signals = strategy.generate_signals(large_ohlcv_df)
 
     assert "signal" in signals.columns
     assert "size_weight" in signals.columns
-    assert len(signals) > 0
+    assert len(signals) == len(large_ohlcv_df)
+    assert signals.index.equals(large_ohlcv_df.index)
     assert set(signals["signal"].unique()).issubset({-1.0, 0.0, 1.0})

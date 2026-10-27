@@ -14,7 +14,7 @@ where direction is a coin flip.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -53,6 +53,31 @@ _BOTH = 2
 _NEITHER = 3
 
 
+class _RegimePredictor(Protocol):
+    """Classifier interface needed by regime scoring."""
+
+    def predict_proba(
+        self, features: NDArray[np.float64], /
+    ) -> NDArray[np.float32] | NDArray[np.float64]:
+        """Return one four-class probability vector per feature row."""
+        ...
+
+
+def _predict_probabilities(
+    model: _RegimePredictor, features: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    """Normalize model precision and reject malformed predictions."""
+    probabilities = np.asarray(model.predict_proba(features), dtype=np.float64)
+    if probabilities.shape != (len(features), 4):
+        raise ValueError(
+            "Regime classifier probabilities must have shape "
+            f"({len(features)}, 4); got {probabilities.shape}"
+        )
+    if not np.isfinite(probabilities).all():
+        raise ValueError("Regime classifier probabilities must be finite")
+    return probabilities
+
+
 def _timestamps(frame: pd.DataFrame) -> pd.DatetimeIndex:
     """Require ordered, unique time identities before combining scoring history."""
     if "timestamp" in frame.columns:
@@ -76,7 +101,7 @@ def _train_regime_classifier(
     learning_rate: float = 0.1,
     subsample: float = 0.7,
     random_seed: int = 42,
-) -> xgb.XGBClassifier:
+) -> _RegimePredictor:
     """Train a 4-class regime classifier.
 
     Ensures all 4 classes are present by adding a tiny synthetic
@@ -128,6 +153,7 @@ def _run_regime_state_machine(
     AND P(both) < max_p_both (avoid coin-flip regimes),
     AND P(neither) < max_p_neither (avoid dead markets).
     Size: proportional to P(signal) - P(both).
+    Missing probability rows flatten the position and reset all holding state.
 
     Returns:
         Tuple of (signals, size_weights).
@@ -140,8 +166,16 @@ def _run_regime_state_machine(
     bars_in_pos = 0
     entry_price = 0.0
     current_weight = 1.0
+    ready = np.isfinite(proba).all(axis=1)
 
     for i in range(n):
+        if not ready[i]:
+            state = 0
+            bars_in_pos = 0
+            entry_price = 0.0
+            current_weight = 1.0
+            continue
+
         p_lo = proba[i, _LONG_ONLY]
         p_so = proba[i, _SHORT_ONLY]
         p_both = proba[i, _BOTH]
@@ -209,18 +243,21 @@ def _run_regime_state_machine(
 def _evaluate_regime_combo(
     df: pd.DataFrame,
     feature_names: list[str],
-    model: xgb.XGBClassifier,
+    model: _RegimePredictor,
     config: QuantileStrategyConfig,
     params: _ParamTuple,
     engine: BaseBacktestEngine,
-    target: str,
+    source_frame: pd.DataFrame,
 ) -> tuple[_ParamTuple, dict[str, Any]]:
-    """Evaluate a parameter combination for grid search."""
+    """Evaluate a parameter combination on every source bar, including gaps."""
     horizon, min_confidence, edge_for_full_size = params
 
     x: NDArray[np.float64] = df[feature_names].to_numpy(dtype=np.float64)
-    proba = model.predict_proba(x)
-    close_arr: NDArray[np.float64] = df["close"].to_numpy(dtype=np.float64)
+    proba: NDArray[np.float64] = np.full((len(source_frame), 4), np.nan)
+    positions = df.index.to_numpy(dtype=np.intp)
+    if len(df):
+        proba[positions] = _predict_probabilities(model, x)
+    close_arr: NDArray[np.float64] = source_frame["close"].to_numpy(dtype=np.float64)
 
     dyn = config.dynamic_sizing
     min_weight = config.min_position_size / config.position_size if dyn else 0.0
@@ -239,7 +276,7 @@ def _evaluate_regime_combo(
         edge_for_full_size=edge_for_full_size,
     )
 
-    sig_df = df.copy()
+    sig_df = source_frame.copy()
     sig_df["signal"] = signals
     sig_df["size_weight"] = size_weights
 
@@ -269,7 +306,7 @@ class QuantileStrategy(BaseStrategy):
         self._parallel_config = parallel_config
 
         self._feature_eng: QuantileFeatureEngineer | None = None
-        self._regime_model: xgb.XGBClassifier | None = None
+        self._regime_model: _RegimePredictor | None = None
         self._feature_names: list[str] = []
 
         # Best params from fit()
@@ -287,7 +324,7 @@ class QuantileStrategy(BaseStrategy):
             return
 
         cfg = self._config
-        df = df.assign(timestamp=_timestamps(df))
+        df = df.assign(timestamp=_timestamps(df)).reset_index(drop=True)
         self._train_df = df.copy()
 
         horizons = cfg.horizon_candidates or [cfg.horizon]
@@ -306,7 +343,7 @@ class QuantileStrategy(BaseStrategy):
         direction = metric_direction(target)
         min_mp = cfg.min_monthly_pnl
 
-        best_model: xgb.XGBClassifier | None = None
+        best_model: _RegimePredictor | None = None
         best_fe: QuantileFeatureEngineer | None = None
         best_fnames: list[str] = []
 
@@ -336,6 +373,9 @@ class QuantileStrategy(BaseStrategy):
                 subsample=cfg.subsample,
                 random_seed=cfg.random_seed,
             )
+            # Evaluation does not need labels: immature tail observations can
+            # still be scored, while feature gaps retain their source positions.
+            scoring_feat = fe.transform(df, include_target=False)
 
             # Log class distribution
             y: NDArray[np.int_] = feat_df["target_regime"].to_numpy(dtype=np.int_)
@@ -378,13 +418,13 @@ class QuantileStrategy(BaseStrategy):
                 n_jobs=n_jobs,
             )(
                 delayed(_evaluate_regime_combo)(
-                    feat_df,
+                    scoring_feat,
                     fnames,
                     regime_model,
                     cfg,
                     combo,
                     self._backtest_engine,
-                    target,
+                    df,
                 )
                 for combo in grid
             )
@@ -448,16 +488,17 @@ class QuantileStrategy(BaseStrategy):
         """
         cfg = self._config
 
-        if self._regime_model is None or self._feature_eng is None:
+        if (
+            self._regime_model is None
+            or self._feature_eng is None
+            or self._train_df is None
+        ):
             msg = (
                 "QuantileStrategy has no trained regime model: call fit(train_df) "
                 "with a backtest engine before generate_signals(). Training on the "
                 "frame being evaluated would let earlier signals use later data."
             )
             raise RuntimeError(msg)
-
-        if self._train_df is None:
-            return self._generate_signals_with_model(df)
 
         # --- Chunked rolling retrain ---
         horizon = self._best_horizon
@@ -486,17 +527,10 @@ class QuantileStrategy(BaseStrategy):
         test_len = len(df)
 
         chunk_starts = list(range(0, test_len, retrain_interval))
-        all_signals: NDArray[np.float64] = np.zeros(test_len, dtype=np.float64)
-        all_weights: NDArray[np.float64] = np.ones(test_len, dtype=np.float64)
+        all_proba: NDArray[np.float64] = np.full((test_len, 4), np.nan)
 
         dyn = cfg.dynamic_sizing
         min_weight = cfg.min_position_size / cfg.position_size if dyn else 0.0
-
-        # State carried across chunks
-        sm_state = 0
-        sm_bars_in_pos = 0
-        sm_entry_price = 0.0
-        sm_current_weight = 1.0
 
         for ci, chunk_start in enumerate(chunk_starts):
             chunk_end = min(chunk_start + retrain_interval, test_len)
@@ -555,118 +589,12 @@ class QuantileStrategy(BaseStrategy):
                 continue
 
             x: NDArray[np.float64] = predict_feat[fnames].to_numpy(dtype=np.float64)
-            proba = regime_model.predict_proba(x)
-            chunk_close: NDArray[np.float64] = predict_feat["close"].to_numpy(
-                dtype=np.float64,
-            )
-
-            # Run state machine for this chunk
-            chunk_len = len(proba)
-            for j in range(chunk_len):
-                out_idx = chunk_start + int(positions[j])
-                if out_idx >= test_len:
-                    break
-
-                p_lo = proba[j, _LONG_ONLY]
-                p_so = proba[j, _SHORT_ONLY]
-                p_both = proba[j, _BOTH]
-                p_neither = proba[j, _NEITHER]
-                c = chunk_close[j]
-
-                if sm_state == 0:
-                    # Filter: skip dangerous or dead regimes
-                    if p_both > cfg.max_p_both or p_neither > cfg.max_p_neither:
-                        all_signals[out_idx] = 0.0
-                        continue
-
-                    long_edge = p_lo - p_both
-                    short_edge = p_so - p_both
-                    mc = self._best_min_confidence
-
-                    want_long = p_lo > mc and long_edge > 0
-                    want_short = p_so > mc and short_edge > 0
-
-                    if want_long and (not want_short or long_edge > short_edge):
-                        sm_state = 1
-                        sm_bars_in_pos = 0
-                        sm_entry_price = c
-                        if dyn and self._best_edge_for_full_size > 0:
-                            raw_w = long_edge / self._best_edge_for_full_size
-                            sm_current_weight = min(
-                                max(raw_w, min_weight),
-                                1.0,
-                            )
-                        else:
-                            sm_current_weight = 1.0
-                        all_weights[out_idx] = sm_current_weight
-                    elif want_short:
-                        sm_state = -1
-                        sm_bars_in_pos = 0
-                        sm_entry_price = c
-                        if dyn and self._best_edge_for_full_size > 0:
-                            raw_w = short_edge / self._best_edge_for_full_size
-                            sm_current_weight = min(
-                                max(raw_w, min_weight),
-                                1.0,
-                            )
-                        else:
-                            sm_current_weight = 1.0
-                        all_weights[out_idx] = sm_current_weight
-                else:
-                    sm_bars_in_pos += 1
-                    all_weights[out_idx] = sm_current_weight
-
-                    if sm_bars_in_pos < cfg.min_holding_bars:
-                        all_signals[out_idx] = float(sm_state)
-                        continue
-
-                    if sm_entry_price > 0 and cfg.strategy_sl > 0:
-                        pnl_pct = sm_state * (c - sm_entry_price) / sm_entry_price
-                        if pnl_pct < -cfg.strategy_sl:
-                            sm_state = 0
-                            all_signals[out_idx] = 0.0
-                            continue
-
-                    if sm_bars_in_pos >= horizon:
-                        sm_state = 0
-                        all_signals[out_idx] = 0.0
-                        continue
-
-                all_signals[out_idx] = float(sm_state)
-
-        result = df.copy()
-        if len(all_signals) < len(df):
-            pad = len(df) - len(all_signals)
-            all_signals = np.concatenate([np.zeros(pad), all_signals])
-            all_weights = np.concatenate([np.ones(pad), all_weights])
-
-        result["signal"] = all_signals[: len(df)]
-        result["size_weight"] = all_weights[: len(df)]
-        return result
-
-    def _generate_signals_with_model(
-        self,
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """Generate signals using the current fixed model."""
-        cfg = self._config
-        assert self._feature_eng is not None  # noqa: S101
-        assert self._regime_model is not None  # noqa: S101
-
-        feat_df = self._feature_eng.transform(df, include_target=False)
-        x: NDArray[np.float64] = feat_df[self._feature_names].to_numpy(
-            dtype=np.float64,
-        )
-        proba = self._regime_model.predict_proba(x)
-        close_arr: NDArray[np.float64] = feat_df["close"].to_numpy(dtype=np.float64)
-
-        dyn = cfg.dynamic_sizing
-        min_weight = cfg.min_position_size / cfg.position_size if dyn else 0.0
+            all_proba[chunk_start + positions] = _predict_probabilities(regime_model, x)
 
         signals, size_weights = _run_regime_state_machine(
-            close=close_arr,
-            proba=proba,
-            horizon=self._best_horizon,
+            close=df["close"].to_numpy(dtype=np.float64),
+            proba=all_proba,
+            horizon=horizon,
             min_holding_bars=cfg.min_holding_bars,
             min_confidence=self._best_min_confidence,
             max_p_both=cfg.max_p_both,
@@ -676,11 +604,7 @@ class QuantileStrategy(BaseStrategy):
             min_weight=min_weight,
             edge_for_full_size=self._best_edge_for_full_size,
         )
-
-        result = feat_df.copy()
-        result["signal"] = signals
-        result["size_weight"] = size_weights
-        return result
+        return df.assign(signal=signals, size_weight=size_weights)
 
     def get_parameters(self) -> dict[str, Any]:
         """Return strategy parameters."""
