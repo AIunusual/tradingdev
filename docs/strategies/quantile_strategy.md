@@ -45,6 +45,13 @@ one direction has a clear edge.
 - Dynamic sizing scales exposure by directional edge when enabled.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
+Warm-up or unavailable features produce a flat signal and reset the position,
+even before the minimum holding period. When features return, a new entry must
+pass the entry conditions again. Indicator gaps can also make subsequent bars
+unavailable, so missing data may cause extra exits or periods without exposure.
+See the [scoring contract](../strategy_contract.md#training-before-scoring) for
+the alignment and state-handling requirements.
+
 ## Running
 
 A simple backtest cannot train this strategy. Preparation rejects that mode
@@ -69,6 +76,13 @@ A config that declares `validation` cannot be run as a simple backtest, and
 `--walk-forward` against a config without it fails with `Config has no
 validation section for walk-forward.`
 
+Each fold reports metrics for its test window and for its training window. The
+training-window figures are in-sample: the strategy is fitted on that window and
+then scores the same bars, so they describe fit rather than out-of-sample
+performance. Only the test-window metrics are held out. See the
+[training contract](../strategy_contract.md#training-before-scoring) for the
+scoring requirements.
+
 For MCP, ask the assistant to use walk-forward validation. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
 If the assistant tries a simple backtest or optimization, preparation returns
@@ -79,6 +93,11 @@ still present a successful replacement plan for your confirmation. See the
 failure semantics.
 
 ## Data Requirements
+
+Training and scoring inputs need a `timestamp` column or `DatetimeIndex` with
+non-missing, unique, strictly increasing times. Times are normalized to UTC;
+values without a timezone are interpreted as UTC. Invalid time identities are
+rejected because their history cannot be ordered reliably.
 
 The config declares OHLCV plus two feature sources:
 

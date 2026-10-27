@@ -2,12 +2,34 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
 
 
 class TestQuantileFeatureEngineer:
+    @pytest.mark.parametrize("datetime_index", [False, True])
+    def test_transform_preserves_source_rows_after_warmup_and_gaps(
+        self, large_ohlcv_df: pd.DataFrame, datetime_index: bool
+    ) -> None:
+        frame = large_ohlcv_df.iloc[:120].copy()
+        frame.loc[60, "open"] = np.nan
+        frame.index = (
+            pd.DatetimeIndex(frame["timestamp"])
+            if datetime_index
+            else pd.Index(np.arange(len(frame)) * 3 + 7)
+        )
+        original = frame.copy(deep=True)
+
+        result = QuantileFeatureEngineer().transform(frame, include_target=False)
+
+        assert result.index[0] == frame.index[30]
+        assert frame.index[60] not in result.index
+        assert frame.index[61] in result.index
+        pd.testing.assert_frame_equal(result[frame.columns], frame.loc[result.index])
+        pd.testing.assert_frame_equal(frame, original)
+
     def test_transform_produces_features_without_nan(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
