@@ -217,6 +217,13 @@ JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載�
 及 ExecutionPlanService 保留，MCP adapter 再映射為 `next_tool`。這個回覆不會建立
 可執行計畫，也不免除後續程式檢查與使用者確認。
 
+`BacktestService.load_execution_dataset()` 可在正式執行階段載入一次完整行情與特徵，
+封存為不可變的 Parquet bytes；`run_manifest(..., loaded_dataset=...)` 每次重新解碼，
+使用獨立策略、引擎與該次隨機上下文。快照綁定來源設定、標的、頻率與期間，
+內容雜湊識別實際資料；原 `source_dataset_id` 仍只描述資料請求。不支援的型別轉換
+直接失敗，不靜默改變資料。這個 API 不屬於確認前的程式檢查；未提供快照的單次
+回測仍循原資料載入流程。程序隔離與任意策略全域狀態安全不由此 API 保證。
+
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
 共用建立 job、啟動 worker 與啟動失敗紀錄。提交已準備的內容時不重新解析 YAML，
