@@ -947,8 +947,10 @@ and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.
 Each run stores its own fixed parameters and constructor settings in its manifest.
 `prepare_comparison` instead accepts `candidates`: one to eight distinct ordered
-sets, each with `label`, `rationale` and a `parameters` override mapping. It has no
-global `parameters` argument. Research, selected revision, data, costs and seed
+sets, each with `label`, `rationale` and a `parameters` override mapping. Labels
+are stripped of leading and trailing whitespace and must remain nonempty and
+unique across the comparison; outer whitespace cannot distinguish two labels.
+It has no global `parameters` argument. Research, selected revision, data, costs and seed
 are shared; each candidate freezes its complete effective constructor. All
 candidates pass the two synthetic contract fixtures before the whole bundle is
 presented for one approval. After approval, they use fresh strategies/engines and

@@ -168,9 +168,16 @@ rest of the temporary workspace after verified cleanup.
 Cancellation of an active job without a complete control identity fails without
 signalling or claiming that the process stopped. A queued job that has not started
 a process can be cancelled directly. Status checks mark a started job failed when
-its supervisor identity is missing or no longer matches; the first response
-includes the same error persisted in the database. Spawn failures also persist
-`failed`, an explanatory error and `ended_at` before propagating the exception.
+its supervisor identity is missing or no longer matches, with a comparison-specific
+exception: comparison status checks must first confirm worker cleanup. If cleanup
+cannot be verified, they retain the active job and candidate states and return
+`detail_error.code = worker_cleanup_failed`, rather than marking the job failed.
+Explicit cancellation likewise preserves those states on cleanup failure and
+returns `code = worker_cleanup_failed`; missing control identity instead returns
+`worker_identity_unavailable`. When a status check does mark a job failed, its
+first response includes the same error persisted in the database. Spawn failures
+also persist `failed`, an explanatory error and `ended_at` before propagating the
+exception.
 
 ## ML Research Artifacts
 
