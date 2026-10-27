@@ -194,7 +194,6 @@ def verify_comparison_delivery(
         final.text,
         job_id=job_id,
         run_ids=run_ids,
-        labels=[candidate.label for candidate in saved.candidates],
     )
     assert report_call.arguments.get("commentary"), (
         "Report requires explanatory commentary"
@@ -230,13 +229,21 @@ def verify_comparison_delivery(
     registered = store.get_artifact(report["artifact_id"])
     assert registered is not None and registered["path"] == str(report_path)
     assert registered["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
-    print("[comparison] Final delivery for semantic review:\n" + final.text, flush=True)
+    print(
+        "[comparison] Manual semantic review required: verify every candidate's "
+        "metric attribution, success/failure wording, limitations and detail "
+        "navigation against the saved evidence. Identity checks do not prove prose "
+        "correctness.\nFinal delivery:\n" + final.text,
+        flush=True,
+    )
 
 
-def assert_comparison_references(
-    text: str, *, job_id: str, run_ids: list[str], labels: list[str]
-) -> None:
-    """Locate every result by child IDs or the parent plus its exact row labels."""
+def assert_comparison_references(text: str, *, job_id: str, run_ids: list[str]) -> None:
+    """Locate saved results by all child IDs or their unique comparison parent.
+
+    Candidate wording may be paraphrased. Its correspondence to metrics, outcome
+    states and navigation instructions requires semantic review of the final prose.
+    """
     visible = visible_text(text)
 
     def mentions(value: str) -> bool:
@@ -248,10 +255,10 @@ def assert_comparison_references(
         )
 
     child_references = all(mentions(run_id) for run_id in run_ids)
-    parent_references = mentions(job_id) and all(mentions(label) for label in labels)
+    parent_references = mentions(job_id)
     assert child_references or parent_references, (
         "Final reply must identify every result using all child run IDs, or the "
-        "exact comparison job ID and every candidate label"
+        "exact comparison job ID"
     )
     assert mentions("full"), "Final reply must identify the results' full scope"
 
@@ -373,31 +380,29 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
     [
         "結果：parent_candidate_1、parent_candidate_2，兩組都是 full scope。",
         "比較工作：`parent`，K=9 與 K=14 的結果皆為 `full` scope。",
+        "比較工作：parent，full scope；較短與較長週期分別列在報告中。",
+        "比較工作：parent，full scope；完整報告保留各組設定及結果。",
         "| 比較工作 | 候選 | 範圍 |\n|---|---|---|\n"
         "| parent | K=9 | full |\n| parent | K=14 | full |",
     ],
 )
-def test_comparison_references_accept_child_ids_or_parent_and_all_labels(
+def test_comparison_references_accept_child_ids_or_parent_without_exact_labels(
     text: str,
 ) -> None:
     assert_comparison_references(
         text,
         job_id="parent",
         run_ids=["parent_candidate_1", "parent_candidate_2"],
-        labels=["K=9", "K=14"],
     )
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "比較工作：parent，K=9，full scope。",  # Missing one candidate.
         "比較工作：another_parent，K=9、K=14，full scope。",
-        "比較工作：parent，full scope。",  # Parent alone is not enough.
         "比較工作：parent，K=9、K=14。",  # Missing scope.
         "結果：parent_candidate_1、parent_candidate_2。",  # Old path needs scope too.
         "結果：parent_candidate_1，full scope。",  # Partial child selection.
-        "比較工作：parent，K=90、K=14，full scope。",  # Label prefix is not identity.
         "比較工作：parent_other，K=9、K=14，full scope。",
         "[閱讀報告](</parent/K=9/K=14/full>)",  # Hidden URL values are not prose.
     ],
@@ -410,5 +415,4 @@ def test_comparison_references_reject_missing_wrong_or_hidden_identity(
             text,
             job_id="parent",
             run_ids=["parent_candidate_1", "parent_candidate_2"],
-            labels=["K=9", "K=14"],
         )

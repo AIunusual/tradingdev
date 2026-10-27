@@ -1148,10 +1148,13 @@ successful runs still produce a report. The report identity includes the bundle,
 ledger, verified snapshot/receipt and successful child artifacts. A failed or
 cancelled job with only `not_run` candidates may have no snapshot if loading failed
 before publication; missing evidence for any attempted candidate is an error.
-Final conversational delivery may identify the comparison by its parent job ID,
-every candidate's label and result scopes, with the report link and detail-view
-instructions. Individual child run IDs remain in the report; repeating all of
-them in conversation is optional. Single-run delivery still identifies its run ID.
+Final conversational delivery may identify the complete comparison by its exact
+parent job ID and result scopes, with the report link and detail-view instructions.
+Interpret every candidate using readable parameter names; exact internal labels
+and child run IDs remain in the report and need not be repeated in conversation.
+The parent's binding and report completeness are mechanically checked; natural
+language completeness, parameter/metric correspondence and navigation wording
+also require semantic review. Single-run delivery still identifies its run ID.
 For either selector, omitted/null sections select standard;
 an explicit ordered list chooses visible sections and their order within the detail
 view. When selected, `overview` always belongs to the first navigation level.

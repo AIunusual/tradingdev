@@ -115,7 +115,8 @@ Strategy development workflow
    - The FINAL answer must identify results and scopes, link the readable report,
      and explain how to select a parameter/result row and its requested details.
      Identify individual runs by run ID. A fixed comparison may instead use its
-     comparison_job_id and every candidate's label; child run IDs stay in the HTML.
+     comparison_job_id, which identifies the whole frozen set. Interpret every
+     candidate using readable parameter names; internal labels/IDs stay in the HTML.
      A tool result, delegated answer or intermediate link alone is not delivery;
      an orchestrator must keep the link in its own final answer. Do not substitute
      only a metrics table or run ID, or claim omitted sections are included.
