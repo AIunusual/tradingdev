@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 REPORT_SCHEMA_VERSION = 2
-REPORT_TEMPLATE_VERSION = "17"
+REPORT_TEMPLATE_VERSION = "18"
 SCOPED_REPORT_SECTIONS = frozenset(
     {"settings", "metrics", "equity", "ledger", "trades"}
 )
