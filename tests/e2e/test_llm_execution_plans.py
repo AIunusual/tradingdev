@@ -10,6 +10,7 @@ external market-data access or a real human interface.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -25,6 +26,10 @@ from tests.e2e.conversation_user import ObservedPlanUser, review_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
+from tests.e2e.workflow_research import (
+    assert_research_matches_config,
+    research_values,
+)
 from tests.integration.execution_fixtures import execution_options
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.research_fixtures import research_for_config
@@ -188,8 +193,68 @@ def _successful(calls: list[ToolCall], name: str) -> list[tuple[int, ToolCall]]:
     ]
 
 
+def _assert_selected_research(
+    calls: list[ToolCall],
+    prepare_index: int,
+    approval: ObservedPlanUser,
+    revision_id: str | None,
+) -> None:
+    """Bind reused values to the actual fixture revision, not the prepared request."""
+    assert isinstance(revision_id, str) and revision_id
+    directory = (
+        approval.workspace.workspace
+        / "generated_strategies"
+        / _WF_STRATEGY
+        / "revisions"
+        / revision_id
+    )
+    config_text = (directory / "config.yaml").read_text()
+    metadata = json.loads((directory / "metadata.json").read_text())
+    assert metadata["strategy_id"] == _WF_STRATEGY
+    assert metadata["revision_id"] == revision_id
+    assert hashlib.sha256(config_text.encode()).hexdigest() == metadata["config_hash"]
+    assert any(
+        index < prepare_index
+        and call.arguments.get("strategy_id") == _WF_STRATEGY
+        and call.result.get("strategy_id") == _WF_STRATEGY
+        and call.result.get("revision_id") == revision_id
+        and call.result.get("yaml_config") == config_text
+        for index, call in _successful(calls, "get_strategy")
+    ), "The model must read the selected revision's exact saved configuration"
+    selected_config = yaml.safe_load(config_text)
+    expected = research_values(selected_config, context="Selected revision YAML")
+    for phase in ("validation", "dry_run"):
+        checked = metadata[phase]
+        assert checked["success"] and checked["revision_id"] == revision_id
+        assert (
+            research_values(checked.get("effective_config"), context=phase) == expected
+        ), "Selected source conflicts with its saved validation evidence"
+    if len(approval.plans) > 1:
+        selected_config["backtest"]["fees"] = approval.revised_fees
+        assert calls[prepare_index].arguments["research"].get("fees") == (
+            approval.revised_fees
+        ), "The revised request must explicitly include the authorized fee change"
+        expected["fees"] = approval.revised_fees
+    assert_research_matches_config(
+        calls[prepare_index].arguments.get("research"), selected_config
+    )
+    config = approval.plans[-1].manifest.config_copy()
+    assert research_values(config, context="Prepared manifest") == expected, (
+        "Prepared research settings differ from the selected source and user decision"
+    )
+    assert config["research"]["selected_revision"]["revision_id"] == revision_id
+    assert (
+        config["research"]["selected_revision"]["config_hash"]
+        == (metadata["config_hash"])
+    )
+
+
 def _assert_evidence(
-    calls: list[ToolCall], kind: PlanKind, approval: ObservedPlanUser
+    calls: list[ToolCall],
+    kind: PlanKind,
+    approval: ObservedPlanUser,
+    *,
+    selected_revision_id: str | None,
 ) -> None:
     calls = effective_workflow_calls(calls)
     approval.assert_complete()
@@ -215,11 +280,18 @@ def _assert_evidence(
     assert prepare_call.result["confirmation_summary"]
     assert prepare_call.result["artifact_id"]
     revision_id = manifest.config_copy()["strategy"].get("revision_id")
+    assert revision_id == selected_revision_id, (
+        "Execution must use the fixture's selected immutable revision"
+    )
     expected_arguments = _arguments(kind, revision_id)
     if len(approval.plans) > 1:
         expected_arguments["research"]["fees"] = approval.revised_fees
     for name, value in expected_arguments.items():
+        if name == "research" and kind == "walk_forward":
+            continue
         assert prepare_call.arguments.get(name) == value
+    if kind == "walk_forward":
+        _assert_selected_research(calls, prepare_index, approval, selected_revision_id)
     assert plan.preflight.schema_version == 2
     assert {
         "configuration",
@@ -443,17 +515,23 @@ def test_execution_plan_live_fixtures_without_model(kind: PlanKind) -> None:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace)
 
-        async def run() -> list[ToolCall]:
+        async def run() -> tuple[list[ToolCall], str | None]:
             async with workspace.connect() as client:
                 revision_id = (
                     await _seed_walk_forward(client) if kind == "walk_forward" else None
                 )
-                return await _direct_workflow(client, kind, revision_id, approval)
+                calls = await _direct_workflow(client, kind, revision_id, approval)
+                return calls, revision_id
 
-        calls = asyncio.run(run())
+        calls, revision_id = asyncio.run(run())
         original = deepcopy(calls)
-        _assert_evidence(calls, kind, approval)
-        _assert_evidence(effective_workflow_calls(calls), kind, approval)
+        _assert_evidence(calls, kind, approval, selected_revision_id=revision_id)
+        _assert_evidence(
+            effective_workflow_calls(calls),
+            kind,
+            approval,
+            selected_revision_id=revision_id,
+        )
         assert calls == original, "The verifier must retain raw model arguments"
         prepare_index = next(
             index for index, call in enumerate(calls) if call.name == f"prepare_{kind}"
@@ -462,7 +540,109 @@ def test_execution_plan_live_fixtures_without_model(kind: PlanKind) -> None:
             broken = deepcopy(calls)
             broken[prepare_index].arguments["presentation"] = invalid
             with pytest.raises(AssertionError, match="presentation"):
-                _assert_evidence(broken, kind, approval)
+                _assert_evidence(
+                    broken, kind, approval, selected_revision_id=revision_id
+                )
+        if kind == "walk_forward":
+            _check_reused_research_regressions(
+                calls, prepare_index, approval, revision_id
+            )
+
+
+def _check_reused_research_regressions(
+    calls: list[ToolCall],
+    prepare_index: int,
+    approval: ObservedPlanUser,
+    revision_id: str | None,
+) -> None:
+    """Corrupt evidence after one real execution instead of repeating the worker."""
+    normalized = effective_workflow_calls(calls)
+    repeated = {
+        "kind": "inherit_selected_revision",
+        "start_date": "2024-01-01T08:00:00+08:00",
+        "end_date": "2024-01-08T00:00:00Z",
+        "fees": 0,
+        "slippage": 0,
+    }
+    for research in (
+        repeated,
+        {
+            **repeated,
+            "strategy_outline": "已驗證的雙分段 SMA 測試策略。",
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "init_cash": 10000,
+            "annualization": 365,
+        },
+    ):
+        accepted = deepcopy(normalized)
+        accepted[prepare_index].arguments["research"] = json.dumps(research)
+        original = deepcopy(accepted)
+        _assert_evidence(
+            accepted, "walk_forward", approval, selected_revision_id=revision_id
+        )
+        assert accepted == original, "Repeated research must preserve raw evidence"
+    for field, value in (
+        ("start_date", "2024-01-01T01:00:00Z"),
+        ("end_date", "2024-01-08T01:00:00Z"),
+        ("fees", 0.0006),
+        ("slippage", 0.0005),
+        ("strategy_outline", "Different rules"),
+        ("annualization", "market"),
+    ):
+        broken = deepcopy(normalized)
+        broken[prepare_index].arguments["research"] = {**repeated, field: value}
+        with pytest.raises(AssertionError, match="research changes|reselect"):
+            _assert_evidence(
+                broken, "walk_forward", approval, selected_revision_id=revision_id
+            )
+    broken = deepcopy(normalized)
+    broken[prepare_index].arguments["revision_id"] = "another_revision"
+    with pytest.raises(AssertionError):
+        _assert_evidence(
+            broken, "walk_forward", approval, selected_revision_id=revision_id
+        )
+    with pytest.raises(AssertionError, match="selected immutable revision"):
+        _assert_evidence(
+            normalized, "walk_forward", approval, selected_revision_id="other"
+        )
+    read_index = next(
+        index for index, call in enumerate(normalized) if call.name == "get_strategy"
+    )
+    for field, value in (
+        ("revision_id", "another_revision"),
+        ("yaml_config", "backtest: {fees: 0.001}"),
+    ):
+        broken = deepcopy(normalized)
+        broken[read_index].result[field] = value
+        with pytest.raises(AssertionError, match="exact saved configuration"):
+            _assert_evidence(
+                broken, "walk_forward", approval, selected_revision_id=revision_id
+            )
+    assert isinstance(revision_id, str)
+    metadata_path = (
+        approval.workspace.workspace
+        / "generated_strategies"
+        / _WF_STRATEGY
+        / "revisions"
+        / revision_id
+        / "metadata.json"
+    )
+    original_metadata = metadata_path.read_bytes()
+    for phase in ("validation", "dry_run"):
+        metadata = json.loads(original_metadata)
+        metadata[phase]["effective_config"]["backtest"]["fees"] = 0.001
+        try:
+            metadata_path.write_text(json.dumps(metadata))
+            with pytest.raises(AssertionError, match="conflicts.*validation evidence"):
+                _assert_evidence(
+                    normalized,
+                    "walk_forward",
+                    approval,
+                    selected_revision_id=revision_id,
+                )
+        finally:
+            metadata_path.write_bytes(original_metadata)
 
 
 async def _model_workflow(
@@ -470,7 +650,7 @@ async def _model_workflow(
     pytestconfig: pytest.Config,
     kind: PlanKind,
     approval: ObservedPlanUser,
-) -> list[ToolCall]:
+) -> tuple[list[ToolCall], str | None]:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     if provider == "codex":
@@ -478,7 +658,7 @@ async def _model_workflow(
         if kind == "walk_forward":
             async with workspace.connect() as client:
                 revision_id = await _seed_walk_forward(client)
-        return codex_calls(
+        calls = codex_calls(
             await run_codex(
                 workspace.root,
                 _prompt(kind, revision_id),
@@ -487,11 +667,12 @@ async def _model_workflow(
                 timeout_seconds=pytestconfig.getoption("llm_timeout"),
             )
         )
+        return calls, revision_id
     async with workspace.connect() as client:
         revision_id = (
             await _seed_walk_forward(client) if kind == "walk_forward" else None
         )
-        return await run_local_model(
+        calls = await run_local_model(
             client,
             _prompt(kind, revision_id),
             model=pytestconfig.getoption("llm_model"),
@@ -501,6 +682,7 @@ async def _model_workflow(
             reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
             user_reply=approval,
         )
+        return calls, revision_id
 
 
 @pytest.mark.live_llm
@@ -511,8 +693,10 @@ def test_llm_prepares_confirms_and_queries_execution_plan(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace)
-        calls = asyncio.run(_model_workflow(workspace, pytestconfig, kind, approval))
-        _assert_evidence(calls, kind, approval)
+        calls, revision_id = asyncio.run(
+            _model_workflow(workspace, pytestconfig, kind, approval)
+        )
+        _assert_evidence(calls, kind, approval, selected_revision_id=revision_id)
 
 
 @pytest.mark.live_llm
@@ -522,10 +706,12 @@ def test_llm_revises_plan_then_waits_for_explicit_user_approval(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         approval = ObservedPlanUser(workspace, decisions=("revise", "approve"))
-        calls = asyncio.run(
+        calls, revision_id = asyncio.run(
             _model_workflow(workspace, pytestconfig, "optimization", approval)
         )
-        _assert_evidence(calls, "optimization", approval)
+        _assert_evidence(
+            calls, "optimization", approval, selected_revision_id=revision_id
+        )
         assert len(approval.turns) == 3
         assert approval.plans[0].manifest.config_copy()["backtest"]["fees"] == 0
         assert approval.plans[1].manifest.config_copy()["backtest"]["fees"] == 0.001
@@ -538,7 +724,7 @@ def test_llm_clarifies_ambiguous_reply_then_honors_decline(
     with temporary_mcp_workspace() as workspace:
         workspace.seed_market(market_frame())
         user = ObservedPlanUser(workspace, decisions=("ambiguous", "decline"))
-        calls = asyncio.run(
+        calls, _revision_id = asyncio.run(
             _model_workflow(workspace, pytestconfig, "optimization", user)
         )
         user.assert_complete()

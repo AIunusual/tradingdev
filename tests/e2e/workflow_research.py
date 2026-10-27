@@ -49,16 +49,16 @@ def _value(field: str, value: object) -> object:
     return value
 
 
-def _recorded_research(call: ToolCall) -> dict[str, object]:
-    config = call.result.get("effective_config")
+def research_values(config: Any, *, context: str) -> dict[str, object]:
+    """Project complete observed settings; never add defaults or scenario values."""
     assert isinstance(config, dict), (
-        f"{call.name} must retain effective_config research evidence"
+        f"{context} must retain effective_config research evidence"
     )
     result: dict[str, object] = {}
     for field, (section, key) in _FIELDS.items():
         values = config.get(section)
         assert isinstance(values, dict) and key in values, (
-            f"{call.name} effective_config is missing {section}.{key}"
+            f"{context} effective_config is missing {section}.{key}"
         )
         result[field] = _value(field, values[key])
     return result
@@ -73,13 +73,27 @@ def assert_research_reused(
     successful lifecycle states. This checks observed values only: it neither
     fills missing evidence from a scenario nor rewrites input provenance.
     """
+    expected = research_values(
+        validated.result.get("effective_config"), context=validated.name
+    )
+    assert (
+        research_values(dry_run.result.get("effective_config"), context=dry_run.name)
+        == expected
+    ), "Validated and dry-run effective_config research settings differ"
+    _assert_inherited_values(research, expected)
+
+
+def assert_research_matches_config(research: Any, selected_config: Any) -> None:
+    """Compare an inherited request with independently bound immutable source YAML."""
+    _assert_inherited_values(
+        research, research_values(selected_config, context="Selected revision")
+    )
+
+
+def _assert_inherited_values(research: Any, expected: dict[str, object]) -> None:
     assert isinstance(research, dict) and research.get("kind") == (
         "inherit_selected_revision"
-    ), "prepare_backtest research must inherit the selected revision"
-    expected = _recorded_research(validated)
-    assert _recorded_research(dry_run) == expected, (
-        "Validated and dry-run effective_config research settings differ"
-    )
+    ), "Prepared research must inherit the selected revision"
     for field, value in research.items():
         if field == "kind":
             continue
@@ -91,6 +105,6 @@ def assert_research_reused(
             if value == "unavailable":
                 value = None
         assert _value(field, value) == expected[field], (
-            f"prepare_backtest research changes {field}: "
+            f"Prepared research changes {field}: "
             f"selected revision has {expected[field]!r}; got {value!r}"
         )

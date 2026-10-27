@@ -143,6 +143,8 @@ Codex 測試在臨時工作區啟動獨立 MCP server，停用其他 server、�
 KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折數、確認前狀態及
 執行產物。Walk-forward 另核對確認前未執行行情試跑或訓練、正式 purged 隔離區間，以及
 原 revision／隨機種子未變。離線版本使用相同 MCP／worker 與證據檢查，不呼叫模型。
+Walk-forward 的研究沿用核對 fixture 實際建立的 revision、保存 YAML 的 hash，
+以及該版本完整且一致的驗證證據；等值研究欄位與等價 UTC 日期可重述，實值變更仍拒絕。
 離線 HTTP 回歸測試以 localhost Streamable HTTP、正式 server 及真實 MCP client
 驗證準備、確認單讀取與決策提交；離線準備程序及正式 worker 使用替代實作。
 桌面客戶端的檔案呈現與對話按鈕須另行驗證。
