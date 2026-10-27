@@ -75,6 +75,8 @@ FLAML 2.7 的安裝 metadata 接受 Python `>=3.10`，但
 優先進入簡報專項，連同對應 HTML／CSS、空的 `docs/.nojekyll` 及通過內容驗證的
 VS Code 簡報工作，確認來源與產物一致。不能只憑 `.html`、`.css`、task label 或
 `.vscode` 路徑將任意內容視為文件。
+簡報工作須符合固定命令與結構，其他工作須完全未變；tasks 文件頂層只允許
+`version` 與 `tasks`，額外的 `options`、`inputs` 等設定即使未變也走程式分流。
 
 分類比較固定 Git tree 的非空差異，改名核對兩側路徑；兩側仍存在的檔案均須為
 mode `100644` 的一般檔案，才可進入上述路徑。政策、建置工具與 lock、未知設定、
@@ -89,7 +91,7 @@ mode `100644` 的一般檔案，才可進入上述路徑。政策、建置工具
 
 [專案介紹簡報](talks/tradingdev-introduction/README.md)以 Marp Markdown 編輯，
 `theme.css` 保存版型，`index.html` 是提交至 Git 的瀏覽器產物。
-編輯時另需 Node.js 與 npm。Marp 及其傳遞依賴由 `tooling/marp/package-lock.json`
+編輯時另需 Node.js 18 以上與 npm。Marp 及其傳遞依賴由 `tooling/marp/package-lock.json`
 鎖定，初始化工具鏈後，手動建置、VS Code 與 snapshot 使用相同建置入口：
 
 ```bash
@@ -98,6 +100,8 @@ uv run --no-sync python -m tooling.presentations setup
 
 Shell 入口 `./scripts/presentations.sh setup|build|watch|check` 呼叫相同模組，
 同樣使用 repository 的 `.venv`。
+`setup` 安裝限時 300 秒；`build`、`check` 及每次 `watch` 重建的編譯限時
+120 秒。簡報 CLI 未提供期限覆寫選項，逾時會失敗並清理其啟動的程序。
 
 初始化會下載 npm 套件；更新工具鏈時須明確更新 lock 並重新初始化。一般 build／check
 不安裝或升級依賴，缺少工具或安裝與 lock 不符會失敗，不會退回全域 Marp。
@@ -427,6 +431,7 @@ Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件、簡報專項�
 ```
 
 檢查輸出會列出期限；逾時視為失敗，先停止程序再清理暫存。
+此參數只調整 snapshot 外層期限，不延長簡報編譯器的 120 秒期限。
 
 以下 Codex 證據與文件審查期限設定適用於程式分流，文件與簡報專項不呼叫 Codex。
 Codex 文件審查預設接受最多 600,000 bytes 的完整證據，超過時於呼叫模型前失敗。
@@ -443,9 +448,11 @@ Codex 文件審查預設接受最多 600,000 bytes 的完整證據，超過時�
 腳本另限制完整 prompt 為 1,024,000 字元，包含審查指示與批次資訊，
 低於已觀察到的 Codex `turn/start` 1,048,576 字元限制。
 
-超過單次容量時，腳本按完整檔案分批。每批均包含全部 diff、Markdown 文件及
-候選檔案清單，其餘原始檔分批完整涵蓋。所有批次先檢查容量；共同證據或單一檔案
-連同共同證據仍放不下時，須拆分變更，提高 byte 預算無法解決單次輸入限制。
+超過單次容量時，腳本按完整檔案分批。每批均包含全部 diff、Markdown 文件、
+候選檔案清單及已選取的完整登錄簡報脈絡（含 HTML／CSS），其餘原始檔分批完整涵蓋。
+簡報脈絡是每批共用證據，不能藉分散至不同批次降低其容量。
+所有批次先檢查容量；共同證據或單一檔案連同共同證據仍放不下時，須拆分變更，
+提高 byte 預算無法解決單次輸入限制。
 
 最多八批並行，各自使用唯讀、無工具的 Codex 與獨立臨時目錄；所有批次共用
 預設 180 秒期限，包含排隊時間，程序清理另計。分批會增加呼叫及重複 context 的用量。
