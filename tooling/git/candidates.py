@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from tooling.git.change_scope import classify_changes
 from tooling.process_guard import ProcessCleanupError, run_captured, run_checked
+from tooling.review_options import review_arguments, validate_review_options
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -223,7 +224,11 @@ def merge_candidate(
 
 
 def validate_evidence_budget(max_evidence_bytes: int | None) -> None:
-    if max_evidence_bytes is not None and max_evidence_bytes <= 0:
+    if max_evidence_bytes is not None and (
+        isinstance(max_evidence_bytes, bool)
+        or not isinstance(max_evidence_bytes, int)
+        or max_evidence_bytes <= 0
+    ):
         raise RuntimeError("Documentation evidence budget must be positive.")
 
 
@@ -254,11 +259,21 @@ def verify_candidate(
     candidate: MergeCandidate,
     *,
     max_evidence_bytes: int | None = None,
+    review_scopes: tuple[str, ...] | None = None,
+    review_context: tuple[str, ...] = (),
+    max_prompt_bytes: int | None = None,
+    max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     """Check each immutable candidate with the profile required by its changes."""
     validate_evidence_budget(max_evidence_bytes)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=max_prompt_bytes,
+        max_total_prompt_bytes=max_total_prompt_bytes,
+    )
     validate_snapshot_timeout(snapshot_timeout_seconds)
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
@@ -304,6 +319,14 @@ def verify_candidate(
     if max_evidence_bytes is not None:
         print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
         command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
+    command.extend(
+        review_arguments(
+            review_scopes=review_scopes,
+            review_context=review_context,
+            max_prompt_bytes=max_prompt_bytes,
+            max_total_prompt_bytes=max_total_prompt_bytes,
+        )
+    )
     # Preserve setup time and allow the review's own deadline/cleanup to finish.
     run(
         command,

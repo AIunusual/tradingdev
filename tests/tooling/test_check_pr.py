@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -14,10 +15,11 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from tooling import presentations, review_docs
+from tooling import presentations, review_docs, review_evidence
 from tooling.git import candidates, check_pr, gate
 from tooling.git.pr_context import PullRequest
 from tooling.process_guard import ProcessCleanupError, terminate_tree
+from tooling.review_options import add_review_arguments, review_arguments
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -194,9 +196,24 @@ def test_lightweight_candidate_uses_merged_tree_and_only_selected_checks(
 
     def check() -> None:
         if runner == "pr":
-            check_pr.check_pr(7, snapshot_timeout_seconds=30)
+            check_pr.check_pr(
+                7,
+                snapshot_timeout_seconds=30,
+                review_scopes=("tooling",),
+                review_context=("AGENTS.md",),
+                max_prompt_bytes=123,
+                max_total_prompt_bytes=456,
+            )
         else:
-            gate.check_full("main", f"feature/{profile}", snapshot_timeout_seconds=30)
+            gate.check_full(
+                "main",
+                f"feature/{profile}",
+                snapshot_timeout_seconds=30,
+                review_scopes=("tooling",),
+                review_context=("AGENTS.md",),
+                max_prompt_bytes=123,
+                max_total_prompt_bytes=456,
+            )
 
     if failure:
         error = {
@@ -352,11 +369,18 @@ def test_check_validates_both_sides_and_removes_candidate_and_snapshot(
             calls.append("docs")
             assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
             assert cwd == Path(review_docs.__file__).resolve().parents[1]
+            for flag in (
+                "--review-scope",
+                "--review-context",
+                "--max-prompt-bytes",
+                "--max-total-prompt-bytes",
+            ):
+                assert flag not in command
             assert command[command.index("--base") + 1] == scenario.request.base_sha
             assert Path(command[command.index("--repo") + 1]).exists()
             if budget is None:
                 assert "--max-evidence-bytes" not in command
-                assert review_docs.MAX_EVIDENCE_BYTES == 600_000
+                assert review_evidence.MAX_EVIDENCE_BYTES == 600_000
             else:
                 assert command[command.index("--max-evidence-bytes") + 1] == str(budget)
 
@@ -411,7 +435,14 @@ def test_check_cli_forwards_review_options(
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
         documentation_timeout_seconds: int,
+        review_scopes: tuple[str, ...] | None,
+        review_context: tuple[str, ...],
+        max_prompt_bytes: int | None,
+        max_total_prompt_bytes: int | None,
     ) -> None:
+        assert review_scopes is None
+        assert review_context == ()
+        assert max_prompt_bytes is max_total_prompt_bytes is None
         assert (first, second) == (
             (7, "upstream") if runner == "pr" else ("main", "HEAD")
         )
@@ -440,6 +471,206 @@ def test_check_cli_forwards_review_options(
     monkeypatch.setattr(sys, "argv", ["check", *arguments])
     module.main()
     assert calls == [(budget, snapshot_timeout or 900, documentation_timeout or 180)]
+
+
+@pytest.mark.parametrize("runner", ["pr", "full"])
+def test_scoped_review_options_reach_reviewer_without_skipping_full_checks(
+    scenario: Scenario, monkeypatch: MonkeyPatch, runner: str
+) -> None:
+    before = _source_state(scenario.source)
+    calls: list[str] = []
+    contexts = ("docs/中文 $(literal); space%.md", "AGENTS.md")
+    expected = [
+        "--review-scope",
+        "tooling",
+        "--review-scope",
+        "execution",
+        "--review-context",
+        contexts[0],
+        "--review-context",
+        contexts[1],
+        "--max-prompt-bytes",
+        "123456",
+        "--max-total-prompt-bytes",
+        "456789",
+    ]
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
+    ) -> None:
+        if command[0] == "bash":
+            assert command == ["bash", "scripts/check-full.sh"]
+            calls.append("full")
+        else:
+            assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
+            assert command[command.index("--review-scope") :] == expected
+            assert command[command.index("--max-evidence-bytes") + 1] == "600123"
+            calls.append("review")
+
+    monkeypatch.setattr(candidates, "run", run)
+    options: dict[str, Any] = {
+        "review_scopes": ("tooling", "execution"),
+        "review_context": contexts,
+        "max_prompt_bytes": 123456,
+        "max_total_prompt_bytes": 456789,
+        "max_evidence_bytes": 600123,
+    }
+    # Every value retains its own type through both public entrypoints.
+    if runner == "pr":
+        check_pr.check_pr(7, **options)
+    else:
+        gate.check_full("main", "feature/work", **options)
+    assert calls == ["review", "full"]
+    assert _source_state(scenario.source) == before
+    _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("runner", ["pr", "full"])
+def test_cli_forwards_repeated_scope_and_literal_context_paths(
+    monkeypatch: MonkeyPatch, runner: str
+) -> None:
+    calls: list[dict[str, object]] = []
+    module = check_pr if runner == "pr" else gate
+    monkeypatch.setattr(module, "git", lambda *_: str(Path.cwd()))
+    monkeypatch.setattr(
+        module,
+        "check_pr" if runner == "pr" else "check_full",
+        lambda *_, **options: calls.append(options),
+    )
+    entry = ["7"] if runner == "pr" else ["full", "--base", "main"]
+    contexts = ("docs/中文 $(literal); %.md", "AGENTS.md")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check",
+            *entry,
+            "--review-scope",
+            "tooling",
+            "--review-scope",
+            "execution",
+            "--review-context",
+            contexts[0],
+            "--review-context",
+            contexts[1],
+            "--max-prompt-bytes",
+            "123",
+            "--max-total-prompt-bytes",
+            "456",
+            "--max-evidence-bytes",
+            "789",
+        ],
+    )
+    module.main()
+    assert calls == [
+        {
+            "review_scopes": ("tooling", "execution"),
+            "review_context": contexts,
+            "max_prompt_bytes": 123,
+            "max_total_prompt_bytes": 456,
+            "max_evidence_bytes": 789,
+            "snapshot_timeout_seconds": 900,
+            "documentation_timeout_seconds": 180,
+        }
+    ]
+
+
+def test_forwarded_option_like_context_paths_remain_literal_files() -> None:
+    parser = argparse.ArgumentParser()
+    add_review_arguments(parser)
+    contexts = ("--max-prompt-bytes", "-研究 $(literal); %.md", "docs/plain.md")
+    parsed = parser.parse_args(review_arguments(review_context=contexts))
+    assert parsed.review_context == list(contexts)
+    assert parsed.max_prompt_bytes is None
+    assert parsed.max_total_prompt_bytes is None
+    assert parsed.review_scopes is None
+
+
+@pytest.mark.parametrize("entry", ["pr", "full", "verify"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {name: value}
+        for name in (
+            "max_evidence_bytes",
+            "max_prompt_bytes",
+            "max_total_prompt_bytes",
+        )
+        for value in (False, True, 0, -1, 1.5, "10")
+    ]
+    + [{"review_scopes": scopes} for scopes in ((), ("",), ("unknown",), "tooling")]
+    + [{"review_context": ("",)}],
+)
+def test_invalid_model_review_options_reject_before_side_effects(
+    monkeypatch: MonkeyPatch, entry: str, options: dict[str, Any]
+) -> None:
+    _forbid_check_side_effects(monkeypatch)
+    with pytest.raises(RuntimeError):
+        if entry == "pr":
+            check_pr.check_pr(7, **options)
+        elif entry == "full":
+            gate.check_full("main", "HEAD", **options)
+        else:
+            candidates.verify_candidate(
+                candidates.MergeCandidate(Path.cwd(), "base", "head", "tree"),
+                **options,
+            )
+
+
+@pytest.mark.parametrize("runner", ["pr", "full"])
+@pytest.mark.parametrize(
+    "flag, value",
+    [
+        ("--review-scope", ""),
+        ("--review-scope", "unknown"),
+        *[
+            (flag, value)
+            for flag in ("--max-prompt-bytes", "--max-total-prompt-bytes")
+            for value in ("0", "-1", "1.5", "true")
+        ],
+    ],
+)
+def test_cli_rejects_invalid_review_controls_at_parse_boundary(
+    monkeypatch: MonkeyPatch, runner: str, flag: str, value: str
+) -> None:
+    _forbid_check_side_effects(monkeypatch)
+    entry = ["7"] if runner == "pr" else ["full", "--base", "main"]
+    monkeypatch.setattr(sys, "argv", ["check", *entry, flag, value])
+    with pytest.raises(SystemExit) as failure:
+        (check_pr if runner == "pr" else gate).main()
+    assert failure.value.code == 2
+
+
+@pytest.mark.parametrize("action", ["commit", "push"])
+@pytest.mark.parametrize(
+    "option, value",
+    [
+        ("--review-scope", "tooling"),
+        ("--review-context", "AGENTS.md"),
+        ("--max-prompt-bytes", "123"),
+        ("--max-total-prompt-bytes", "456"),
+    ],
+)
+def test_review_controls_are_not_ignored_by_other_gate_actions(
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    action: str,
+    option: str,
+    value: str,
+) -> None:
+    _forbid_check_side_effects(monkeypatch)
+    arguments = ["gate", action, option, value]
+    if action == "push":
+        arguments.extend(["--destination", "git@github.com:owner/project.git"])
+    monkeypatch.setattr(sys, "argv", arguments)
+    with pytest.raises(SystemExit) as failure:
+        gate.main()
+    assert failure.value.code == 2
+    assert f"{option} is only valid for full checks" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("budget", [0, -1])
@@ -666,6 +897,7 @@ def test_runner_changes_during_pr_check_are_detected(
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
         documentation_timeout_seconds: int,
+        **review_options: object,
     ) -> None:
         if mutation == "new_file":
             (scenario.source / "user-work.txt").write_text("keep this")
@@ -705,6 +937,7 @@ def test_manual_full_rejects_ref_movement(
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
         documentation_timeout_seconds: int,
+        **review_options: object,
     ) -> None:
         replacement = (
             scenario.request.head_sha if ref == "main" else scenario.request.base_sha
@@ -782,6 +1015,7 @@ def test_actual_remote_ref_movement_invalidates_unchanged_api_response(
         max_evidence_bytes: int | None,
         snapshot_timeout_seconds: int,
         documentation_timeout_seconds: int,
+        **review_options: object,
     ) -> None:
         if change == "delete":
             _git(scenario.source, "update-ref", "-d", ref)
@@ -1050,6 +1284,8 @@ def test_code_and_presentation_changes_run_both_check_profiles(
     ) -> None:
         if command[0] != "bash":
             assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
+            assert command[command.index("--review-scope") + 1] == "presentation"
+            assert command[command.index("--review-context") + 1] == name
             calls.append("review")
             return
         assert timeout == 45
@@ -1064,9 +1300,20 @@ def test_code_and_presentation_changes_run_both_check_profiles(
 
     def check() -> None:
         if runner == "pr":
-            check_pr.check_pr(7, snapshot_timeout_seconds=45)
+            check_pr.check_pr(
+                7,
+                snapshot_timeout_seconds=45,
+                review_scopes=("presentation",),
+                review_context=(name,),
+            )
         else:
-            gate.check_full("main", "feature/work", snapshot_timeout_seconds=45)
+            gate.check_full(
+                "main",
+                "feature/work",
+                snapshot_timeout_seconds=45,
+                review_scopes=("presentation",),
+                review_context=(name,),
+            )
 
     if failure:
         with pytest.raises(subprocess.CalledProcessError):

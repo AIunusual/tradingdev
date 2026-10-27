@@ -372,6 +372,14 @@ def _heading_text(tokens: Iterable[Token]) -> str:
     )
 
 
+def markdown_lines(text: str) -> list[str]:
+    """Split only CommonMark line endings, preserving every original character."""
+    lines = re.findall(r"[^\r\n]*(?:\r\n|\r|\n|$)", text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _parse_sections(
     path: str, text: str
 ) -> tuple[tuple[MarkdownSection, ...], frozenset[int]]:
@@ -379,9 +387,7 @@ def _parse_sections(
         return (), frozenset()
     # Match CommonMark's CR/LF line normalization without changing the slices.
     # str.splitlines() would incorrectly count Unicode paragraph separators.
-    lines = re.findall(r"[^\r\n]*(?:\r\n|\r|\n|$)", text)
-    if lines[-1] == "":
-        lines.pop()
+    lines = markdown_lines(text)
     environment: dict[str, Any] = {}
     tokens = MarkdownIt("commonmark").parse(text, environment)
     boundaries: list[tuple[int, tuple[str, ...]]] = [(0, ())]
