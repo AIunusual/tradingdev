@@ -956,11 +956,14 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 17 uses two navigation levels within one offline HTML
+Report schema 2 / template 18 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
-effective parameters,
-date coverage, train/test role and principal saved metrics. A result link opens
+effective parameters, date coverage, train/test role and principal saved metrics.
+Interactive and static overview tables show explicit `查看明細 →` links in the
+result-sequence column, with a separate navigation hint beside the table.
+The interactive table also supports plain row clicks; keyboard focus alone does
+not navigate. A result link opens
 the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
 the reader back to the overview. This keeps all optimization training trials and
 the selected parameter's test result distinct. A report is generated explicitly
