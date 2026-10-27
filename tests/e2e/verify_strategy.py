@@ -232,7 +232,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     selected["signal"] = expected_signals(selected, scenario, run_parameters)
     reference = BacktestService().create_engine(bt).run(selected).metrics
     assert reference["total_trades"] > 0
-    for metric in ("total_return", "total_trades", "max_drawdown"):
+    for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
         assert math.isclose(
             run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
@@ -316,7 +316,7 @@ def verify_novice_intake(root: Path) -> None:
         .metrics
     )
     assert reference["total_trades"] > 0
-    for metric in ("total_return", "total_trades", "max_drawdown"):
+    for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
         assert math.isclose(
             run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])

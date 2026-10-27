@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,6 +22,7 @@ from tests.e2e.strategy_scenarios import market_frame
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.run_service import RunService
 from tradingdev.domain.presentation.reports import REPORT_RECIPES
 
 if TYPE_CHECKING:
@@ -135,6 +137,28 @@ def _verify_completed_intake(
         run["run_id"],
         expected_sections=list(REPORT_RECIPES["standard"]),
         expected_commentary=None,
+    )
+    metrics = RunService(workspace=paths).get_run_metrics(
+        run["run_id"],
+        metric_ids=["total_return", "annual_return", "max_drawdown", "total_trades"],
+    )
+    assert metrics["success"] is True
+    print(
+        "[intake] Saved metric evidence for final-prose semantic review:\n"
+        + json.dumps(
+            {
+                "run_id": run["run_id"],
+                "scope": metrics["scope"],
+                "metrics": metrics["metrics"],
+                "display_metrics": metrics["display_metrics"],
+                "units": {
+                    key: definition["unit"]
+                    for key, definition in metrics["definitions"].items()
+                },
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
     )
     print(
         "[intake] Accepted effective configuration for semantic review:\n"

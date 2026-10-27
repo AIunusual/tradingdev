@@ -64,7 +64,10 @@ def register(mcp: MCPServer, service: RunService) -> None:
         )
     )
     def get_run(run_id: str) -> RunResponse | ErrorResponse:
-        """Read a run summary; get_run_metrics reads any available metric IDs."""
+        """Read a run summary; use display_metrics for ready-to-present values.
+
+        get_run_metrics reads any available metric IDs with saved definitions.
+        """
         payload = service.get_run(run_id)
         if payload.get("success") is False:
             return ErrorResponse.model_validate(payload)
@@ -88,6 +91,7 @@ def register(mcp: MCPServer, service: RunService) -> None:
         Omit scope for each run's default. metric_ids selects stored metrics;
         omission selects summaries. Fold statistics retain valid_count.
         Incompatible definitions, modes, or settings are explicitly reported.
+        Use display_metrics for presentation; raw metrics retain saved units.
         """
         payload = service.compare_runs(run_ids, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:
@@ -135,6 +139,7 @@ def register(mcp: MCPServer, service: RunService) -> None:
         Omit scope to use default_scope. Scopes include full, fold/0/train,
         fold/0/test, test_summary, trial/0/train, and test when recorded.
         Response contains original definitions/settings and reasons for nulls.
+        Use display_metrics for presentation; percent signs are already included.
         Unknown IDs/scopes return available choices. No strategy is rerun.
         Fold summaries are distributions across folds, not whole-period returns.
         """

@@ -989,6 +989,16 @@ accounting identities, and saved account/bar/timestamp/equity arrays must align.
 `get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
 read that scope in full. Unknown scopes and metric IDs produce structured errors
 with discovery information. Summary omission never affects calculation or storage.
+`get_run`, `get_run_metrics`, and each `compare_runs` row also return
+`display_metrics` alongside unchanged raw `metrics`. Display values use each
+run's saved definition: fractions are percentages with two decimal places and a
+`%` suffix (`493.045775` becomes `49304.58%`); other units remain numeric strings
+in their saved units. Integers remain exact; other numbers use two decimal places.
+Use these rounded values for presentation and raw metrics for calculations.
+Fold statistics retain their shape and numeric, unscaled `valid_count`; nulls
+remain null with unavailable reasons in metadata. Metric selection also selects
+display values. Without trustworthy saved definitions, including legacy runs,
+the display mapping is empty; current catalog units are never substituted.
 Comparisons retain the requested values and report comparability and reasons;
 differences in mode, definitions, provider versions, sampling, annualization,
 capital or execution context cannot silently become equivalent rankings.

@@ -81,6 +81,12 @@ def test_report_preserves_finite_numbers_and_explicit_units() -> None:
     assert "Est. Monthly Vol" not in report
 
 
+def test_large_annual_return_uses_percentage_scale_in_cli_report() -> None:
+    metrics = _metrics() | {"annual_return": 493.04577519114036}
+    assert _values(format_metrics_report(metrics))["Annual Return"] == "49304.58%"
+    assert metrics["annual_return"] == 493.04577519114036
+
+
 def test_volume_report_keeps_return_metrics_unavailable_and_drawdown_in_own_field() -> (
     None
 ):
