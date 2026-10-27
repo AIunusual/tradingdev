@@ -95,7 +95,9 @@ class ExecutionManifestStore:
             raise ManifestError("Execution submission lock must not be a symlink")
         path.parent.mkdir(parents=True, exist_ok=True)
         # This coordinates submitters; it is not a filesystem/SQLite transaction.
-        with FileLock(path, timeout=30):
+        # One object per path makes nested submission/create_job calls reentrant
+        # in the same thread while retaining cross-thread/process exclusion.
+        with FileLock(path, timeout=30, is_singleton=True):
             self.path(run_id)
             yield
 

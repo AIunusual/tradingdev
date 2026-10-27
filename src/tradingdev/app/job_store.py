@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
-from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,30 +12,21 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
-from tradingdev.adapters.storage.filesystem import (
-    WorkspacePaths,
-    sha256_file,
-    sha256_text,
-)
-from tradingdev.adapters.storage.performance import PerformanceStore
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.run_lineage import (
-    extract_random_seed,
     load_config_payload,
     read_strategy_snapshot,
 )
-from tradingdev.app.strategy_service import StrategyNotExecutableError
+from tradingdev.app.run_publisher import RunPublicationBinding, RunPublisher
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
-from tradingdev.domain.performance.artifacts import (
-    PerformanceArtifacts,
-    bundles_from_pipeline,
-)
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
+    from tradingdev.domain.performance.artifacts import PerformanceArtifacts
 
 logger = logging.getLogger(__name__)
 
@@ -114,63 +103,76 @@ class JobStore:
         manifest: ExecutionManifest | None = None,
     ) -> dict[str, Any]:
         """Create a new job record and persist it."""
-        result_path = self._workspace.runs / job_id / "result.json"
-        if manifest is not None:
-            if extra_payload is not None and any(
-                key in extra_payload
-                for key in (
-                    "job_id",
-                    "manifest_hash",
-                    "strategy_name",
-                    "revision_id",
-                    "job_type",
-                )
-            ):
+        with self.submission_lock(job_id):
+            if self._store.get_job(job_id) is not None:
+                raise ValueError(f"Job already exists: {job_id}")
+            if self._store.get_run(job_id) is not None:
+                raise ValueError(f"Job ID belongs to an existing run: {job_id}")
+            if extra_payload is not None and "job_id" in extra_payload:
                 raise ManifestError("Extra payload cannot replace execution identity")
-            config = manifest.config_copy()
-            strategy = config["strategy"]
-            if strategy_name is not None and strategy_name != strategy.get("id"):
-                raise ManifestError("Job and manifest refer to different strategies")
-            if revision_id is not None and revision_id != strategy.get("revision_id"):
-                raise ManifestError("Job and manifest refer to different revisions")
-            strategy_name = strategy["id"]
-            revision_id = strategy.get("revision_id")
-            job_type = manifest.kind
-            symbol = config["backtest"]["symbol"]
-            timeframe = config["backtest"]["timeframe"]
-            start_date = config["backtest"]["start_date"]
-            end_date = config["backtest"]["end_date"]
-            if manifest.optimization is not None:
-                start_date = manifest.optimization.train_start.isoformat()
-                end_date = manifest.optimization.test_end.isoformat()
-            path = self._manifests.publish(job_id, manifest)
-            projection = path.with_name("config.yaml")
-            projection.write_text(
-                yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
-                encoding="utf-8",
+            result_path = self._workspace.runs / job_id / "result.json"
+            if manifest is not None:
+                if extra_payload is not None and any(
+                    key in extra_payload
+                    for key in (
+                        "job_id",
+                        "manifest_hash",
+                        "strategy_name",
+                        "revision_id",
+                        "job_type",
+                    )
+                ):
+                    raise ManifestError(
+                        "Extra payload cannot replace execution identity"
+                    )
+                config = manifest.config_copy()
+                strategy = config["strategy"]
+                if strategy_name is not None and strategy_name != strategy.get("id"):
+                    raise ManifestError(
+                        "Job and manifest refer to different strategies"
+                    )
+                if revision_id is not None and revision_id != strategy.get(
+                    "revision_id"
+                ):
+                    raise ManifestError("Job and manifest refer to different revisions")
+                strategy_name = strategy["id"]
+                revision_id = strategy.get("revision_id")
+                job_type = manifest.kind
+                symbol = config["backtest"]["symbol"]
+                timeframe = config["backtest"]["timeframe"]
+                start_date = config["backtest"]["start_date"]
+                end_date = config["backtest"]["end_date"]
+                if manifest.optimization is not None:
+                    start_date = manifest.optimization.train_start.isoformat()
+                    end_date = manifest.optimization.test_end.isoformat()
+                path = self._manifests.publish(job_id, manifest)
+                projection = path.with_name("config.yaml")
+                projection.write_text(
+                    yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8",
+                )
+                config_path = str(projection)
+            record = JobRecord(
+                job_id=job_id,
+                status="queued",
+                job_type=job_type,
+                strategy_name=strategy_name,
+                revision_id=revision_id,
+                manifest_hash=manifest.manifest_hash if manifest is not None else None,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                config_path=config_path,
+                created_at=_now_iso(),
+                result_path=str(result_path),
             )
-            config_path = str(projection)
-        record = JobRecord(
-            job_id=job_id,
-            status="queued",
-            job_type=job_type,
-            strategy_name=strategy_name,
-            revision_id=revision_id,
-            manifest_hash=manifest.manifest_hash if manifest is not None else None,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            config_path=config_path,
-            created_at=_now_iso(),
-            result_path=str(result_path),
-        )
-        record_payload = _record_to_dict(record)
-        if extra_payload is not None:
-            record_payload.update(extra_payload)
-        self._store.upsert_job(record_payload)
-        logger.debug("Created job %s", job_id)
-        return record_payload
+            record_payload = _record_to_dict(record)
+            if extra_payload is not None:
+                record_payload.update(extra_payload)
+            self._store.upsert_job(record_payload)
+            logger.debug("Created job %s", job_id)
+            return record_payload
 
     def submission_lock(self, job_id: str) -> AbstractContextManager[None]:
         """Serialize one job's creation and launch through the storage adapter."""
@@ -250,6 +252,26 @@ class JobStore:
         execution_manifest: ExecutionManifest | None = None,
     ) -> Path:
         """Serialize metrics to a run artifact and record run metadata."""
+        with self.submission_lock(job_id):
+            return self._save_result_locked(
+                job_id,
+                metrics,
+                pipeline=pipeline,
+                performance=performance,
+                config_snapshot=config_snapshot,
+                execution_manifest=execution_manifest,
+            )
+
+    def _save_result_locked(
+        self,
+        job_id: str,
+        metrics: dict[str, Any],
+        *,
+        pipeline: PipelineResult | None,
+        performance: PerformanceArtifacts | None,
+        config_snapshot: dict[str, Any] | None,
+        execution_manifest: ExecutionManifest | None,
+    ) -> Path:
         if pipeline is not None and performance is not None:
             raise ValueError(
                 "Supply either pipeline or performance artifacts, not both"
@@ -257,6 +279,8 @@ class JobStore:
         safe = normalize_json_object(metrics)
 
         job = self.get_job(job_id)
+        if job is None and self.get_run(job_id) is not None:
+            raise ValueError(f"Result ID belongs to an existing run: {job_id}")
         config_path = _resolve_optional_path(job.get("config_path")) if job else None
         config_payload = (
             pipeline.config_snapshot
@@ -274,178 +298,40 @@ class JobStore:
         )
         if executed is not None and not isinstance(executed, ExecutionManifest):
             raise ManifestError("Invalid executed manifest")
+        expected: ExecutionManifest | None = None
         if job is not None and job.get("manifest_hash") is not None:
             if executed is None:
                 raise ManifestError("Result must retain the executed manifest")
             executed.verify(expected_hash=job["manifest_hash"])
-            self.load_manifest(job_id)
+            expected = self.load_manifest(job_id)
             if config_payload is not None and config_payload != executed.config_copy():
                 raise ManifestError("Result config differs from the executed manifest")
             config_payload = executed.config_copy()
         elif executed is not None:
             raise ManifestError("Result manifest is not bound to a submitted job")
-        details = (
-            bundles_from_pipeline(job_id, pipeline, safe)
-            if pipeline is not None
-            else PerformanceArtifacts.model_validate_json(performance.model_dump_json())
-            if performance is not None
-            else None
-        )
-        if details is not None and (
-            details.performance.run_id != job_id
-            or details.performance.manifest_hash
-            != (executed.manifest_hash if executed is not None else None)
-        ):
-            raise ManifestError("Performance artifacts differ from the executed result")
-        source = read_strategy_snapshot(
-            config_payload,
-            self._workspace,
-            strategy_id=str((job or {}).get("strategy_name") or ""),
-        )
-        if job is not None and job.get("revision_id") != source.revision_id:
-            msg = "Job and result configuration refer to different revisions"
-            raise StrategyNotExecutableError(msg)
-        config_content = (
-            yaml.safe_dump(config_payload, sort_keys=False, allow_unicode=True)
-            if config_payload is not None
-            else None
-        )
-        config_hash = (
-            sha256_text(config_content) if config_content is not None else None
-        )
-        run_dir = self._workspace.runs / job_id
-        result_path = run_dir / "result.json"
-        performance_store = PerformanceStore(self._workspace, self._store)
-        if details is not None and job is None:
-            raise ValueError("Performance artifacts require an existing job")
-        publication = (
-            performance_store.publication(
-                details,
-                safe,
-                [
-                    run_dir / name
-                    for name in (
-                        "result.json",
-                        "config.yaml",
-                        "strategy.py",
-                        "dataset_fingerprint.json",
-                        "pipeline_result.pkl",
-                    )
-                ],
-            )
-            if details is not None
-            else nullcontext(False)
-        )
-        with publication as existing:
-            if existing:
-                return result_path
-            run_dir.mkdir(parents=True, exist_ok=True)
+        if job is None:
+            # Historical summary-only callers can save without a submitted job;
+            # this does not create a run or authorize an executed manifest.
+            if pipeline is not None or performance is not None:
+                raise ValueError("Performance artifacts require an existing job")
+            read_strategy_snapshot(config_payload, self._workspace, strategy_id="")
+            result_path = self._workspace.runs / job_id / "result.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(
                 json.dumps(safe, indent=2, ensure_ascii=False, allow_nan=False),
                 encoding="utf-8",
             )
-
-            if job is not None:
-                strategy_source = source.path
-                source_hash = source.source_hash
-                random_seed = extract_random_seed(config_payload)
-                dataset_fingerprint = self._dataset_fingerprint(job)
-                # Current execution creates one run per job, so run_id is job_id.
-                # Revisit this before supporting multi-run jobs such as fold-level
-                # optimization artifacts.
-                self._store.create_run(
-                    run_id=job_id,
-                    job_id=job_id,
-                    strategy_id=str(job.get("strategy_name", "")),
-                    revision_id=source.revision_id,
-                    manifest_hash=executed.manifest_hash
-                    if executed is not None
-                    else None,
-                    artifact_dir=run_dir,
-                    metrics=safe,
-                    config_hash=config_hash,
-                    source_hash=source_hash,
-                    random_seed=random_seed,
-                    dataset_id=dataset_fingerprint["dataset_id"],
-                )
-                self._store.create_artifact(
-                    artifact_id=f"{job_id}:result_json",
-                    run_id=job_id,
-                    artifact_type="result_json",
-                    path=result_path,
-                    sha256=sha256_file(result_path),
-                    metadata={"job_id": job_id},
-                )
-                if executed is not None:
-                    manifest_path = self._manifests.path(job_id)
-                    self._store.create_artifact(
-                        artifact_id=f"{job_id}:execution_manifest",
-                        run_id=job_id,
-                        artifact_type="execution_manifest",
-                        path=manifest_path,
-                        sha256=sha256_file(manifest_path),
-                        metadata={
-                            "manifest_hash": executed.manifest_hash,
-                            "schema_version": executed.schema_version,
-                        },
-                    )
-                if config_content is not None:
-                    snapshot_path = run_dir / "config.yaml"
-                    snapshot_path.write_bytes(config_content.encode("utf-8"))
-                    self._store.create_artifact(
-                        artifact_id=f"{job_id}:config_snapshot",
-                        run_id=job_id,
-                        artifact_type="config_snapshot",
-                        path=snapshot_path,
-                        sha256=sha256_file(snapshot_path),
-                        metadata={
-                            "job_id": job_id,
-                            "source_path": str(config_path),
-                            "config_hash": config_hash,
-                        },
-                    )
-                    if strategy_source is not None and source.content is not None:
-                        strategy_snapshot = run_dir / "strategy.py"
-                        strategy_snapshot.write_bytes(source.content)
-                        self._store.create_artifact(
-                            artifact_id=f"{job_id}:strategy_source",
-                            run_id=job_id,
-                            artifact_type="strategy_source",
-                            path=strategy_snapshot,
-                            sha256=sha256_file(strategy_snapshot),
-                            metadata={
-                                "job_id": job_id,
-                                "source_path": str(strategy_source),
-                                "source_hash": source_hash,
-                                "revision_id": source.revision_id,
-                            },
-                        )
-                fingerprint_path = run_dir / "dataset_fingerprint.json"
-                fingerprint_path.write_text(
-                    json.dumps(dataset_fingerprint, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                self._store.create_artifact(
-                    artifact_id=f"{job_id}:dataset_fingerprint",
-                    run_id=job_id,
-                    artifact_type="dataset_fingerprint",
-                    path=fingerprint_path,
-                    sha256=sha256_file(fingerprint_path),
-                    metadata=dataset_fingerprint,
-                )
-                if pipeline is not None:
-                    pipeline_path = run_dir / "pipeline_result.pkl"
-                    pipeline_path.write_bytes(pickle.dumps(pipeline))
-                    self._store.create_artifact(
-                        artifact_id=f"{job_id}:pipeline_result",
-                        run_id=job_id,
-                        artifact_type="pipeline_result",
-                        path=pipeline_path,
-                        sha256=sha256_file(pipeline_path),
-                        metadata={"job_id": job_id, "format": "pickle"},
-                    )
-                if details is not None:
-                    PerformanceStore(self._workspace, self._store).publish(details)
+            return result_path
+        result_path = RunPublisher(self._workspace, self._store).publish(
+            RunPublicationBinding(
+                job_id=job_id, run_id=job_id, expected_manifest=expected
+            ),
+            safe,
+            pipeline=pipeline,
+            performance=performance,
+            config_snapshot=config_payload,
+            execution_manifest=executed,
+        )
         logger.debug("Saved result for job %s -> %s", job_id, result_path)
         return result_path
 
@@ -472,21 +358,6 @@ class JobStore:
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         """Return stored artifact metadata."""
         return self._store.get_artifact(artifact_id)
-
-    def _dataset_fingerprint(self, job: dict[str, Any]) -> dict[str, str]:
-        dataset_id = str(job.get("dataset_id") or "")
-        payload = {
-            "dataset_id": dataset_id,
-            "symbol": str(job.get("symbol") or ""),
-            "timeframe": str(job.get("timeframe") or ""),
-            "start_date": str(job.get("start_date") or ""),
-            "end_date": str(job.get("end_date") or ""),
-        }
-        if not dataset_id:
-            dataset_id = sha256_text(json.dumps(payload, sort_keys=True))
-            payload["dataset_id"] = dataset_id
-        payload["fingerprint"] = sha256_text(json.dumps(payload, sort_keys=True))
-        return payload
 
 
 def _now_iso() -> str:

@@ -592,6 +592,7 @@ def test_real_trial_alarm_during_contract_execution_retains_timeout_status(
             assert store.list_runs() == []
             run_dir = store.workspace.runs / "fixture"
             assert {path.name for path in run_dir.iterdir()} == {
+                ".submission.lock",
                 "manifest.json",
                 "config.yaml",
             }

@@ -93,6 +93,21 @@ bundled strategies and historical records without revision identity expose
 pointer and does not change the
 revision used by an existing job or completed run.
 
+Run publication is handled by `RunPublisher`, separately from job lifecycle
+updates. `RunPublicationBinding` supplies the owning `job_id`, the distinct
+`run_id`, and the expected execution manifest established by the submission
+owner. That owner must verify membership before publication; the binding alone
+does not prove that a child was approved. The publisher verifies the existing
+job, strategy/revision, executed manifest, configuration, source and performance
+identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs;
+artifact metadata retains the owning job ID. Child runs require complete
+performance artifacts. Publication locking, rollback and retry checks cover
+the run files and lineage. `JobStore.save_result` retains the single-run
+interface and always constructs a binding with `run_id == job_id`.
+Job creation and child publication share the run-ID submission lock; a new job
+cannot reuse an existing run ID, and a child cannot occupy an existing job ID.
+The lock file remains for concurrent waiters and same-thread nested submission.
+
 Draft cleanup scans raw job identities and payloads, run references and all stored
 manifests, including manifests left without a database job. Failed and cancelled
 jobs still retain their source references. A malformed or ambiguous history blocks
