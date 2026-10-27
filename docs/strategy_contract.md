@@ -256,9 +256,10 @@ increasing values. Timestamps are compared in UTC, a `timestamp` column is
 rewritten in UTC, and naive values are interpreted as UTC. A frame with no
 identity, or with duplicated or decreasing timestamps, raises `ValueError`.
 
-An empty scored frame produces no signals, and `RollingRetrainer` and the
-SafetyVolume Risk Gate return before validating either frame, so the checks
-above apply only when there is something to score.
+An empty scored frame produces no signals. `RollingRetrainer` and the
+SafetyVolume Risk Gate return before validating either frame, while
+`QuantileStrategy.generate_signals()` validates both frames before returning an
+empty result.
 
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
