@@ -367,8 +367,10 @@ worker 依 manifest 記錄的最大化或最小化方向選出參數，再進行
 
 ### 保存與查詢結果
 
-背景 worker 透過 JobStore 保存結果，CLI 透過 ArtifactService 保存；
-兩條路徑共用 manifest 與績效儲存 adapters。SQLite 保存工作、run、artifact 索引與
+一般背景工作透過 JobStore.save_result 委派 RunPublisher 發佈結果，再更新工作狀態；
+固定比較由 ComparisonService 直接以 RunPublisher 發佈各候選 run，另行更新候選帳本
+與父工作生命週期，結果發佈和工作狀態更新分開處理。CLI 透過 ArtifactService 保存；
+這些路徑共用 manifest 與績效儲存 adapters。SQLite 保存工作、run、artifact 索引與
 數值指標；filesystem 保存 revision、資料快取及執行產物。
 
 Backtest／walk-forward 另存 PipelineResult，供 dashboard 載入呈現；
