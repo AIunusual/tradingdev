@@ -410,6 +410,32 @@ files in place. As before, revision-directory publication and current-pointer
 replacement are separate filesystem operations: a failed pointer update can leave
 a complete unreferenced revision while the previous current pointer remains.
 
+## Fixed Comparison Evidence
+
+`ComparisonManifest` fixes one to eight ordered ordinary-backtest candidates,
+including their labels, proposal rationale and complete execution manifests.
+Only effective constructor parameters may differ; strategy identity, research,
+data settings, execution assumptions and seed must match. Repeated effective
+parameter sets are rejected. Its digest binds every candidate before execution.
+
+`ComparisonStore` uses `comparisons/<job_id>/manifest.json` and `ledger.json`.
+The ledger reserves `<job_id>_candidate_N` run IDs and retains every candidate's
+child manifest hash, status and failure reason. It progresses from `pending` to
+`running`, then `succeeded`, `failed` or `cancelled`; untouched candidates can
+become `not_run`. Identical retries preserve terminal outcomes. A reserved run ID
+does not prove a result exists; the execution coordinator must verify published
+child results before recording success. Metrics remain in each run's artifacts.
+
+After approval, `snapshot.parquet` and `receipt.json` retain the actual merged
+data bytes and their SHA-256, data binding, source request ID and comparison hash.
+The coordinator verifies the snapshot's data binding against the accepted
+execution; the storage adapter validates identity, JSON and file integrity.
+This receipt does not change the approved manifest. Initial ledger publication
+precedes the manifest completion marker; a missing ledger beside an existing
+manifest is corruption and cannot reset completed candidates. Failed snapshot
+publication rolls back only files created by that attempt. Draft cleanup scans
+comparison children, including orphaned manifests, and blocks ambiguous history.
+
 ## Execution Manifest
 
 Before spawning a background worker, the service publishes
