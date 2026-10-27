@@ -149,6 +149,10 @@ KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折
 
 一般策略建立、修復及歷史查詢情境須沿用已驗證 YAML 基礎設定：`prepare_backtest`
 的 `parameters` 與 `backtest_overrides` 須省略或傳 `null`，覆寫相同值也不符合要求。
+準備時須明示剛通過 validate／dry-run 的 `revision_id`，並使用
+`research.kind=inherit_selected_revision`。研究欄位可省略，或重傳與該版本兩次成功檢查的
+`effective_config` 相同的值；兩份研究設定證據都須完整且一致，日期按等價 UTC 時間比對。
+`kind=new` 與 `annualization=market` 會重新選擇研究或政策，不符合這些固定設定沿用情境。
 參數實驗則沿用同一 runnable revision，以 `parameters` 提交不同設定，並核對結果
 及基礎 YAML 未被改寫。入口即時顯示進度與耗時，第一個失敗即停止；
 加 `--maxfail=0` 可跑完全部情境。
