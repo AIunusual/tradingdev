@@ -315,13 +315,13 @@ def test_reference_definitions_keep_their_complete_original_sections() -> None:
             "data",
             "README.md",
             "# TradingDev\n## New behavior\nMust not disappear.\n",
-            "unfamiliar-heading-full-document",
+            "unknown-sections-preserved",
         ),
         (
             "tooling",
             "docs/development.md",
             "# 開發指南\n## 更新文件\n### New nested heading\nNew rules.\n",
-            "unfamiliar-heading-full-document",
+            "unknown-sections-preserved",
         ),
         (
             "general",
@@ -336,6 +336,56 @@ def test_unfamiliar_content_is_preserved_with_explicit_reason(
 ) -> None:
     assert sections_for_scope(scope, path, text) == markdown_sections(path, text)
     assert selection_reason(scope, path, text) == reason
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_unknown_section_and_entire_subtree_are_preserved_in_every_scope(
+    scope: str,
+) -> None:
+    parent = "## 查看結果與圖表\nRequired ancestor context.\n"
+    unknown = "### New behavior\nNew evidence [manual].\n"
+    child = "#### 開啟 Dashboard\nKnown title inside the unknown subtree.\n"
+    grandchild = "##### New details\nDeeper unknown evidence.\n"
+    unrelated = "## 研究機器學習訊號\n" + "Unrelated known ML details.\n" * 1_000
+    definitions = "## 終端機用法\n[manual]: ../README.md\n"
+    text = "前言\n# TradingDev\n" + parent + unknown + child + grandchild + unrelated
+    text += definitions
+
+    all_sections = markdown_sections("README.md", text)
+    selected = sections_for_scope(scope, "README.md", text)
+    assert "".join(section.text for section in all_sections) == text
+    expected = {parent, unknown, child, grandchild, definitions}
+    assert expected <= {section.text for section in selected}
+    assert set(selected) <= set(all_sections)
+    assert selected[0].text == "前言\n"
+    assert selection_reason(scope, "README.md", text) == (
+        "general-scope-full-document"
+        if scope == "general"
+        else "unknown-sections-preserved"
+    )
+    if scope == "tooling":
+        # A new heading must not repeat a long, recognized unrelated section.
+        assert unrelated not in {section.text for section in selected}
+        assert sum(len(section.text) for section in selected) < len(text) // 10
+    if scope == "general":
+        assert selected == all_sections
+
+
+def test_unknown_ancestor_retains_known_descendants_until_its_subtree_ends() -> None:
+    text = (
+        "# TradingDev\n"
+        "## New workflow\nNew contract.\n"
+        "### 研究機器學習訊號\nNested known title still belongs to new contract.\n"
+        "## 研究機器學習訊號\nSeparate known ML section.\n"
+        "## 常見問題\nCommon context.\n"
+    )
+    sections = markdown_sections("README.md", text)
+    selected = sections_for_scope("tooling", "README.md", text)
+    assert selected == (sections[0], sections[1], sections[2], sections[4])
+    assert selected[2].headings == ("TradingDev", "New workflow", "研究機器學習訊號")
+    assert "Separate known ML section." not in "".join(
+        section.text for section in selected
+    )
 
 
 def test_registered_strategy_docs_follow_whole_document_responsibility() -> None:

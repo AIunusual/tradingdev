@@ -1,8 +1,9 @@
 """Deterministic review ownership and lossless Markdown context selection.
 
 These scopes organize evidence; they never exempt a path from review. Unknown
-paths have the explicit ``general`` owner. Unknown documents or headings retain
-their complete text so a stale responsibility registry cannot hide new content.
+paths have the explicit ``general`` owner. Unknown documents retain all text;
+unknown sections and their descendants appear in every scope so a stale
+responsibility registry cannot hide new content.
 """
 
 from __future__ import annotations
@@ -53,8 +54,8 @@ def _headings(scopes: Iterable[str], *titles: str) -> dict[str, frozenset[str]]:
 
 
 # Heading titles are evidence selectors, not prose summaries or instructions.
-# Every heading in a registered document must be recognized before any section
-# can be omitted. An edit introducing a new heading therefore widens context.
+# A section can be omitted only when its full heading ancestry is recognized.
+# New headings widen context by retaining their entire subtree in every scope.
 _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     "README.md": {
         **_headings(_ALL, "TradingDev", "常見問題", "相關文件"),
@@ -441,12 +442,12 @@ def _selection_reason(
     if registry is None:
         return "unfamiliar-document-full-document"
     if any(title not in registry for section in sections for title in section.headings):
-        return "unfamiliar-heading-full-document"
+        return "unknown-sections-preserved"
     return "registered-heading-responsibility"
 
 
 def selection_reason(scope: str, path: str, text: str) -> str:
-    """Explain whether context selection used the registry or widened to all text."""
+    """Explain registered selection or conservative unknown-content retention."""
     return _selection_reason(scope, path, markdown_sections(path, text))
 
 
@@ -455,20 +456,26 @@ def sections_for_scope(scope: str, path: str, text: str) -> tuple[MarkdownSectio
 
     Changed documents must separately receive full-content review. This function
     only selects context for other scopes; it never grants a coverage exemption.
-    Any unrecognized document or heading returns every section, as reported by
-    :func:`selection_reason`.
+    Unrecognized documents return every section. Within registered documents,
+    unknown headings retain their complete subtree in every scope, together
+    with ancestor prose and reference definitions. Only recognized, unrelated
+    sections can be omitted, as reported by :func:`selection_reason`.
     """
     sections, reference_lines = _parse_sections(path, text)
     reason = _selection_reason(scope, path, sections)
     if reason == "registered-document-responsibility":
         return sections if scope in _WHOLE_DOC_SCOPES[path] else ()
-    if reason != "registered-heading-responsibility":
+    if reason not in {
+        "registered-heading-responsibility",
+        "unknown-sections-preserved",
+    }:
         return sections
     registry = _DOC_HEADINGS[path]
     selected = {
         index
         for index, section in enumerate(sections)
         if not section.headings
+        or any(title not in registry for title in section.headings)
         or scope in registry[section.headings[-1]]
         or any(
             section.start_line <= line <= section.end_line for line in reference_lines
