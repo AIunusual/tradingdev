@@ -83,7 +83,7 @@ window.TradingDevTables=(()=>{
    const record=rows[dataContext.__report_row_index];
    const destination=record?.[navigateField];
    if(typeof destination!=='string'||!/^#result-\d+-\d+$/.test(destination)){
-    return '無可用明細';
+    return `${escapeText(value)} · 無可用明細`;
    }
    return `<a href="${escapeText(destination)}"`
     +` aria-label="查看結果 ${escapeText(value)} 的明細"`
@@ -119,7 +119,7 @@ window.TradingDevTables=(()=>{
   }));
   const table=new Bokeh.Tables.DataTable({
    source,columns:tableColumns.filter((_,index)=>active.has(index)),
-   height:520,sizing_mode:'stretch_width',autosize_mode:'none',
+   height:spec.height??520,sizing_mode:'stretch_width',autosize_mode:'none',
    index_position:null,editable:false,reorderable:false,sortable:true,
    selectable:true,scroll_to_selection:false,row_height:32,
    frozen_columns:Math.min(2,Math.max(0,defaults.length-1))||null
@@ -136,7 +136,8 @@ window.TradingDevTables=(()=>{
    visible:Boolean(spec.filter_field)
   });
   const query=new Bokeh.Widgets.TextInput({title:'搜尋所有欄位',
-   placeholder:'時間、價格、委託或成交編號…',sizing_mode:'stretch_width'});
+   placeholder:spec.search_placeholder??'時間、價格、委託或成交編號…',
+   sizing_mode:'stretch_width'});
   const count=new Bokeh.Widgets.Div({text:'',sizing_mode:'stretch_width'});
   const updateRows=()=>{
    const needle=query.value.trim().toLocaleLowerCase();

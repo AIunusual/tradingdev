@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
@@ -19,6 +22,8 @@ from tradingdev.app.run_lineage import (
     read_strategy_snapshot,
 )
 from tradingdev.app.run_publisher import RunPublicationBinding, RunPublisher
+from tradingdev.domain.comparison import ComparisonManifest
+from tradingdev.domain.comparison_results import ComparisonLedger
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.shared.utils.json_values import normalize_json_object
 
@@ -26,6 +31,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
+    from tradingdev.domain.execution_target import ExecutionTarget
     from tradingdev.domain.performance.artifacts import PerformanceArtifacts
 
 logger = logging.getLogger(__name__)
@@ -100,10 +106,11 @@ class JobStore:
         config_path: str | None = None,
         job_type: str = "backtest",
         extra_payload: dict[str, Any] | None = None,
-        manifest: ExecutionManifest | None = None,
+        manifest: ExecutionTarget | None = None,
     ) -> dict[str, Any]:
         """Create a new job record and persist it."""
-        with self.submission_lock(job_id):
+        with self.submission_lock(job_id), ExitStack() as reservations:
+            self._check_comparison_reservation(job_id)
             if self._store.get_job(job_id) is not None:
                 raise ValueError(f"Job already exists: {job_id}")
             if self._store.get_run(job_id) is not None:
@@ -125,7 +132,17 @@ class JobStore:
                     raise ManifestError(
                         "Extra payload cannot replace execution identity"
                     )
-                config = manifest.config_copy()
+                if isinstance(manifest, ComparisonManifest):
+                    for row in ComparisonLedger.create(job_id, manifest).candidates:
+                        reservations.enter_context(self.submission_lock(row.run_id))
+                        if (
+                            self._store.get_job(row.run_id) is not None
+                            or self._store.get_run(row.run_id) is not None
+                        ):
+                            raise ManifestError("Comparison child ID is already in use")
+                    config = manifest.common_config()
+                else:
+                    config = manifest.config_copy()
                 strategy = config["strategy"]
                 if strategy_name is not None and strategy_name != strategy.get("id"):
                     raise ManifestError(
@@ -142,10 +159,19 @@ class JobStore:
                 timeframe = config["backtest"]["timeframe"]
                 start_date = config["backtest"]["start_date"]
                 end_date = config["backtest"]["end_date"]
-                if manifest.optimization is not None:
+                if (
+                    isinstance(manifest, ExecutionManifest)
+                    and manifest.optimization is not None
+                ):
                     start_date = manifest.optimization.train_start.isoformat()
                     end_date = manifest.optimization.test_end.isoformat()
-                path = self._manifests.publish(job_id, manifest)
+                if isinstance(manifest, ComparisonManifest):
+                    comparisons = ComparisonStore(self._workspace)
+                    comparisons.initialize(job_id, manifest)
+                    path = comparisons.path(job_id)
+                    result_path = comparisons.path(job_id, "ledger.json")
+                else:
+                    path = self._manifests.publish(job_id, manifest)
                 projection = path.with_name("config.yaml")
                 projection.write_text(
                     yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
@@ -178,13 +204,35 @@ class JobStore:
         """Serialize one job's creation and launch through the storage adapter."""
         return self._manifests.submission_lock(job_id)
 
-    def load_manifest(self, job_id: str) -> ExecutionManifest:
+    def _check_comparison_reservation(self, identifier: str) -> None:
+        """A submitted comparison owns its deterministic child IDs before execution."""
+        match = re.fullmatch(r"(.+)_candidate_([1-8])", identifier)
+        if match is None:
+            return
+        parent_id = match[1]
+        parent = self.get_job(parent_id)
+        if parent is None or parent.get("job_type") != "comparison":
+            return
+        ledger = ComparisonStore(self._workspace).load_ledger(
+            parent_id, expected_hash=str(parent["manifest_hash"])
+        )
+        if any(row.run_id == identifier for row in ledger.candidates):
+            raise ManifestError("ID is reserved by a comparison candidate")
+
+    def load_manifest(self, job_id: str) -> ExecutionTarget:
         """Read a job's pinned specification; legacy jobs cannot resume execution."""
         job = self.get_job(job_id)
         if job is None or not isinstance(job.get("manifest_hash"), str):
             raise ManifestError("Job has no execution manifest; submit a new job")
-        manifest = self._manifests.load(job_id, expected_hash=job["manifest_hash"])
-        strategy = manifest.config_copy()["strategy"]
+        if job.get("job_type") == "comparison":
+            comparison = ComparisonStore(self._workspace).load_manifest(
+                job_id, expected_hash=job["manifest_hash"]
+            )
+            strategy = comparison.common_config()["strategy"]
+            manifest: ExecutionTarget = comparison
+        else:
+            manifest = self._manifests.load(job_id, expected_hash=job["manifest_hash"])
+            strategy = manifest.config_copy()["strategy"]
         if (
             manifest.kind != job.get("job_type")
             or strategy.get("id") != job.get("strategy_name")
@@ -279,6 +327,11 @@ class JobStore:
         safe = normalize_json_object(metrics)
 
         job = self.get_job(job_id)
+        self._check_comparison_reservation(job_id)
+        if job is not None and job.get("job_type") == "comparison":
+            raise ManifestError(
+                "Comparison results must be published as candidate runs"
+            )
         if job is None and self.get_run(job_id) is not None:
             raise ValueError(f"Result ID belongs to an existing run: {job_id}")
         config_path = _resolve_optional_path(job.get("config_path")) if job else None
@@ -303,7 +356,10 @@ class JobStore:
             if executed is None:
                 raise ManifestError("Result must retain the executed manifest")
             executed.verify(expected_hash=job["manifest_hash"])
-            expected = self.load_manifest(job_id)
+            loaded = self.load_manifest(job_id)
+            if not isinstance(loaded, ExecutionManifest):
+                raise ManifestError("A comparison cannot publish one parent result")
+            expected = loaded
             if config_payload is not None and config_payload != executed.config_copy():
                 raise ManifestError("Result config differs from the executed manifest")
             config_payload = executed.config_copy()
@@ -393,7 +449,7 @@ def create_job(
     job_type: str = "backtest",
     extra_payload: dict[str, Any] | None = None,
     revision_id: str | None = None,
-    manifest: ExecutionManifest | None = None,
+    manifest: ExecutionTarget | None = None,
 ) -> dict[str, Any]:
     """Create a new job record in the default store."""
     return get_default_job_store().create_job(
@@ -421,7 +477,7 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     return get_default_job_store().get_job(job_id)
 
 
-def load_manifest(job_id: str) -> ExecutionManifest:
+def load_manifest(job_id: str) -> ExecutionTarget:
     """Load a pinned execution specification from the default workspace."""
     return get_default_job_store().load_manifest(job_id)
 

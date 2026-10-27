@@ -17,7 +17,7 @@ from tests.app.test_backtest_service import (
 )
 
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_dataset import ExecutionDataset
+from tradingdev.app.execution_dataset import ExecutionDataset, execution_data_binding
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.randomness import get_numpy_rng, get_random, get_seed
@@ -107,6 +107,49 @@ def test_capture_contains_real_merged_features_and_loads_only_once(
         assert run.dataset_id == snapshot.dataset_id
         assert run.processed_path == snapshot.processed_path
     assert len(data.loads) == 1
+
+
+def test_saved_data_binding_remains_readable_without_applying_new_defaults(
+    tmp_path: Path,
+) -> None:
+    service, data, _loader, _strategy = _service(tmp_path)
+    manifest = service.prepare_execution(_raw_config(), kind="backtest")
+    expected = execution_data_binding(manifest)
+    payload = manifest.model_dump(mode="json", exclude={"manifest_hash"})
+    payload["config"]["backtest"].pop("periods_per_year")
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    historical = ExecutionManifest.model_validate(
+        {**payload, "manifest_hash": hashlib.sha256(encoded.encode()).hexdigest()}
+    )
+    assert execution_data_binding(historical) == expected
+    with pytest.raises(ManifestError, match="current runtime schema"):
+        service.load_execution_dataset(historical)
+    assert data.loads == []
+
+
+@pytest.mark.parametrize(
+    "field", ["data", "symbol", "timeframe", "start_date", "end_date"]
+)
+def test_saved_data_binding_rejects_incomplete_settings(
+    tmp_path: Path, field: str
+) -> None:
+    service, _data, _loader, _strategy = _service(tmp_path)
+    manifest = service.prepare_execution(_raw_config(), kind="backtest")
+    payload = manifest.model_dump(mode="json", exclude={"manifest_hash"})
+    if field == "data":
+        payload["config"].pop(field)
+    else:
+        payload["config"]["backtest"].pop(field)
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    historical = ExecutionManifest.model_validate(
+        {**payload, "manifest_hash": hashlib.sha256(encoded.encode()).hexdigest()}
+    )
+    with pytest.raises(ManifestError, match="complete saved data settings"):
+        execution_data_binding(historical)
 
 
 def test_snapshot_preserves_index_nullable_dtypes_and_object_isolation(

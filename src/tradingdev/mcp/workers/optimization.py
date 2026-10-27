@@ -36,6 +36,7 @@ from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
+from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.optimization.grid_search import (
     GridSearchResult,
     best_result,
@@ -250,6 +251,8 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     # --- Phase 2: verify and load the sole execution specification ---
     try:
         manifest = job_store.load_manifest(job_id)
+        if not isinstance(manifest, ExecutionManifest):
+            raise ManifestError("Comparison requires the comparison worker")
         optimization = manifest.optimization
         if manifest.kind != "optimization" or optimization is None:
             msg = "Job requires an optimization execution manifest"

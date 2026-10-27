@@ -192,10 +192,8 @@ class ComparisonStore:
                 raise
             return receipt
 
-    def load_snapshot(
-        self, job_id: str, *, expected_hash: str
-    ) -> tuple[ComparisonReceipt, bytes]:
-        """Verify the receipt against this job and the hash of actual snapshot bytes."""
+    def load_receipt(self, job_id: str, *, expected_hash: str) -> ComparisonReceipt:
+        """Read bound receipt metadata; this does not verify current snapshot bytes."""
         self.load_manifest(job_id, expected_hash=expected_hash)
         content = self._read(job_id, "receipt.json")
         try:
@@ -205,6 +203,13 @@ class ComparisonStore:
             receipt.verify(job_id=job_id, expected_hash=expected_hash)
         except (ValueError, UnicodeError) as exc:
             raise ManifestError("Cannot read valid comparison receipt") from exc
+        return receipt
+
+    def load_snapshot(
+        self, job_id: str, *, expected_hash: str
+    ) -> tuple[ComparisonReceipt, bytes]:
+        """Verify the receipt against this job and the hash of actual snapshot bytes."""
+        receipt = self.load_receipt(job_id, expected_hash=expected_hash)
         snapshot = self._read(job_id, "snapshot.parquet")
         if (
             not snapshot

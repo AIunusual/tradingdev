@@ -205,7 +205,7 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 ### 準備、確認與執行回測
 
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
-MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization`
+MCP 先以 `prepare_backtest`、`prepare_comparison`、`prepare_walk_forward` 或 `prepare_optimization`
 準備執行計畫：傳入具型別的研究需求，解析有效市場、期間、成本與來源標籤，
 再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成離線程式與設定檢查，確認程序已停止並清理臨時內容後，
@@ -224,6 +224,14 @@ JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載�
 直接失敗，不靜默改變資料。這個 API 不屬於確認前的程式檢查；未提供快照的單次
 回測仍循原資料載入流程。程序隔離與任意策略全域狀態安全不由此 API 保證。
 
+固定比較由 ResearchPreparationService 解析一次研究設定，保存一到八組候選的完整
+執行 manifest；ComparisonManifest 只允許建構子參數不同。每組合成檢查通過後，
+PreparedComparison 與各組收據交給同一計畫／確認流程。使用者批准整組後，
+ComparisonService 共用一份資料快照，逐組獨立執行；ComparisonStore 保存完整候選帳本，
+RunPublisher 核對父子身分與資料收據後發佈各組結果。個別失敗不隱藏候選，
+也不產生虛構的父 run 或合併資金績效。取消與崩潰恢復須先確認 worker 已停止。
+此流程支援普通回測，不包含需要訓練或 walk-forward 的多組比較。
+
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
 共用建立 job、啟動 worker 與啟動失敗紀錄。提交已準備的內容時不重新解析 YAML，
@@ -234,7 +242,8 @@ PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmi
 PreflightService 將設定準備、策略匯入、建構子與執行模式檢查，以及生成策略的固定合成資料
 訊號契約檢查放入受監督的子程序；預設總預算為 60 秒，程序清理另計。
 確認前不載入快取或下載真實行情、不執行回測引擎，也不呼叫策略訓練。
-內建策略只檢查配置、模式與參數綁定，不執行訊號；需要先訓練的策略明列訊號檢查待訓練後進行。
+一般準備中的內建策略只檢查配置、模式與參數綁定，不執行訊號；固定比較則逐組執行兩種合成
+訊號檢查，所有候選共用一次準備時限。需要先訓練的策略明列訊號檢查待訓練後進行。
 最佳化在此固定候選與有效參數，不以行情評估候選或先挑選參數。
 檢查證據明列已檢查與尚未驗證的項目；資料可用性、實際分折、訓練、成交、成本與績效
 須等待使用者同意後的正式執行。合成訊號通過不證明交易規則完全正確、沒有前視或可獲利。
@@ -532,6 +541,10 @@ QuantStats 繪圖以程序內鎖及局部樣式隔離，固定 SVG 身分並移�
 選取核對章節時，完整事件資料供本機表格篩選、排序、欄位選擇及 CSV／JSON 匯出；
 畫面篩選與兩位小數顯示不裁減或捨入下載資料。
 完整性核對不代表封存全部外部執行環境。
+
+固定比較報告以 `comparison_job_id` 選取，ReportService 經 report_comparison 讀取完整帳本、
+核對快照與成功子結果，再交給共用 renderer。所有候選的參數、理由、狀態與失敗原因是必留內容，
+不受可選章節影響；只有成功子結果提供交易明細入口。沒有任何成功結果時仍可交付報告。
 
 ### 設定與儲存一致性
 

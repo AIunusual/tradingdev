@@ -22,6 +22,7 @@ from tradingdev.adapters.execution.process_runner import (
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.domain.preflight import PreflightReceipt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -219,7 +220,9 @@ def _check_preflight_cleanup(
         workspace, timeout_seconds=3 if outcome == "timeout" else 60
     )
     if outcome == "success":
-        assert service.prepare(request).receipt.synthetic_fixture_rows == [80, 240]
+        receipt = service.prepare(request).receipt
+        assert isinstance(receipt, PreflightReceipt)
+        assert receipt.synthetic_fixture_rows == [80, 240]
     else:
         with pytest.raises(PreflightError) as caught:
             service.prepare(request)

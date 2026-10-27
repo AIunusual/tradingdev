@@ -19,17 +19,21 @@ if TYPE_CHECKING:
     from tradingdev.domain.execution import ExecutionManifest
 
 
-def _data_binding(manifest: ExecutionManifest) -> str:
-    """Bind all resolved source settings and the exact requested market period."""
-    config = manifest.config_for_execution()
-    backtest = config["backtest"]
+def execution_data_binding(manifest: ExecutionManifest) -> str:
+    """Bind saved source settings and period without applying current defaults."""
+    config = manifest.config_copy()
+    backtest = config.get("backtest")
+    keys = ("symbol", "timeframe", "start_date", "end_date")
+    if (
+        not isinstance(config.get("data"), dict)
+        or not isinstance(backtest, dict)
+        or any(not isinstance(backtest.get(key), str) for key in keys)
+    ):
+        raise ManifestError("Execution dataset requires complete saved data settings")
     return json.dumps(
         {
             "data": config["data"],
-            "market": {
-                key: backtest[key]
-                for key in ("symbol", "timeframe", "start_date", "end_date")
-            },
+            "market": {key: backtest[key] for key in keys},
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -61,7 +65,7 @@ class ExecutionDataset:
     @classmethod
     def capture(cls, manifest: ExecutionManifest, dataset: LoadedDataset) -> Self:
         """Serialize a verified execution's fully loaded frame exactly once."""
-        binding = _data_binding(manifest)
+        binding = execution_data_binding(manifest)
         payload = dataset.frame.to_parquet(engine="pyarrow", index=None)
         restored = pd.read_parquet(BytesIO(payload), engine="pyarrow")
         try:
@@ -92,7 +96,7 @@ class ExecutionDataset:
 
     def frame_for(self, manifest: ExecutionManifest) -> pd.DataFrame:
         """Decode fresh data only for the identical sources and research period."""
-        if _data_binding(manifest) != self.data_binding_json:
+        if execution_data_binding(manifest) != self.data_binding_json:
             raise ManifestError(
                 "Execution dataset does not match the manifest's data settings "
                 "and research period"

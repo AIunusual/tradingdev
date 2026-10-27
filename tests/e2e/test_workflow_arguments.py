@@ -32,6 +32,14 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
     return [
         ("prepare_backtest", prepare),
         (
+            "prepare_comparison",
+            {name: value for name, value in prepare.items() if name != "parameters"}
+            | {
+                "candidates": '[{"label":"固定候選","rationale":"事先指定",'
+                '"parameters":{"period":20}}]'
+            },
+        ),
+        (
             "prepare_walk_forward",
             prepare | {"validation_config": '{"n_splits": 2, "train_ratio": 0.6}'},
         ),
@@ -68,6 +76,7 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
             },
         ),
         ("generate_report", {"run_ids": '["run"]', "sections": "null"}),
+        ("generate_report", {"comparison_job_id": "parent", "run_ids": "null"}),
         *[
             (name, {"run_id": "run", "limit": "1", "offset": "1"})
             for name in (
@@ -122,7 +131,7 @@ def test_conversion_preserves_failed_calls_source_text_and_unknown_fields() -> N
     assert effective_workflow_calls([confirmed])[0].arguments == confirmed.arguments
 
 
-@pytest.mark.parametrize("value", ["{}", '"run"', "[", "null", "[1]"])
+@pytest.mark.parametrize("value", ["{}", '"run"', "[", "[1]"])
 def test_conversion_rejects_invalid_report_list_shapes(value: str) -> None:
     call = ToolCall("generate_report", {"run_ids": value}, {"success": True})
     with pytest.raises(AssertionError, match="run_ids"):

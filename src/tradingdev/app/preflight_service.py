@@ -14,11 +14,18 @@ from tradingdev.adapters.execution.process_runner import (
     ProcessRunner,
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.execution_submission import PreparedExecution
+from tradingdev.app.prepared_execution import (
+    PreparedComparison,
+    PreparedExecution,
+    PreparedSubmission,
+)
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.preflight import (
+    ComparisonPreflightReceipt,
     PreflightPayload,
     PreflightReceipt,
     PreflightRequest,
+    ProgramReceipt,
 )
 from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionGuidance,
@@ -44,8 +51,8 @@ class PreflightError(RuntimeError):
 
 @dataclass(frozen=True)
 class PreflightResult:
-    prepared: PreparedExecution
-    receipt: PreflightReceipt
+    prepared: PreparedSubmission
+    receipt: ProgramReceipt
 
 
 class PreflightService:
@@ -131,16 +138,32 @@ class PreflightService:
                         execution_guidance=guidance,
                     )
                 payload = PreflightPayload.model_validate(raw["result"])
+                if payload.manifest.kind != request.kind:
+                    raise ValueError("Preflight execution kind must match the request")
             except (OSError, ValueError, KeyError) as error:
                 raise PreflightError(
                     "invalid_preflight_response", str(error)
                 ) from error
-            return PreflightResult(
-                PreparedExecution(
+            prepared: PreparedSubmission
+            if isinstance(payload.manifest, ComparisonManifest):
+                assert isinstance(payload.receipt, ComparisonPreflightReceipt)
+                prepared = PreparedComparison(
+                    payload.manifest,
+                    Path(payload.original_config_path),
+                    {
+                        item.candidate_id: tuple(item.receipt.synthetic_fixture_rows)
+                        for item in payload.receipt.candidates
+                    },
+                )
+            else:
+                assert isinstance(payload.receipt, PreflightReceipt)
+                prepared = PreparedExecution(
                     payload.manifest,
                     Path(payload.original_config_path),
                     tuple(payload.receipt.synthetic_fixture_rows),
-                ),
+                )
+            return PreflightResult(
+                prepared,
                 payload.receipt.model_copy(
                     update={"elapsed_seconds": time.monotonic() - started}
                 ),

@@ -6,23 +6,28 @@ import argparse
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.execution_requests import (
     BacktestInput,
+    ComparisonInput,
     OptimizationInput,
     WalkForwardInput,
 )
 from tradingdev.app.data_service import DataService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError
+from tradingdev.app.prepared_execution import PreparedComparison, PreparedExecution
 from tradingdev.app.research_preparation import ResearchPreparationService
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import (
+    ComparisonCandidateReceipt,
+    ComparisonPreflightReceipt,
     PreflightCheck,
     PreflightPayload,
     PreflightReceipt,
@@ -33,6 +38,9 @@ from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionModeError,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
+
+if TYPE_CHECKING:
+    from tradingdev.app.prepared_execution import PreparedSubmission
 
 
 def execute_preflight(
@@ -50,19 +58,26 @@ def execute_preflight(
     # Preparation resolves data paths and source declarations only. It never loads
     # cached bars, calls a crawler, or checks whether historical prices exist.
     data = DataService(source_workspace)
+    prepared: PreparedSubmission
     try:
-        arguments = (
-            OptimizationInput.model_validate(request.arguments)
-            if request.kind == "optimization"
-            else WalkForwardInput.model_validate(request.arguments)
-            if request.kind == "walk_forward"
-            else BacktestInput.model_validate(request.arguments)
-        )
-        prepared = ResearchPreparationService(
+        preparation = ResearchPreparationService(
             strategy_service=strategies,
             strategy_loader=loader,
             data_service=data,
-        ).prepare(request.kind, arguments)
+        )
+        if request.kind == "comparison":
+            prepared = preparation.prepare_comparison(
+                ComparisonInput.model_validate(request.arguments)
+            )
+        else:
+            arguments = (
+                OptimizationInput.model_validate(request.arguments)
+                if request.kind == "optimization"
+                else WalkForwardInput.model_validate(request.arguments)
+                if request.kind == "walk_forward"
+                else BacktestInput.model_validate(request.arguments)
+            )
+            prepared = preparation.prepare(request.kind, arguments)
     except StrategyExecutionModeError:
         raise
     except StrategyNotExecutableError as exc:
@@ -74,6 +89,51 @@ def execute_preflight(
             else "invalid_execution_request"
         )
         raise PreflightError(code, str(exc)) from exc
+    if isinstance(prepared, PreparedComparison):
+        children = [
+            ComparisonCandidateReceipt(
+                candidate_id=candidate.candidate_id,
+                receipt=_execution_receipt(
+                    PreparedExecution(
+                        candidate.manifest,
+                        prepared.original_config_path,
+                        prepared.candidate_fixture_rows[candidate.candidate_id],
+                    ),
+                    strategies,
+                    started,
+                    comparison_candidate=True,
+                ),
+            )
+            for candidate in prepared.manifest.candidates
+        ]
+        decoded = ComparisonManifest.model_validate_json(
+            prepared.manifest.model_dump_json()
+        )
+        decoded.verify(expected_hash=prepared.manifest.manifest_hash)
+        return PreflightPayload(
+            manifest=prepared.manifest,
+            original_config_path=str(prepared.original_config_path),
+            receipt=ComparisonPreflightReceipt(
+                manifest_hash=prepared.manifest.manifest_hash,
+                elapsed_seconds=time.monotonic() - started,
+                candidates=children,
+            ),
+        )
+    return PreflightPayload(
+        manifest=prepared.manifest,
+        original_config_path=str(prepared.original_config_path),
+        receipt=_execution_receipt(prepared, strategies, started),
+    )
+
+
+def _execution_receipt(
+    prepared: PreparedExecution,
+    strategies: StrategyService,
+    started: float,
+    *,
+    comparison_candidate: bool = False,
+) -> PreflightReceipt:
+    """Serialize one exact child and retain evidence from its actual signal checks."""
     original = prepared.manifest
     config = original.config_for_execution()
     selected = strategies.resolve_executable(
@@ -86,7 +146,7 @@ def execute_preflight(
         "parameter_binding",
     ]
     signal_check: SignalCheck
-    if original.strategy_execution.kind == "generated":
+    if comparison_candidate or original.strategy_execution.kind == "generated":
         checks.append("signal_contract")
         signal_check = "synthetic_contract_passed"
     elif training == "required":
@@ -100,7 +160,7 @@ def execute_preflight(
     decoded = ExecutionManifest.model_validate_json(original.model_dump_json())
     decoded.verify(expected_hash=original.manifest_hash)
     checks.append("manifest_serialization")
-    receipt = PreflightReceipt(
+    return PreflightReceipt(
         manifest_hash=original.manifest_hash,
         elapsed_seconds=time.monotonic() - started,
         checked_paths=checks,
@@ -114,11 +174,6 @@ def execute_preflight(
             "training",
             "performance",
         ],
-    )
-    return PreflightPayload(
-        manifest=original,
-        original_config_path=str(prepared.original_config_path),
-        receipt=receipt,
     )
 
 

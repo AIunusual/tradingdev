@@ -21,9 +21,9 @@ from tradingdev.adapters.storage.performance import (
 )
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_store import JobStore
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.run_publisher import RunPublicationBinding, RunPublisher
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.backtest.pipeline_result import PipelineResult

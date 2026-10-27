@@ -26,8 +26,14 @@ from tradingdev.adapters.reporting.tables import (
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.report_comparison import load_report_comparison
 from tradingdev.app.run_service import RunService
-from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
+from tradingdev.app.trade_history_service import (
+    HistoryReadError,
+    LoadedHistoryRun,
+    TradeHistoryService,
+)
+from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.presentation.ledger import build_ledger
 from tradingdev.domain.presentation.reports import (
     REPORT_RECIPES,
@@ -92,17 +98,28 @@ class ReportService:
 
     def generate_report(
         self,
-        run_ids: list[str],
+        run_ids: list[str] | None = None,
         sections: list[str] | None = None,
         commentary: list[dict[str, str]] | None = None,
+        *,
+        comparison_job_id: str | None = None,
     ) -> dict[str, Any]:
-        """Read every recorded scope from one to eight distinct runs and publish HTML.
+        """Publish saved runs or one finalized fixed comparison as offline HTML.
 
         Identical inputs reuse the same report, provided existing report files and
         registrations are intact. Missing/corrupt history is an error, never a request
         to reconstruct it from pickle, current configuration, or a fresh simulation.
         """
-        if (
+        if (run_ids is None) == (comparison_job_id is None):
+            return _error(
+                "invalid_report_selection",
+                "Provide either run_ids or comparison_job_id, exclusively",
+            )
+        if comparison_job_id is not None and (
+            not isinstance(comparison_job_id, str) or not comparison_job_id.strip()
+        ):
+            return _error("invalid_report_selection", "Provide a comparison job ID")
+        if comparison_job_id is None and (
             not isinstance(run_ids, list)
             or not 1 <= len(run_ids) <= 8
             or any(not isinstance(run_id, str) for run_id in run_ids)
@@ -141,13 +158,29 @@ class ReportService:
                 "Provide up to 20 plain-text title/text notes, 20000 characters total",
             )
         try:
-            payload = self._load(run_ids)
+            if comparison_job_id is not None:
+                comparison = load_report_comparison(
+                    self._workspace, self._store, self._history, comparison_job_id
+                )
+                run_ids = list(comparison.runs)
+                payload = self._load(run_ids, loaded_runs=comparison.runs)
+                payload["fixed_comparison"] = comparison.evidence
+            else:
+                assert run_ids is not None
+                payload = self._load(run_ids)
             payload["sections"] = list(selected)
             payload["commentary"] = [dict(note) for note in notes]
             payload["comparison_table"] = comparison_table(
-                payload, navigate=bool(SCOPED_REPORT_SECTIONS.intersection(selected))
+                payload,
+                navigate=bool(
+                    payload["runs"] and SCOPED_REPORT_SECTIONS.intersection(selected)
+                ),
             )
-            if set(selected) & {"overview", "ledger", "trades"}:
+            if comparison_job_id is not None or set(selected) & {
+                "overview",
+                "ledger",
+                "trades",
+            }:
                 payload["renderers"] = {"bokeh": bokeh_provenance()}
             if "metrics" in selected:
                 for run in payload["runs"]:
@@ -217,6 +250,9 @@ class ReportService:
                     for run in payload["runs"]
                 },
             }
+            if comparison_job_id is not None:
+                manifest["comparison_job_id"] = comparison_job_id
+                manifest["fixed_comparison"] = payload["fixed_comparison"]
             return publish_report(
                 self._workspace,
                 self._store,
@@ -225,19 +261,31 @@ class ReportService:
                 _encode(manifest),
                 run_ids=run_ids,
                 scope_count=scope_count,
+                comparison_job_id=comparison_job_id,
             )
         except (
             HistoryReadError,
             ReportPublicationError,
         ) as exc:
             return _error(exc.code, str(exc))
+        except ManifestError as exc:
+            return _error("comparison_report_invalid", str(exc))
         except (OSError, ValueError, sqlite3.Error, QuantStatsReportError) as exc:
             return _error("report_generation_failed", str(exc))
 
-    def _load(self, run_ids: list[str]) -> dict[str, Any]:
+    def _load(
+        self,
+        run_ids: list[str],
+        *,
+        loaded_runs: dict[str, LoadedHistoryRun] | None = None,
+    ) -> dict[str, Any]:
         runs: list[dict[str, Any]] = []
         for run_id in run_ids:
-            loaded = self._history.load_run(run_id)
+            loaded = (
+                loaded_runs[run_id]
+                if loaded_runs is not None
+                else self._history.load_run(run_id)
+            )
             run = loaded.run
             bundle = loaded.performance
             scopes: list[dict[str, Any]] = []

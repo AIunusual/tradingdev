@@ -10,10 +10,10 @@ from tests.integration.execution_fixtures import execution_options, research_arg
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.execution_plan_service import ExecutionPlanService
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightResult, PreflightService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.domain.preflight import (
     PreflightCheck,
     PreflightReceipt,

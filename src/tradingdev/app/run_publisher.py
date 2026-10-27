@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import re
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,12 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import sha256_file, sha256_text
 from tradingdev.adapters.storage.performance import (
     PerformanceArtifactError,
     PerformanceStore,
 )
+from tradingdev.app.execution_dataset import execution_data_binding
 from tradingdev.app.run_lineage import (
     StrategySourceSnapshot,
     extract_random_seed,
@@ -26,8 +29,11 @@ from tradingdev.app.run_lineage import (
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.performance.artifacts import (
+    ObservationsBundle,
     PerformanceArtifacts,
+    PerformanceBundle,
     bundles_from_pipeline,
+    validate_projection,
 )
 from tradingdev.shared.utils.json_values import normalize_json_object
 
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
+    from tradingdev.domain.execution_target import ExecutionTarget
 
 
 @dataclass(frozen=True)
@@ -107,6 +114,133 @@ class RunPublisher:
                 execution_manifest=execution_manifest,
             )
             return self._publish(context)
+
+    def verify_published(self, binding: RunPublicationBinding) -> None:
+        """Validate a stopped comparison worker's complete publication for recovery.
+
+        No strategy code is imported and no pipeline pickle is loaded. A leftover
+        publication marker is removed only after every registered artifact and the
+        complete performance pair have verified against the approved parent/child.
+        The caller must first confirm that the owning worker has stopped.
+        """
+        manifest = binding.expected_manifest
+        job = self._store.get_job(binding.job_id)
+        if manifest is None or job is None or job.get("job_type") != "comparison":
+            raise ManifestError("Recovery requires an approved comparison candidate")
+        manifest.verify()
+        comparisons = ComparisonStore(self._workspace)
+        parent_hash = str(job["manifest_hash"])
+        parent = comparisons.load_manifest(binding.job_id, expected_hash=parent_hash)
+        ledger = comparisons.load_ledger(binding.job_id, expected_hash=parent_hash)
+        row = next(
+            (row for row in ledger.candidates if row.run_id == binding.run_id), None
+        )
+        if row is None or row.child_manifest_hash != manifest.manifest_hash:
+            raise ManifestError("Published result is not a comparison member")
+        receipt = comparisons.load_receipt(binding.job_id, expected_hash=parent_hash)
+        if receipt.data_binding_json != execution_data_binding(manifest):
+            raise ManifestError("Published result data binding differs")
+        config = manifest.config_copy()
+        strategy = config["strategy"]
+        if parent.common_config()["strategy"] != {
+            key: value for key, value in strategy.items() if key != "parameters"
+        }:
+            raise ManifestError("Published result strategy binding differs")
+        run = self._store.get_run(binding.run_id)
+        run_dir = self._manifests.path(binding.run_id).parent
+        expected = {
+            "job_id": binding.job_id,
+            "strategy_id": strategy["id"],
+            "revision_id": strategy.get("revision_id"),
+            "manifest_hash": manifest.manifest_hash,
+            "source_hash": strategy.get("source_hash"),
+            "random_seed": config["random_seed"],
+            "dataset_id": f"sha256:{receipt.snapshot_sha256}",
+            "artifact_dir": str(run_dir),
+        }
+        if run is None or any(run.get(key) != value for key, value in expected.items()):
+            raise ManifestError("Published result identity differs from its comparison")
+        required = {
+            "result_json": "result.json",
+            "execution_manifest": "manifest.json",
+            "config_snapshot": "config.yaml",
+            "dataset_fingerprint": "dataset_fingerprint.json",
+            "performance_json": "performance.json",
+            "observations_json": "observations.json",
+        }
+        if strategy.get("source_hash") is not None:
+            required["strategy_source"] = "strategy.py"
+        artifacts = self._store.list_artifacts(binding.run_id)
+        by_type = {item["artifact_type"]: item for item in artifacts}
+        if not required.keys() <= by_type.keys():
+            raise ManifestError("Published result is incomplete")
+        for item in artifacts:
+            path = Path(item["path"])
+            if (
+                item["run_id"] != binding.run_id
+                or item["artifact_id"] != f"{binding.run_id}:{item['artifact_type']}"
+                or path.parent != run_dir
+                or path.is_symlink()
+                or path.resolve().parent != run_dir.resolve()
+                or not path.is_file()
+                or sha256_file(path) != item["sha256"]
+            ):
+                raise ManifestError("Published result artifact is missing or corrupt")
+            if (
+                item["artifact_type"] in required
+                and path.name != required[item["artifact_type"]]
+            ):
+                raise ManifestError("Published result artifact path differs")
+            if (
+                item["artifact_type"] not in {"performance_json", "observations_json"}
+                and item["metadata"].get("job_id") != binding.job_id
+            ):
+                raise ManifestError("Published artifact belongs to a different job")
+        self._manifests.load(
+            binding.run_id,
+            expected_hash=manifest.manifest_hash,
+            expected_file_sha256=by_type["execution_manifest"]["sha256"],
+        )
+        if (
+            yaml.safe_load((run_dir / "config.yaml").read_text()) != config
+            or sha256_file(run_dir / "config.yaml") != run.get("config_hash")
+            or json.loads((run_dir / "result.json").read_text()) != run["metrics"]
+            or (
+                strategy.get("source_hash") is not None
+                and sha256_file(run_dir / "strategy.py") != strategy["source_hash"]
+            )
+        ):
+            raise ManifestError(
+                "Published result snapshots differ from approved execution"
+            )
+        fingerprint = json.loads((run_dir / "dataset_fingerprint.json").read_text())
+        if fingerprint != _dataset_fingerprint(
+            {
+                **job,
+                "dataset_id": expected["dataset_id"],
+                "source_dataset_id": receipt.source_dataset_id,
+            }
+        ):
+            raise ManifestError("Published result dataset fingerprint differs")
+        details = PerformanceArtifacts(
+            performance=PerformanceBundle.model_validate_json(
+                (run_dir / "performance.json").read_bytes()
+            ),
+            observations=ObservationsBundle.model_validate_json(
+                (run_dir / "observations.json").read_bytes()
+            ),
+        )
+        if (
+            details.performance.run_id != binding.run_id
+            or details.performance.manifest_hash != manifest.manifest_hash
+        ):
+            raise ManifestError("Published performance identity differs")
+        validate_projection(details, run["metrics"])
+        marker = run_dir / ".result-publication"
+        if marker.exists():
+            if marker.is_symlink():
+                raise ManifestError("Invalid publication marker")
+            marker.rmdir()
 
     def _publish(self, context: _Publication) -> Path:
         binding = context.binding
@@ -241,6 +375,15 @@ class RunPublisher:
         job = self._store.get_job(binding.job_id)
         if job is None:
             raise ValueError("Run publication requires an existing job")
+        reservation = re.fullmatch(r"(.+)_candidate_([1-8])", binding.run_id)
+        if reservation is not None and reservation[1] != binding.job_id:
+            owner = self._store.get_job(reservation[1])
+            if owner is not None and owner.get("job_type") == "comparison":
+                ledger = ComparisonStore(self._workspace).load_ledger(
+                    reservation[1], expected_hash=str(owner["manifest_hash"])
+                )
+                if any(row.run_id == binding.run_id for row in ledger.candidates):
+                    raise ManifestError("Run ID is reserved by a different comparison")
         config_path = Path(str(job["config_path"])) if job.get("config_path") else None
         if config_path is not None and not config_path.is_absolute():
             config_path = Path.cwd() / config_path
@@ -267,8 +410,45 @@ class RunPublisher:
             parent_hash = job.get("manifest_hash")
             if not isinstance(parent_hash, str):
                 raise ManifestError("Result manifest is not bound to a submitted job")
-            parent = self._manifests.load(binding.job_id, expected_hash=parent_hash)
-            parent_strategy = parent.config_copy()["strategy"]
+            if job.get("job_type") == "comparison":
+                comparisons = ComparisonStore(self._workspace)
+                comparison = comparisons.load_manifest(
+                    binding.job_id, expected_hash=parent_hash
+                )
+                parent: ExecutionTarget = comparison
+                ledger = comparisons.load_ledger(
+                    binding.job_id, expected_hash=parent_hash
+                )
+                member = next(
+                    (row for row in ledger.candidates if row.run_id == binding.run_id),
+                    None,
+                )
+                if (
+                    member is None
+                    or member.child_manifest_hash != expected.manifest_hash
+                    or member.status not in {"running", "succeeded"}
+                    or (
+                        self._store.get_run(binding.run_id) is None
+                        and (
+                            member.status != "running"
+                            or job.get("status") != "running_backtest"
+                        )
+                    )
+                ):
+                    raise ManifestError("Run is not an active member of its comparison")
+                receipt = comparisons.load_receipt(
+                    binding.job_id, expected_hash=parent_hash
+                )
+                if (
+                    receipt.data_binding_json != execution_data_binding(expected)
+                    or job.get("dataset_id") != f"sha256:{receipt.snapshot_sha256}"
+                    or job.get("source_dataset_id") != receipt.source_dataset_id
+                ):
+                    raise ManifestError("Comparison result data identity differs")
+                parent_strategy = comparison.common_config()["strategy"]
+            else:
+                parent = self._manifests.load(binding.job_id, expected_hash=parent_hash)
+                parent_strategy = parent.config_copy()["strategy"]
             strategy = expected.config_copy()["strategy"]
             if (
                 parent.kind != job.get("job_type")
@@ -400,5 +580,7 @@ def _dataset_fingerprint(job: dict[str, Any]) -> dict[str, str]:
     }
     if not dataset_id:
         payload["dataset_id"] = sha256_text(json.dumps(payload, sort_keys=True))
+    if job.get("source_dataset_id"):
+        payload["source_dataset_id"] = str(job["source_dataset_id"])
     payload["fingerprint"] = sha256_text(json.dumps(payload, sort_keys=True))
     return payload

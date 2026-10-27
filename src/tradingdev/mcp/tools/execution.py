@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 from mcp_types import ToolAnnotations
@@ -11,7 +11,9 @@ from pydantic import JsonValue, ValidationError  # noqa: TC002
 
 from tradingdev.app.contracts.execution_requests import (
     BacktestInput,
+    ComparisonInput,
     OptimizationInput,
+    ParameterCandidateInput,  # noqa: TC001
     WalkForwardInput,
 )
 from tradingdev.app.contracts.plans import (
@@ -44,13 +46,15 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     )
 
     async def prepare(
-        kind: ExecutionKind,
+        kind: ExecutionKind | Literal["comparison"],
         arguments: dict[str, Any],
         presentation: ConfirmationPresentation,
     ) -> PlanResponse | PlanRejected:
         try:
             parsed = (
-                OptimizationInput.model_validate(arguments)
+                ComparisonInput.model_validate(arguments)
+                if kind == "comparison"
+                else OptimizationInput.model_validate(arguments)
                 if kind == "optimization"
                 else WalkForwardInput.model_validate(arguments)
                 if kind == "walk_forward"
@@ -108,6 +112,40 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             "backtest_overrides": backtest_overrides,
         }
         return await prepare("backtest", args, presentation)
+
+    @mcp.tool(annotations=prepare_annotations)
+    async def prepare_comparison(
+        strategy_id: str,
+        research: ResearchSpec,
+        candidates: list[ParameterCandidateInput],
+        presentation: ConfirmationPresentation,
+        revision_id: str | None = None,
+        backtest_overrides: dict[str, JsonValue] | None = None,
+    ) -> PlanResponse | PlanRejected:
+        """Prepare 1–8 fixed parameter sets for independent backtests on shared data.
+
+        Supply each candidate's label, selection rationale and parameter overrides;
+        the backend freezes complete constructor values and checks every candidate
+        with synthetic data. No history, training or backtest runs before approval.
+        Ordinary backtest strategies only; training-required research needs the
+        walk-forward workflow. This is fixed comparison, not an adaptive search.
+        Use human descriptions for the union of all constructor parameter paths.
+        Present confirmation_summary and the HTML confirmation_link verbatim,
+        end the turn and wait for the user's later decision about the whole set.
+        After completion
+        generate_report(comparison_job_id=job_id) retains every candidate outcome.
+        """
+        return await prepare(
+            "comparison",
+            {
+                "strategy_id": strategy_id,
+                "research": research,
+                "candidates": candidates,
+                "revision_id": revision_id,
+                "backtest_overrides": backtest_overrides,
+            },
+            presentation,
+        )
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_walk_forward(

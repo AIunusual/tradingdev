@@ -6,7 +6,7 @@ from pydantic import Field
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.execution_plan import PlanState
-from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.preflight import ProgramReceipt
 from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionGuidance,  # noqa: TC001 — Pydantic resolves the nested schema.
 )
@@ -24,7 +24,7 @@ class PlanResponse(ContractModel):
     confirmation_link: str
     html_path: str
     artifact_id: str
-    preflight: PreflightReceipt
+    preflight: ProgramReceipt
     job_id: str | None = None
     error: str | None = None
 

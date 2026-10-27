@@ -9,8 +9,8 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tradingdev.domain.execution import ExecutionManifest  # noqa: TC001
-from tradingdev.domain.preflight import PreflightReceipt  # noqa: TC001
+from tradingdev.domain.execution_target import ExecutionTarget  # noqa: TC001
+from tradingdev.domain.preflight import ProgramReceipt, verify_program_receipt
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationDocument,  # noqa: TC001
 )
@@ -27,9 +27,9 @@ class ExecutionPlan(BaseModel):
 
     schema_version: Literal[2] = 2
     plan_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    manifest: ExecutionManifest
+    manifest: ExecutionTarget
     original_config_path: str
-    preflight: PreflightReceipt
+    preflight: ProgramReceipt
     document: ConfirmationDocument
     created_at: datetime
     expires_at: datetime
@@ -54,7 +54,7 @@ class ExecutionPlan(BaseModel):
 
     def verify(self) -> None:
         self.manifest.verify()
-        self.preflight.verify_manifest(self.manifest)
+        verify_program_receipt(self.manifest, self.preflight)
         if self.document.identity.manifest_hash != self.manifest.manifest_hash:
             raise ValueError("Confirmation document belongs to another execution")
         if self.document.identity.plan_id != self.plan_id:

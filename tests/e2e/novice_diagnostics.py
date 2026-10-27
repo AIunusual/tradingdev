@@ -130,7 +130,11 @@ def novice_failure_evidence(
     plan = user.plan
     if plan is None:
         return {**evidence, "selected_plan": None, "reason": "No plan was reviewed"}
-    strategy = plan.manifest.config_copy()["strategy"]
+    strategy = (
+        plan.manifest.common_config()
+        if plan.manifest.kind == "comparison"
+        else plan.manifest.config_copy()
+    )["strategy"]
     evidence["selected_plan"] = {
         "plan_id": plan.plan_id,
         "manifest_hash": plan.manifest.manifest_hash,

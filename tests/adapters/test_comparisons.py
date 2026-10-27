@@ -293,6 +293,26 @@ def test_snapshot_receipt_binds_actual_bytes_without_changing_approved_manifest(
             _snapshot(store, manifest, **kwargs)
 
 
+def test_metadata_query_does_not_read_snapshot_but_still_validates_receipt(
+    store: ComparisonStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest()
+    store.initialize("job_1", manifest)
+    receipt = _snapshot(store, manifest)
+    original_read = store._read
+
+    def read(job_id: str, artifact: ComparisonArtifact) -> bytes:
+        assert artifact != "snapshot.parquet", "Status queries must not load the frame"
+        return original_read(job_id, artifact)
+
+    monkeypatch.setattr(store, "_read", read)
+    assert store.load_receipt("job_1", expected_hash=manifest.manifest_hash) == receipt
+    store.path("job_1", "receipt.json").write_text('{"job_id":"other"}')
+    with pytest.raises(ManifestError, match="valid comparison receipt"):
+        store.load_receipt("job_1", expected_hash=manifest.manifest_hash)
+
+
 @pytest.mark.parametrize(
     "binding",
     [

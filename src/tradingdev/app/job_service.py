@@ -16,12 +16,12 @@ from tradingdev.adapters.execution.process_runner import (
     request_worker_stop,
 )
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.comparison_service import ComparisonService
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.jobs import JobState, JobSummary
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_config import (
     apply_backtest_overrides,
@@ -30,6 +30,7 @@ from tradingdev.app.job_config import (
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.pagination import paginate
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -266,19 +267,55 @@ class JobService:
             }
 
         status = str(job["status"])
+        cleanup_error: dict[str, Any] | None = None
         if (
             status in self._ACTIVE_STATUSES
             and (status != "queued" or job.get("pid") is not None)
             and not self._is_process_alive(job)
         ):
-            status = "failed"
-            failure = {
-                "status": status,
-                "error": "Worker process terminated unexpectedly.",
-                "ended_at": datetime.now(UTC).isoformat(),
-            }
-            self._job_store.update_job(job_id, **failure)
-            job.update(failure)
+            if job.get("job_type") == "comparison":
+                handle = WorkerHandle.from_job(job)
+                try:
+                    if handle is None:
+                        raise RuntimeError("Worker control identity is unavailable")
+                    request_worker_stop(self._job_store.workspace.root, handle)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    cleanup_error = {
+                        "success": False,
+                        "code": "worker_cleanup_failed",
+                        "error": f"Worker cleanup could not be confirmed: {exc}",
+                    }
+                if cleanup_error is None:
+                    latest = self._job_store.get_job(job_id)
+                    if (
+                        latest is not None
+                        and latest["status"] in self._TERMINAL_STATUSES
+                    ):
+                        # The worker may finish between the first read and its
+                        # supervisor's exit. Preserve that completed lifecycle.
+                        return self.get_job_status(job_id)
+                    try:
+                        ComparisonService(job_store=self._job_store).reconcile(
+                            job_id, reason="Worker process terminated unexpectedly."
+                        )
+                    except (OSError, TypeError, ValueError) as exc:
+                        cleanup_error = {
+                            "success": False,
+                            "code": "execution_manifest_invalid",
+                            "error": str(exc),
+                        }
+            if (
+                cleanup_error is None
+                or cleanup_error["code"] == "execution_manifest_invalid"
+            ):
+                status = "failed"
+                failure = {
+                    "status": status,
+                    "error": "Worker process terminated unexpectedly.",
+                    "ended_at": datetime.now(UTC).isoformat(),
+                }
+                self._job_store.update_job(job_id, **failure)
+                job.update(failure)
 
         created_at = datetime.fromisoformat(str(job["created_at"]))
         elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
@@ -294,6 +331,25 @@ class JobService:
             "end_date": job.get("end_date"),
             "elapsed_seconds": elapsed,
         }
+
+        if job.get("job_type") == "comparison":
+            response["ended_at"] = job.get("ended_at")
+            response["data_downloaded"] = job.get("data_downloaded", False)
+            if job.get("error"):
+                response["error"] = job["error"]
+            try:
+                response["comparison"] = ComparisonService(
+                    job_store=self._job_store
+                ).summary(job_id)
+            except (OSError, TypeError, ValueError) as exc:
+                response["detail_error"] = {
+                    "success": False,
+                    "code": "execution_manifest_invalid",
+                    "error": str(exc),
+                }
+            if cleanup_error is not None:
+                response["detail_error"] = cleanup_error
+            return response
 
         if status == "done":
             response["ended_at"] = job.get("ended_at")
@@ -428,6 +484,13 @@ class JobService:
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
         job = self._job_store.get_job(job_id)
+        if job is not None and job.get("job_type") == "comparison":
+            with self._job_store.submission_lock(job_id):
+                return self._cancel_job(job_id)
+        return self._cancel_job(job_id)
+
+    def _cancel_job(self, job_id: str) -> dict[str, Any]:
+        job = self._job_store.get_job(job_id)
         if job is None:
             return {
                 "success": False,
@@ -477,6 +540,22 @@ class JobService:
                     "code": "worker_cleanup_failed",
                     "status": status,
                     "pid": handle.pid,
+                }
+
+        if job.get("job_type") == "comparison":
+            try:
+                ComparisonService(job_store=self._job_store).reconcile(
+                    job_id,
+                    reason="Cancelled by user.",
+                    active_status="cancelled",
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                self._job_store.update_job(job_id, status="failed", error=str(exc))
+                return {
+                    "success": False,
+                    "error": f"Comparison evidence could not be finalized: {exc}",
+                    "code": "execution_manifest_invalid",
+                    "status": "failed",
                 }
 
         self._job_store.update_job(

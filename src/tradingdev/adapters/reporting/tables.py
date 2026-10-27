@@ -117,7 +117,7 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
                     f"{cell} · 查看明細 →</a>"
                     if isinstance(destination, str)
                     and re.fullmatch(r"#result-\d+-\d+", destination)
-                    else "無可用明細"
+                    else f"{cell} · 無可用明細"
                 )
             cells.append(f"<td{attributes}>{cell}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
@@ -307,11 +307,61 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                         value if not isinstance(value, dict) else None
                     )
             rows.append(row)
+    if fixed := payload.get("fixed_comparison"):
+        by_run = {row["run_id"]: row for row in rows}
+        rows = []
+        for sequence, candidate in enumerate(fixed["candidates"], 1):
+            row = dict(by_run.get(candidate["run_id"], {}))
+            row.update(
+                sequence=sequence,
+                candidate=candidate["label"],
+                status={
+                    "succeeded": "成功",
+                    "failed": "失敗／無結果",
+                    "cancelled": "已取消／無結果",
+                    "not_run": "未執行／無結果",
+                }[candidate["status"]],
+                rationale=candidate["rationale"],
+                reason=candidate["reason"],
+                effective_parameters=json.dumps(
+                    candidate["parameters"], ensure_ascii=False, sort_keys=True
+                ),
+                run_id=candidate["run_id"],
+            )
+            rows.append(row)
+        metric_columns = [
+            item for item in columns if item["field"].startswith("metric:")
+        ]
+        other_columns = [item for item in columns[1:] if item not in metric_columns]
+        for item in other_columns:
+            item["visible"] = False
+        for item in metric_columns:
+            item["width"] = 145
+            if item["field"].startswith("metric:total_trades:"):
+                item["visible"] = False
+        columns = [
+            columns[0],
+            column("candidate", "固定候選", width=145),
+            column("status", "執行狀態", width=145),
+            column("effective_parameters", "完整有效參數", width=190),
+            *metric_columns,
+            column("reason", "無結果原因", width=230),
+            column("rationale", "執行前比較理由", width=300, visible=False),
+            *other_columns,
+        ]
     return _with_precision(
         {
             "columns": columns,
             "rows": rows,
             "navigate_field": "detail" if navigate else None,
+            **(
+                {
+                    "height": max(160, 50 + 32 * len(rows)),
+                    "search_placeholder": "固定候選、狀態、參數或原因…",
+                }
+                if fixed
+                else {}
+            ),
         }
     )
 

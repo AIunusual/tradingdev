@@ -53,9 +53,12 @@ Strategy development workflow
    - Generated Python is executed during checks; this is not a security sandbox.
 
 5. Prepare the requested execution.
-   - Choose prepare_backtest, prepare_walk_forward or prepare_optimization from
-     the strategy's requirements and requested research. Supply human-language
-     presentation labels/units for all effective parameters.
+   - Use prepare_comparison for fixed parameter alternatives (1–8 sets),
+     prepare_backtest for one run, or prepare_walk_forward for training/validation.
+     Each fixed candidate needs its selection rationale. Read the core contract's
+     comparison limits; never turn a comparison into a best-return search.
+     Use prepare_optimization only for an explicitly requested parameter search.
+     Supply human-language presentation labels/units for all effective parameters.
    - Use returned missing parameter paths to repair presentation. A next_tool
      suggestion applies only after its required_configuration is satisfied.
      Do not remove training/validation to bypass a rejection. train_model does
@@ -97,16 +100,22 @@ Strategy development workflow
    - Query saved equity, paired trades, executions or account states only as needed.
      Respect each tool's availability and accounting limits; never reconstruct
      absent records or describe an open trade's final mark as an executed exit.
+   - A comparison's terminal status includes every candidate outcome. Retain failed,
+     cancelled and unexecuted candidates with reasons; do not infer zero returns or
+     select only successful runs. Inspect successful child runs for their metrics.
 
 9. Generate and deliver the report.
-   - Completing a backtest, walk-forward or optimization with performance/risk
-     interpretation includes an offline HTML report unless the user explicitly
-     requests only summary/metrics or no report.
+   - Completing research with performance/risk interpretation includes an offline
+     HTML report unless the user explicitly requests only summary/metrics or none.
    - Read get_report_sections; call generate_report after inspecting results.
      Omit sections for the complete standard report unless the user selects them.
      Supply plain-text commentary in the user's language, distinct from calculations.
-   - The FINAL answer must include run IDs/scopes, a readable Markdown report link
-     and how to select the relevant parameter/result row and its requested details.
+     For fixed comparisons use comparison_job_id, not a handpicked run_ids list;
+     this preserves all candidates, including when none produced a successful run.
+   - The FINAL answer must identify results and scopes, link the readable report,
+     and explain how to select a parameter/result row and its requested details.
+     Identify individual runs by run ID. A fixed comparison may instead use its
+     comparison_job_id and every candidate's label; child run IDs stay in the HTML.
      A tool result, delegated answer or intermediate link alone is not delivery;
      an orchestrator must keep the link in its own final answer. Do not substitute
      only a metrics table or run ID, or claim omitted sections are included.
