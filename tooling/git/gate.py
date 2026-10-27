@@ -21,7 +21,8 @@ from tooling.git.candidates import (
     validate_snapshot_timeout,
     verify_candidate,
 )
-from tooling.git.change_scope import documentation_only
+from tooling.git.change_scope import ChangeScope, classify_changes
+from tooling.review_options import add_review_arguments, validate_review_options
 
 
 def assert_index_unchanged(tree: str) -> None:
@@ -38,10 +39,12 @@ def check_commit() -> None:
         text=True,
         check=False,
     )
-    docs_only = base.returncode == 0 and documentation_only(
-        Path.cwd(), base.stdout.strip(), tree
+    scope = (
+        classify_changes(Path.cwd(), base.stdout.strip(), tree)
+        if base.returncode == 0
+        else ChangeScope("code")
     )
-    profile = "docs" if docs_only else "fast"
+    profile = "fast" if scope.kind == "code" else scope.kind
     print(f"Commit checks: {profile}", flush=True)
     check_snapshot(tree, profile)
     assert_index_unchanged(tree)
@@ -52,10 +55,20 @@ def check_full(
     head_ref: str,
     *,
     max_evidence_bytes: int | None = None,
+    review_scopes: tuple[str, ...] | None = None,
+    review_context: tuple[str, ...] = (),
+    max_prompt_bytes: int | None = None,
+    max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     validate_evidence_budget(max_evidence_bytes)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=max_prompt_bytes,
+        max_total_prompt_bytes=max_total_prompt_bytes,
+    )
     validate_snapshot_timeout(snapshot_timeout_seconds)
     validate_documentation_timeout(documentation_timeout_seconds)
     if git("status", "--porcelain", "--untracked-files=all"):
@@ -66,6 +79,10 @@ def check_full(
         verify_candidate(
             candidate,
             max_evidence_bytes=max_evidence_bytes,
+            review_scopes=review_scopes,
+            review_context=review_context,
+            max_prompt_bytes=max_prompt_bytes,
+            max_total_prompt_bytes=max_total_prompt_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
             documentation_timeout_seconds=documentation_timeout_seconds,
         )
@@ -148,6 +165,7 @@ def main() -> None:
         type=int,
         help="Set a positive timeout for this full snapshot check (default: 900)",
     )
+    add_review_arguments(parser)
     args = parser.parse_args()
     action = args.action
     if action == "full" and not args.base:
@@ -162,6 +180,22 @@ def main() -> None:
         parser.error("--snapshot-timeout-seconds is only valid for full checks")
     if args.documentation_timeout_seconds is not None and action != "full":
         parser.error("--documentation-timeout-seconds is only valid for full checks")
+    for option, value in (
+        ("--review-scope", args.review_scopes),
+        ("--review-context", args.review_context or None),
+        ("--max-prompt-bytes", args.max_prompt_bytes),
+        ("--max-total-prompt-bytes", args.max_total_prompt_bytes),
+    ):
+        if value is not None and action != "full":
+            parser.error(f"{option} is only valid for full checks")
+    review_scopes = None if args.review_scopes is None else tuple(args.review_scopes)
+    review_context = tuple(args.review_context)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=args.max_prompt_bytes,
+        max_total_prompt_bytes=args.max_total_prompt_bytes,
+    )
     validate_evidence_budget(args.max_evidence_bytes)
     snapshot_timeout_seconds = (
         DEFAULT_SNAPSHOT_TIMEOUT_SECONDS
@@ -185,6 +219,10 @@ def main() -> None:
             args.base,
             args.head,
             max_evidence_bytes=args.max_evidence_bytes,
+            review_scopes=review_scopes,
+            review_context=review_context,
+            max_prompt_bytes=args.max_prompt_bytes,
+            max_total_prompt_bytes=args.max_total_prompt_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
             documentation_timeout_seconds=documentation_timeout_seconds,
         )

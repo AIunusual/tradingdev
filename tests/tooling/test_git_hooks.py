@@ -42,7 +42,10 @@ if mode == 'docs':
     )
 else:
     base = tree = None
-    content = (root / ('README.md' if mode == 'markdown' else 'src/app.py')).read_text()
+    name = {'markdown': 'README.md',
+            'presentations': 'docs/talks/tradingdev-introduction/slides.md'}.get(
+                mode, 'src/app.py')
+    content = (root / name).read_text()
 record = {'mode': mode, 'root': str(root), 'content': content,
           'base': base, 'tree': tree}
 if mode != 'docs':
@@ -56,12 +59,14 @@ if mode != 'docs':
 with Path(os.environ['HOOK_TEST_RECORD']).open('a') as stream:
     stream.write(json.dumps(record) + '\\n')
 failure = os.environ.get('HOOK_TEST_FAIL')
-if mode in {'full', 'markdown'} and failure in {'mutation', 'staged_mutation'}:
+if (mode in {'full', 'markdown', 'presentations'}
+        and failure in {'mutation', 'staged_mutation'}):
     (root / 'src/app.py').write_text("VALUE = 'modified by checker'\\n")
     if os.environ['HOOK_TEST_FAIL'] == 'staged_mutation':
         subprocess.run(['git', 'add', 'src/app.py'], check=True)
 if (os.environ.get('HOOK_TEST_FAIL') == mode
-        or 'REJECT_FAST' in content or 'REJECT_DOCS' in content):
+        or any(marker in content for marker in
+               ('REJECT_FAST', 'REJECT_DOCS', 'REJECT_PRESENTATIONS'))):
     print(f'{mode} rejected candidate', file=sys.stderr)
     sys.exit(1)
 """
@@ -146,6 +151,9 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
         for name in (
             "__init__.py",
             "process_guard.py",
+            "presentations.py",
+            "review_options.py",
+            "review_scope.py",
             "git/__init__.py",
             "git/gate.py",
             "git/candidates.py",
@@ -155,7 +163,12 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(_PROJECT / "tooling" / name, destination)
         repo.write("scripts/test_checker.py", _CHECKER)
-        for profile, mode in (("fast", "fast"), ("full", "full"), ("docs", "markdown")):
+        for profile, mode in (
+            ("fast", "fast"),
+            ("full", "full"),
+            ("docs", "markdown"),
+            ("presentations", "presentations"),
+        ):
             repo.write(
                 f"scripts/check-{profile}.sh",
                 "#!/usr/bin/env bash\n"
@@ -167,6 +180,7 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
         )
         repo.write("src/app.py", "VALUE = 'initial'\n")
         repo.write("README.md", "# Test repository\n")
+        repo.write("docs/talks/tradingdev-introduction/slides.md", "# Initial slides\n")
         repo.write(".gitignore", ".venv/\n__pycache__/\n")
         repo.git("add", ".")
         repo.git("commit", "-qm", "chore: initialize fixture")
@@ -334,7 +348,10 @@ def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
         assert (repo.root / "src/app.py").read_text() == "VALUE = 'unstaged changes'\n"
 
 
-@pytest.mark.parametrize("profile, mode", [("full", "full"), ("docs", "markdown")])
+@pytest.mark.parametrize(
+    "profile, mode",
+    [("full", "full"), ("docs", "markdown"), ("presentations", "presentations")],
+)
 @pytest.mark.parametrize("failure", ["rejection", "mutation", "staged_mutation"])
 def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
     profile: str,
@@ -365,8 +382,13 @@ def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
         events = repo.events(mode)
         assert len(events) == 1
         assert events[0]["head_tree"] == tree + "\n"
-        assert events[0]["content"] == (
-            "# Test repository\n" if profile == "docs" else "VALUE = 'initial'\n"
+        assert (
+            events[0]["content"]
+            == {
+                "docs": "# Test repository\n",
+                "presentations": "# Initial slides\n",
+                "full": "VALUE = 'initial'\n",
+            }[profile]
         )
         assert not Path(str(events[0]["root"])).parent.exists()
         assert repo.git("rev-parse", "HEAD") == before
@@ -885,3 +907,51 @@ def test_primary_detection_rejects_ambiguous_main_and_master() -> None:
         result = repo.run("scripts/detect-primary-branch.sh", check=False)
         assert result.returncode != 0
         assert "both main and master exist" in result.stderr
+
+
+def test_presentation_commit_validates_staged_source_and_preserves_unstaged_fix() -> (
+    None
+):
+    with _repository() as repo:
+        repo.start_task()
+        name = "docs/talks/tradingdev-introduction/slides.md"
+        before = repo.git("rev-parse", "HEAD")
+        repo.write(name, "# REJECT_PRESENTATIONS staged\n")
+        repo.git("add", name)
+        repo.write(name, "# Unstaged corrected slides\n")
+        repo.write("src/app.py", "VALUE = 'REJECT_FAST unrelated edit'\n")
+        result = repo.run("git", "commit", "-m", "docs: revise slides", check=False)
+        assert result.returncode != 0
+        assert repo.git("rev-parse", "HEAD") == before
+        assert repo.git("diff", "--cached", "--name-only") == name
+        assert repo.events("presentations")[-1]["content"] == (
+            "# REJECT_PRESENTATIONS staged\n"
+        )
+        repo.git("add", name)
+        repo.write(name, "# REJECT_PRESENTATIONS unstaged\n")
+        repo.run("scripts/git-flow-commit.sh", "docs: revise slides")
+        assert repo.git("show", f"HEAD:{name}") == "# Unstaged corrected slides"
+        assert "unrelated edit" in (repo.root / "src/app.py").read_text()
+        assert not repo.events("fast")
+        assert not repo.events("markdown")
+        assert not repo.events("full")
+        assert not repo.events("docs")
+        assert all(
+            not Path(str(event["root"])).parent.exists()
+            for event in repo.events("presentations")
+        )
+
+
+def test_mixed_presentation_commit_keeps_fast_checks() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        repo.write("docs/talks/tradingdev-introduction/slides.md", "# Updated slides\n")
+        repo.write("src/app.py", "VALUE = 'REJECT_FAST staged'\n")
+        repo.git("add", "docs", "src/app.py")
+        result = repo.run(
+            "git", "commit", "-m", "fix: mixed slides and code", check=False
+        )
+        assert result.returncode != 0
+        assert len(repo.events("fast")) == 1
+        assert not repo.events("presentations")
+        assert not repo.events("markdown")

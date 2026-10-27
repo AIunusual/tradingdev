@@ -45,3 +45,6 @@ workspace/data/
 
 # CatBoost training output
 catboost_info/
+
+# Locked presentation compiler (install with scripts/presentations.sh setup)
+tooling/marp/node_modules/

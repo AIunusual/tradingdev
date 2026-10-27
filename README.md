@@ -517,6 +517,7 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 
 ## 相關文件
 
+- [專案介紹簡報](docs/talks/tradingdev-introduction/README.md)：給非技術聽眾的完整閱讀版，包含瀏覽器播放、工具比較與後續開發方向。
 - [內建策略說明](docs/strategies/README.md)：各策略的規則、參數與資料需求。
 - [策略契約](docs/strategy_contract.md)：自行撰寫 Python／YAML、版本與驗證規則。
 - [執行結果與產物](docs/run_artifacts.md)：完整指標、執行設定與保存格式。

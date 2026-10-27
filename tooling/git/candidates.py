@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING
 
-from tooling.git.change_scope import documentation_only
-from tooling.process_guard import run_captured, run_checked
+from tooling.git.change_scope import classify_changes
+from tooling.process_guard import ProcessCleanupError, run_captured, run_checked
+from tooling.review_options import review_arguments, validate_review_options
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -42,6 +44,10 @@ def execution_environment(cwd: Path) -> dict[str, str]:
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONPATH": os.pathsep.join([str(cwd / "src"), str(cwd)]),
         "TRADINGDEV_CHECK_PYTHON": sys.executable,
+        "TRADINGDEV_PRESENTATION_TOOLCHAIN": os.environ.get(
+            "TRADINGDEV_PRESENTATION_TOOLCHAIN",
+            str(Path(__file__).resolve().parents[2] / "tooling/marp"),
+        ),
     }
     for name in git("rev-parse", "--local-env-vars").splitlines():
         environment.pop(name, None)
@@ -65,6 +71,20 @@ def run(
     run_checked(command, cwd=cwd, env=environment, timeout=timeout)
 
 
+@contextmanager
+def _snapshot_workspace() -> Generator[Path]:
+    root = Path(mkdtemp(prefix="tradingdev-git-check-"))
+    retained = False
+    try:
+        yield root
+    except ProcessCleanupError as error:
+        retained = True
+        raise ProcessCleanupError(f"{error} Snapshot retained at {root}") from error
+    finally:
+        if not retained:
+            shutil.rmtree(root)
+
+
 def check_snapshot(
     tree: str,
     profile: str,
@@ -73,8 +93,7 @@ def check_snapshot(
     timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> None:
     validate_snapshot_timeout(timeout_seconds)
-    with TemporaryDirectory(prefix="tradingdev-git-check-") as temporary:
-        root = Path(temporary)
+    with _snapshot_workspace() as root:
         archive = root / "candidate.tar"
         with archive.open("wb") as output:
             subprocess.run(
@@ -205,7 +224,11 @@ def merge_candidate(
 
 
 def validate_evidence_budget(max_evidence_bytes: int | None) -> None:
-    if max_evidence_bytes is not None and max_evidence_bytes <= 0:
+    if max_evidence_bytes is not None and (
+        isinstance(max_evidence_bytes, bool)
+        or not isinstance(max_evidence_bytes, int)
+        or max_evidence_bytes <= 0
+    ):
         raise RuntimeError("Documentation evidence budget must be positive.")
 
 
@@ -236,28 +259,48 @@ def verify_candidate(
     candidate: MergeCandidate,
     *,
     max_evidence_bytes: int | None = None,
+    review_scopes: tuple[str, ...] | None = None,
+    review_context: tuple[str, ...] = (),
+    max_prompt_bytes: int | None = None,
+    max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     """Check each immutable candidate with the profile required by its changes."""
     validate_evidence_budget(max_evidence_bytes)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=max_prompt_bytes,
+        max_total_prompt_bytes=max_total_prompt_bytes,
+    )
     validate_snapshot_timeout(snapshot_timeout_seconds)
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
-    if documentation_only(candidate.repository, candidate.base, candidate.tree):
+    scope = classify_changes(candidate.repository, candidate.base, candidate.tree)
+    if scope.kind != "code":
+        label = "Documentation-only" if scope.kind == "docs" else "Presentation"
         print(
-            "Documentation-only candidate: checking Markdown and local links. "
+            f"{label} candidate: running {scope.kind} snapshot checks. "
             "Codex, Python quality checks and pytest are not run.",
             flush=True,
         )
         check_snapshot(
             candidate.tree,
-            "docs",
+            scope.kind,
             repo=candidate.repository,
             timeout_seconds=snapshot_timeout_seconds,
         )
-        print("Documentation-only checks passed.", flush=True)
+        print(f"{label} checks passed.", flush=True)
         return
+    if scope.presentations_changed:
+        print("Code candidate also changes presentations: checking slides.", flush=True)
+        check_snapshot(
+            candidate.tree,
+            "presentations",
+            repo=candidate.repository,
+            timeout_seconds=snapshot_timeout_seconds,
+        )
     print(f"Documentation timeout: {documentation_timeout_seconds} seconds", flush=True)
     print("Reviewing code/documentation consistency with Codex...", flush=True)
     command = [
@@ -276,6 +319,14 @@ def verify_candidate(
     if max_evidence_bytes is not None:
         print(f"Documentation evidence budget: {max_evidence_bytes} bytes", flush=True)
         command.extend(["--max-evidence-bytes", str(max_evidence_bytes)])
+    command.extend(
+        review_arguments(
+            review_scopes=review_scopes,
+            review_context=review_context,
+            max_prompt_bytes=max_prompt_bytes,
+            max_total_prompt_bytes=max_total_prompt_bytes,
+        )
+    )
     # Preserve setup time and allow the review's own deadline/cleanup to finish.
     run(
         command,

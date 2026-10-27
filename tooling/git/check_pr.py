@@ -23,6 +23,7 @@ from tooling.git.candidates import (
 )
 from tooling.git.pr_context import get_pull_request, remote_url
 from tooling.process_guard import run_captured
+from tooling.review_options import add_review_arguments, validate_review_options
 
 
 def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:
@@ -65,10 +66,20 @@ def check_pr(
     remote: str = "origin",
     *,
     max_evidence_bytes: int | None = None,
+    review_scopes: tuple[str, ...] | None = None,
+    review_context: tuple[str, ...] = (),
+    max_prompt_bytes: int | None = None,
+    max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
     documentation_timeout_seconds: int = DEFAULT_DOCUMENTATION_TIMEOUT_SECONDS,
 ) -> None:
     validate_evidence_budget(max_evidence_bytes)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=max_prompt_bytes,
+        max_total_prompt_bytes=max_total_prompt_bytes,
+    )
     validate_snapshot_timeout(snapshot_timeout_seconds)
     validate_documentation_timeout(documentation_timeout_seconds)
     request = get_pull_request(number, remote)
@@ -104,6 +115,10 @@ def check_pr(
         verify_candidate(
             candidate,
             max_evidence_bytes=max_evidence_bytes,
+            review_scopes=review_scopes,
+            review_context=review_context,
+            max_prompt_bytes=max_prompt_bytes,
+            max_total_prompt_bytes=max_total_prompt_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
             documentation_timeout_seconds=documentation_timeout_seconds,
         )
@@ -157,7 +172,16 @@ def main() -> None:
         type=int,
         help="Set a positive timeout for this full snapshot check (default: 900)",
     )
+    add_review_arguments(parser)
     args = parser.parse_args()
+    review_scopes = None if args.review_scopes is None else tuple(args.review_scopes)
+    review_context = tuple(args.review_context)
+    validate_review_options(
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=args.max_prompt_bytes,
+        max_total_prompt_bytes=args.max_total_prompt_bytes,
+    )
     validate_evidence_budget(args.max_evidence_bytes)
     snapshot_timeout_seconds = (
         DEFAULT_SNAPSHOT_TIMEOUT_SECONDS
@@ -176,6 +200,10 @@ def main() -> None:
         args.number,
         args.remote,
         max_evidence_bytes=args.max_evidence_bytes,
+        review_scopes=review_scopes,
+        review_context=review_context,
+        max_prompt_bytes=args.max_prompt_bytes,
+        max_total_prompt_bytes=args.max_total_prompt_bytes,
         snapshot_timeout_seconds=snapshot_timeout_seconds,
         documentation_timeout_seconds=documentation_timeout_seconds,
     )

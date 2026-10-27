@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TextIO
 
+CLEANUP_UNVERIFIED_EXIT_CODE = 86
+
+
+class ProcessCleanupError(RuntimeError):
+    """Subprocess cleanup could not be verified; retain affected workspaces."""
+
+
 _GRACE_SECONDS = 5.0
 _STOP_SECONDS = 3.0
 _POLL_SECONDS = 0.02
@@ -109,9 +116,9 @@ def terminate_tree(
             time.sleep(_POLL_SECONDS)
     survivors = sorted(process.pid for process in known if _alive(process))
     if survivors:
-        raise RuntimeError(f"Could not terminate subprocesses: {survivors}")
+        raise ProcessCleanupError(f"Could not terminate subprocesses: {survivors}")
     if not inspection_complete:
-        raise RuntimeError(
+        raise ProcessCleanupError(
             "Process inspection was denied; descendant cleanup is unverified"
         )
 
@@ -142,7 +149,7 @@ def _run(
         deadline = time.monotonic() + timeout
         while process.poll() is None:
             if not _observe(known):
-                raise RuntimeError(
+                raise ProcessCleanupError(
                     "Process inspection access is required to track check subprocesses"
                 )
             if time.monotonic() >= deadline:
@@ -159,9 +166,9 @@ def _run(
     finally:
         try:
             terminate_tree(leader, known)
-        except RuntimeError as error:
+        except ProcessCleanupError as error:
             if failure is not None:
-                raise RuntimeError(
+                raise ProcessCleanupError(
                     f"{type(failure).__name__}: {failure}; cleanup failed: {error}"
                 ) from failure
             raise
@@ -179,6 +186,10 @@ def run_checked(
 ) -> None:
     """Run a check, allowing teardown on interruption before stopping descendants."""
     returncode = _run(command, cwd=cwd, env=env, timeout=timeout)
+    if returncode == CLEANUP_UNVERIFIED_EXIT_CODE:
+        raise ProcessCleanupError(
+            "The child check reported unverified subprocess cleanup."
+        )
     if returncode:
         raise subprocess.CalledProcessError(returncode, command)
 
