@@ -140,12 +140,12 @@ uv run --no-sync python -m tooling.presentations build
 ./scripts/check-presentations.sh
 ```
 
-專項檢查在獨立臨時目錄重建 HTML，逐 byte 核對已提交產物，並檢查頁碼、入口閱讀
-範圍與非預期外部資源。檢查不覆寫來源或產物，也不執行 `.vscode` 中的工作。
+專項檢查在獨立臨時目錄重建 HTML，逐 byte 核對已提交產物，並檢查 HTML 頁碼與
+非預期外部資源。檢查不覆寫來源或產物，也不執行 `.vscode` 中的工作。
 HTML 已內含樣式與播放程式，閱讀者不需要安裝 Node.js。
 Markdown 開頭的註解保存 Marp directives；每頁末尾的註解是講者稿，
-`_footer` 則提供可點擊的來源。修改正文、來源或版型後，都應重新輸出 HTML，
-並同步檢查閱讀路線的頁碼與入口文件。
+`_footer` 則提供可點擊的來源。修改正文、來源或版型後，都應重新輸出 HTML。
+大綱、閱讀路線與後續目標集中維護在 `slides.md`；簡報目錄的 README 提供編輯與發布操作。
 
 本機 HTTP 預覽只服務簡報目錄，結束時按 `Ctrl+C`：
 

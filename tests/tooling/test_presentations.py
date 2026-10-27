@@ -125,7 +125,7 @@ def _html(extra: str = "") -> str:
     )
 
 
-_ENTRY = "# Deck\n\n共 2 頁\n\n| 頁次 | 主題 |\n| --- | --- |\n| 1–2 | Intro |\n"
+_ENTRY = "# Editing the deck\n\nUse Tasks: Run Task → slides: watch.\n"
 
 
 def test_static_html_accepts_embedded_resources_and_external_citations() -> None:
@@ -134,8 +134,7 @@ def test_static_html_accepts_embedded_resources_and_external_citations() -> None
             _html(
                 '<img src="data:image/png;base64,AA==">'
                 "<style>a {background:url(#a)}</style>"
-            ),
-            _ENTRY,
+            )
         )
         == 2
     )
@@ -167,27 +166,21 @@ def test_static_html_accepts_embedded_resources_and_external_citations() -> None
 )
 def test_loaded_resources_and_watch_injections_are_rejected(extra: str) -> None:
     with pytest.raises(presentations.PresentationError):
-        presentations.check_html(_html(extra), _ENTRY)
+        presentations.check_html(_html(extra))
 
 
 @pytest.mark.parametrize(
-    "content, entry",
+    "content",
     [
-        (_html().replace('id="2"', 'id="3"'), _ENTRY),
-        (_html().replace('pagination="2"', 'pagination="1"'), _ENTRY),
-        (_html().replace('total="2"', 'total="3"'), _ENTRY),
-        (_html(), _ENTRY.replace("共 2 頁", "共 3 頁")),
-        (_html(), _ENTRY.replace("1–2", "2–2")),
-        (_html(), _ENTRY.replace("1–2", "1–1")),
-        (_html(), _ENTRY + "| 2–2 | Overlap |\n"),
-        ("<html></html>", _ENTRY),
+        _html().replace('id="2"', 'id="3"'),
+        _html().replace('pagination="2"', 'pagination="1"'),
+        _html().replace('total="2"', 'total="3"'),
+        "<html></html>",
     ],
 )
-def test_entry_counts_page_ranges_and_section_identity_must_agree(
-    content: str, entry: str
-) -> None:
+def test_html_page_counts_and_section_identity_must_agree(content: str) -> None:
     with pytest.raises(presentations.PresentationError):
-        presentations.check_html(content, entry)
+        presentations.check_html(content)
 
 
 def _deck(root: Path) -> Path:

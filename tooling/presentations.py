@@ -259,7 +259,7 @@ class _PresentationHTML(HTMLParser):
         self.active, self.content = None, []
 
 
-def check_html(content: str, entry: str) -> int:
+def check_html(content: str) -> int:
     """Inspect generated output as data; never open it in a browser."""
     parser = _PresentationHTML()
     parser.feed(content)
@@ -276,23 +276,6 @@ def check_html(content: str, entry: str) -> int:
             raise PresentationError(
                 "Section IDs, page numbers and totals are inconsistent."
             )
-    declared = re.findall(r"共\s*(\d+)\s*頁", entry)
-    if declared != [str(count)]:
-        raise PresentationError(
-            "The entry README must declare the correct total page count."
-        )
-    ranges = re.findall(r"^\|\s*(\d+)\s*[–—-]\s*(\d+)\s*\|", entry, flags=re.MULTILINE)
-    next_page = 1
-    for first, last in ranges:
-        if int(first) != next_page or int(last) < int(first):
-            raise PresentationError(
-                "The entry page ranges must be consecutive without overlap."
-            )
-        next_page = int(last) + 1
-    if next_page != count + 1:
-        raise PresentationError(
-            "The entry page ranges must cover every slide exactly once."
-        )
     return count
 
 
@@ -508,7 +491,7 @@ def build(root: Path, *, output: Path | None = None, timeout: float = 120) -> No
 
 
 def check_presentations(root: Path, *, timeout: float = 120) -> None:
-    """Rebuild using the locked compiler, then verify committed output and entry."""
+    """Check documents, rebuild with the locked compiler and verify the output."""
     from tooling.documentation import check_documents
 
     root = root.resolve()
@@ -522,10 +505,7 @@ def check_presentations(root: Path, *, timeout: float = 120) -> None:
                 "Committed index.html is out of date; "
                 "run scripts/presentations.sh build."
             )
-        count = check_html(
-            output.read_text(encoding="utf-8"),
-            (root / DECK / "README.md").read_text(encoding="utf-8"),
-        )
+        count = check_html(output.read_text(encoding="utf-8"))
     print(
         f"Presentation checks passed ({count} slides; "
         "locked build, links, pages and resources)."
