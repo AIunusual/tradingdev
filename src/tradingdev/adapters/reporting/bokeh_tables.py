@@ -77,6 +77,21 @@ window.TradingDevTables=(()=>{
   };
   return formatter;
  }
+ function makeNavigationFormatter(rows,navigateField){
+  const formatter=new Bokeh.Tables.StringFormatter();
+  formatter.doFormat=(row,cell,value,columnDef,dataContext)=>{
+   const record=rows[dataContext.__report_row_index];
+   const destination=record?.[navigateField];
+   if(typeof destination!=='string'||!/^#result-\d+-\d+$/.test(destination)){
+    return '無可用明細';
+   }
+   return `<a href="${escapeText(destination)}"`
+    +` aria-label="查看結果 ${escapeText(value)} 的明細"`
+    +' style="color:#2367cc;text-decoration:underline;font-weight:600">'
+    +`${escapeText(value)} · 查看明細 →</a>`;
+  };
+  return formatter;
+ }
  async function create(target,spec){
   const rows=spec.rows,columns=spec.columns;
   const fullValues=spec.full_precision_values;
@@ -98,7 +113,9 @@ window.TradingDevTables=(()=>{
   const tableColumns=columns.map(column=>new Bokeh.Tables.TableColumn({
    field:column.field,title:column.title,sortable:column.sortable!==false,
    width:column.width??Math.min(290,Math.max(150,column.title.length*12)),
-   formatter:makeFormatter(column,fullValues,()=>fullPrecision)
+   formatter:spec.navigate_field&&column.field==='sequence'
+    ?makeNavigationFormatter(rows,spec.navigate_field)
+    :makeFormatter(column,fullValues,()=>fullPrecision)
   }));
   const table=new Bokeh.Tables.DataTable({
    source,columns:tableColumns.filter((_,index)=>active.has(index)),
@@ -207,7 +224,24 @@ window.TradingDevTables=(()=>{
   const tableHost=document.createElement('div');
   target.replaceChildren(toolbarHost,selectorDetails,tableHost);
   if(spec.navigate_field){
-   source.selected.properties.indices.change.connect(()=>{
+   // Selection also changes during keyboard focus. Only a plain cell click is
+   // a row-navigation shortcut; anchors retain native keyboard/new-tab behavior.
+   tableHost.addEventListener('keydown',event=>{
+    if(event.key==='Tab'
+     ||event.composedPath().some(node=>node instanceof HTMLAnchorElement)){
+     // Let the browser focus/activate links instead of SlickGrid moving cells.
+     event.stopPropagation();
+    }
+   },true);
+   tableHost.addEventListener('click',event=>{
+    const path=event.composedPath();
+    if(event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey
+     ||path.some(node=>node instanceof HTMLAnchorElement)
+     ||!path.some(node=>node instanceof Element
+      &&node.classList.contains('slick-cell'))){
+     return;
+    }
+    // This bubble listener runs after SlickGrid updates the selected source row.
     const selected=source.selected.indices[0];
     if(selected===undefined){return;}
     const rowIndex=source.data.__report_row_index[selected];

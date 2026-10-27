@@ -36,6 +36,7 @@ svg{width:100%;height:auto;display:block}svg text{font-size:12px;fill:#52657a}
 [hidden]{display:none!important}main{max-width:1600px}.bokeh-table{min-width:0}
 .report-nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
 .precision-controls label{font-weight:600;cursor:pointer}
+.table-navigation{padding:12px 16px;border-left:4px solid #2367cc;background:#edf4ff}
 a{color:#2367cc}.bokeh-column-controls{border:1px solid #dce5ef;padding:12px}
 .quantstats-frame{width:100%;height:1050px;border:1px solid #dce5ef;background:white}
 @media(max-width:750px){.two{grid-template-columns:1fr}}
@@ -593,16 +594,14 @@ _LIMITATIONS = (
 
 def _overview(payload: dict[str, Any]) -> str:
     comparison = payload["default_scope_comparison"]
-    navigation = (
-        "點選互動表格的資料列，或文字表格的結果序號，進入已選取的單組詳情。"
-        if payload["comparison_table"]["navigate_field"]
-        else "本報告未選取單組詳情章節。"
-    )
     result = (
-        "<p>每列是一個保存結果。先核對訓練／測試用途、日期與成本，再比較績效；"
-        + navigation
-        + "</p>"
-        "<p class='muted'>下列績效採當次保存值，保留其定義；"
+        "<p>每列是一個保存結果。先核對訓練／測試用途、日期與成本，再比較績效。</p>"
+        + (
+            "<p class='notice'>本報告未選取單組詳情章節。</p>"
+            if not payload["comparison_table"]["navigate_field"]
+            else ""
+        )
+        + "<p class='muted'>下列績效採當次保存值，保留其定義；"
         "不同日期或定義的數值不應直接排名。"
         "各折摘要不是合併資金曲線，詳情保留其描述統計。</p>"
         + render_table(
