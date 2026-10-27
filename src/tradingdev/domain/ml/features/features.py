@@ -87,13 +87,19 @@ class FeatureEngineer:
 
         if include_target:
             next_ret = close.shift(-self._target_horizon) / close - 1
-            features["target"] = np.sign(next_ret).fillna(0).astype(int)
+            # The last ``target_horizon`` rows have no realised outcome yet.
+            # Leave them unlabelled so the shared ``dropna`` removes them;
+            # filling them with 0 would invent a flat label that the bars
+            # arriving later contradict.
+            features["target"] = np.sign(next_ret)
 
         result = pd.concat(
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
         result = result.dropna()
+        if include_target:
+            result["target"] = result["target"].astype(int)
         if not preserve_index:
             result = result.reset_index(drop=True)
 

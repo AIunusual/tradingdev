@@ -431,6 +431,11 @@ or label rows and reports their count. `horizon` is a positive number of source
 bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
 the model's declared feature list.
 
+The bundled ML strategies label their own frames through `FeatureEngineer` and
+`DirectionFeatureEngineer` instead of `build_dataset`. Both follow the same rule:
+a bar whose label needs prices beyond the supplied frame carries no label and is
+omitted, so a labelled frame never ends with an invented flat outcome.
+
 Both `build_dataset` and `build_panel` pass their date bounds to
 `DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
 bounds with an offset are converted to UTC. Rows are selected with

@@ -186,13 +186,20 @@ class DirectionFeatureEngineer:
         if include_target:
             h = self._prediction_horizon
             fwd_return = close.shift(-h) / close - 1
-            features["target"] = (fwd_return > 0).astype(int)
+            # The last ``h`` rows have no realised outcome yet. Keep them
+            # unlabelled so the shared ``dropna`` removes them; ``NaN > 0``
+            # would otherwise read as a down move.
+            features["target"] = (
+                (fwd_return > 0).astype(float).where(fwd_return.notna())
+            )
 
         result = pd.concat(
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
         result = result.dropna().reset_index(drop=True)
+        if include_target:
+            result["target"] = result["target"].astype(int)
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result
