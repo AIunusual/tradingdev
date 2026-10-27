@@ -411,7 +411,11 @@ Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件、簡報專項�
 
 - 一般文件：執行 `check-docs.sh` 的文件 snapshot，跳過 Codex 與完整 pytest。
 - 簡報專項：執行 `check-presentations.sh` 的 snapshot，跳過 Codex 與完整 pytest。
-- 程式變更：執行 Codex 文件一致性與讀者定位審查，再執行快速品質及完整離線 pytest；涉及簡報時另須通過簡報專項。
+- 程式變更：涉及簡報時先通過簡報 snapshot，再執行 Codex 文件一致性與讀者定位審查，最後執行快速品質及完整離線 pytest。
+
+簡報前置檢查也涵蓋 `tooling/presentations.py`、`scripts/presentations.sh`、
+`scripts/check-presentations.sh` 或 `tooling/marp/` 內檔案的變更；失敗即停止，
+不會繼續呼叫 Codex 或完整 pytest。
 
 所有流程都核對候選不可變性，結束時重新確認 PR 與實際遠端 base／head，
 輸出 PR URL、base／head SHA 與候選 tree，並清理臨時產物及啟動的程序。
