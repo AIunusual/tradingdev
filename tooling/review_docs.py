@@ -15,6 +15,7 @@ from threading import Event
 from typing import Any
 
 from tooling.codex_binary import resolve_codex_binary
+from tooling.presentations import PRESENTATION_PATHS, is_presentation_path
 from tooling.process_guard import (
     process_descendants,
     process_identity,
@@ -55,7 +56,8 @@ REVIEW_INSTRUCTIONS = (
 )
 BATCH_INSTRUCTIONS = (
     "This is one batch of a complete review. Every batch includes the full diff, "
-    "all candidate Markdown documents and the complete candidate file inventory. "
+    "all candidate Markdown documents, all selected registered presentation "
+    "context and the complete candidate file inventory. "
     "Inspect the complete candidate files assigned to this batch and use the "
     "shared diff/documents to check interactions across the entire change. "
     "Other candidate files are assigned to other batches, not omitted from the "
@@ -124,12 +126,72 @@ def _relevant(path: str) -> bool:
             ".yml",
             ".json",
             ".md",
+            ".html",
+            ".htm",
+            ".css",
         }
         or path
         in {
             ".gitignore",
             ".gitattributes",
+            "docs/.nojekyll",
         }
+    )
+
+
+def _tree_entries(repo: Path, tree: str) -> dict[str, tuple[str, str]]:
+    entries: dict[str, tuple[str, str]] = {}
+    for entry in _git(repo, "ls-tree", "-r", "-z", tree).split("\0"):
+        if entry:
+            metadata, path = entry.split("\t", 1)
+            mode, kind, _ = metadata.split()
+            entries[path] = mode, kind
+    return entries
+
+
+def _text_blob(repo: Path, tree: str, path: str, entry: tuple[str, str]) -> str:
+    if entry[1] != "blob":
+        raise ReviewError(f"Required review evidence {path!r} is not a Git blob.")
+    try:
+        content = _git(repo, "show", f"{tree}:{path}")
+    except ReviewError as exc:
+        raise ReviewError(
+            f"Cannot read required review evidence {path!r}: {exc}"
+        ) from exc
+    if "\0" in content:
+        raise ReviewError(f"Required review evidence {path!r} contains binary data.")
+    return content
+
+
+def _presentation_context(
+    changed: set[str], entries: dict[str, tuple[str, str]]
+) -> set[str]:
+    present = PRESENTATION_PATHS & entries.keys()
+    if not (changed & PRESENTATION_PATHS) and not (
+        present and any(is_presentation_path(path) for path in changed)
+    ):
+        return set()
+    missing = PRESENTATION_PATHS - entries.keys()
+    if missing:
+        raise ReviewError(
+            "Missing required registered presentation review evidence: "
+            + ", ".join(sorted(missing))
+        )
+    for path in sorted(PRESENTATION_PATHS):
+        if entries[path] != ("100644", "blob"):
+            raise ReviewError(
+                f"Required presentation review evidence {path!r} "
+                "is not an ordinary non-executable Git blob."
+            )
+    return set(PRESENTATION_PATHS)
+
+
+def _exclusion_reason(path: str) -> str:
+    if Path(path).parts[0] in {"workspace", ".git", ".venv"}:
+        return "Runtime workspace or local environment content is excluded."
+    return (
+        "Outside the supported text evidence selection, "
+        "including binary assets and lockfiles."
     )
 
 
@@ -144,15 +206,25 @@ def build_evidence(
     ).split("\0")
     changed = [path for path in changed if path]
     relevant = sorted(path for path in changed if _relevant(path))
-    files = set(
-        _git(repo, "ls-tree", "-r", "--name-only", "-z", candidate_tree).split("\0")
-    )
+    entries = _tree_entries(repo, candidate_tree)
+    files = set(entries)
     docs = {
         path
         for path in files
         if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
         or (path.startswith("docs/") and path.endswith(".md"))
     }
+    context = _presentation_context(set(changed), entries)
+    candidate_files = {
+        path: _text_blob(repo, candidate_tree, path, entries[path])
+        for path in sorted(docs | context | (set(relevant) & files))
+    }
+    # Force textual diffs only after validating both sides. Git attributes must
+    # not hide selected source changes behind a "Binary files differ" marker.
+    base_entries = _tree_entries(repo, base_tree)
+    for path in relevant:
+        if path in base_entries:
+            _text_blob(repo, base_tree, path, base_entries[path])
     diff = (
         _git(
             repo,
@@ -160,6 +232,7 @@ def build_evidence(
             "--no-ext-diff",
             "--no-textconv",
             "--no-renames",
+            "--text",
             "--unified=5",
             base_tree,
             candidate_tree,
@@ -169,22 +242,31 @@ def build_evidence(
         if relevant
         else ""
     )
+    excluded = sorted(set(changed) - set(relevant))
     evidence = {
         "base_tree": base_tree,
         "candidate_tree": candidate_tree,
         "changed_paths": changed,
-        "excluded_from_content": sorted(set(changed) - set(relevant)),
+        "excluded_from_content": excluded,
+        "exclusion_reasons": {path: _exclusion_reason(path) for path in excluded},
         "selection": (
             "All changed scripts (including extensionless Git hooks), source, "
-            "configuration and Markdown text files; "
+            "configuration, Markdown, HTML and CSS text files; docs/.nojekyll; "
             "all candidate README, ARCHITECTURE, agent policies and docs/**/*.md. "
-            "Lockfiles, binary assets and runtime workspace contents are excluded."
+            "Registered presentation changes and related build/deployment changes "
+            "include the complete candidate presentation source, theme, HTML and "
+            "README as context. Selected content must be UTF-8 without NUL bytes. "
+            "Other paths, including binary assets and unsupported lockfiles, and "
+            "runtime workspace contents are excluded as individually listed. "
+            "The tree inventory lists every candidate path; the file inventory "
+            "lists every candidate file selected for full-content review."
         ),
         "diff": diff,
-        "candidate_files": {
-            path: _git(repo, "show", f"{candidate_tree}:{path}")
-            for path in sorted(docs | (set(relevant) & files))
-        },
+        "candidate_tree_inventory": sorted(files),
+        "candidate_file_inventory": sorted(candidate_files),
+        "candidate_file_modes": {path: entries[path][0] for path in candidate_files},
+        "presentation_context_paths": sorted(context),
+        "candidate_files": candidate_files,
     }
     content = json.dumps(evidence, ensure_ascii=False)
     size = len(content.encode("utf-8"))
@@ -208,14 +290,19 @@ def build_review_prompts(evidence: str) -> list[str]:
         return [full_prompt]
     original = json.loads(evidence)
     files: dict[str, str] = original["candidate_files"]
-    docs = {path: value for path, value in files.items() if path.endswith(".md")}
-    sources = {path: value for path, value in files.items() if path not in docs}
+    context = set(original.get("presentation_context_paths", []))
+    shared_files = {
+        path: value
+        for path, value in files.items()
+        if path.endswith(".md") or path in context
+    }
+    sources = {path: value for path, value in files.items() if path not in shared_files}
     shared = original | {"candidate_file_inventory": sorted(files)}
 
     def render(paths: list[str], index: int, count: int) -> str:
         batch = shared | {
             "batch": {"index": index, "count": count, "assigned_paths": paths},
-            "candidate_files": docs | {path: sources[path] for path in paths},
+            "candidate_files": shared_files | {path: sources[path] for path in paths},
         }
         return (
             REVIEW_INSTRUCTIONS
@@ -235,7 +322,7 @@ def build_review_prompts(evidence: str) -> list[str]:
     # packing; final count/index values can only have the same or fewer digits.
     upper_count = max(1, len(sources))
     if len(render([], upper_count, upper_count)) > MAX_PROMPT_CHARS:
-        raise too_large("Shared diff and documentation")
+        raise too_large("Shared diff, documentation and presentation context")
     groups: list[list[str]] = []
     group: list[str] = []
     for path in sorted(sources):

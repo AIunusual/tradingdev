@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tooling import review_docs
+from tooling.presentations import PRESENTATION_PATHS
 from tooling.process_guard import terminate_tree
 
 if TYPE_CHECKING:
@@ -143,6 +144,179 @@ def test_evidence_includes_deleted_files_and_all_existing_docs(
     assert "src/app.py" in evidence["changed_paths"]
     assert "src/app.py" not in evidence["candidate_files"]
     assert "docs/strategies/example.md" in evidence["candidate_files"]
+
+
+@pytest.mark.parametrize("asset", ["web/index.html", "web/page.htm", "web/theme.css"])
+def test_changed_text_assets_include_complete_candidate_and_diff(
+    repository: tuple[Path, str, str], asset: str
+) -> None:
+    repo, _, _ = repository
+    target = repo / asset
+    target.parent.mkdir()
+    target.write_text("old asset\n", encoding="utf-8")
+    # Repository attributes cannot suppress relevant textual diff evidence.
+    (repo / ".gitattributes").write_text(f"{asset} -diff\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    content = "完整資產\nnew asset\n"
+    target.write_text(content, encoding="utf-8")
+    (repo / "web/image.png").write_bytes(b"\x89PNG\r\n\0BINARY_SECRET")
+    (repo / "docs").mkdir()
+    (repo / "docs/.nojekyll").write_text("", encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    target.write_text("UNSTAGED_ASSET\n", encoding="utf-8")
+
+    raw = review_docs.build_evidence(repo, base, tree)
+    evidence = json.loads(raw)
+
+    assert evidence["candidate_files"][asset] == content
+    assert evidence["candidate_files"]["docs/.nojekyll"] == ""
+    assert "-old asset" in evidence["diff"]
+    assert "+new asset" in evidence["diff"]
+    assert "Binary files" not in evidence["diff"]
+    assert "UNSTAGED_ASSET" not in raw
+    assert "BINARY_SECRET" not in raw
+    assert evidence["excluded_from_content"] == ["web/image.png"]
+    assert "binary assets" in evidence["exclusion_reasons"]["web/image.png"]
+    assert evidence["candidate_file_inventory"] == sorted(evidence["candidate_files"])
+    assert "web/image.png" in evidence["candidate_tree_inventory"]
+    assert "web/image.png" not in evidence["candidate_file_inventory"]
+
+
+def _write_presentation(repo: Path) -> dict[str, str]:
+    files = {
+        path: f"Immutable presentation context: {path}\n" for path in PRESENTATION_PATHS
+    }
+    for path, content in files.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    return files
+
+
+@pytest.mark.parametrize("changed_name", ["README.md", "slides.md", "theme.css"])
+def test_registered_presentation_includes_unchanged_candidate_context(
+    repository: tuple[Path, str, str], changed_name: str
+) -> None:
+    repo, _, _ = repository
+    files = _write_presentation(repo)
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    changed_path = next(path for path in files if Path(path).name == changed_name)
+    files[changed_path] = "Updated presentation claim\n"
+    (repo / changed_path).write_text(files[changed_path], encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    for path in files:
+        (repo / path).write_text("UNSTAGED_PRESENTATION\n", encoding="utf-8")
+
+    raw = review_docs.build_evidence(repo, base, tree)
+    evidence = json.loads(raw)
+
+    assert evidence["changed_paths"] == [changed_path]
+    assert evidence["presentation_context_paths"] == sorted(files)
+    assert all(
+        evidence["candidate_files"][path] == content for path, content in files.items()
+    )
+    assert "UNSTAGED_PRESENTATION" not in raw
+
+
+def test_registered_build_changes_include_unchanged_presentation_context(
+    repository: tuple[Path, str, str],
+) -> None:
+    repo, _, _ = repository
+    files = _write_presentation(repo)
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    (repo / "tooling/marp").mkdir(parents=True)
+    (repo / "tooling/marp/package.json").write_text("{}\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    evidence = json.loads(review_docs.build_evidence(repo, base, tree))
+
+    assert evidence["presentation_context_paths"] == sorted(files)
+    assert all(
+        evidence["candidate_files"][path] == content for path, content in files.items()
+    )
+
+
+def test_unrelated_change_does_not_load_unchanged_presentation_assets(
+    repository: tuple[Path, str, str],
+) -> None:
+    repo, _, _ = repository
+    files = _write_presentation(repo)
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    (repo / "src/app.py").write_text("VALUE = 'updated'\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    evidence = json.loads(review_docs.build_evidence(repo, base, tree))
+
+    assert evidence["presentation_context_paths"] == []
+    assert all(
+        path not in evidence["candidate_files"]
+        for path in files
+        if not path.endswith(".md")
+    )
+
+
+@pytest.mark.parametrize("invalid", ["missing", "symlink", "executable"])
+def test_incomplete_registered_presentation_fails_before_model_call(
+    repository: tuple[Path, str, str], fake_codex: Path, invalid: str
+) -> None:
+    repo, base, _ = repository
+    files = _write_presentation(repo)
+    html_path = next(path for path in files if path.endswith(".html"))
+    html = repo / html_path
+    if invalid == "executable":
+        html.chmod(0o755)
+    else:
+        html.unlink()
+        if invalid == "symlink":
+            html.symlink_to("slides.md")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    with pytest.raises(review_docs.ReviewError, match="presentation review evidence"):
+        review_docs.review(base, tree, repo=repo)
+
+    assert not fake_codex.exists()
+
+
+@pytest.mark.parametrize("invalid", [b"\xffinvalid", b"contains\0binary"])
+def test_invalid_selected_asset_fails_before_model_call(
+    repository: tuple[Path, str, str], fake_codex: Path, invalid: bytes
+) -> None:
+    repo, base, _ = repository
+    (repo / "page.html").write_bytes(invalid)
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    with pytest.raises(review_docs.ReviewError, match="page.html"):
+        review_docs.review(base, tree, repo=repo)
+
+    assert not fake_codex.exists()
+
+
+def test_complete_html_asset_still_enforces_evidence_byte_budget(
+    repository: tuple[Path, str, str], fake_codex: Path
+) -> None:
+    repo, base, _ = repository
+    content = "<html>" + "x" * 310_000 + "</html>\n"
+    (repo / "page.html").write_text(content, encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
+
+    raw = review_docs.build_evidence(repo, base, tree, max_bytes=1_000_000)
+    assert json.loads(raw)["candidate_files"]["page.html"] == content
+    assert "+" + content in json.loads(raw)["diff"]
 
 
 @pytest.mark.parametrize("batched", [False, True])
@@ -426,6 +600,36 @@ def test_prompt_hard_limit_is_independent_of_explicit_evidence_budget() -> None:
     assert 0 < review_docs.MAX_PROMPT_CHARS < 1_048_576
     assert review_docs.MAX_PARALLEL_REVIEWS == 8
     assert review_docs.MAX_EVIDENCE_BYTES == 600_000
+
+
+def test_batches_keep_complete_registered_presentation_context_together(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    evidence = json.loads(_synthetic_evidence())
+    context = {
+        "docs/talks/deck/index.html": "<html>" + "a" * 1_000 + "</html>",
+        "docs/talks/deck/theme.css": "/*" + "b" * 1_000 + "*/",
+    }
+    evidence["candidate_files"].update(context)
+    evidence["presentation_context_paths"] = sorted(context)
+    monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 30_000)
+
+    prompts = review_docs.build_review_prompts(json.dumps(evidence))
+
+    assert len(prompts) > 1
+    for prompt in prompts:
+        batch = _prompt_evidence(prompt)
+        assert all(
+            batch["candidate_files"][path] == content
+            for path, content in context.items()
+        )
+        assert not (set(batch["batch"]["assigned_paths"]) & context.keys())
+
+    evidence["candidate_files"]["docs/talks/deck/index.html"] = "x" * 30_000
+    with pytest.raises(
+        review_docs.ReviewError, match="Shared diff.*presentation context"
+    ):
+        review_docs.build_review_prompts(json.dumps(evidence))
 
 
 def test_large_evidence_batches_include_complete_shared_context_and_all_files(

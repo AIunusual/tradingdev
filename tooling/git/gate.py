@@ -21,7 +21,7 @@ from tooling.git.candidates import (
     validate_snapshot_timeout,
     verify_candidate,
 )
-from tooling.git.change_scope import documentation_only
+from tooling.git.change_scope import ChangeScope, classify_changes
 
 
 def assert_index_unchanged(tree: str) -> None:
@@ -38,10 +38,12 @@ def check_commit() -> None:
         text=True,
         check=False,
     )
-    docs_only = base.returncode == 0 and documentation_only(
-        Path.cwd(), base.stdout.strip(), tree
+    scope = (
+        classify_changes(Path.cwd(), base.stdout.strip(), tree)
+        if base.returncode == 0
+        else ChangeScope("code")
     )
-    profile = "docs" if docs_only else "fast"
+    profile = "fast" if scope.kind == "code" else scope.kind
     print(f"Commit checks: {profile}", flush=True)
     check_snapshot(tree, profile)
     assert_index_unchanged(tree)

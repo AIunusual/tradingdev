@@ -1,0 +1,84 @@
+/* @theme tradingdev */
+@import 'default';
+
+section {
+  width: 1280px;
+  height: 720px;
+  padding: 64px 80px 76px;
+  background: #f8f7f3;
+  color: #16343c;
+  font-family: 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  font-size: 30px;
+  line-height: 1.55;
+  justify-content: center;
+}
+section h1, section h2, section h3 {
+  color: #16343c;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+}
+section h1 { font-size: 76px; }
+section h2 { font-size: 46px; margin-bottom: 34px; }
+section h3 { font-size: 32px; margin: 18px 0 10px; }
+section strong { color: #087f79; font-weight: 650; }
+section p, section ul, section ol { margin: 14px 0; }
+section li { margin: 10px 0; }
+section a { color: #087f79; text-decoration: underline; text-underline-offset: 4px; }
+section blockquote {
+  border-left: 5px solid #d2714a;
+  padding: 8px 0 8px 28px;
+  margin: 22px 0;
+  color: #16343c;
+  font-size: 34px;
+  background: transparent;
+}
+section table {
+  width: 100%;
+  display: table;
+  font-size: 25px;
+  line-height: 1.45;
+  border-collapse: collapse;
+  margin: 20px 0;
+}
+section table th, section table td {
+  padding: 16px 18px;
+  border: 0;
+  border-bottom: 1px solid #c9d4d2;
+  background: transparent;
+  vertical-align: top;
+}
+section table th { color: #087f79; font-weight: 650; }
+section table tr { background: transparent; }
+section code { background: #e5eeea; color: #16343c; font-size: 0.85em; }
+section footer {
+  position: absolute;
+  left: 80px;
+  right: 105px;
+  bottom: 29px;
+  color: #567076;
+  font-size: 16px;
+  line-height: 1.4;
+}
+section footer a { color: inherit; }
+section p:has(> em:only-child) { font-size: 21px; color: #567076; margin-top: 20px; }
+section p > em:only-child { font-style: normal; }
+section::after { right: 38px; bottom: 25px; color: #567076; font-size: 17px; }
+section.cover, section.chapter {
+  background: #16343c;
+  color: #f8f7f3;
+}
+section.cover h1, section.chapter h2 { color: #f8f7f3; }
+section.cover strong, section.chapter strong { color: #80d8c4; }
+section.cover h1 { margin-bottom: 20px; }
+section.cover p { font-size: 34px; }
+section.cover p:has(> em:only-child), section.chapter p:has(> em:only-child) { color: #b7cfcc; }
+section.cover::after, section.chapter::after { color: #b7cfcc; }
+section.chapter h2 { font-size: 58px; max-width: 1000px; }
+section.chapter p { font-size: 34px; max-width: 1030px; }
+section.statement blockquote { font-size: 42px; line-height: 1.5; }
+section.compact { font-size: 27px; }
+section.compact table { font-size: 23px; }
+section.compact table th, section.compact table td { padding: 13px 16px; }
+section.references { font-size: 25px; }
+section.references li { margin: 13px 0; }

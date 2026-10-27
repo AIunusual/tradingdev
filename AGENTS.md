@@ -95,6 +95,10 @@
 - `scripts/check-docs.sh` 執行唯讀 Markdown 與本機檔案／標題連結檢查；
   不執行文件中的命令，也不連線檢測外部 URL。Markdown 使用專案 PyMarkdown；
   中文敘述與表格不套用 ASCII 行寬限制。
+- `scripts/check-presentations.sh` 檢查文件及已登錄簡報，以鎖定的 Marp 工具鏈
+  在獨立臨時目錄重建並核對 HTML、頁碼與離線資源。檢查不安裝套件、不執行
+  VS Code 工作、不呼叫模型或完整 pytest；缺少工具鏈或輸出不同步須失敗。
+  建置工具與初始化方式見開發指南；瀏覽器操作及視覺排版仍須另行驗證。
 - `scripts/check-fast.sh` 執行唯讀 Ruff、格式、strict Mypy 與上述文件檢查。
   手動執行 `scripts/check-full.sh` 一律執行快速檢查及完整離線 pytest，
   不因工作樹只有文件變更而縮減範圍。
@@ -136,8 +140,9 @@
   契約變更須涵蓋 CLI、MCP 等呼叫端，不只依修改檔案挑選同名測試。
 - 涉及開發政策、程式行為、依賴或測試基礎設施的任務，交付前執行一次
   `scripts/check-full.sh`。代理須主動執行，不將發現錯誤的責任留給使用者 push。
-- 符合下方 Git 分流規則的純文件變更只需文件品質檢查；一般程式註解或格式
-  變更仍需快速品質檢查。可由 commit hook 完成，不必在 commit 前額外手動
+- 符合下方 Git 分流規則的一般文件變更只需文件品質檢查；簡報變更執行簡報
+  專項檢查。兩者不因新增 HTML、CSS 或受限編輯工作而執行完整 Python 測試。
+  一般程式註解或格式變更仍需快速品質檢查。可由 commit hook 完成，不必在 commit 前額外手動
   跑一次，也不因此執行 pytest 或真實模型策略測試。文件語意、命令正確性
   與讀者用途由差異審閱確認，文件品質檢查不能取代這項責任。
 - 修改模型可見的 MCP 工具 schema／回覆契約、策略生成／修復流程、prompt
@@ -168,7 +173,7 @@
 - 使用未參與該階段實作、具獨立上下文的 reviewer，或另啟本機 code review
   工作階段，選擇其一即可。審查任務僅唯讀檢視與回報，不修改、不提交，
   也不再為審查任務安排另一輪 reviewer。純分析與單純回覆不觸發本流程；
-  符合純文件分流的變更及一般程式註解或格式變更不強制額外模型審查；
+  符合文件或簡報專項分流的變更及一般程式註解或格式變更不強制額外模型審查；
   開發政策變更仍須獨立階段審查。
 - 指派時提供任務目的、審查基準與版本、差異範圍。Reviewer 須閱讀本檔，
   追查相關未修改的使用端、契約、正常與失敗路徑及測試缺口；依變更檢查
@@ -221,31 +226,41 @@
 ## Git hooks 與本機 PR 審查
 
 - 用 `scripts/install-git-hooks.sh` 安裝 repository 的 `.githooks`。
-- 純文件分流只接受 `README.md`、`ARCHITECTURE.md` 與 `docs/**/*.md` 的
-  非空變更，變更前後仍存在的檔案都須是 Git mode `100644` 的一般檔案。
-  分類以不可變 Git tree 的差異為準，改名亦須核對前後路徑；`AGENTS.md`、
-  程式、設定、可執行檔、符號連結、混合或無法確認的變更，以及空差異，
-  一律維持原檢查流程，不以副檔名或工作樹狀態推測純文件。
-- 每次 commit 都執行提交格式檢查；符合上述規則時執行 `check-docs.sh`，
-  其他變更執行 `check-fast.sh`。兩者都驗證暫存內容的獨立 snapshot，並核對
-  暫存 tree 未變，不能用尚未暫存的修正掩蓋待提交版本的錯誤。純文件分流
-  不執行 Ruff、Mypy、Codex 或 pytest。
+- 分類以不可變 Git tree 的非空差異為準，改名核對前後路徑，兩側仍存在的
+  檔案均須為 mode `100644` 的一般檔案，才可進入文件或簡報專項分流。
+- 一般文件分流接受 `README.md`、`ARCHITECTURE.md` 與 `docs/**/*.md`。
+  已登錄簡報的 Markdown 入口與來源優先歸入簡報專項，避免修改文字卻未更新 HTML。
+- 簡報專項接受一般文件及已登錄的簡報入口、來源、HTML、CSS、空的
+  `docs/.nojekyll`，以及通過內容驗證的 `.vscode/tasks.json` 差異。
+  只允許既定簡報工作的固定命令與結構；其他工作須完全未變。
+  頂層只允許 `version` 與 `tasks`；額外的 `options`、`inputs` 等設定即使
+  未變，也走程式分流，避免全域設定覆寫簡報工作的執行方式。
+  不以工作名稱或 `.json` 副檔名放行任意命令、環境覆寫或動態替換。
+- `AGENTS.md`、產品程式、依賴與 lock、建置工具、檢查程式、未知設定、
+  可執行檔、符號連結、包含這些檔案的混合變更、空差異與無法確認的變更，
+  均走程式分流。不得為讓某次變更通過而擴大白名單或偽造分類。
+- 每次 commit 都執行提交格式檢查；一般文件執行 `check-docs.sh`，簡報專項
+  執行 `check-presentations.sh`，程式分流執行 `check-fast.sh`。各路徑都驗證
+  暫存內容的獨立 snapshot，核對暫存 tree 未變，不以未暫存修正掩蓋錯誤。
+  文件與簡報專項不執行 Ruff、Mypy、自動 Codex 審查或完整 pytest。
 - 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
   僅限 GitHub，依 Git 傳入的實際目的地拒絕直接推送或刪除主線；本機 hook
   不能攔截 GitHub 網頁合併，也不能攔截不建立 commit 的本機 fast-forward。
   不得把 hook 描述為遠端強制門禁。
 - 準備決定合併的審閱者，明確執行 `scripts/check-pr.sh <PR編號>`。
-  不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR；非純文件分流另需
+  不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR；程式分流另需
   已登入的 Codex CLI。檢查本身不建立 PR、發送評論、push 或合併。
 - PR 檢查 fetch 主線與 PR head 至獨立臨時 Git repository，計算合併候選
   tree；不切換或更新開發者的分支。衝突或讀取版本不一致直接失敗。
-- PR 合併候選相對主線 tree 的差異符合純文件規則時，只執行文件 snapshot
-  檢查，不呼叫 Codex、不跑 Ruff、Mypy 或 pytest；差異審閱仍須確認文件語意、
-  命令正確性與讀者用途。其他候選先由 Codex 比對程式與既有架構／契約／操作
-  文件及讀者用途，再執行 `scripts/check-full.sh`。兩種分流均須保留候選
-  不可變性、base／head／tree 核對及程序、檔案清理。
-- 真實模型策略測試由審閱者依變更明確執行；純文件不要求此測試。
-  非純文件分流的 Codex 文件審查仍會呼叫模型。每次明確執行候選檢查都重新
+- PR 與本機合併候選依相對主線 tree 的差異採相同分類。一般文件只執行文件
+  snapshot；簡報專項執行簡報 snapshot，不呼叫 Codex、不跑 Python 全套。
+  差異審閱仍須確認語意、命令、讀者用途與必要的視覺／操作行為。
+- 程式候選若涉及簡報、其編譯模組／scripts 或 `tooling/marp/`，先執行簡報
+  snapshot；失敗即停止，不進入 Codex 或完整 pytest。其後由 Codex 比對程式
+  與既有架構／契約／操作文件及讀者用途，再執行 `scripts/check-full.sh`。
+  所有分流保留候選不可變性、base／head／tree 核對及程序、檔案清理。
+- 真實模型策略測試由審閱者依變更明確執行；文件與簡報不要求此測試。
+  程式分流的 Codex 文件審查仍會呼叫模型。每次明確執行候選檢查都重新
   驗證，不重用舊版檢查 receipt。
 - Codex 文件審查使用唯讀、無工具的執行，僅傳入 Git 版本的程式與文件，
   不修改 repository。過時文件、執行失敗、逾時或無效回覆皆令檢查失敗。
@@ -260,7 +275,7 @@
   本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。
 - 尚未建立 PR 時，可在乾淨且已提交的 checkout 執行
   `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
-  此命令採用相同的純文件／完整候選分流，仍核對本機 refs 與工作樹未變；
+  此命令採用相同的文件／簡報／程式候選分流，仍核對本機 refs 與工作樹未變；
   只驗證本機指定 ref，不代表遠端 PR 已驗證。
 - 一次 snapshot 檢查預設逾時為 900 秒；完整 PR／本機候選檢查可用
   `--snapshot-timeout-seconds <正整數>` 明確指定當次期限，須說明測得的
