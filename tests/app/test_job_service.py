@@ -48,7 +48,8 @@ def test_start_walk_forward_uses_bundled_walkforward_config(
         symbol="BTC/USDT",
         timeframe="1h",
         start_date="2024-01-01",
-        end_date="2025-12-31",
+        # Keep the bundled validation window inside this explicit research period.
+        end_date="2025-12-31T23:59:59.999999",
     )
 
     assert response["job_id"]
@@ -104,7 +105,8 @@ def test_start_worker_failure_is_persisted_before_reraising(
             symbol="BTC/USDT",
             timeframe="1h",
             start_date="2024-01-01",
-            end_date="2025-12-31",
+            # Reach the worker failure with a valid complete-day validation window.
+            end_date=("2025-12-31T23:59:59.999999" if walk_forward else "2025-12-31"),
         )
 
     assert caught.value is failure
