@@ -157,7 +157,12 @@ def test_retrainer_keeps_history_that_genuinely_precedes_scoring() -> None:
 
 
 def test_retrainer_refuses_frames_without_a_time_identity() -> None:
-    """Without timestamps the overlap cannot be detected, so it must refuse."""
+    """The identity is required for every non-empty scoring call.
+
+    It is not limited to frames that overlap: without timestamps nothing can
+    show that the training rows precede the scored window, so the call refuses
+    instead of assuming it.
+    """
     scored = pd.DataFrame({"close": [100.0, 101.0, 102.0]})
     history = pd.DataFrame({"close": [99.0, 99.5]})
     retrainer = RollingRetrainer(
@@ -170,6 +175,22 @@ def test_retrainer_refuses_frames_without_a_time_identity() -> None:
 
     with pytest.raises(ValueError, match="timestamp"):
         retrainer.run(scored, history, _AlwaysLong(), _RecordingFeatureEngineer())
+
+
+def test_retrainer_scores_an_empty_frame_without_validating_it() -> None:
+    """An empty scored frame produces no signals, so there is nothing to order."""
+    empty = pd.DataFrame({"close": pd.Series(dtype=float)})
+    retrainer = RollingRetrainer(
+        XGBoostModelConfig(),
+        retrain_interval=1000,
+        threshold=0.6,
+        cooldown=0,
+        lookback=1000,
+    )
+
+    signals = retrainer.run(empty, empty, _AlwaysLong(), _RecordingFeatureEngineer())
+
+    assert signals.tolist() == []
 
 
 def test_retrainer_refuses_duplicated_history_timestamps() -> None:

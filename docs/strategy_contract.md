@@ -244,13 +244,19 @@ Scoring a window that overlaps the training history must not duplicate that
 history or replay future bars into it. `QuantileStrategy.generate_signals()`,
 `XGBoostStrategy.generate_signals()` (through `RollingRetrainer`) and the
 SafetyVolume Risk Gate loop keep only the training rows that strictly precede
-the scored frame, matched on timestamps taken from a `timestamp` column or a
-`DatetimeIndex` and normalized to UTC (naive values are interpreted as UTC).
-Both frames must carry non-missing, unique, strictly increasing timestamps;
-missing or invalid time identities raise `ValueError` rather than assuming the
-training frame precedes scoring. Scoring the training frame itself therefore
-contributes no history, so its prediction contexts stay chronological instead
-of continuing from the tail of one copy into the head of the next.
+the scored frame. Scoring the training frame itself therefore contributes no
+history, so its prediction contexts stay chronological instead of continuing
+from the tail of one copy into the head of the next.
+
+Whether the two frames overlap can only be decided from timestamps, so the time
+identity is an input requirement for every scoring call, not only for
+overlapping ones: each non-empty scored frame, and each non-empty training
+history, must carry a `timestamp` column or a `DatetimeIndex` with non-missing,
+unique and strictly increasing values. Timestamps are compared in UTC, a
+`timestamp` column is rewritten in UTC, and naive values are interpreted as UTC.
+A frame with no identity, or with duplicated or decreasing timestamps, raises
+`ValueError` even when the frames happen not to overlap. `RollingRetrainer` and
+the SafetyVolume Risk Gate return before validating an empty scored frame.
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 
