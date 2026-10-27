@@ -86,6 +86,31 @@ snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型�
 `theme.css` 保存版型，`index.html` 是提交至 Git 的瀏覽器產物。
 簡報建置工具不加入 Python 執行環境；編輯時另需 Node.js 與 npm。
 
+#### 在 VS Code 儲存時自動編譯
+
+[`.vscode/tasks.json`](../.vscode/tasks.json) 已提供 `slides: watch` 背景工作，
+以專案根目錄為工作目錄，只編譯這份 `slides.md`，並監看它使用的 `theme.css`。
+啟動時先輸出一次，之後每次儲存這兩個檔案都會更新同目錄的 `index.html`。
+
+1. 用 VS Code 開啟整個 repository 資料夾，並確認 Node.js／`npx` 在 VS Code 的 PATH 中。
+2. 在可信任的工作區，首次出現自動工作提示時選擇 **Allow Automatic Tasks**。
+   若先前已拒絕，可執行 **Tasks: Manage Automatic Tasks** 改為允許。
+3. 重新開啟資料夾後會自動啟動。若要在目前視窗立即啟動，執行
+   **Tasks: Run Task → slides: watch**。
+
+這使用 VS Code 內建 Tasks，不需額外的 run-on-save 外掛。未儲存的編輯不會觸發編譯，
+其他 Markdown 檔也不會產生 HTML。編譯訊息在 `slides: watch` 的專用終端機；
+找不到 `npx` 時，請先修正 VS Code 的 PATH，再重新執行工作。
+自動工作規則見 [VS Code 官方說明](https://code.visualstudio.com/docs/debugtest/tasks#_control-automatic-task-execution)。
+
+Marp watch 會在 HTML 加入本機即時重新載入程式，供編輯時使用。
+準備提交或發布時，先用 **Tasks: Terminate Task → slides: watch** 停止監看，
+再執行 **Tasks: Run Task → slides: build**，輸出不含即時重新載入程式的靜態版本。
+兩個工作使用相同的 Marp 版本、主題與輸出設定；`slides: build` 也可從
+**Tasks: Run Build Task** 選取，不會覆寫專案的預設建置工作。
+
+#### 手動輸出與預覽
+
 在 repository 根目錄使用固定版本的 Marp CLI 輸出：
 
 ```bash

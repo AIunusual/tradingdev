@@ -1,0 +1,68 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "slides: watch",
+      "detail": "儲存 TradingDev 簡報或主題時，自動更新 index.html。",
+      "type": "process",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "@marp-team/marp-cli@4.5.1",
+        "docs/talks/tradingdev-introduction/slides.md",
+        "--theme",
+        "docs/talks/tradingdev-introduction/theme.css",
+        "--title",
+        "TradingDev｜讓 AI 助手協助研究交易策略",
+        "--description",
+        "產品介紹、使用場景、分類比較與後續開發方向",
+        "--output",
+        "docs/talks/tradingdev-introduction/index.html",
+        "--watch"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "folderOpen",
+        "instanceLimit": 1
+      },
+      "presentation": {
+        "reveal": "silent",
+        "focus": false,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "slides: build",
+      "detail": "輸出供保存或發布的靜態 index.html。",
+      "type": "process",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "@marp-team/marp-cli@4.5.1",
+        "docs/talks/tradingdev-introduction/slides.md",
+        "--theme",
+        "docs/talks/tradingdev-introduction/theme.css",
+        "--title",
+        "TradingDev｜讓 AI 助手協助研究交易策略",
+        "--description",
+        "產品介紹、使用場景、分類比較與後續開發方向",
+        "--output",
+        "docs/talks/tradingdev-introduction/index.html"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "focus": false,
+        "panel": "dedicated"
+      }
+    }
+  ]
+}
