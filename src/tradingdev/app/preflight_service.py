@@ -1,4 +1,4 @@
-"""Prepare and sample an execution in a supervised, time-bounded subprocess."""
+"""Prepare and check a program in a supervised, time-bounded subprocess."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class PreflightResult:
 
 
 class PreflightService:
-    """Keep generated execution and sample artifacts outside the server process."""
+    """Keep generated program checks and temporary files outside the server process."""
 
     def __init__(
         self,
@@ -136,7 +136,11 @@ class PreflightService:
                     "invalid_preflight_response", str(error)
                 ) from error
             return PreflightResult(
-                PreparedExecution(payload.manifest, Path(payload.original_config_path)),
+                PreparedExecution(
+                    payload.manifest,
+                    Path(payload.original_config_path),
+                    tuple(payload.receipt.synthetic_fixture_rows),
+                ),
                 payload.receipt.model_copy(
                     update={"elapsed_seconds": time.monotonic() - started}
                 ),

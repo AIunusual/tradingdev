@@ -70,8 +70,9 @@ def register(mcp: MCPServer, service: DataService) -> None:
         """Discover source names, assets, symbols, intervals and market settings.
 
         Select data.requirements.market.source in YAML. null timeframes means
-        upstream-dependent, not unrestricted support. Discovery performs no fetch;
-        preparation still checks whether the requested sample is available.
+        upstream-dependent, not unrestricted support. Preparation checks declared
+        local capabilities offline. Historical availability is checked when the
+        execution obtains data after approval; discovery performs no fetch.
         """
         return [
             DataSourceDescription.model_validate(item) for item in describe_sources()

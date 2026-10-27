@@ -188,3 +188,38 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     assert "questions and ambiguous replies are not consent" in decision
     assert "newly prepared plan and fresh approval" in decision
     assert "cannot prove the decision's human origin" in decision
+
+
+def test_preparation_schema_separates_code_checks_from_historical_execution(
+    runtime_root: Path,
+) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    discovery = " ".join((tools["list_data_sources"].description or "").split())
+    assert "local capabilities offline" in discovery
+    assert "data after approval" in discovery
+    assert "sample is available" not in discovery
+    for name in ("prepare_backtest", "prepare_walk_forward", "prepare_optimization"):
+        tool = tools[name]
+        assert not {"sample_bars", "minimum_history_bars"}.intersection(
+            tool.input_schema["properties"]
+        )
+        schema = tool.output_schema
+        assert schema is not None
+        receipt = schema["$defs"]["PreflightReceipt"]
+        assert receipt["properties"]["schema_version"]["const"] == 2
+        assert {
+            "synthetic_fixture_rows",
+            "signal_check",
+            "training_requirement",
+            "not_checked",
+        } <= set(receipt["required"])
+        assert not {
+            "data_source",
+            "windows",
+            "trade_count",
+            "execution_record_count",
+            "trading_path_exercised",
+            "tested_fold_count",
+            "sample_bars_used",
+        }.intersection(receipt["properties"])

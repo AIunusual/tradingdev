@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.conversation_user import ObservedPlanUser
@@ -18,6 +19,7 @@ from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.domain.preflight import PreflightReceipt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -260,8 +262,6 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     assert set(presentation.get("parameter_descriptions", {})) == {
         f"/{name}" for name in scenario.parameters
     }, "Presentation must explain every captured parameter"
-    assert actual_arguments.pop("minimum_history_bars", None) == 20
-    assert actual_arguments.pop("sample_bars", None) == 128
     for optional in ("parameters", "backtest_overrides"):
         if actual_arguments.get(optional) is None:
             actual_arguments.pop(optional, None)
@@ -277,6 +277,19 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     assert prepared.result.get("preflight"), (
         "Preparation must retain preflight evidence"
     )
+    try:
+        receipt = PreflightReceipt.model_validate(prepared.result["preflight"])
+    except ValidationError as exc:
+        raise AssertionError("Preparation must retain valid offline evidence") from exc
+    assert receipt.manifest_hash == manifest_hash
+    assert receipt.signal_check == "synthetic_contract_passed"
+    assert receipt.synthetic_fixture_rows == [80, 240]
+    assert set(receipt.not_checked) == {
+        "historical_data",
+        "backtest_engine",
+        "training",
+        "performance",
+    }
     assert not prepared.result.get("job_id"), "Preparing must not launch a formal job"
     start_index = require_index(
         f"submit_execution_decision(plan_id={plan_id!r}) returning a nonempty "

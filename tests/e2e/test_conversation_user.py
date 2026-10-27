@@ -99,14 +99,10 @@ def _prepare(context: PlanContext) -> ToolCall:
     presentation = ConfirmationPresentation.model_validate(
         arguments.pop("presentation")
     )
-    minimum = arguments.pop("minimum_history_bars")
-    sample = arguments.pop("sample_bars")
     result = context.service.prepare(
         PreflightRequest(
             kind="backtest",
             arguments=arguments,
-            minimum_history_bars=minimum,
-            sample_bars=sample,
         ),
         presentation,
     )
@@ -118,6 +114,18 @@ def _prepare(context: PlanContext) -> ToolCall:
 
 def _present(call: ToolCall, number: int = 1) -> ModelTurn:
     return ModelTurn(number, review_text(call.result), [call])
+
+
+def test_review_rejects_preflight_reply_that_differs_from_saved_plan(
+    tmp_path: Path,
+) -> None:
+    context = plan_context(tmp_path)
+    user = ObservedPlanUser(MCPWorkspace(tmp_path))
+    prepared = _prepare(context)
+    prepared.result["preflight"]["elapsed_seconds"] = 9.0
+    with pytest.raises(AssertionError, match="offline checks must match"):
+        asyncio.run(user(_present(prepared)))
+    assert context.runner.calls == []
 
 
 def _decision(
@@ -325,9 +333,7 @@ def test_revision_requires_new_saved_plan_with_requested_settings(
     rejected = _decision(context, first.result["plan_id"], "revise")
     context.arguments["backtest_overrides"] = {"fees": user.revised_fees}
     args: dict[str, Any] = {
-        key: value
-        for key, value in context.arguments.items()
-        if key not in {"presentation", "minimum_history_bars", "sample_bars"}
+        key: value for key, value in context.arguments.items() if key != "presentation"
     }
     changed = JobService(job_store=context.service.jobs).prepare_backtest(**args)
     assert isinstance(changed, PreparedExecution)

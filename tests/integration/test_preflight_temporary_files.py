@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 
 _TEMPFILE_PROBE = '''
-import json, os, runpy, signal, subprocess, sys, tempfile, time, types
+import json, os, runpy, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 import psutil
 
@@ -82,34 +82,16 @@ if outcome == "failure":
     raise RuntimeError("temporary artifact failure")
 if outcome == "timeout":
     time.sleep(60)
-if outcome == "ml_failure":
-    import pandas as pd
-    from tradingdev.domain.ml.models.flaml_model import FLAMLAutoMLDirectionModel
-
-    class FailingAutoML:
-        # Mimics a third-party learner that writes to TMPDIR before dying.
-        # The spill outlives the failed search and is left for the supervisor
-        # to clean up, even when the wrapper disables its known learners'
-        # diagnostic output.
-        classes_ = (0, 1)
-        model = None
-
-        def fit(self, X_train, y_train, **kwargs):
-            scratch = Path(tempfile.mkdtemp(prefix="flaml_direction_"))
-            spill = scratch / "catboost_1700000000.0" / "learn"
-            spill.mkdir(parents=True)
-            (spill / "partial-model.bin").write_bytes(b"unfinished model")
-            record["paths"].append(str(spill.parent))
-            record["training_rows"] = len(X_train)
-            write_record("worker.json", record)
-            raise RuntimeError("substitute AutoML search failed")
-
-    flaml = types.ModuleType("flaml")
-    flaml.AutoML = FailingAutoML
-    sys.modules["flaml"] = flaml
-    FLAMLAutoMLDirectionModel(random_seed=None).train(
-        pd.DataFrame({"feature": [0.0, 1.0, 2.0], "target": [0, 1, 0]})
-    )
+if outcome == "library_failure":
+    # Exercise third-party spill cleanup without doing model training merely to
+    # test the supervisor. This failure happens before offline preparation starts.
+    scratch = Path(tempfile.mkdtemp(prefix="library_spill_"))
+    spill = scratch / "nested" / "partial"
+    spill.mkdir(parents=True)
+    (spill / "artifact.bin").write_bytes(b"unfinished library output")
+    record["paths"].append(str(spill.parent))
+    write_record("worker.json", record)
+    raise RuntimeError("substitute library failed")
 module = sys.argv.pop(1)
 runpy.run_module(module, run_name="__main__")
 '''
@@ -204,7 +186,9 @@ def _configure_probe(
     return workspace, request
 
 
-@pytest.mark.parametrize("outcome", ["success", "failure", "timeout", "ml_failure"])
+@pytest.mark.parametrize(
+    "outcome", ["success", "failure", "timeout", "library_failure"]
+)
 def test_preflight_removes_worker_library_temporary_files_after_process_exit(
     monkeypatch: pytest.MonkeyPatch,
     outcome: str,
@@ -235,7 +219,7 @@ def _check_preflight_cleanup(
         workspace, timeout_seconds=3 if outcome == "timeout" else 60
     )
     if outcome == "success":
-        assert service.prepare(request).receipt.sample_bars_used == 128
+        assert service.prepare(request).receipt.synthetic_fixture_rows == [80, 240]
     else:
         with pytest.raises(PreflightError) as caught:
             service.prepare(request)
@@ -254,13 +238,10 @@ def _check_preflight_cleanup(
     assert record["temporary_environment"] == {
         name: str(directory / "tmp") for name in ("TMPDIR", "TMP", "TEMP")
     }
-    if outcome == "ml_failure":
-        assert record["training_rows"] == 3
-        # The learner's own temporary directory must sit under the
-        # supervised temp tree.
-        assert any(path.name.startswith("catboost_") for path in artifacts)
+    if outcome == "library_failure":
+        # The library's own temporary directory must sit under the supervised tree.
         assert any(
-            part.startswith("flaml_direction_")
+            part.startswith("library_spill_")
             for path in artifacts
             for part in path.parts
         )

@@ -70,9 +70,9 @@ def render_confirmation_summary(
         ]
         if values:
             lines.append("；".join(values))
-    lines.append("試跑只涵蓋有限樣本，不代表完整回測已完成。")
+    lines.append("確認前僅檢查程式，未取得真實行情、訓練或執行回測。")
     lines.append(
-        "請先閱讀完整 HTML 確認單中的設定與試跑限制，再於對話回覆同意、拒絕或修改要求。"
+        "請先閱讀完整 HTML 確認單中的設定與檢查限制，再於對話回覆同意、拒絕或修改要求。"
     )
     return "\n".join(lines)
 
@@ -102,7 +102,7 @@ def render_confirmation_html(document: ConfirmationDocument) -> str:
         "<p class='muted'>策略名稱與下方說明由模型提供。</p>"
         f"<p>{escape(document.summary)}</p></header>"
         "<section><h2>閱讀後回到對話確認</h2>"
-        "<p>請閱讀下方完整設定與試跑限制。確認後，在原對話回覆同意執行、拒絕，"
+        "<p>請閱讀下方完整設定與檢查限制。確認後，在原對話回覆同意執行、拒絕，"
         "或說明要修改的內容。閱讀本頁不會啟動回測；修改設定後會產生新的確認單。</p></section>"
     )
     for section in document.sections:

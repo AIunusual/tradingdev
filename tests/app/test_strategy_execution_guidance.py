@@ -211,8 +211,6 @@ def test_preflight_rejects_malformed_execution_guidance_and_cleans_files(
     request = PreflightRequest(
         kind="backtest",
         arguments=_arguments("quantile_volume", "backtest"),
-        minimum_history_bars=20,
-        sample_bars=128,
     )
     with pytest.raises(PreflightError) as caught:
         PreflightService(workspace).prepare(request)

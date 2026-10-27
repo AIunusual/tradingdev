@@ -189,6 +189,34 @@ def test_run_raw_config_simple_backtest_serializes_metrics(tmp_path: Path) -> No
     manifest.verify()
 
 
+@pytest.mark.parametrize(
+    ("actual_timeframe", "declared_timeframe", "declared_symbol"),
+    [("3h", "1h", "BTC/USDT"), ("1h", "3h", "BTC/USDT"), ("1h", "1h", "AAPL")],
+)
+def test_direct_run_rejects_market_declarations_that_differ_from_actual_request(
+    tmp_path: Path,
+    actual_timeframe: str,
+    declared_timeframe: str,
+    declared_symbol: str,
+) -> None:
+    service, data_service, _loader, _strategy = _service(tmp_path)
+    config = _raw_config(
+        data={
+            "requirements": {
+                "market": {
+                    "source": "yahoo_finance",
+                    "symbol": declared_symbol,
+                    "timeframe": declared_timeframe,
+                }
+            }
+        }
+    )
+    config["backtest"]["timeframe"] = actual_timeframe
+    with pytest.raises(ValueError, match="symbol/timeframe must match backtest"):
+        service.run_raw_config(config)
+    assert data_service.loads == []
+
+
 def test_serialization_retains_metrics_outside_the_summary(tmp_path: Path) -> None:
     service, _data, _loader, _strategy = _service(tmp_path)
     metrics = {

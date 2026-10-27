@@ -134,7 +134,7 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
 策略 strategy_id={_strategy_id(kind)}，revision_id={revision_id!r}。
 先 get_strategy 讀取目前策略原始碼與 YAML；不要 save 或修改策略。
 使用 prepare_{kind}，BTC/USDT、1h，backtest_overrides={json.dumps(_COSTS)}。
-minimum_history_bars=20、sample_bars=128；全部行情已在快取，不需下載。
+確認前只做離線程式驗證；正式執行所需行情已在快取，不需下載。
 presentation 提供繁體中文 title、summary、parameter_descriptions。
 每個有效建構子參數含預設值都要白話 label、description、unit。
 參數鍵為 JSON pointer：內建 KD 用 /config/k_period 等 /config/*；
@@ -203,12 +203,19 @@ def _assert_evidence(
         }
     for name, value in expected_arguments.items():
         assert prepare_call.arguments.get(name) == value
-    assert plan.preflight.minimum_history_bars == 20
-    assert plan.preflight.sample_bars_requested == 128
-    assert plan.preflight.sample_bars_used <= 128
-    assert {"configuration", "signals", "engine", "serialization"} <= set(
-        plan.preflight.checked_paths
-    )
+    assert plan.preflight.schema_version == 2
+    assert {
+        "configuration",
+        "execution_capabilities",
+        "parameter_binding",
+        "manifest_serialization",
+    } <= set(plan.preflight.checked_paths)
+    assert set(plan.preflight.not_checked) == {
+        "historical_data",
+        "backtest_engine",
+        "training",
+        "performance",
+    }
     descriptions = prepare_call.arguments["presentation"]["parameter_descriptions"]
     expected_parameters: dict[str, Any] = (
         {"config": KDStrategyConfig().model_dump(), "fit_config": None}
@@ -263,8 +270,10 @@ def _assert_evidence(
     assert run["strategy_id"] == _strategy_id(kind)
     assert run["revision_id"] == revision_id
     if kind == "optimization":
-        assert plan.preflight.tested_candidates == 1
-        assert plan.preflight.total_candidates == 2
+        assert plan.preflight.parameter_combinations_checked == 2
+        assert "candidate_binding" in plan.preflight.checked_paths
+        assert plan.preflight.signal_check == "bundled_not_executed"
+        assert plan.preflight.synthetic_fixture_rows == []
         assert manifest.optimization is not None
         assert manifest.optimization.param_ranges == {"k_period": [9, 14]}
         assert manifest.optimization.optimization_metric == "total_return"
@@ -278,10 +287,10 @@ def _assert_evidence(
         scopes = {run["selected_train_scope"], "test"}
         assert run["default_scope"] == "test"
     else:
-        assert plan.preflight.tested_fold_count == 1
-        assert plan.preflight.total_fold_count == 2
-        assert "single_fold_only" in plan.preflight.warnings
-        assert "fit" in plan.preflight.checked_paths
+        assert plan.preflight.parameter_combinations_checked is None
+        assert plan.preflight.signal_check == "synthetic_contract_passed"
+        assert plan.preflight.synthetic_fixture_rows == [80, 240]
+        assert "signal_contract" in plan.preflight.checked_paths
         assert manifest.config_copy()["random_seed"] == 42
         assert manifest.config_copy()["validation"] == WalkForwardConfig.model_validate(
             _WF_VALIDATION
@@ -295,20 +304,13 @@ def _assert_evidence(
             .with_name("confirmation.txt")
             .read_text()
         )
-        assert "已試跑的驗證分段：1 / 2" in confirmation
+        assert "已試跑的驗證分段" not in confirmation
         assert "固定起點、逐次擴大訓練區間" in confirmation
         assert "淨化分段不使用指定日期" in confirmation
         assert "訓練開始：2024-01-06" in confirmation
         assert "訓練結束：2024-01-05" in confirmation
         assert "淨化分段不使用此比例" in confirmation
         assert "此欄設定值（否）不使用" in confirmation
-        origin = pd.Timestamp("2024-01-01", tz="UTC")
-        for window, (start, end) in zip(
-            plan.preflight.windows, ((0, 36), (43, 86)), strict=True
-        ):
-            assert window.rows == end - start
-            assert pd.Timestamp(window.start) == origin + pd.Timedelta(hours=start)
-            assert pd.Timestamp(window.end) == origin + pd.Timedelta(hours=end - 1)
         assert set(run["available_scopes"]) == {
             "fold/0/train",
             "fold/0/test",

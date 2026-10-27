@@ -453,29 +453,12 @@ on a later run. Integrity verification assumes the job's expected digest remains
 trusted; it is not a security boundary against someone controlling both the
 database and workspace files.
 
-## Execution Plans and Confirmation Documents
+## Bounded Historical Sampling
 
-`ExecutionPlan` schema version 1 binds a unique 32-character `plan_id`, the full
-execution manifest, `original_config_path`, `PreflightReceipt`,
-`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
-The hash covers canonical JSON of every field except itself. The document and
-preflight hashes must identify the same manifest; the document also identifies
-the same plan. Plans currently expire one hour after preparation. The content
-does not change when approval state changes.
-
-`PreflightService` runs preparation and sample execution in a supervised child
-with a default 60-second budget, including imports, configuration resolution,
-generated signal-contract checks, sample data acquisition, engine execution and
-result serialization. Process cleanup has its own deadline. Success is returned
-only after verified worker cleanup. The request supplies
-`minimum_history_bars` and `sample_bars` (default 1024, allowed 64–4096), with
-the minimum required history bounded by that total budget. Every actual sample
-window must satisfy the declared history requirement. A split execution needs
-enough total budget for its training and test windows separately.
-
-The sample uses the selected market-data pipeline and effective settings.
-It searches bounded calendar windows within the requested dates, continuing
-past empty market-closure windows until it reaches the bar budget or end date.
+`DataService.load_sample` and crawler `fetch_sample` remain independent data
+utilities; MCP confirmation preparation does not call them. Sampling uses the
+selected market-data pipeline and effective settings and searches bounded calendar
+windows within the requested dates, continuing past empty market-closure windows until it reaches the bar budget or end date.
 Cached Parquet data is read in batches, interpreting timezone-naive timestamps
 as UTC just like ordinary loading. Feature caches project only the timestamp
 and requested value column, retaining exact matches to selected market bars.
@@ -496,47 +479,70 @@ Each selected CSV is scanned in batches of at most 1024 rows, retaining only
 the earliest requested bars even when stored rows are out of order. Later-date
 archives are not read once the output budget is satisfied. Downloads are limited
 to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
-is limited to 128 MiB. Exceeding a limit fails preparation.
+is limited to 128 MiB. Exceeding a limit fails the sampling operation.
 An archive is still downloaded in full before parsing, so sample bar counts do
 not imply proportionate network traffic. These are application-level resource
 controls, not an operating-system memory limit or a Python sandbox.
-Backtests sample one window; walk-forward samples one train/test fold;
-optimization samples its first candidate on both training and held-out periods.
-Temporary sample results, data and tool caches live in an independent temporary
-directory, outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP`
-also point inside that directory, containing standard temporary files created
-by third-party model training without changing the parent's environment.
-Successful, failed and timed-out workers
-are stopped and verified before their files are deleted. If process cleanup
-cannot be verified, the directory is retained and the operation reports failure;
-file cleanup failure is also an error. No successful sample publishes a regular
-job or run. This process supervision is not a complete generated-Python sandbox.
 
-The receipt records:
+## Execution Plans and Confirmation Documents
 
-- `manifest_hash`, elapsed seconds, requested/used sample bars and declared
-  minimum history;
-- `data_origin: market_data`, provider ID, and actual `windows` with role,
-  start/end timestamps and row count;
-- `checked_paths`: backend-issued check codes for configuration, signals,
-  actual engine execution and serialization, plus generated signal-contract
-  checks, walk-forward fitting or optimization candidate binding when applicable;
-- observed trade count, optional native execution-record count and whether the
-  sample exercised the trading path;
-- tested/total fold or candidate counts, and explicit coverage warnings.
+`ExecutionPlan` schema version 2 binds a unique 32-character `plan_id`, the full
+execution manifest, `original_config_path`, `PreflightReceipt`,
+`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
+The hash covers canonical JSON of every field except itself. The document and
+preflight hashes must identify the same manifest; the document also identifies
+the same plan. Plans currently expire one hour after preparation. The content
+does not change when approval state changes.
 
-`market_data` means the configured data pipeline was used. Offline tests may
-substitute the provider; their receipts do not prove live external-market
-verification. Zero trades alone do not fail preparation: the document says the
-engine completed but this sample did not cover the strategy's trade/cost path.
-Optimization additionally requires the first candidate's sampled training
-objective to be available and finite. Otherwise preparation fails with
-`unrankable_sample_objective`, even if another candidate or the full training
-period could yield a rankable value. Enlarge the sample within its allowed budget
-or revise the settings and prepare again. A zero-trade sample can therefore fail
-when the selected objective cannot be calculated without trades.
-The document also states that remaining dates, folds and candidate combinations
-may still fail during full execution. Sample success is not a profitability claim.
+`PreflightService` performs offline preparation in a supervised child with a
+60-second default budget covering imports, configuration resolution, execution-mode
+and parameter binding checks, generated signal-contract checks, and manifest
+serialization. Process cleanup has its own deadline. The request contains only
+`kind` and `arguments`; MCP preparation no longer accepts `minimum_history_bars`
+or `sample_bars`. It does not load cached or remote market data, run a backtest
+engine, train a model or serialize performance results.
+
+Generated strategies use the existing fixed 80- and 240-row synthetic fixtures
+with the captured base execution parameters. These check the returned DataFrame,
+input preservation and the `signal` contract, including values in `{-1, 0, 1}`.
+They do not prove the requested trading semantics, absence of look-ahead or
+sufficient warm-up for real history. Bundled strategies receive configuration,
+execution-mode and parameter checks without calling `fit` or `generate_signals`.
+Training-dependent signal execution is deferred until formal training. Optimization
+checks candidate bindings without evaluating any candidate's historical objective;
+a successful plan does not imply that a rankable objective will be available.
+
+The version 2 receipt records:
+
+- `manifest_hash` and `elapsed_seconds`;
+- `checked_paths`: `configuration`, `execution_capabilities`, `parameter_binding`
+  and `manifest_serialization`, plus `signal_contract` for generated strategies
+  and `candidate_binding` for optimization;
+- `synthetic_fixture_rows`: the generated strategy fixture sizes, or an empty
+  list for bundled strategies;
+- `signal_check`: `synthetic_contract_passed`, `deferred_until_training` or
+  `bundled_not_executed`, together with `training_requirement`;
+- `parameter_combinations_checked`: the number of parameter combinations whose
+  bindings were checked, not the number of backtests or performance trials;
+- `not_checked`: `historical_data`, `backtest_engine`, `training` and `performance`.
+
+There are no market windows, fold coverage, trade counts or profitability claims
+in this evidence. The confirmation explicitly states that data availability,
+actual folds, model training, execution costs and performance remain unverified
+until the user approves formal execution. Data or execution failures may therefore
+occur after a successful preparation.
+
+Temporary requests, responses and tool caches live in an independent directory,
+outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP` also point
+inside that directory without changing the parent's environment. Successful,
+failed and timed-out workers are stopped and verified before files are deleted.
+If process cleanup cannot be verified, the directory is retained and the operation
+reports failure; file cleanup failure is also an error. Preparation publishes no
+regular job or run. These resource controls are not a generated-Python sandbox.
+
+Plan and confirmation-document schemas are both version 2. Older confirmation
+plans must be prepared and approved again; they are not automatically migrated
+or deleted. Existing run results and reports do not need to be recomputed.
 
 `ConfirmationPresentation` accepts only model-authored title, summary and
 `parameter_descriptions`. Description keys are JSON pointers relative to captured
@@ -553,7 +559,7 @@ extra descriptions return `invalid_confirmation_presentation` with
 `required_parameter_paths`, allowing the model to repair wording without changing
 the source revision. Model units do not rescale captured values.
 
-The backend builds a typed document with fixed strategy, market, parameters,
+The backend builds a version 2 typed document with fixed strategy, market, parameters,
 execution, validation, optimization, preflight and limitations sections.
 Non-applicable sections remain explicit. Known cost/rate semantics have backend
 formatters; unknown effective setting fields fail preparation rather than being

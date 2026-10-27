@@ -11,7 +11,10 @@ import pytest
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    execution_options,
+    synthetic_preflight_receipt,
+)
 
 
 def _repair_evidence() -> list[ToolCall]:
@@ -60,7 +63,7 @@ def _repair_evidence() -> list[ToolCall]:
                 "confirmation_summary": "確認本次參數與歷史模擬期間。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
-                "preflight": {"status": "passed"},
+                "preflight": synthetic_preflight_receipt("a" * 64),
             },
         ),
         ToolCall(
@@ -444,6 +447,26 @@ def test_preparation_requires_reviewable_confirmation_evidence(field: str) -> No
         assert_workflow(calls, SCENARIOS["repair"])
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"manifest_hash": "b" * 64},
+        {"schema_version": 1},
+        {"synthetic_fixture_rows": []},
+        {"checked_paths": ["configuration", "engine"]},
+        {"not_checked": ["backtest_engine", "training", "performance"]},
+        {"trade_count": 3},
+    ],
+)
+def test_workflow_rejects_stale_or_historical_preparation_evidence(
+    changes: dict[str, Any],
+) -> None:
+    calls = _repair_evidence()
+    calls[6].result["preflight"].update(changes)
+    with pytest.raises(AssertionError):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
 def test_workflow_accepts_sdk_decoded_metadata_and_parameter_arguments() -> None:
     scenario = replace(SCENARIOS["repair"], experiment=True)
     calls = _repair_evidence()
@@ -451,8 +474,6 @@ def test_workflow_accepts_sdk_decoded_metadata_and_parameter_arguments() -> None
     arguments["presentation"] = json.dumps(arguments["presentation"])
     arguments["parameters"] = json.dumps(scenario.overrides)
     arguments["backtest_overrides"] = "null"
-    arguments["minimum_history_bars"] = "20"
-    arguments["sample_bars"] = "128"
     original = dict(arguments)
     assert_workflow(calls, scenario)
     assert calls[6].arguments == original, "Raw model evidence must remain available"

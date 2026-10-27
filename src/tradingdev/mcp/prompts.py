@@ -28,17 +28,18 @@ Strategy development workflow
 
 4. Prepare the requested execution.
    - Choose prepare_backtest, prepare_walk_forward or prepare_optimization from
-     the strategy's requirements and requested research. Supply minimum history
-     and human-language presentation labels/units for all effective parameters.
+     the strategy's requirements and requested research. Supply human-language
+     presentation labels/units for all effective parameters.
    - Use returned missing parameter paths to repair presentation. A next_tool
      suggestion applies only after its required_configuration is satisfied.
      Do not remove training/validation to bypass a rejection. train_model does
      not train a bundled strategy instance; fit() is not an MCP tool.
    - Parameter experiments reuse a runnable revision through parameters overrides;
      they do not rewrite its source or base validation evidence.
-   - Preparation runs a bounded trial. Do not pre-download full history merely
-     for confirmation; ensure_data is for explicitly requested cache acquisition.
-     A zero-trade sample or representative fold does not prove full-run success.
+   - Preparation checks code/configuration with bounded synthetic signal checks;
+     it does not fetch market data, train models or run a backtest. Do not fetch
+     history for confirmation; ensure_data requires an explicit data request.
+     Program checks do not prove data availability or successful full execution.
 
 5. Present the prepared plan for review.
    - Quote confirmation_summary verbatim, preferably as a Markdown blockquote.

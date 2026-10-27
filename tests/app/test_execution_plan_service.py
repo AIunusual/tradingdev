@@ -1,4 +1,4 @@
-"""Approval state and persisted identity with substituted trial/process boundaries."""
+"""Approval state and identity with substituted validation/process boundaries."""
 
 from __future__ import annotations
 
@@ -42,14 +42,10 @@ def _prepare(context: PlanContext) -> PlanResponse:
     presentation = ConfirmationPresentation.model_validate(
         arguments.pop("presentation")
     )
-    minimum = arguments.pop("minimum_history_bars")
-    sample = arguments.pop("sample_bars")
     result = context.service.prepare(
         PreflightRequest(
             kind="backtest",
             arguments=arguments,
-            minimum_history_bars=minimum,
-            sample_bars=sample,
         ),
         presentation,
     )
@@ -126,7 +122,7 @@ def test_changed_persisted_content_is_rejected_before_question(
     if target == "manifest":
         payload[target]["config"]["backtest"]["fees"] = 0.5
     elif target == "preflight":
-        payload[target]["trade_count"] = 99
+        payload[target]["elapsed_seconds"] = 99.0
     else:
         payload[target]["summary"] = "Different settings"
     _rewrite_payload(context, prepared.plan_id, payload)
@@ -228,13 +224,13 @@ def test_submission_failure_is_visible_and_cannot_launch_on_retry(
         context.service.begin_confirmation(prepared.plan_id)
 
 
-def test_failed_trial_never_publishes_a_plan(
+def test_failed_validation_never_publishes_a_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     context = plan_context(tmp_path)
 
     def fail(_request: PreflightRequest) -> None:
-        raise PreflightError("preflight_timeout", "sample timed out")
+        raise PreflightError("preflight_timeout", "program checks timed out")
 
     monkeypatch.setattr(context.preflight, "prepare", fail)
     with pytest.raises(AssertionError, match="preflight_timeout"):
@@ -454,7 +450,7 @@ def test_conversation_approval_rejects_changes_to_reviewed_evidence(
         if target == "manifest":
             payload[target]["config"]["backtest"]["fees"] = 0.5
         elif target == "preflight":
-            payload[target]["trade_count"] = 99
+            payload[target]["elapsed_seconds"] = 99.0
         else:
             payload[target]["summary"] = "Unreviewed settings"
         _rewrite_payload(context, prepared.plan_id, payload)

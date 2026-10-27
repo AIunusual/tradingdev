@@ -189,16 +189,17 @@ class OptimizationService:
                 end_date=f"{test_end}T23:59:59.999999",
             )
             apply_backtest_overrides(effective_config, backtest_overrides)
-            manifest = BacktestService(
+            checked = BacktestService(
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
                 data_service=self._data_service,
-            ).prepare_execution(
+            ).capture_execution(
                 effective_config,
                 kind="optimization",
                 optimization=optimization,
                 parameters=parameters,
             )
+            manifest = checked.manifest
             strategy_config = manifest.config_copy()["strategy"]
             names = list(optimization.param_ranges)
             candidates = (optimization.param_ranges[name] for name in names)
@@ -235,7 +236,7 @@ class OptimizationService:
                 "total_combinations": 0,
                 "code": "invalid_optimization_request",
             }
-        return PreparedExecution(manifest, config_path)
+        return PreparedExecution(manifest, config_path, checked.synthetic_fixture_rows)
 
     def _resolve_strategy_config(
         self, strategy_id: str, revision_id: str | None

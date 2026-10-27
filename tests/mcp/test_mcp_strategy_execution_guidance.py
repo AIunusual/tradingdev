@@ -77,7 +77,7 @@ def test_nontraining_rejection_keeps_its_code_without_training_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(_request: object) -> None:
-        raise PreflightError("preflight_timeout", "sample timed out")
+        raise PreflightError("preflight_timeout", "program checks timed out")
 
     with TemporaryDirectory(prefix="mcp-guidance-", dir=tmp_path) as directory:
         root = Path(directory)
@@ -91,7 +91,7 @@ def test_nontraining_rejection_keeps_its_code_without_training_recovery(
         payload = result.structured_content["result"]
         assert payload["success"] is False
         assert payload["code"] == "preflight_timeout"
-        assert payload["error"] == "sample timed out"
+        assert payload["error"] == "program checks timed out"
         assert payload["next_tool"] is None
         assert payload["execution_guidance"] is None
         text = next(block.text for block in result.content if block.type == "text")

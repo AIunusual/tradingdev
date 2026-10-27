@@ -44,8 +44,6 @@ def guidance_arguments(tool: str) -> dict[str, Any]:
         "strategy_id": STRATEGY_ID,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
-        "minimum_history_bars": 20,
-        "sample_bars": 128,
         "presentation": _PRESENTATION,
     }
     if tool == "prepare_backtest":

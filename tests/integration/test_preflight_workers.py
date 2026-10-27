@@ -92,7 +92,7 @@ def test_bounded_runner_stops_group_on_success_failure_and_timeout(
         ("timeout", "backtest"),
     ],
 )
-def test_real_preflight_parent_removes_sample_workspace_after_worker_exit(
+def test_real_preflight_parent_removes_validation_workspace_after_worker_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     outcome: str,
@@ -114,13 +114,13 @@ def test_real_preflight_parent_removes_sample_workspace_after_worker_exit(
     )
     if outcome == "success":
         result = service.prepare(request)
-        assert 1 <= result.receipt.sample_bars_used <= 128
+        assert result.receipt.synthetic_fixture_rows == [80, 240]
         assert result.prepared.manifest.manifest_hash == result.receipt.manifest_hash
     else:
         with pytest.raises(PreflightError) as caught:
             service.prepare(request)
         assert caught.value.code == (
-            "preflight_timeout" if outcome == "timeout" else "preflight_failed"
+            "preflight_timeout" if outcome == "timeout" else "invalid_execution_request"
         )
     assert not temporary.exists()
     assert list(workspace.runs.iterdir()) == []

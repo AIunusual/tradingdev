@@ -1,4 +1,4 @@
-"""Complete, human-readable projections of fixed settings and actual sample evidence."""
+"""Human-readable projections of fixed settings and bounded program evidence."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from tradingdev.adapters.presentation.confirmation import (
 from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
-from tradingdev.domain.preflight import PreflightReceipt, PreflightWindow
+from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.presentation.confirmation import (
     SECTION_TITLES,
     ConfirmationDocument,
@@ -105,62 +105,37 @@ def _manifest(
 
 
 def _receipt(manifest: ExecutionManifest, **changes: Any) -> PreflightReceipt:
-    split = manifest.kind != "backtest"
-    checks = ["configuration", "signals", "engine", "serialization"]
-    if manifest.strategy_execution.kind == "generated":
+    generated = manifest.strategy_execution.kind == "generated"
+    checks = [
+        "configuration",
+        "execution_capabilities",
+        "parameter_binding",
+        "manifest_serialization",
+    ]
+    if generated:
         checks.append("signal_contract")
-    if manifest.kind == "walk_forward":
-        checks.append("fit")
-    if manifest.kind == "optimization":
+    if manifest.optimization:
         checks.append("candidate_binding")
-    validation = manifest.config_copy().get("validation")
-    explicit = (
-        validation is not None
-        and not validation["purged_split"]
-        and all(
-            validation[key] is not None
-            for key in ("train_start", "train_end", "test_start", "test_end")
-        )
-    )
     return PreflightReceipt.model_validate(
         {
+            "schema_version": 2,
             "manifest_hash": manifest.manifest_hash,
             "elapsed_seconds": 1.5,
-            "sample_bars_requested": 64,
-            "sample_bars_used": 64,
-            "minimum_history_bars": 20,
-            "data_source": "binance_vision",
-            "windows": [
-                PreflightWindow(
-                    role="train" if split else "full",
-                    start="2024-01-01T00:00:00Z",
-                    end="2024-01-02T07:00:00Z",
-                    rows=32 if split else 64,
-                ),
-                *(
-                    [
-                        PreflightWindow(
-                            role="test",
-                            start="2024-07-01T00:00:00Z",
-                            end="2024-07-02T07:00:00Z",
-                            rows=32,
-                        )
-                    ]
-                    if split
-                    else []
-                ),
-            ],
             "checked_paths": checks,
-            "trade_count": 0,
-            "trading_path_exercised": False,
-            "tested_fold_count": 1 if manifest.kind == "walk_forward" else None,
-            "total_fold_count": (1 if explicit else validation["n_splits"])
-            if validation is not None
-            else None,
-            "tested_candidates": 1 if manifest.optimization else None,
-            "total_candidates": manifest.optimization.total_combinations
+            "synthetic_fixture_rows": [80, 240] if generated else [],
+            "signal_check": "synthetic_contract_passed"
+            if generated
+            else "bundled_not_executed",
+            "training_requirement": "unknown",
+            "parameter_combinations_checked": manifest.optimization.total_combinations
             if manifest.optimization
             else None,
+            "not_checked": [
+                "historical_data",
+                "backtest_engine",
+                "training",
+                "performance",
+            ],
             **changes,
         }
     )
@@ -206,9 +181,13 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
         "於對話回覆",
     ):
         assert expected in summary
-    assert "試跑只涵蓋有限樣本" in summary
+    assert "確認前僅檢查程式" in summary
     assert "閱讀本頁不會啟動回測" in html
-    for detail in ("最低歷史資料需求", "試跑沒有觀察到交易", "策略設定 1"):
+    for detail in (
+        "合成訊號檢查筆數",
+        "實際可用日期、筆數與資料缺口尚未驗證",
+        "策略設定 1",
+    ):
         assert detail not in summary and detail in html
     if kind == "optimization":
         assert "參數組合總數：3" in summary
@@ -253,9 +232,9 @@ def test_every_execution_kind_has_complete_equivalent_human_views(kind: Any) -> 
             assert field.label in text and field.label in html
             assert field.value_text in text and field.value_text in html
             assert field.description in text and field.description in html
-    assert "試跑沒有觀察到交易" in text
+    assert "尚未執行回測引擎" in text
     assert "已完成必要檢查，可供使用者確認" in text
-    assert "最低歷史資料需求：20" in text
+    assert "合成訊號檢查筆數：80、240" in text
     assert "手續費率：0.06%" in text
     assert "滑價率：0.05%" in text
     assert "每根 K 線 1 小時" in text
@@ -332,8 +311,8 @@ def test_nested_search_candidates_keep_labels_correlated_without_raw_json_keys()
     assert "/thresholds/1" in parameter_paths(manifest)
     text = render_confirmation_text(_document(manifest))
     assert "參數組合總數：4" in text
-    assert "已試跑的參數組合：1 / 4" in text
-    assert "試跑未涵蓋全部參數組合" in text
+    assert "已檢查參數綁定的組合數：4" in text
+    assert "不代表已執行候選的歷史回測或比較績效" in text
     assert "搜尋組 1／候選 1：策略設定 1：5" in text
     assert "搜尋組 1／候選 1：策略設定 2：7" in text
     assert "搜尋組 2／候選 2：策略設定 4：40" in text
@@ -502,7 +481,7 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     assert "指定日期模式固定為一組，此設定不使用" in text
     assert "訓練開始：2024-01-01" in text
     assert "預定分段組數：1" in text
-    assert "已試跑的驗證分段：1 / 1" in text
+    assert "尚未訓練模型或執行驗證分段" in text
 
 
 @pytest.mark.parametrize("offset", ["", "+08:00"])
@@ -556,7 +535,7 @@ def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
     assert "分段方式：依資料筆數自動分段" in text
     assert "自動分段的訓練比例：60%" in text
     assert f"訓練區間逐次擴大：{'是' if expanding else '否'}" in text
-    assert "已試跑的驗證分段：1 / 2" in text
+    assert "尚未訓練模型或執行驗證分段" in text
 
 
 @pytest.mark.parametrize("dates", [False, True])
@@ -586,12 +565,12 @@ def test_purged_validation_shows_effective_mode_and_ignored_controls(
     assert "訓練區間逐次擴大：是" in text
     assert "此欄設定值（否）不使用" in text
     assert "預定分段組數：2" in text
-    assert "已試跑的驗證分段：1 / 2" in text
-    assert "未涵蓋所有驗證分段" in text
+    assert "尚未訓練模型或執行驗證分段" in text
+    assert "已試跑的驗證分段" not in text
     assert "使用指定日期的一組" not in text
     if dates:
         assert "訓練開始：2024-01-01" in text
-    with pytest.raises(ValueError, match="fold coverage"):
+    with pytest.raises(ValueError, match="Extra inputs"):
         build_confirmation_document(
             manifest, _presentation(manifest), _receipt(manifest, total_fold_count=1)
         )
@@ -641,9 +620,9 @@ def test_disabled_label_audit_is_not_presented_as_safe_labels(horizon: int) -> N
     "change",
     [
         "wrong_manifest",
-        "missing_engine",
+        "missing_binding",
         "unknown_check",
-        "unknown_warning",
+        "missing_limitation",
         "candidate_count",
     ],
 )
@@ -654,46 +633,82 @@ def test_invalid_or_incomplete_preflight_evidence_cannot_make_a_confirmation(
     receipt = _receipt(manifest)
     if change == "wrong_manifest":
         receipt.manifest_hash = "0" * 64
-    elif change == "missing_engine":
-        receipt.checked_paths.remove("engine")
+    elif change == "missing_binding":
+        receipt.checked_paths.remove("parameter_binding")
     elif change == "unknown_check":
         receipt = receipt.model_copy(
             update={"checked_paths": [*receipt.checked_paths, "invented_check"]}
         )
-    elif change == "unknown_warning":
-        receipt.warnings.append("unmapped_warning")
+    elif change == "missing_limitation":
+        receipt.not_checked.remove("historical_data")
     else:
-        receipt.total_candidates = 2
+        receipt.parameter_combinations_checked = 2
     with pytest.raises(ValueError):
         build_confirmation_document(manifest, _presentation(manifest), receipt)
 
 
 @pytest.mark.parametrize(
-    "change", ["data_source", "fold_count", "window_role", "extra_check"]
+    "change",
+    [
+        "fabricated_engine",
+        "fixture_rows",
+        "deferred_generated",
+        "extra_candidate_check",
+    ],
 )
-def test_preflight_cannot_claim_other_data_or_unexecuted_paths(change: str) -> None:
+def test_preflight_cannot_claim_unexecuted_or_missing_program_checks(
+    change: str,
+) -> None:
     manifest = _manifest("walk_forward")
     receipt = _receipt(manifest)
-    if change == "data_source":
-        receipt.data_source = "different-provider"
-    elif change == "fold_count":
-        receipt.total_fold_count = 2
-    elif change == "window_role":
-        receipt.windows[0].role = "full"
+    if change == "fabricated_engine":
+        receipt = receipt.model_copy(
+            update={"checked_paths": [*receipt.checked_paths, "engine"]}
+        )
+    elif change == "fixture_rows":
+        receipt.synthetic_fixture_rows.pop()
+    elif change == "deferred_generated":
+        receipt = receipt.model_copy(
+            update={
+                "signal_check": "deferred_until_training",
+                "training_requirement": "required",
+                "synthetic_fixture_rows": [],
+                "checked_paths": [
+                    check
+                    for check in receipt.checked_paths
+                    if check != "signal_contract"
+                ],
+            }
+        )
     else:
         receipt.checked_paths.append("candidate_binding")
     with pytest.raises(ValueError):
         build_confirmation_document(manifest, _presentation(manifest), receipt)
 
 
-def test_only_fold_is_not_presented_as_partial_fold_coverage() -> None:
-    manifest = _manifest("walk_forward", validation={"n_splits": 1})
-    receipt = _receipt(manifest, warnings=["single_fold_only"])
-    document = build_confirmation_document(manifest, _presentation(manifest), receipt)
+def test_even_one_fold_is_not_presented_as_having_been_trained_or_backtested() -> None:
+    document = _document(_manifest("walk_forward", validation={"n_splits": 1}))
     text = render_confirmation_text(document)
-    assert "已試跑的驗證分段：1 / 1" in text
-    assert "未涵蓋所有驗證分段" not in text
-    assert "完整期間仍可能遇到" in text
+    assert "預定分段組數：1" in text
+    assert "尚未訓練模型或執行驗證分段" in text
+    assert "尚未取得或檢查真實行情" in text
+    assert "尚未執行回測引擎" in text
+    assert "已試跑的驗證分段" not in text
+
+
+def test_required_training_strategy_discloses_that_signals_are_not_executed() -> None:
+    manifest = _manifest("walk_forward", bundled=True)
+    receipt = _receipt(
+        manifest,
+        signal_check="deferred_until_training",
+        training_requirement="required",
+    )
+    text = render_confirmation_text(
+        build_confirmation_document(manifest, _presentation(manifest), receipt)
+    )
+    assert "此策略須先訓練；本次只檢查設定與執行模式" in text
+    assert "合成訊號檢查筆數" not in text
+    assert "尚未計算績效" in text
 
 
 def test_unknown_execution_setting_is_not_silently_omitted() -> None:

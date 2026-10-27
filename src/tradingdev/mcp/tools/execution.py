@@ -1,4 +1,4 @@
-"""Bounded preparation, HTML review and explicit conversational decisions."""
+"""Offline program checks, HTML review and explicit conversational decisions."""
 
 from __future__ import annotations
 
@@ -15,11 +15,7 @@ from tradingdev.app.contracts.plans import (
     PlanResponse,  # noqa: TC001
     PlanStarted,  # noqa: TC001
 )
-from tradingdev.domain.preflight import (
-    MinimumHistoryBars,  # noqa: TC001 — SDK resolves tool annotations.
-    PreflightRequest,
-    SampleBars,  # noqa: TC001 — SDK resolves tool annotations.
-)
+from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,  # noqa: TC001
 )
@@ -44,16 +40,12 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     async def prepare(
         kind: ExecutionKind,
         arguments: BacktestInput | OptimizationInput,
-        minimum_history_bars: int,
-        sample_bars: int,
         presentation: ConfirmationPresentation,
     ) -> PlanResponse | PlanRejected:
         try:
             request = PreflightRequest(
                 kind=kind,
                 arguments=arguments.model_dump(mode="json"),
-                minimum_history_bars=minimum_history_bars,
-                sample_bars=sample_bars,
             )
         except ValidationError as exc:
             raise invalid_arguments(exc) from exc
@@ -81,17 +73,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a frozen backtest plan with a bounded trial; no full job starts.
+        """Prepare a frozen plan with program checks; no market data or backtest.
 
-        Requires a runnable/promoted revision. Supply minimum_history_bars per window,
-        presentation labels/units for every constructor parameter including defaults,
-        and sample_bars as the total trial budget. Missing labels return exact
+        Requires a runnable/promoted revision. Supply presentation labels/units for
+        every constructor parameter including defaults. Missing labels return exact
         required_parameter_paths. parameters recursively overrides base parameters;
         backtest_overrides changes cost/capital/execution fields, not dates/market.
         Present the returned confirmation_summary verbatim and HTML link, end the turn,
@@ -107,13 +96,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             parameters=parameters,
             backtest_overrides=backtest_overrides,
         )
-        return await prepare(
-            "backtest",
-            args,
-            minimum_history_bars,
-            sample_bars,
-            presentation,
-        )
+        return await prepare("backtest", args, presentation)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_walk_forward(
@@ -123,17 +106,15 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         start_date: str,
         end_date: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a frozen walk-forward plan using a bounded representative fold.
+        """Prepare a walk-forward plan without market data, training or backtests.
 
         Requires validation training/test windows and a runnable/promoted revision.
-        Supply minimum history and human parameter presentation as for prepare_backtest.
-        The sample does not prove all folds will succeed. Present confirmation_summary
+        Supply human parameter presentation as for prepare_backtest. Program checks
+        do not prove training or folds will succeed. Present confirmation_summary
         verbatim and its HTML link; end the turn and await the user's later decision.
         """
         args = BacktestInput(
@@ -146,13 +127,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             parameters=parameters,
             backtest_overrides=backtest_overrides,
         )
-        return await prepare(
-            "walk_forward",
-            args,
-            minimum_history_bars,
-            sample_bars,
-            presentation,
-        )
+        return await prepare("walk_forward", args, presentation)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_optimization(
@@ -166,17 +141,15 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         test_start: str,
         test_end: str,
         presentation: ConfirmationPresentation,
-        minimum_history_bars: MinimumHistoryBars,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
-        sample_bars: SampleBars = 1024,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a pinned search after checking the grid and trialing one candidate.
+        """Prepare a pinned search with program and grid checks; no candidate backtests.
 
         Dates are inclusive UTC days: train_start < train_end < test_start < test_end.
-        Use human parameter descriptions and the strategy's minimum history. The HTML
-        contains ranges, objective direction, costs and sample coverage. Present its
+        Use human parameter descriptions. The HTML contains ranges, objective
+        direction, costs and program-check limits. Present its
         link and verbatim confirmation_summary; end the turn and await a later decision.
         An approved search has no second worker-side confirmation.
         """
@@ -194,13 +167,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             parameters=parameters,
             backtest_overrides=backtest_overrides,
         )
-        return await prepare(
-            "optimization",
-            args,
-            minimum_history_bars,
-            sample_bars,
-            presentation,
-        )
+        return await prepare("optimization", args, presentation)
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -211,7 +178,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         )
     )
     def get_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
-        """Read saved confirmation and trial evidence without rerunning a strategy."""
+        """Read saved confirmation and program-check evidence without rerunning code."""
         return service.get(plan_id)
 
     @mcp.tool(
