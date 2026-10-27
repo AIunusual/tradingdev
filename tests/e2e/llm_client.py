@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,8 @@ from tooling.context_budget import RequestSizes, text_size
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS, successful_mcp_calls
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tests.e2e.conversation import UserReply
     from tests.integration.mcp_harness import MCPClient
 
@@ -225,6 +228,7 @@ async def run_local_model(
     user_reply: UserReply | None = None,
     max_turns: int = 8,
     tool_names: list[str] | None = None,
+    on_tool_call: Callable[[ToolCall], None] | None = None,
 ) -> list[ToolCall]:
     """Bridge local Chat Completions tool calls to real stdio MCP, with bounds.
 
@@ -233,6 +237,8 @@ async def run_local_model(
     explicit model feedback at most twice per conversation, before any tool from
     that response runs. Other malformed responses and budget exhaustion fail.
     The caller owns the MCP session and its worker/file cleanup.
+    An optional observer receives an isolated completed call before the next
+    model request, so a later failure does not discard that evidence.
     """
     calls: list[ToolCall] = []
     recent_results: list[str] = []
@@ -413,6 +419,8 @@ async def run_local_model(
                     payload = result.model_dump(mode="json", by_alias=True)
                     call = ToolCall(name, arguments, tool_payload(payload))
                     calls.append(call)
+                    if on_tool_call is not None:
+                        on_tool_call(deepcopy(call))
                     summary = f"{_tool_summary(call)}; mcp_error={result.is_error}"
                     recent_results.append(summary)
                     _progress(
