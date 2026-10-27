@@ -18,9 +18,8 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
-- **時間身分**: 評分資料必須帶可排序的時間戳（`timestamp` 欄位或 `DatetimeIndex`，
-  唯一且遞增）；缺漏、重複或非遞增會直接停止評分，不會產生訊號。時間戳同時決定哪些
-  較早的訓練列可以重用，所以重播訓練段時不會把同一段當成自己的歷史。詳細 API 規則見
+- **時間戳**: 評分資料必須有可排序的時間戳，否則不會進行風險評分、也不會產生訊號；
+  詳細的資料格式與驗證規則見
   [訓練契約](../strategy_contract.md#training-before-scoring)。
 
 ### Layer 2: Direction (SMA Crossover)
