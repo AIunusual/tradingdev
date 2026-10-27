@@ -60,9 +60,9 @@ designed for research on market-making volume targets, not live execution.
   preceding bar's prediction. Cooldown counts all source bars, including gaps,
   and threshold selection uses the same timing. See the
   [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
-- Scoring a non-empty frame requires valid chronological timestamps; data without
-  them cannot be scored and produces no signals. An empty frame returns no signals
-  without this check. See the
+- Scoring a non-empty frame requires chronological timestamps; when they are
+  missing or invalid the scoring call fails with `ValueError`. An empty frame
+  returns no signals and skips this check. See the
   [training contract](../strategy_contract.md#training-before-scoring).
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
