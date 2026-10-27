@@ -72,10 +72,9 @@ validation section for walk-forward.`
 Each fold reports metrics for its test window and for its training window. The
 training-window figures are in-sample: the strategy is fitted on that window and
 then scores the same bars, so they describe fit rather than out-of-sample
-performance. Only the test-window metrics are held out. Scoring keeps every
-usable bar on its own row when both frames carry timestamps; the
-[training contract](../strategy_contract.md#training-before-scoring) states that
-requirement and what happens without it.
+performance. Only the test-window metrics are held out. See the
+[training contract](../strategy_contract.md#training-before-scoring) for the
+scoring requirements.
 
 For MCP, ask the assistant to use walk-forward validation. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
