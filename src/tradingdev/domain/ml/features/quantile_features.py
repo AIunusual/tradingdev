@@ -99,7 +99,8 @@ class QuantileFeatureEngineer:
         Returns:
             DataFrame with original + feature + target columns.
             DVOL changes remain unknown when either comparison endpoint is missing.
-            Rows with NaN features are dropped.
+            Rows with NaN features are dropped; surviving source index labels
+            are preserved so predictions can be aligned with the input.
         """
         close = df["close"].astype(float)
         high = df["high"].astype(float)
@@ -210,7 +211,7 @@ class QuantileFeatureEngineer:
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result
