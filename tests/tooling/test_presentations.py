@@ -459,6 +459,7 @@ def test_unverified_process_cleanup_preserves_workspace(
 
     monkeypatch.setattr(presentations, "mkdtemp", make_space)
     monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/node")
 
     def fail(*args: object, **kwargs: object) -> None:
         raise ProcessCleanupError("Could not terminate subprocesses")
