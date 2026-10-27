@@ -437,11 +437,13 @@ def test_check_cli_forwards_review_options(
         documentation_timeout_seconds: int,
         review_scopes: tuple[str, ...] | None,
         review_context: tuple[str, ...],
+        review_context_for: tuple[tuple[str, str], ...],
         max_prompt_bytes: int | None,
         max_total_prompt_bytes: int | None,
     ) -> None:
         assert review_scopes is None
         assert review_context == ()
+        assert review_context_for == ()
         assert max_prompt_bytes is max_total_prompt_bytes is None
         assert (first, second) == (
             (7, "upstream") if runner == "pr" else ("main", "HEAD")
@@ -489,6 +491,8 @@ def test_scoped_review_options_reach_reviewer_without_skipping_full_checks(
         contexts[0],
         "--review-context",
         contexts[1],
+        "--review-context-for=tooling:docs/中文: $(literal).md",
+        "--review-context-for=cross_scope:-name.md",
         "--max-prompt-bytes",
         "123456",
         "--max-total-prompt-bytes",
@@ -515,6 +519,10 @@ def test_scoped_review_options_reach_reviewer_without_skipping_full_checks(
     options: dict[str, Any] = {
         "review_scopes": ("tooling", "execution"),
         "review_context": contexts,
+        "review_context_for": (
+            ("tooling", "docs/中文: $(literal).md"),
+            ("cross_scope", "-name.md"),
+        ),
         "max_prompt_bytes": 123456,
         "max_total_prompt_bytes": 456789,
         "max_evidence_bytes": 600123,
@@ -557,6 +565,8 @@ def test_cli_forwards_repeated_scope_and_literal_context_paths(
             contexts[0],
             "--review-context",
             contexts[1],
+            "--review-context-for=tooling:docs/中文: $(literal).md",
+            "--review-context-for=cross_scope:-name.md",
             "--max-prompt-bytes",
             "123",
             "--max-total-prompt-bytes",
@@ -570,6 +580,10 @@ def test_cli_forwards_repeated_scope_and_literal_context_paths(
         {
             "review_scopes": ("tooling", "execution"),
             "review_context": contexts,
+            "review_context_for": (
+                ("tooling", "docs/中文: $(literal).md"),
+                ("cross_scope", "-name.md"),
+            ),
             "max_prompt_bytes": 123,
             "max_total_prompt_bytes": 456,
             "max_evidence_bytes": 789,
@@ -585,6 +599,13 @@ def test_forwarded_option_like_context_paths_remain_literal_files() -> None:
     contexts = ("--max-prompt-bytes", "-研究 $(literal); %.md", "docs/plain.md")
     parsed = parser.parse_args(review_arguments(review_context=contexts))
     assert parsed.review_context == list(contexts)
+    scoped = (
+        ("tooling", "--max-prompt-bytes"),
+        ("cross_scope", "-研究: $(literal); %.md"),
+    )
+    argv = review_arguments(review_context_for=scoped)
+    assert argv == [f"--review-context-for={scope}:{path}" for scope, path in scoped]
+    assert parser.parse_args(argv).review_context_for == list(scoped)
     assert parsed.max_prompt_bytes is None
     assert parsed.max_total_prompt_bytes is None
     assert parsed.review_scopes is None
@@ -603,7 +624,17 @@ def test_forwarded_option_like_context_paths_remain_literal_files() -> None:
         for value in (False, True, 0, -1, 1.5, "10")
     ]
     + [{"review_scopes": scopes} for scopes in ((), ("",), ("unknown",), "tooling")]
-    + [{"review_context": ("",)}],
+    + [{"review_context": ("",)}]
+    + [
+        {"review_context_for": value}
+        for value in (
+            (("unknown", "file.py"),),
+            (("tooling", ""),),
+            (("tooling",),),
+            (("tooling", 1),),
+            [("tooling", "file.py")],
+        )
+    ],
 )
 def test_invalid_model_review_options_reject_before_side_effects(
     monkeypatch: MonkeyPatch, entry: str, options: dict[str, Any]
@@ -627,6 +658,9 @@ def test_invalid_model_review_options_reject_before_side_effects(
     [
         ("--review-scope", ""),
         ("--review-scope", "unknown"),
+        ("--review-context-for", "unknown:file.py"),
+        ("--review-context-for", "tooling:"),
+        ("--review-context-for", "tooling"),
         *[
             (flag, value)
             for flag in ("--max-prompt-bytes", "--max-total-prompt-bytes")
@@ -651,6 +685,7 @@ def test_cli_rejects_invalid_review_controls_at_parse_boundary(
     [
         ("--review-scope", "tooling"),
         ("--review-context", "AGENTS.md"),
+        ("--review-context-for", "tooling:AGENTS.md"),
         ("--max-prompt-bytes", "123"),
         ("--max-total-prompt-bytes", "456"),
     ],

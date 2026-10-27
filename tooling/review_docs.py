@@ -216,6 +216,7 @@ def prepare_review(
     max_evidence_bytes: int = MAX_EVIDENCE_BYTES,
     review_scopes: tuple[str, ...] | None = None,
     review_context: tuple[str, ...] = (),
+    review_context_for: tuple[tuple[str, str], ...] = (),
     max_prompt_bytes: int | None = None,
     max_total_prompt_bytes: int | None = None,
 ) -> ReviewPlan:
@@ -224,6 +225,7 @@ def prepare_review(
         validate_review_options(
             review_scopes=review_scopes,
             review_context=review_context,
+            review_context_for=review_context_for,
             max_prompt_bytes=max_prompt_bytes,
             max_total_prompt_bytes=max_total_prompt_bytes,
         )
@@ -241,6 +243,7 @@ def prepare_review(
         tree,
         max_bytes=max_evidence_bytes,
         review_context=review_context,
+        review_context_for=review_context_for,
     )
     return build_review_plan(
         evidence,
@@ -278,6 +281,7 @@ def review(
     max_evidence_bytes: int = MAX_EVIDENCE_BYTES,
     review_scopes: tuple[str, ...] | None = None,
     review_context: tuple[str, ...] = (),
+    review_context_for: tuple[tuple[str, str], ...] = (),
     max_prompt_bytes: int | None = None,
     max_total_prompt_bytes: int | None = None,
 ) -> None:
@@ -295,6 +299,7 @@ def review(
         max_evidence_bytes=max_evidence_bytes,
         review_scopes=review_scopes,
         review_context=review_context,
+        review_context_for=review_context_for,
         max_prompt_bytes=max_prompt_bytes,
         max_total_prompt_bytes=max_total_prompt_bytes,
     )
@@ -402,6 +407,7 @@ def main() -> int:
         if args.review_scopes is None
         else tuple(args.review_scopes),
         "review_context": tuple(args.review_context),
+        "review_context_for": tuple(args.review_context_for),
         "max_prompt_bytes": args.max_prompt_bytes,
         "max_total_prompt_bytes": args.max_total_prompt_bytes,
     }

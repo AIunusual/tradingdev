@@ -691,6 +691,12 @@ def _candidate_metadata(evidence: dict[str, Any]) -> None:
     files = evidence["candidate_files"]
     evidence["candidate_tree_inventory"] = sorted(files)
     evidence["candidate_file_inventory"] = sorted(files)
+    evidence["automatic_document_paths"] = sorted(
+        path
+        for path in files
+        if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
+        or (path.startswith("docs/") and path.endswith(".md"))
+    )
     evidence["candidate_file_modes"] = dict.fromkeys(files, "100644")
     evidence["candidate_file_blobs"] = {
         path: _blob_oid(content) for path, content in files.items()

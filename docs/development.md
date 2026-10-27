@@ -496,12 +496,23 @@ uv run --no-sync python -m tooling.review_docs \
 契約與流程間的影響；不以其他批次的摘要取代原始證據。路徑涵蓋不等於已找到
 所有語意或動態相依。模型需要額外來源才能判斷時須回報確切路徑與理由，整次
 審查失敗；下次可透過可重複的 `--review-context` 補入候選 Git 的完整文字檔。
-補充內容會交給每批，允許自動選取類型以外的普通 UTF-8、無 NUL 檔案；若該檔
+`--review-context` 的補充內容會交給每批。若只有特定責任範圍需要全文，使用可重複的
+`--review-context-for SCOPE:PATH`；`SCOPE` 為上列責任範圍或 `cross_scope`，只在第一個
+冒號分隔，路徑中的其餘冒號保留。指定範圍必須已被選取；額外範圍可用
+`--review-scope` 明確加入。指定 `cross_scope` 時，即使只有一個責任批次仍執行跨範圍
+審查。各範圍的補充全文只交給該範圍每批，不取代其他範圍原本需要的文件章節，
+僅因特定範圍補充而納入的未變更 Markdown 不會成為其他範圍的共享文件；
+原本自動選取的文件仍保留各範圍需要的原文章節。同批已有全文則不重複章節。
+規劃輸出保留自動文件來源、映射、每批來源 blob 身分及證據／prompt
+雜湊，沒有送達、無效範圍或缺少檔案均在呼叫模型前失敗。
+兩種補充方式都允許自動選取類型以外的普通 UTF-8、無 NUL 檔案；若該檔
 有變更，也將其 diff 納入責任範圍。仍不接受 runtime 目錄、glob、目錄、工作樹
 內容或符號連結：
 
 ```bash
 ./scripts/check-pr.sh 27 --review-context src/tradingdev/domain/strategies/base.py
+./scripts/check-pr.sh 27 --review-context-for tooling:tests/e2e/test_llm_comparison.py \
+  --review-context-for cross_scope:docs/run_artifacts.md
 ```
 
 容量採三個獨立的 UTF-8 byte 預算，所有批次均在呼叫模型前完成容量檢查：

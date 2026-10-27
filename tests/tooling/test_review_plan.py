@@ -225,6 +225,8 @@ def test_plan_only_cli_works_without_codex_and_does_not_claim_review_passed(
             "--tree",
             tree,
             "--plan-only",
+            "--review-context-for=strategy:src/context.py",
+            "--review-context-for=cross_scope:README.md",
         ],
         capture_output=True,
         text=True,
@@ -241,6 +243,10 @@ def test_plan_only_cli_works_without_codex_and_does_not_claim_review_passed(
     manifest = json.loads(result.stdout)
     assert manifest["status"] == "planned_not_reviewed"
     assert manifest["candidate_tree"] == tree
+    assert manifest["scoped_context_paths"] == {
+        "strategy": ["src/context.py"],
+        "cross_scope": ["README.md"],
+    }
     assert "Documentation review passed" not in result.stdout
 
 
@@ -322,3 +328,249 @@ def test_explicit_context_keeps_runtime_and_symlink_restrictions(
         _write(repo, path, "private context\n")
     with pytest.raises(ReviewError, match="regular non-runtime"):
         review_docs.prepare_review(base, _tree(repo), repo=repo, review_context=(path,))
+
+
+def test_scoped_originals_are_isolated_and_preserve_other_document_sections(
+    change: tuple[Path, str, str],
+) -> None:
+    repo, base, tree = change
+    original = json.loads(
+        build_evidence(repo, base, tree, review_context=("src/context.py",))
+    )
+    plan = review_docs.prepare_review(
+        base,
+        tree,
+        repo=repo,
+        review_context=("src/context.py",),
+        review_context_for=(("strategy", "README.md"), ("cross_scope", "README.md")),
+    )
+    payloads = [_payload(prompt) for prompt in plan.prompts]
+    for batch, entry in zip(payloads, plan.manifest["batches"], strict=True):
+        assert (
+            batch["candidate_files"]["src/context.py"]
+            == original["candidate_files"]["src/context.py"]
+        )
+        assert entry["candidate_file_blobs"] == batch["candidate_file_blobs"]
+        if batch["scope"] in {"strategy", "cross_scope"}:
+            assert (
+                batch["candidate_files"]["README.md"]
+                == original["candidate_files"]["README.md"]
+            )
+            assert not any(
+                s["path"] == "README.md" for s in batch.get("document_sections", [])
+            )
+        else:
+            assert "README.md" not in batch["candidate_files"]
+            assert any(
+                s["path"] == "README.md"
+                and s["text"] == original["candidate_files"]["README.md"]
+                for s in batch["document_sections"]
+            )
+    assert payloads[-1]["path_diffs"] == original["path_diffs"]
+    assert plan.manifest["scoped_context_paths"] == {
+        "cross_scope": ["README.md"],
+        "strategy": ["README.md"],
+    }
+    other = review_docs.prepare_review(
+        base,
+        tree,
+        repo=repo,
+        review_context=("src/context.py",),
+        review_context_for=(("results", "README.md"), ("cross_scope", "README.md")),
+    )
+    assert plan.manifest["evidence_hash"] != other.manifest["evidence_hash"]
+    assert plan.manifest["plan_hash"] != other.manifest["plan_hash"]
+    plan.verify()
+
+
+def test_cross_scope_context_forces_audit_for_single_scope(
+    change: tuple[Path, str, str],
+) -> None:
+    repo, base, _ = change
+    _write(repo, REPORT, "VALUE = 'old report'\n")
+    tree = _tree(repo)
+    plan = review_docs.prepare_review(
+        base, tree, repo=repo, review_context_for=(("cross_scope", "src/context.py"),)
+    )
+    assert [batch["scope"] for batch in plan.manifest["batches"]] == [
+        "strategy",
+        "cross_scope",
+    ]
+    assert (
+        _payload(plan.prompts[-1])["path_diffs"]
+        == json.loads(build_evidence(repo, base, tree))["path_diffs"]
+    )
+
+
+@pytest.mark.parametrize("scope", ["unknown", "data"])
+def test_invalid_or_unselected_scoped_context_fails_before_model(
+    change: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+) -> None:
+    repo, base, tree = change
+    monkeypatch.setattr(
+        review_docs, "_run", lambda *_a, **_kw: pytest.fail("model ran")
+    )
+    with pytest.raises(ReviewError, match="known scope|unselected scopes"):
+        review_docs.review(
+            base, tree, repo=repo, review_context_for=((scope, "src/context.py"),)
+        )
+    if scope == "data":
+        plan = review_docs.prepare_review(
+            base,
+            tree,
+            repo=repo,
+            review_scopes=("strategy", "results", "data"),
+            review_context_for=((scope, "src/context.py"),),
+        )
+        assert any(batch["scope"] == scope for batch in plan.manifest["batches"])
+
+
+@pytest.mark.parametrize(
+    "path", ["../escape.py", "/tmp/secret.py", "missing.py", "src/context-link.py"]
+)
+def test_scoped_context_rejects_unsafe_or_unavailable_git_paths(
+    change: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    repo, base, _ = change
+    (repo / "src/context-link.py").symlink_to("context.py")
+    tree = _tree(repo)
+    monkeypatch.setattr(
+        review_docs, "_run", lambda *_a, **_kw: pytest.fail("model ran")
+    )
+    with pytest.raises(ReviewError, match="candidate Git tree"):
+        review_docs.review(
+            base, tree, repo=repo, review_context_for=(("strategy", path),)
+        )
+
+
+def test_scoped_missing_blob_and_capacity_fail_before_model(
+    change: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, tree = change
+    monkeypatch.setattr(
+        review_docs, "_run", lambda *_a, **_kw: pytest.fail("model ran")
+    )
+    raw = json.loads(
+        build_evidence(
+            repo, base, tree, review_context_for=(("strategy", "src/context.py"),)
+        )
+    )
+    del raw["candidate_files"]["src/context.py"]
+    with pytest.raises(ReviewError, match="context is missing"):
+        build_review_plan(json.dumps(raw))
+    with pytest.raises(ReviewError, match="cannot fit"):
+        review_docs.review(
+            base,
+            tree,
+            repo=repo,
+            review_context_for=(("strategy", "src/context.py"),),
+            max_prompt_bytes=1,
+        )
+
+
+@pytest.mark.parametrize("missing", ["candidate_file_blobs", "candidate_file_modes"])
+def test_scoped_context_requires_blob_identity_and_mode(
+    change: tuple[Path, str, str],
+    missing: str,
+) -> None:
+    repo, base, tree = change
+    raw = json.loads(
+        build_evidence(
+            repo, base, tree, review_context_for=(("strategy", "src/context.py"),)
+        )
+    )
+    del raw[missing]["src/context.py"]
+    with pytest.raises(ReviewError, match="blob identity or mode"):
+        build_review_plan(json.dumps(raw))
+
+
+def test_scoped_changed_extra_retains_owner_and_cross_scope_diff(
+    change: tuple[Path, str, str],
+) -> None:
+    repo, base, _ = change
+    _write(repo, "plain.txt", "new explicit context\n")
+    tree = _tree(repo)
+    plan = review_docs.prepare_review(
+        base, tree, repo=repo, review_context_for=(("strategy", "plain.txt"),)
+    )
+    payloads = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in payloads if "plain.txt" in batch["assigned_paths"]]
+    assert len(owners) == 1
+    assert owners[0]["scope"] == "general"
+    assert owners[0]["candidate_files"]["plain.txt"] == "new explicit context\n"
+    assert "plain.txt" in payloads[-1]["path_diffs"]
+
+
+@pytest.mark.parametrize("target", ["strategy", "cross_scope"])
+@pytest.mark.parametrize("global_context", [False, True])
+@pytest.mark.parametrize("changed_document", [False, True])
+def test_extra_markdown_does_not_escape_its_scope_unless_independently_selected(
+    change: tuple[Path, str, str],
+    target: str,
+    global_context: bool,
+    changed_document: bool,
+) -> None:
+    repo, _, _ = change
+    path = "notes.md"
+    _write(repo, path, "# Notes\nSCOPED_ONLY_ORIGINAL_MARKER\n")
+    base = _tree(repo)
+    _write(repo, STRATEGY, "VALUE = 'later strategy'\n")
+    _write(repo, REPORT, "VALUE = 'later report'\n")
+    if changed_document:
+        _write(repo, path, "# Notes\nSCOPED_ONLY_ORIGINAL_MARKER\nChanged notes.\n")
+    tree = _tree(repo)
+    plan = review_docs.prepare_review(
+        base,
+        tree,
+        repo=repo,
+        review_scopes=("strategy", "results", "tooling", "general"),
+        review_context=(path,) if global_context else (),
+        review_context_for=((target, path),),
+    )
+    original = _git(repo, "show", f"{tree}:{path}") + "\n"
+    for prompt in plan.prompts:
+        batch = _payload(prompt)
+        if (
+            global_context
+            or batch["scope"] == target
+            or path in batch["assigned_paths"]
+        ):
+            assert batch["candidate_files"][path] == original
+        elif not changed_document:
+            assert path not in batch["candidate_files"]
+            assert "SCOPED_ONLY_ORIGINAL_MARKER" not in prompt
+        if not changed_document and not global_context:
+            assert path not in batch.get("document_inventory", {})
+            assert not any(
+                section["path"] == path
+                for section in batch.get("document_sections", [])
+            )
+    audit = _payload(plan.prompts[-1])
+    raw = json.loads(build_evidence(repo, base, tree))
+    assert audit["path_diffs"] == raw["path_diffs"]
+    assert (path in audit["path_diffs"]) == changed_document
+    assert path not in plan.manifest["automatic_document_paths"]
+
+
+@pytest.mark.parametrize("corruption", ["missing", "omitted", "extra", "duplicate"])
+def test_automatic_document_provenance_fails_closed(
+    change: tuple[Path, str, str],
+    corruption: str,
+) -> None:
+    repo, base, tree = change
+    raw = json.loads(build_evidence(repo, base, tree))
+    if corruption == "missing":
+        del raw["automatic_document_paths"]
+    elif corruption == "omitted":
+        raw["automatic_document_paths"] = []
+    elif corruption == "extra":
+        raw["automatic_document_paths"].append("src/context.py")
+    else:
+        raw["automatic_document_paths"].append("README.md")
+    with pytest.raises(ReviewError, match="document provenance"):
+        build_review_plan(json.dumps(raw))

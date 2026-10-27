@@ -57,6 +57,7 @@ def check_full(
     max_evidence_bytes: int | None = None,
     review_scopes: tuple[str, ...] | None = None,
     review_context: tuple[str, ...] = (),
+    review_context_for: tuple[tuple[str, str], ...] = (),
     max_prompt_bytes: int | None = None,
     max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
@@ -66,6 +67,7 @@ def check_full(
     validate_review_options(
         review_scopes=review_scopes,
         review_context=review_context,
+        review_context_for=review_context_for,
         max_prompt_bytes=max_prompt_bytes,
         max_total_prompt_bytes=max_total_prompt_bytes,
     )
@@ -81,6 +83,7 @@ def check_full(
             max_evidence_bytes=max_evidence_bytes,
             review_scopes=review_scopes,
             review_context=review_context,
+            review_context_for=review_context_for,
             max_prompt_bytes=max_prompt_bytes,
             max_total_prompt_bytes=max_total_prompt_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
@@ -183,6 +186,7 @@ def main() -> None:
     for option, value in (
         ("--review-scope", args.review_scopes),
         ("--review-context", args.review_context or None),
+        ("--review-context-for", args.review_context_for or None),
         ("--max-prompt-bytes", args.max_prompt_bytes),
         ("--max-total-prompt-bytes", args.max_total_prompt_bytes),
     ):
@@ -190,9 +194,11 @@ def main() -> None:
             parser.error(f"{option} is only valid for full checks")
     review_scopes = None if args.review_scopes is None else tuple(args.review_scopes)
     review_context = tuple(args.review_context)
+    review_context_for = tuple(args.review_context_for)
     validate_review_options(
         review_scopes=review_scopes,
         review_context=review_context,
+        review_context_for=review_context_for,
         max_prompt_bytes=args.max_prompt_bytes,
         max_total_prompt_bytes=args.max_total_prompt_bytes,
     )
@@ -221,6 +227,7 @@ def main() -> None:
             max_evidence_bytes=args.max_evidence_bytes,
             review_scopes=review_scopes,
             review_context=review_context,
+            review_context_for=review_context_for,
             max_prompt_bytes=args.max_prompt_bytes,
             max_total_prompt_bytes=args.max_total_prompt_bytes,
             snapshot_timeout_seconds=snapshot_timeout_seconds,
