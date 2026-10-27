@@ -159,10 +159,10 @@ class RollingRetrainer:
         ctx = combined.iloc[ctx_start : combined_idx + 1].copy()
         feat_pred = fe.transform(ctx, include_target=False)
 
-        if len(feat_pred) == 0:
+        if combined_idx not in feat_pred.index:
             return 0
 
-        proba = model.predict_proba(feat_pred.iloc[[-1]])
+        proba = model.predict_proba(feat_pred.loc[[combined_idx]])
         p_long = float(proba[1].iloc[0]) if 1 in proba.columns else 0.0
         p_short = float(proba[-1].iloc[0]) if -1 in proba.columns else 0.0
 

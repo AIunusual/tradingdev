@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import (
         BaseBacktestEngine,
     )
+    from tradingdev.domain.ml.features.features import FeatureEngineer
     from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
         SafetyVolumeStrategyConfig,
     )
@@ -59,7 +60,7 @@ class SafetyVolumeStrategy(BaseStrategy):
 
         # Optional ML direction model
         self._dir_model: XGBoostDirectionModel | None = None
-        self._dir_fe: Any = None  # FeatureEngineer (lazy import)
+        self._dir_fe: FeatureEngineer | None = None
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -434,9 +435,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             return out
         # Preserve source positions through dropna, including interior gaps.
         # The copied RangeIndex is metadata, never an input feature for the model.
-        feat = self._dir_fe.transform(
-            df.reset_index(drop=True), include_target=False, preserve_index=True
-        )
+        feat = self._dir_fe.transform(df.reset_index(drop=True), include_target=False)
         if feat.empty:
             return out
         preds = self._dir_model.predict(feat)

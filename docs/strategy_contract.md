@@ -440,6 +440,14 @@ prices. Inference without targets retains those rows when their features are
 complete. Quantile and SafetyVolume's risk model use their separate target
 builders; they also leave outcomes beyond the supplied frame unavailable.
 
+`FeatureEngineer.transform()` preserves surviving source index labels; there is
+no index-reset option. Callers needing row positions supply a positional index.
+SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
+prediction skips a bar whose own features are unavailable, rather than reusing
+an earlier prediction. Its threshold search evaluates the complete source frame,
+leaves unavailable rows without entry signals, and measures cooldown in source
+bars, including gaps.
+
 The XGBoost and FLAML direction model training APIs require at least one labelled
 training row. A supplied validation frame must also be non-empty. Empty inputs
 raise `ValueError` before model state changes or external training starts,
