@@ -248,15 +248,18 @@ the scored frame. Scoring the training frame itself therefore contributes no
 history, so its prediction contexts stay chronological instead of continuing
 from the tail of one copy into the head of the next.
 
-Whether the two frames overlap can only be decided from timestamps, so the time
-identity is an input requirement for every scoring call, not only for
-overlapping ones: each non-empty scored frame, and each non-empty training
-history, must carry a `timestamp` column or a `DatetimeIndex` with non-missing,
-unique and strictly increasing values. Timestamps are compared in UTC, a
-`timestamp` column is rewritten in UTC, and naive values are interpreted as UTC.
-A frame with no identity, or with duplicated or decreasing timestamps, raises
-`ValueError` even when the frames happen not to overlap. `RollingRetrainer` and
-the SafetyVolume Risk Gate return before validating an empty scored frame.
+Whether the two frames overlap can only be decided from timestamps, so a scoring
+request with a non-empty scored frame requires a time identity, whether or not
+the frames overlap: that frame, and any non-empty training history, must carry a
+`timestamp` column or a `DatetimeIndex` with non-missing, unique and strictly
+increasing values. Timestamps are compared in UTC, a `timestamp` column is
+rewritten in UTC, and naive values are interpreted as UTC. A frame with no
+identity, or with duplicated or decreasing timestamps, raises `ValueError`.
+
+An empty scored frame produces no signals, and `RollingRetrainer` and the
+SafetyVolume Risk Gate return before validating either frame, so the checks
+above apply only when there is something to score.
+
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 

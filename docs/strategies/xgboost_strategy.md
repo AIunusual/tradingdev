@@ -61,10 +61,10 @@ designed for research on market-making volume targets, not live execution.
   and threshold selection uses the same timing. See the
   [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
 - Scoring data must be timestamped: `generate_signals()` needs a unique,
-  increasing `timestamp` column or `DatetimeIndex`, and refuses a frame without
-  one instead of returning signals. Timestamps also bound how much earlier
-  training data may be reused, so replaying the training frame does not reuse it
-  as its own history. See the
+  increasing `timestamp` column or `DatetimeIndex`, and refuses a non-empty frame
+  without one instead of returning signals. Timestamps also bound how much
+  earlier training data may be reused, so replaying the training frame does not
+  reuse it as its own history. See the
   [training contract](../strategy_contract.md#training-before-scoring).
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
