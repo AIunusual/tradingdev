@@ -18,8 +18,7 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
-- **時間戳**: 非空的評分資料必須有可排序的時間戳，缺少或無效時評分會以 `ValueError` 失敗；
-  空白資料不評分，也不做這項檢查。規則見
+- **時間戳**: 評分資料必須有時間戳且依時間排序；可接受的輸入、例外與空白資料的處理見
   [訓練契約](../strategy_contract.md#training-before-scoring)。
 
 ### Layer 2: Direction (SMA Crossover)
