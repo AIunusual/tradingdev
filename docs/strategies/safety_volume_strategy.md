@@ -18,6 +18,10 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
+- **重播訓練段**: `fit(train)` 之後再對同一段 `train` 評分（walk-forward 的訓練期指標）
+  時，只把**嚴格早於**評分起點的訓練列當作歷史，重疊的部分會被裁掉，不會把同一根 bar
+  複製兩份接進預測 context。兩邊都必須有時間身分（`timestamp` 欄位或 `DatetimeIndex`，
+  統一 UTC）；缺時間身分、重複或非遞增時間戳會直接 `ValueError`，不會假設訓練段在前。
 
 ### Layer 2: Direction (SMA Crossover)
 

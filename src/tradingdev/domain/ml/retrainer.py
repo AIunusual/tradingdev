@@ -10,6 +10,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -53,12 +54,17 @@ class RollingRetrainer:
 
         Returns:
             Array of signal values (1, -1, 0).
-        """
-        window_size = max(self._lookback * 10, len(train_data))
-        combined = pd.concat([train_data, test_df], ignore_index=True)
-        test_offset = len(train_data)
 
-        total_bars = len(test_df)
+        Raises:
+            ValueError: If the frames have no usable time identity, because the
+                overlap with the training history cannot be detected without it.
+        """
+        history, scored = align_scoring_history(train_data, test_df)
+        window_size = max(self._lookback * 10, len(history))
+        combined = pd.concat([history, scored], ignore_index=True)
+        test_offset = len(history)
+
+        total_bars = len(scored)
         signals = np.zeros(total_bars, dtype=int)
         current_model = model
         last_trade_bar = -self._cooldown

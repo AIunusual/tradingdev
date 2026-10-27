@@ -241,12 +241,16 @@ training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
 
 Scoring a window that overlaps the training history must not duplicate that
-history or replay future bars into it. `QuantileStrategy.generate_signals()`
-treats only the training rows that strictly precede the scored frame as history,
-matched on timestamps taken from a `timestamp` column or a `DatetimeIndex` and
-normalized to UTC (naive values are interpreted as UTC). Both frames must carry
-non-missing, unique, strictly increasing timestamps; missing or invalid time
-identities are rejected rather than assuming the training frame precedes scoring.
+history or replay future bars into it. `QuantileStrategy.generate_signals()`,
+`XGBoostStrategy.generate_signals()` (through `RollingRetrainer`) and the
+SafetyVolume Risk Gate loop keep only the training rows that strictly precede
+the scored frame, matched on timestamps taken from a `timestamp` column or a
+`DatetimeIndex` and normalized to UTC (naive values are interpreted as UTC).
+Both frames must carry non-missing, unique, strictly increasing timestamps;
+missing or invalid time identities raise `ValueError` rather than assuming the
+training frame precedes scoring. Scoring the training frame itself therefore
+contributes no history, so its prediction contexts stay chronological instead
+of continuing from the tail of one copy into the head of the next.
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 
