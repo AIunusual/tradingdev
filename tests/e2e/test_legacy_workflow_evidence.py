@@ -20,7 +20,7 @@ def legacy_calls() -> list[ToolCall]:
     strategy_id = SCENARIOS["legacy"].strategy_id
     identity = {"strategy_id": strategy_id, "revision_id": "new-revision"}
     legacy = {
-        "strategy_id": strategy_id,
+        "strategy_id": SCENARIOS["legacy"].legacy_strategy_id,
         "revision_id": None,
         "kind": "legacy",
         "status": "revision_required",
@@ -41,7 +41,7 @@ def legacy_calls() -> list[ToolCall]:
         ),
         ToolCall(
             "get_strategy",
-            {"strategy_id": strategy_id},
+            {"strategy_id": SCENARIOS["legacy"].legacy_strategy_id},
             {
                 **legacy,
                 "success": True,
@@ -51,7 +51,7 @@ def legacy_calls() -> list[ToolCall]:
         ),
         ToolCall(
             "save_strategy",
-            {"strategy_id": strategy_id},
+            {"strategy_id": strategy_id, "research": SCENARIOS["legacy"].research},
             {**identity, "success": True, "status": "draft"},
         ),
         ToolCall(
@@ -68,10 +68,7 @@ def legacy_calls() -> list[ToolCall]:
             "prepare_backtest",
             {
                 **identity,
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-08",
+                "research": {"kind": "inherit_selected_revision"},
                 **execution_options(SCENARIOS["legacy"].parameters),
             },
             {
@@ -210,4 +207,12 @@ def test_legacy_evidence_rejects_inheriting_runnable_status(
 ) -> None:
     legacy_calls[3].result["status"] = "runnable"
     with pytest.raises(AssertionError, match="without inherited evidence"):
+        assert_workflow(legacy_calls, SCENARIOS["legacy"])
+
+
+def test_legacy_recovery_cannot_overwrite_the_occupied_source_namespace(
+    legacy_calls: list[ToolCall],
+) -> None:
+    legacy_calls[3].arguments["strategy_id"] = SCENARIOS["legacy"].legacy_strategy_id
+    with pytest.raises(AssertionError, match="save_strategy"):
         assert_workflow(legacy_calls, SCENARIOS["legacy"])

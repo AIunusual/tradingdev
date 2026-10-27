@@ -14,12 +14,15 @@ from typing import TYPE_CHECKING, Any
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from tradingdev.app.contracts.reports import ReportCommentary
+from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.domain.research import ResearchSpec, research_payload
 
 if TYPE_CHECKING:
     from tests.e2e.llm_client import ToolCall
 
 _PREPARE: dict[str, TypeAdapter[Any]] = {
+    "research": TypeAdapter(ResearchSpec),
     "presentation": TypeAdapter(ConfirmationPresentation),
     "parameters": TypeAdapter(dict[str, JsonValue] | None),
     "backtest_overrides": TypeAdapter(dict[str, JsonValue] | None),
@@ -29,6 +32,7 @@ _PAGE: dict[str, TypeAdapter[Any]] = {
     "offset": TypeAdapter(int),
 }
 _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
+    "save_strategy": {"research": TypeAdapter(ResearchSpec)},
     "build_dataset": {"horizon": TypeAdapter(int)},
     "train_model": {
         "parameters": TypeAdapter(dict[str, JsonValue] | None),
@@ -44,7 +48,10 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "record": TypeAdapter(bool),
     },
     "prepare_backtest": _PREPARE,
-    "prepare_walk_forward": _PREPARE,
+    "prepare_walk_forward": {
+        **_PREPARE,
+        "validation_config": TypeAdapter(WalkForwardConfig | None),
+    },
     "prepare_optimization": {
         **_PREPARE,
         "param_ranges": TypeAdapter(dict[str, list[JsonValue]]),
@@ -93,8 +100,10 @@ def effective_workflow_calls(calls: list[ToolCall]) -> list[ToolCall]:
                 raise AssertionError(
                     f"Invalid successful {call.name} argument {name}: {exc}"
                 ) from exc
-            arguments[name] = adapter.dump_python(
-                validated, mode="json", exclude_unset=True
+            arguments[name] = (
+                research_payload(validated)
+                if name == "research"
+                else adapter.dump_python(validated, mode="json", exclude_unset=True)
             )
         normalized.append(replace(call, arguments=arguments))
     return normalized

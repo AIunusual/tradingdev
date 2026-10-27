@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    execution_options,
+    research_arguments,
+    research_from_config,
+)
 from tests.integration.test_mcp_protocol import (
     RUN_ARGUMENTS,
     STRATEGY_ID,
@@ -42,6 +47,8 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
                 strategy_id=STRATEGY_ID,
                 code=code,
                 yaml_config=yaml.safe_dump(config),
+                research=research_from_config(config),
+                expected_revision_id=saved["revision_id"],
             )
         revision_id = saved["revision_id"]
         await make_runnable(client, revision_id)
@@ -62,7 +69,7 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
         for fast_period in (2, 5):
             prepared = await client.call(
                 tool,
-                **RUN_ARGUMENTS,
+                **research_arguments(RUN_ARGUMENTS),
                 revision_id=revision_id,
                 parameters={"fast_period": fast_period},
                 **execution_options({"fast_period": fast_period, "slow_period": 8}),
@@ -93,7 +100,7 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
         jobs_before = await client.read_all_pages("list_jobs")
         rejected = await client.call(
             tool,
-            **RUN_ARGUMENTS,
+            **research_arguments(RUN_ARGUMENTS),
             revision_id=revision_id,
             parameters={"unknown_parameter": 1},
             **execution_options({"fast_period": 3, "slow_period": 8}),

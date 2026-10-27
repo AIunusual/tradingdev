@@ -29,6 +29,7 @@ from tradingdev.app.contracts.strategy import (
     StrategyValidationFailure,
     StrategyValidationSuccess,
 )
+from tradingdev.domain.research import ResearchSpec  # noqa: TC001 — MCP resolves tool annotations.
 from tradingdev.domain.strategies.templates import (
     StrategyContractTopic,  # noqa: TC001 — MCP resolves tool annotations.
     strategy_contract_payload,
@@ -85,8 +86,8 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
 
         Exact filters apply before paging. Order is strategy_id, kind, revision_id.
         Follow next_offset; total counts matches. Pages are not a snapshot across
-        changes: restart at offset=0 if the inventory changes. Legacy entries must
-        be explicitly resaved before validation or execution.
+        changes: restart at offset=0 if the inventory changes. Legacy source must
+        be explicitly saved under a new identity before validation or execution.
         """
         return service.list_strategies_page(
             kind=kind, strategy_id=strategy_id, offset=offset, limit=limit
@@ -112,8 +113,8 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
     ):
         """Read source/YAML; omitted revision_id selects current once.
 
-        Legacy source is read-only recovery material: save it as a new draft,
-        then validate/dry-run the returned revision before execution.
+        Legacy source is read-only recovery material: omit strategy_id when saving
+        to create a new identity, then validate/dry-run the returned revision.
         Set legacy=true to read a legacy entry sharing a reserved bundled ID;
         save that source under a different ID. Do not combine with revision_id.
         """
@@ -137,23 +138,39 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
         )
     )
     def save_strategy(
-        strategy_id: str,
         code: str,
         yaml_config: str,
-        request_summary: str = "",
+        research: ResearchSpec,
+        strategy_id: str | None = None,
+        expected_revision_id: str | None = None,
+        display_name: str | None = None,
     ) -> StrategySaveSuccess | StrategySaveFailure:
-        """Save a draft revision; use its revision_id for checks and execution."""
+        """Save code plus authoring YAML using explicit research choices.
+
+        Omit strategy_id to create a new identity automatically; users need not
+        name strategies. A provided ID without expected_revision_id is also a
+        new strategy and must be unused. Revising requires both identifiers and
+        the expected revision must still be current. Research owns its market,
+        dates and cost settings; conflicting YAML is rejected. Inheritance needs
+        that explicitly selected revision. display_name is an optional readable
+        name retained in the config/HTML, separate from the internal ID.
+        Use the returned revision_id for validation and execution.
+        """
         payload = SaveStrategyInput(
             strategy_id=strategy_id,
             code=code,
             yaml_config=yaml_config,
-            request_summary=request_summary,
+            research=research,
+            expected_revision_id=expected_revision_id,
+            display_name=display_name,
         )
         saved = service.save_draft(
-            payload.strategy_id,
             payload.code,
             payload.yaml_config,
-            request_summary=payload.request_summary,
+            payload.research,
+            strategy_id=payload.strategy_id,
+            expected_revision_id=payload.expected_revision_id,
+            display_name=payload.display_name,
         )
         response = {
             "success": saved.success,

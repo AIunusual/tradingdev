@@ -24,7 +24,9 @@ def _repair_evidence() -> list[ToolCall]:
     metrics = {"total_return": 0.25}
     return [
         ToolCall("get_strategy_contract", {}, {"lifecycle": "fixture"}),
-        ToolCall("get_strategy", target, {"success": True}),
+        ToolCall(
+            "get_strategy", target, {"success": True, "revision_id": "broken-revision"}
+        ),
         ToolCall(
             "validate_strategy",
             target,
@@ -32,7 +34,11 @@ def _repair_evidence() -> list[ToolCall]:
         ),
         ToolCall(
             "save_strategy",
-            target,
+            {
+                **target,
+                "research": SCENARIOS["repair"].research,
+                "expected_revision_id": "broken-revision",
+            },
             {"success": True, "status": "draft", "revision_id": "revision_a"},
         ),
         ToolCall(
@@ -49,10 +55,7 @@ def _repair_evidence() -> list[ToolCall]:
             "prepare_backtest",
             {
                 **versioned,
-                "symbol": "BTC/USDT",
-                "timeframe": "1h",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-08",
+                "research": {"kind": "inherit_selected_revision"},
                 **execution_options(SCENARIOS["repair"].parameters),
             },
             {
@@ -307,6 +310,16 @@ def test_repair_order_failure_explains_read_diagnose_save_sequence() -> None:
     assert "strategy_id='llm_repair'" in str(error.value)
     assert "get_strategy must precede validate_strategy" in str(error.value)
     assert "precede successful save_strategy" in str(error.value)
+
+
+@pytest.mark.parametrize("revision", [None, "another-draft"])
+def test_repair_cannot_claim_a_save_without_the_selected_draft(
+    revision: str | None,
+) -> None:
+    calls = _repair_evidence()
+    calls[3].arguments["expected_revision_id"] = revision
+    with pytest.raises(AssertionError, match="bind expected_revision_id"):
+        assert_workflow(calls, SCENARIOS["repair"])
 
 
 @pytest.mark.parametrize("event_index", [4, 5, 8, 9])

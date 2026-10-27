@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    execution_options,
+    research_arguments,
+    research_from_config,
+    research_input,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -29,7 +35,7 @@ RUN_ARGUMENTS = {
     "end_date": "2024-01-08",
 }
 
-PREPARE_ARGUMENTS = RUN_ARGUMENTS | execution_options(
+PREPARE_ARGUMENTS = research_arguments(RUN_ARGUMENTS) | execution_options(
     {"fast_period": 3, "slow_period": 8}
 )
 
@@ -52,6 +58,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"]["parameters"] = {"fast_period": 3, "slow_period": 8}
     config["backtest"]["symbol"] = "ETH/USDT"
+    config["data"]["requirements"]["market"]["symbol"] = "ETH/USDT"
     config["random_seed"] = 42
     config_text = yaml.safe_dump(config)
     saved = await client.call(
@@ -59,7 +66,7 @@ async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
         strategy_id=STRATEGY_ID,
         code=code,
         yaml_config=config_text,
-        request_summary=PROMPT,
+        research=research_from_config(config, outline=PROMPT),
     )
     assert saved["success"], saved
     assert saved["status"] == "draft"
@@ -97,7 +104,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "get_job_status",
             "get_artifact",
         } <= tools.keys()
-        assert {"strategy_id", "code", "yaml_config"} <= set(
+        assert {"research", "code", "yaml_config"} <= set(
             tools["save_strategy"].input_schema["required"]
         )
         assert all(
@@ -305,6 +312,10 @@ async def test_generated_strategy_full_mcp_workflow(
             strategy_id=STRATEGY_ID,
             code=code + "\n# Revised draft\n",
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         assert revision["status"] == "draft"
         assert revision["revision_id"] != saved["revision_id"]
@@ -346,7 +357,9 @@ async def test_rejected_drafts_diagnostics_and_repair(
             },
             {"strategy_id": STRATEGY_ID, "code": code, "yaml_config": "strategy: ["},
         ):
-            assert not (await client.call("save_strategy", **args))["success"]
+            assert not (
+                await client.call("save_strategy", **args, research=research_input())
+            )["success"]
         assert {path: path.read_bytes() for path in before} == before
         assert not (mcp_workspace.root / "escaped.py").exists()
         marker = mcp_workspace.root / "must-not-execute.txt"
@@ -358,6 +371,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=forbidden,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"] and rejected["status"] == "draft"
@@ -372,6 +389,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=removed_import,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"] and rejected["status"] == "draft"
@@ -397,6 +418,10 @@ async def test_rejected_drafts_diagnostics_and_repair(
             strategy_id=STRATEGY_ID,
             code=bad_signal,
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"]
@@ -405,7 +430,14 @@ async def test_rejected_drafts_diagnostics_and_repair(
         }
         assert all(item.get("fix") for item in rejected["diagnostics"])
         repaired = await client.call(
-            "save_strategy", strategy_id=STRATEGY_ID, code=code, yaml_config=config_text
+            "save_strategy",
+            strategy_id=STRATEGY_ID,
+            code=code,
+            yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         await make_runnable(client, repaired["revision_id"])
         metadata_path = Path(repaired["py_path"]).parent / "metadata.json"
@@ -457,6 +489,10 @@ async def test_real_quality_gates_reject_invalid_llm_output(
             strategy_id=STRATEGY_ID,
             code=code + "\nUNKNOWN = undefined_variable\n",
             yaml_config=config_text,
+            research=research_from_config(yaml.safe_load(config_text), outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         rejected = await client.call("validate_strategy", strategy_id=STRATEGY_ID)
         assert not rejected["success"]
@@ -516,6 +552,10 @@ async def test_walk_forward_runs_through_real_worker(
             strategy_id=STRATEGY_ID,
             code=code,
             yaml_config=yaml.safe_dump(config),
+            research=research_from_config(config, outline=PROMPT),
+            expected_revision_id=(
+                await client.call("get_strategy", strategy_id=STRATEGY_ID)
+            )["revision_id"],
         )
         await make_runnable(client)
         wrong_mode = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)

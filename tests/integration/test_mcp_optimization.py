@@ -11,7 +11,12 @@ import pandas as pd
 import pytest
 import yaml
 
-from tests.integration.execution_fixtures import confirm_prepared, execution_options
+from tests.integration.execution_fixtures import (
+    confirm_prepared,
+    execution_options,
+    research_from_config,
+    research_input,
+)
 from tradingdev.domain.execution import ExecutionManifest
 
 if TYPE_CHECKING:
@@ -81,6 +86,7 @@ async def _save_runnable(
     )
     # The MCP request must override these without editing the saved strategy.
     config["backtest"].update(symbol="ETH/USDT", timeframe="4h", fees=0, slippage=0)
+    config["data"]["requirements"]["market"].update(symbol="ETH/USDT", timeframe="4h")
     if walk_forward:
         config["validation"] = {"n_splits": 2}
     saved = await client.call(
@@ -88,6 +94,7 @@ async def _save_runnable(
         strategy_id=STRATEGY_ID,
         code=STRATEGY_CODE,
         yaml_config=yaml.safe_dump(config),
+        research=research_from_config(config),
     )
     assert saved["success"], saved
     for tool in ("validate_strategy", "dry_run_strategy"):
@@ -107,8 +114,9 @@ async def test_optimization_rejects_walk_forward_config_through_mcp(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
             param_ranges={"direction": [-1, 1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
@@ -138,8 +146,9 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
             param_ranges={"direction": [-1, 0, 1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
@@ -155,8 +164,9 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
+            research=research_input(
+                end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+            ),
             param_ranges={"direction": [-1, 0, 1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
@@ -179,6 +189,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             strategy_id=STRATEGY_ID,
             code=STRATEGY_CODE.replace("= self._direction", "= -self._direction"),
             yaml_config=Path(saved["yaml_path"]).read_text(),
+            research={"kind": "inherit_selected_revision"},
+            expected_revision_id=saved["revision_id"],
         )
         assert replacement["revision_id"] != saved["revision_id"]
         assert replacement["status"] == "draft"
@@ -335,7 +347,9 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert Path(artifacts["strategy_source"]["path"]).read_text() == STRATEGY_CODE
         assert effective["backtest"]["symbol"] == "BTC/USDT"
         assert effective["backtest"]["timeframe"] == "1h"
-        assert effective["backtest"]["end_date"] == "2024-01-07T23:59:59.999999"
+        assert pd.Timestamp(effective["backtest"]["end_date"]) == pd.Timestamp(
+            "2024-01-07T23:59:59.999999Z"
+        )
         assert effective["data"]["requirements"]["market"]["symbol"] == "BTC/USDT"
         assert effective["strategy"]["parameters"] == {"direction": -1}
         assert effective == manifest.config_copy()

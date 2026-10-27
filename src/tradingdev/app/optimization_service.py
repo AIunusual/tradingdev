@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,13 +19,14 @@ from tradingdev.app.job_config import (
     apply_backtest_overrides,
     apply_run_overrides,
     bind_strategy_revision,
+    validate_optimization_grid,
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,
 )
-from tradingdev.domain.execution import ManifestError, OptimizationSpec
+from tradingdev.domain.execution import OptimizationSpec
 from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionModeError,
     ensure_execution_mode,
@@ -200,21 +200,7 @@ class OptimizationService:
                 parameters=parameters,
             )
             manifest = checked.manifest
-            strategy_config = manifest.config_copy()["strategy"]
-            names = list(optimization.param_ranges)
-            candidates = (optimization.param_ranges[name] for name in names)
-            combinations = (
-                dict(zip(names, combination, strict=True))
-                for combination in product(*candidates)
-            )
-            try:
-                self._strategy_loader.validate_parameter_grid(
-                    strategy_config, manifest.strategy_execution, combinations
-                )
-            except Exception as exc:
-                raise ManifestError(
-                    f"Invalid strategy optimization settings: {exc}"
-                ) from exc
+            validate_optimization_grid(self._strategy_loader, manifest, optimization)
         except StrategyExecutionModeError as exc:
             return {
                 "job_id": "",

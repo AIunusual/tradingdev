@@ -56,6 +56,8 @@ def _prepare_arguments(tool: str) -> dict[str, Any]:
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
     return arguments
@@ -358,6 +360,8 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
     result = service.call(tool, arguments)
@@ -442,6 +446,8 @@ def test_strategy_binding_failure_is_structured_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 
@@ -511,6 +517,8 @@ def test_strategy_loading_failure_is_structured_before_job_creation(
             test_start="2024-01-04",
             test_end="2024-01-07",
         )
+    elif tool == "prepare_walk_forward":
+        arguments.update(start_date="2024-01-01", end_date="2026-01-01")
     else:
         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
 

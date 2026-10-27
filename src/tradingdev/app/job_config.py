@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
+from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,9 +12,12 @@ import yaml
 
 from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 
 if TYPE_CHECKING:
+    from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
+    from tradingdev.domain.strategies.loader import StrategyLoader
     from tradingdev.domain.strategies.schemas import StrategySpec
 
 
@@ -106,6 +110,8 @@ def apply_run_overrides(
 ) -> dict[str, Any]:
     """Apply request-level market and date choices without editing the strategy."""
     effective_config = deepcopy(raw_config)
+    # Programmatic overrides do not carry the research intake's field origins.
+    effective_config.pop("research", None)
     backtest = effective_config.get("backtest")
     if not isinstance(backtest, dict):
         msg = "backtest config must be a mapping"
@@ -141,5 +147,28 @@ def apply_backtest_overrides(
     unknown = overrides.keys() - allowed
     if unknown:
         raise ValueError(f"Unknown backtest overrides: {', '.join(sorted(unknown))}")
+    config.pop("research", None)
     config["backtest"].update(deepcopy(overrides))
     BacktestConfig.model_validate(config["backtest"])
+
+
+def validate_optimization_grid(
+    loader: StrategyLoader,
+    manifest: ExecutionManifest,
+    optimization: OptimizationSpec,
+) -> None:
+    """Bind every explicit grid candidate using the captured strategy contract."""
+    names = list(optimization.param_ranges)
+    candidates = (optimization.param_ranges[name] for name in names)
+    combinations = (
+        dict(zip(names, combination, strict=True))
+        for combination in product(*candidates)
+    )
+    try:
+        loader.validate_parameter_grid(
+            manifest.config_copy()["strategy"],
+            manifest.strategy_execution,
+            combinations,
+        )
+    except Exception as exc:
+        raise ManifestError(f"Invalid strategy optimization settings: {exc}") from exc

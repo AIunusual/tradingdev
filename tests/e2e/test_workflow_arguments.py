@@ -10,7 +10,7 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.workflow_arguments import effective_workflow_calls
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import execution_options, research_input
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.mcp.server import create_server
 
@@ -21,23 +21,35 @@ if TYPE_CHECKING:
 def _samples() -> list[tuple[str, dict[str, Any]]]:
     prepare = {
         "strategy_id": "fixture",
-        "symbol": "BTC/USDT",
-        "timeframe": "1h",
+        "research": json.dumps(research_input(fees=0)),
         "parameters": '{"period": "20"}',
-        "backtest_overrides": '{"fees": 0}',
+        "backtest_overrides": '{"position_size": 100}',
         **{
             key: json.dumps(value)
             for key, value in execution_options({"period": 20}).items()
         },
     }
-    dates = {"start_date": "2024-01-01", "end_date": "2024-01-08"}
     return [
-        ("prepare_backtest", prepare | dates),
-        ("prepare_walk_forward", prepare | dates),
+        ("prepare_backtest", prepare),
+        (
+            "prepare_walk_forward",
+            prepare | {"validation_config": '{"n_splits": 2, "train_ratio": 0.6}'},
+        ),
+        (
+            "prepare_backtest",
+            prepare
+            | {
+                "research": '{"kind": "inherit_selected_revision"}',
+                "revision_id": "selected-revision",
+            },
+        ),
         (
             "prepare_optimization",
             prepare
             | {
+                "research": json.dumps(
+                    research_input(end_date="2024-01-08T23:59:59.999999", fees=0)
+                ),
                 "param_ranges": '{"period": [10, 20]}',
                 "optimization_metric": "total_return",
                 "train_start": "2024-01-01",

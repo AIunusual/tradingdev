@@ -39,8 +39,12 @@ def _setup(
 
 
 def _draft(revisions: StrategyRevisionStore) -> StrategyMetadata:
+    current = revisions.load("fixture")
     return revisions.create(
-        "fixture", "class Fixture: pass\n", {"strategy": {"class_name": "Fixture"}}
+        "fixture",
+        "class Fixture: pass\n",
+        {"strategy": {"class_name": "Fixture"}},
+        expected_revision_id=None if current is None else current.revision_id,
     )
 
 

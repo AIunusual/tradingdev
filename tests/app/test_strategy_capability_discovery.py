@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 from mcp_types import CallToolResult
+from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.strategy_service import StrategyService
@@ -58,11 +59,19 @@ def test_generated_declarations_and_fit_method_do_not_prove_training_capabilitie
             "raise AssertionError('Discovery must not execute generated source')\n"
             "class TrainingFixture:\n    def fit(self, data):\n        pass\n"
         )
-        saved = service.save_draft(
-            "training_fixture",
-            source,
+        config = (
             "strategy:\n  class_name: TrainingFixture\n"
-            "  training_requirement: required\n",
+            "  training_requirement: required\n"
+            "backtest:\n  symbol: BTC/USDT\n  timeframe: 1h\n"
+            "  start_date: '2024-01-01'\n  end_date: '2024-02-01'\n"
+            "  init_cash: 10000\n"
+            "data:\n  source: binance_api\n"
+        )
+        saved = service.save_draft(
+            source,
+            config,
+            research_for_config(config),
+            strategy_id="training_fixture",
         )
         assert saved.success
         listed = next(

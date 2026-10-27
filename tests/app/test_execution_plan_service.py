@@ -19,19 +19,23 @@ from tests.mcp.execution_fixtures import (
 )
 from tests.preflight_fixtures import make_preflight_fixture
 
+from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
+from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_plan_service import (
     ConfirmationChallenge,
     ExecutionPlanService,
     PlanOperationError,
 )
 from tradingdev.app.execution_submission import PreparedExecution
-from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError
+from tradingdev.app.research_preparation import ResearchPreparationService
+from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.contracts.plans import ExecutionDecision
@@ -345,7 +349,11 @@ def test_changed_generated_revision_after_question_cannot_start(
     workspace, request = make_preflight_fixture(tmp_path, monkeypatch)
     store = JobStore(workspace=workspace)
     arguments: dict[str, Any] = dict(request.arguments)
-    captured = JobService(job_store=store).prepare_backtest(**arguments)
+    captured = ResearchPreparationService(
+        strategy_service=StrategyService(workspace),
+        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        data_service=DataService(workspace),
+    ).prepare("backtest", BacktestInput.model_validate(arguments))
     assert isinstance(captured, PreparedExecution)
     preflight = FixedPreflight(captured)
     runner = RecordingRunner()

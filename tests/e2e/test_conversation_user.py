@@ -14,11 +14,15 @@ from tests.e2e.conversation_user import ObservedPlanUser, _assert_summary, revie
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
 from tests.mcp.execution_fixtures import PlanContext, plan_context
+from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanResponse
+from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import PreparedExecution
-from tradingdev.app.job_service import JobService
+from tradingdev.app.research_preparation import ResearchPreparationService
+from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.contracts.plans import ExecutionDecision
@@ -331,11 +335,16 @@ def test_revision_requires_new_saved_plan_with_requested_settings(
     first = _prepare(context)
     assert "不要執行" in str(asyncio.run(user(_present(first))))
     rejected = _decision(context, first.result["plan_id"], "revise")
-    context.arguments["backtest_overrides"] = {"fees": user.revised_fees}
+    context.arguments["research"]["fees"] = user.revised_fees
     args: dict[str, Any] = {
         key: value for key, value in context.arguments.items() if key != "presentation"
     }
-    changed = JobService(job_store=context.service.jobs).prepare_backtest(**args)
+    workspace = context.service.workspace
+    changed = ResearchPreparationService(
+        strategy_service=StrategyService(workspace),
+        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        data_service=DataService(workspace),
+    ).prepare("backtest", BacktestInput.model_validate(args))
     assert isinstance(changed, PreparedExecution)
     context.preflight.prepared = changed
     second = _prepare(context)

@@ -12,7 +12,7 @@ from tradingdev.domain.strategies.schemas import StrategyStatus
 class StrategyContractSection(ContractModel):
     """Discoverable purpose of one complete contract section."""
 
-    id: Literal["core", "example", "configuration"]
+    id: Literal["core", "research", "example", "configuration"]
     description: str
 
 
@@ -38,19 +38,31 @@ class StrategyConfigurationContract(ContractModel):
     notes: list[str]
 
 
+class StrategyResearchContract(ContractModel):
+    """Required research choices and the shared simulation policy."""
+
+    research_schema: dict[str, JsonValue]
+    policy: dict[str, JsonValue]
+    notes: list[str]
+
+
 class StrategyContractResponse(ContractModel):
     """A selected section, with references to the remaining contract material."""
 
-    section: Literal["core", "example", "configuration"]
+    section: Literal["core", "research", "example", "configuration"]
     available_sections: list[StrategyContractSection]
     content: (
-        StrategyCoreContract | StrategyExampleContract | StrategyConfigurationContract
+        StrategyCoreContract
+        | StrategyResearchContract
+        | StrategyExampleContract
+        | StrategyConfigurationContract
     )
 
     @model_validator(mode="after")
     def validate_section_content(self) -> Self:
         expected = {
             "core": StrategyCoreContract,
+            "research": StrategyResearchContract,
             "example": StrategyExampleContract,
             "configuration": StrategyConfigurationContract,
         }
@@ -218,6 +230,13 @@ class StrategySaveFailure(ErrorResponse):
         "syntax_error",
         "invalid_yaml",
         "invalid_strategy_config",
+        "invalid_revision_request",
+        "invalid_research_spec",
+        "strategy_id_exists",
+        "strategy_revision_conflict",
+        "strategy_revision_invalid",
+        "strategy_save_failed",
+        "strategy_id_generation_failed",
     ]
     message: Literal[""]
     strategy_id: str

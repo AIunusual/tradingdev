@@ -42,7 +42,8 @@ flowchart LR
 | ---- | -------- |
 | `mcp/server.py`、`mcp/tools/` | 組裝 services、註冊工具、驗證協定輸入與輸出 |
 | `mcp/workers/` | 背景工作入口、狀態更新及流程協調；最佳化 worker 直接協調搜尋與樣本外測試 |
-| `app/` | 策略生命週期、設定固定、限時程式檢查、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義回覆 DTO |
+| `app/` | 策略生命週期、研究需求解析、設定固定、限時程式檢查、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義輸入與回覆 DTO |
+| `domain/research.py`、`domain/research_policy.py` | 研究選擇與來源模型、共用模擬本金／成本及年化政策 |
 | `domain/strategies/` | 策略介面、來源探索與載入、參數解析、訊號契約及 bundled strategies |
 | `domain/execution.py`、`domain/randomness.py` | 執行規格與完整性檢查、每次執行的亂數 context |
 | `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時離線檢查請求及驗證證據 |
@@ -120,9 +121,40 @@ Manifest 保留 revision 綁定的身分與非參數宣告，以及該次執行�
 
 ## 從策略建立到結果查詢
 
+### 研究需求與有效設定
+
+模型先取得使用者的策略構想、標的、期間與 K 棒頻率。新研究的 `ResearchSpec`
+要求完整選擇；缺項不能從內建範例、資料量或策略 YAML 推測。明確繼承只接受已選定的
+generated revision，不能以內建策略的範例日期代替使用者選擇。後端能檢查輸入完整性
+及版本綁定，不能證明欄位確實來自真人；多回合追問屬於模型互動責任。
+
+`app/research.py` 共用 builder／resolver，供 StrategyService 保存與
+ResearchPreparationService 準備計畫使用。作者 YAML 保留參數、資料來源、特徵、
+驗證方式與引擎設定；研究需求負責市場、期間、本金、成交成本及年化選擇。
+保存時重複宣告的研究欄位必須一致；執行準備則以研究需求解析當次有效設定，
+不改寫基礎 revision。CLI 的完整 YAML 執行入口仍使用其明示設定。
+直接 Python override helpers 不經研究解析，修改執行設定時移除已失效的 research metadata，
+不把原來源標籤套在新值上，也不改動保存的 revision。
+
+`prepare_walk_forward` 可用 `validation_config` 完整替換當次驗證設定，不與原設定合併；
+省略時保留所選設定。生效的明確訓練／測試 UTC 整日窗須落在研究期間內，不能截短窗口
+或擴張使用者期間來配合範例。Purged 模式的日期欄位不控制分段，也不觸發這項範圍限制。
+
+共用政策只補適用的模擬假設，明示有效值優先，零成本保留。來源及有選項的市場類型
+須在資料設定中明列；不以缺少來源推定 Binance。年化政策依來源能力判斷，只有純加密
+資產來源可自動選全年日數，混合市場來源須指定日數或明示不可用。策略內部的同名成本
+參數不會與成交成本自動同步。解析結果及來源保存於有效 config，worker 不重新套用新政策。
+研究設定的唯一值與來源標籤格式見[研究輸入契約](docs/strategy_contract.md#research-inputs-and-simulation-policy)
+及[保存研究設定](docs/run_artifacts.md#research-settings-and-provenance)。
+
 ### 建立與驗證策略
 
-每次 `save_strategy` 都建立新的 revision，即使程式與 YAML 相同也有新身分。
+`save_strategy` 接受程式、作者 YAML 與研究需求。省略識別碼時自動新建策略；
+提供識別碼而未指定預期版本時，也只能新建，不能覆用已有或殘留的 namespace。
+修訂須同時提供策略識別碼與預期 current revision，並在 lifecycle lock 內核對後發佈。
+自動識別碼遇到內建、舊格式、既有或殘留資料時重試或拒絕，不移動原 current pointer。
+人類名稱由輸入或研究構想產生，保存於固定 YAML 並可在 HTML 查看，不要求使用者先命名。
+每次成功保存都建立新的 revision，即使程式與 YAML 相同也有新身分。
 程式與基礎設定固定不變，metadata 則記錄該 revision 的狀態與驗證證據；
 current pointer 指向最新保存的 revision。保存新版本不會撤銷舊版本的證據，
 也不會讓新版本繼承舊版本的執行資格。
@@ -144,9 +176,11 @@ stateDiagram-v2
     runnable --> promoted: promote_strategy
 ```
 
-上圖描述成功保存後的生成策略 revision。保存被拒絕時不會建立 revision；
+上圖描述成功保存後的生成策略 revision。輸入或版本檢查拒絕時不會建立 revision；
+發佈期間的檔案錯誤可能留下未被 current 指向的完整版本，詳見[產物契約](docs/run_artifacts.md#research-settings-and-provenance)。
 bundled 策略由 Git 管理並以 promoted 身分提供，沒有生成策略的 revision ID。
-舊的平面生成策略檔案可供讀取與重新保存，其舊狀態不能授權執行。
+舊的平面生成策略檔案可供讀取，再以新策略身分保存；原識別碼與檔案保持不變，
+其舊狀態不能授權執行。
 
 Bundled catalog 從註冊 YAML 讀取訓練需求宣告，不為探索能力匯入或執行策略。
 `StrategyCapabilities` 由同一宣告提供探索回覆及共用執行模式檢查；生成與舊格式策略
@@ -170,7 +204,8 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
 MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization`
-準備執行計畫：套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
+準備執行計畫：傳入具型別的研究需求，解析有效市場、期間、成本與來源標籤，
+再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成離線程式與設定檢查，確認程序已停止並清理臨時內容後，
 才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
 
@@ -197,14 +232,17 @@ PreflightService 將設定準備、策略匯入、建構子與執行模式檢查
 受監督子程序的標準暫存環境指向本次受管理目錄；程序監督不是完整 Python sandbox。
 
 確認計畫保存不可變 manifest、程式檢查證據及呈現內容；計畫摘要共同綁定這些資料。
-模型提供策略名稱、摘要與每個參數的白話名稱／說明／單位，後端提供全部有效數值、
+模型提供確認頁標題、摘要與每個參數的白話名稱／說明／單位，後端提供全部有效數值、
 必備章節及實際檢查結果。參數說明必須完整對應固定建構子與搜尋候選的各個葉節點，
 包括巢狀設定及內建策略的訓練設定；遺漏時回傳可供模型補齊的欄位路徑。
 搜尋候選先套用與策略載入相同的純參數合併函數，再呈現完整有效值；巢狀映射未指定的
 欄位保留原值，空映射不清除既有映射，清單與其他值則整體取代。
 這些說明隨計畫保存，不改寫策略 revision 的 YAML。使用者可用自然語言要求調整，
 不必閱讀程式、內部變數或設定檔。完整文字與 HTML 共讀同一份具型別的確認文件，
-核心章節不可省略；技術身分與檔案位置放在獨立資訊區。工具回覆只提供後端產生的
+核心章節不可省略；設定來源與年化取樣方式明列，技術身分、保存名稱、政策版本及
+繼承版本放在獨立資訊區。對話摘要使用策略說明，不帶頁面標題或策略名稱。
+目前摘要與參數解釋仍是模型文字；沒有完整交易公式契約或公式與任意 Python 等價的證明。
+工具回覆只提供後端產生的
 `confirmation_summary` 與 HTML 位置，完整文字保留在計畫產物，不重貼到對話。
 
 助手提供簡短摘要與可點的 HTML 連結後結束回合，等待使用者閱讀並在後續回合明確回覆。
@@ -293,6 +331,9 @@ CLI 命令本身是明確的執行請求，不使用 MCP 的確認互動。
 OptimizationService 在準備時固定搜尋參數、訓練／測試期間、指標方向與第一組估時計算時限，
 並檢查候選參數結構。搜尋之外的有效設定保持固定。最佳化使用自己的訓練／測試切分，
 不能同時套用 walk-forward 設定；候選檢查也不代表所有策略建構與執行一定成功。
+MCP 的研究期間須與訓練起日零時到測試迄日終時的 UTC 整日範圍一致，不能靜默改寫期間。
+預先指定的多組普通回測各有獨立計畫與結果，可由既有多 run 報告比較；目前沒有普通多候選
+批次確認工具，不會因要求比較數組參數就自動改成最佳化。
 
 MCP 的最佳化與其他回測共用前述計畫與確認流程，正式 worker 不再等待第二次確認。
 使用者接受後，worker 才取得真實行情並執行搜尋；確認前的程式檢查不評估 trial 績效。
@@ -400,7 +441,8 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 | `RunService`／`JobService` | 提供一般摘要、指標探索資訊與所需的詳細查詢 |
 
 專案負責成交、費用與滑價的記帳語意，以及引擎資料到統計套件的轉換。
-年化採觀察到的 UTC 日報酬與明確指定的年化頻率，不從 K 棒頻率猜測交易日數。
+年化採觀察到的 UTC 日報酬與有效設定中已固定的每年日數；研究解析會記錄日數來自
+輸入、適用的市場政策或所選版本，不從 K 棒頻率猜測交易日數。
 日級指標只接受宣告為日線或更細的資料，不用日期缺口推斷 K 棒頻率。
 粗於日頻或無法辨識的頻率，年化、日回撤與日／月損益指標保留為不可用；
 仍保存逐根 K 棒的觀察值、總報酬、總損益與交易統計。最佳化提交共用此判斷，
@@ -501,8 +543,9 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 ### MCP 回覆契約
 
 `mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
-及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、configuration、
-example 章節提供，每個回覆列出可讀章節；ML 研究解讀集中在 `get_ml_contract`，
+及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、research、
+configuration、example 章節提供，每個回覆列出可讀章節；research schema 與模擬政策
+直接由 domain 定義產生，完整欄位不重複注入初始指引。ML 研究解讀集中在 `get_ml_contract`，
 資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由
 `get_report_sections` 提供。工具描述與輸入 schema 保留呼叫前需要的條件與參數說明，
 不另載入整份研究手冊。這些入口都是標準 MCP tools，不依賴客戶端能讀取伺服器檔案
@@ -514,6 +557,8 @@ example 章節提供，每個回覆列出可讀章節；ML 研究解讀集中在
 
 MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
+執行請求 DTO 由 MCP 與 preflight worker 共用；研究選擇序列化只傳明示欄位並保留 kind，
+避免把省略選項寫成明示 null 或在程序邊界遺失繼承模式。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
 MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受固定欄位白名單截斷。
 

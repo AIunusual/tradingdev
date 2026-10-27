@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -18,6 +19,8 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.adapters.storage.strategy_revisions import (
+    StrategyNamespaceOccupiedError,
+    StrategyRevisionConflictError,
     StrategyRevisionError,
     StrategyRevisionStore,
     UnsupportedStrategyRevisionError,
@@ -32,6 +35,8 @@ from tradingdev.app.contracts.strategy import (
 )
 from tradingdev.app.pagination import paginate
 from tradingdev.app.quality_policy import quality_config_path
+from tradingdev.app.research import SelectedResearchRevision, build_research_config
+from tradingdev.domain.research import ResearchSpec  # noqa: TC001
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
@@ -98,100 +103,172 @@ class StrategyService:
 
     def save_draft(
         self,
-        strategy_id: str,
         code: str,
         yaml_config: str,
+        research: ResearchSpec,
         *,
-        request_summary: str = "",
+        strategy_id: str | None = None,
+        expected_revision_id: str | None = None,
+        display_name: str | None = None,
     ) -> StrategySaveResult:
-        """Save a generated strategy draft under workspace only."""
-        if not _VALID_NAME.fullmatch(strategy_id):
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error="strategy_id must be lowercase snake_case",
-                code="invalid_strategy_id",
+        """Create a strategy or explicitly revise the selected current revision."""
+        candidate = self._new_strategy_id() if strategy_id is None else strategy_id
+        if strategy_id is None and expected_revision_id is not None:
+            return self._save_error(
+                candidate,
+                "invalid_revision_request",
+                "expected_revision_id requires an explicit strategy_id",
             )
-        if self._catalog.get(strategy_id) is not None:
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error="Generated strategies cannot replace a bundled strategy ID",
-                code="reserved_strategy_id",
+        if not _VALID_NAME.fullmatch(candidate):
+            return self._save_error(
+                candidate,
+                "invalid_strategy_id",
+                "strategy_id must be lowercase snake_case",
             )
         try:
             ast.parse(code)
         except SyntaxError as exc:
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error=f"Python syntax error: {exc}",
-                code="syntax_error",
+            return self._save_error(
+                candidate, "syntax_error", f"Python syntax error: {exc}"
             )
         try:
             parsed = yaml.safe_load(yaml_config)
         except yaml.YAMLError as exc:
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error=f"YAML parse error: {exc}",
-                code="invalid_yaml",
+            return self._save_error(
+                candidate, "invalid_yaml", f"YAML parse error: {exc}"
             )
         if not isinstance(parsed, dict):
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error="YAML must be a mapping",
-                code="invalid_strategy_config",
+            return self._save_error(
+                candidate, "invalid_strategy_config", "YAML must be a mapping"
             )
-        strategy_section = parsed.get("strategy", {})
-        if not isinstance(strategy_section, dict):
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error="YAML strategy section must be a mapping",
-                code="invalid_strategy_config",
+        section = parsed.get("strategy")
+        if not isinstance(section, dict):
+            return self._save_error(
+                candidate,
+                "invalid_strategy_config",
+                "YAML strategy section must be a mapping",
             )
-        class_name = strategy_section.get("class_name")
+        class_name = section.get("class_name")
         if not isinstance(class_name, str) or not class_name:
-            return StrategySaveResult(
-                success=False,
-                strategy_id=strategy_id,
-                source_path="",
-                config_path="",
-                status="rejected",
-                error="YAML missing required field: strategy.class_name",
-                code="invalid_strategy_config",
+            return self._save_error(
+                candidate,
+                "invalid_strategy_config",
+                "YAML missing required field: strategy.class_name",
+            )
+        if display_name is not None and not display_name.strip():
+            return self._save_error(
+                candidate, "invalid_strategy_config", "display_name must not be empty"
             )
 
-        metadata = self._revisions.create(
-            strategy_id, code, parsed, request_summary=request_summary
+        for attempt in range(8 if strategy_id is None else 1):
+            if attempt:
+                candidate = self._new_strategy_id()
+            try:
+                with self._revisions.lifecycle_lock(candidate):
+                    if self._catalog.get(candidate) is not None:
+                        if strategy_id is None:
+                            continue
+                        return self._save_error(
+                            candidate,
+                            "reserved_strategy_id",
+                            "Generated strategies cannot replace a bundled strategy ID",
+                        )
+                    previous = self._revisions.check_save_target(
+                        candidate, expected_revision_id
+                    )
+                    selected = None
+                    if previous is not None:
+                        selected = SelectedResearchRevision(
+                            strategy_id=candidate,
+                            revision_id=previous.revision_id,
+                            config_hash=previous.config_hash,
+                            config=yaml.safe_load(
+                                Path(previous.config_path).read_text(encoding="utf-8")
+                            ),
+                        )
+                    try:
+                        config = build_research_config(
+                            parsed, research, selected_revision=selected
+                        )
+                    except ValueError as exc:
+                        return self._save_error(
+                            candidate, "invalid_research_spec", str(exc)
+                        )
+                    outline = config["research"]["strategy_outline"]
+                    captured_name = config["strategy"].get("display_name")
+                    if captured_name is not None and (
+                        not isinstance(captured_name, str) or not captured_name.strip()
+                    ):
+                        return self._save_error(
+                            candidate,
+                            "invalid_strategy_config",
+                            "YAML strategy.display_name must be nonempty text",
+                        )
+                    if (
+                        display_name is not None
+                        and captured_name is not None
+                        and captured_name.strip() != display_name.strip()
+                    ):
+                        return self._save_error(
+                            candidate,
+                            "invalid_strategy_config",
+                            "YAML strategy.display_name conflicts with display_name",
+                        )
+                    name = display_name if display_name is not None else captured_name
+                    config["strategy"]["display_name"] = (
+                        name.strip()
+                        if name is not None
+                        else outline.splitlines()[0][:80]
+                    )
+                    metadata = self._revisions.create(
+                        candidate,
+                        code,
+                        config,
+                        request_summary=outline,
+                        expected_revision_id=expected_revision_id,
+                    )
+            except StrategyNamespaceOccupiedError as exc:
+                if strategy_id is None:
+                    continue
+                return self._save_error(candidate, "strategy_id_exists", str(exc))
+            except StrategyRevisionConflictError as exc:
+                return self._save_error(
+                    candidate, "strategy_revision_conflict", str(exc)
+                )
+            except StrategyRevisionError as exc:
+                return self._save_error(
+                    candidate, "strategy_revision_invalid", str(exc)
+                )
+            except OSError as exc:
+                return self._save_error(candidate, "strategy_save_failed", str(exc))
+            return StrategySaveResult(
+                success=True,
+                strategy_id=candidate,
+                revision_id=metadata.revision_id,
+                source_path=metadata.source_path,
+                config_path=metadata.config_path,
+                status="draft",
+            )
+        return self._save_error(
+            candidate,
+            "strategy_id_generation_failed",
+            "Could not allocate an unused strategy ID; retry the save",
         )
+
+    @staticmethod
+    def _new_strategy_id() -> str:
+        return "strategy_" + uuid4().hex
+
+    @staticmethod
+    def _save_error(strategy_id: str, code: str, message: str) -> StrategySaveResult:
         return StrategySaveResult(
-            success=True,
+            success=False,
             strategy_id=strategy_id,
-            revision_id=metadata.revision_id,
-            source_path=metadata.source_path,
-            config_path=metadata.config_path,
-            status="draft",
+            source_path="",
+            config_path="",
+            status="rejected",
+            code=code,
+            error=message,
         )
 
     def load(

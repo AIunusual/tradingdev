@@ -149,6 +149,8 @@ backtest:
   stop_loss: 0.03             # 3% 緊急 SL
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"
@@ -171,7 +173,8 @@ uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/sa
 ```
 
 透過 MCP 操作時，先使用 `get_strategy` 確認設定，再呼叫
-`prepare_walk_forward`。一般回測或最佳化的拒絕回覆會引導至此工具。準備階段
+`prepare_walk_forward` 並提供[研究需求](../strategy_contract.md#research-inputs-and-simulation-policy)。
+內建範例日期不能代替使用者選擇。一般回測或最佳化的拒絕回覆會引導至此工具。準備階段
 只離線檢查設定與執行模式，不讀取行情或特徵、不訓練模型，也不建立驗證分段；
 實際行情、特徵與可用訓練區間在使用者同意後的正式執行中檢查。
 若使用者另外要求檢視既有資料，可用 `inspect_dataset(config_path)` 檢查

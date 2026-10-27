@@ -15,6 +15,7 @@ import yaml
 from tests.e2e.codex_harness import runtime_environment, verify_generated_strategy
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.research import NewResearchSpec
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -54,7 +55,6 @@ class FixtureStrategy(BaseStrategy):
 def _fixture_strategy(root: Path, code: str = _CODE) -> Path:
     workspace = WorkspacePaths(root / "workspace")
     saved = StrategyService(workspace).save_draft(
-        "codex_sma_integration",
         code,
         yaml.safe_dump(
             {
@@ -63,8 +63,23 @@ def _fixture_strategy(root: Path, code: str = _CODE) -> Path:
                     "class_name": "FixtureStrategy",
                     "parameters": {"fast_period": 5, "slow_period": 20},
                 },
+                "data": {"source": "binance_vision", "market_type": "futures/um"},
             }
         ),
+        NewResearchSpec.model_validate(
+            {
+                "strategy_outline": "Fixture SMA strategy",
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-08",
+                "init_cash": 10000,
+                "fees": 0,
+                "slippage": 0,
+                "annualization": 365,
+            }
+        ),
+        strategy_id="codex_sma_integration",
     )
     assert saved.success
     metadata_path = Path(saved.source_path).parent / "metadata.json"

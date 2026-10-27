@@ -8,7 +8,11 @@ import pytest
 from jsonschema import Draft202012Validator, ValidationError, validate
 from mcp import ClientSession
 
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    execution_options,
+    research_arguments,
+    research_input,
+)
 
 if TYPE_CHECKING:
     from mcp_types import ListToolsResult, PaginatedRequestParams
@@ -229,14 +233,18 @@ async def test_application_errors_follow_advertised_output_schemas(
                 "success",
                 False,
             ),
-            ("prepare_backtest", run_arguments, "success", False),
-            ("prepare_walk_forward", run_arguments, "success", False),
+            ("prepare_backtest", research_arguments(run_arguments), "success", False),
+            (
+                "prepare_walk_forward",
+                research_arguments(run_arguments),
+                "success",
+                False,
+            ),
             (
                 "prepare_optimization",
                 {
                     **missing_strategy,
-                    "symbol": "BTC/USDT",
-                    "timeframe": "1h",
+                    "research": research_input(end_date="2024-01-08T23:59:59.999999"),
                     "param_ranges": {"fast_period": [3, 5]},
                     "optimization_metric": "sharpe_ratio",
                     "train_start": "2024-01-01",
@@ -254,6 +262,7 @@ async def test_application_errors_follow_advertised_output_schemas(
                     "strategy_id": "invalid_strategy",
                     "code": "def broken(:",
                     "yaml_config": "strategy: {}",
+                    "research": research_input(),
                 },
                 "success",
                 False,
@@ -299,10 +308,16 @@ async def test_cleanup_previews_then_deletes_only_explicit_unused_drafts(
         arguments = {
             "strategy_id": "cleanup_fixture",
             "code": "class Fixture: pass\n",
-            "yaml_config": "strategy:\n  class_name: Fixture\n",
+            "yaml_config": (
+                "strategy:\n  class_name: Fixture\n"
+                "data:\n  source: binance_vision\n  market_type: futures/um\n"
+            ),
+            "research": research_input(),
         }
         first = await client.call("save_strategy", **arguments)
-        current = await client.call("save_strategy", **arguments)
+        current = await client.call(
+            "save_strategy", **arguments, expected_revision_id=first["revision_id"]
+        )
         assert first["success"] and current["success"]
         preview = await client.call(
             "cleanup_strategy_drafts", strategy_id="cleanup_fixture"

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from tests.integration.execution_fixtures import research_arguments
+from tests.research_fixtures import research_for_config
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
@@ -73,6 +75,7 @@ def make_preflight_fixture(
             "parameters": {"threshold": threshold},
         },
         "random_seed": 42,
+        "data": {"source": "binance_vision", "market_type": "futures/um"},
         "backtest": {
             "symbol": "BTC/USDT",
             "timeframe": "1h",
@@ -84,7 +87,12 @@ def make_preflight_fixture(
     }
     if kind == "walk_forward":
         config["validation"] = validation or {"n_splits": 2, "train_ratio": 0.5}
-    saved = strategies.save_draft("sample_strategy", code, yaml.safe_dump(config))
+    saved = strategies.save_draft(
+        code,
+        yaml.safe_dump(config),
+        research_for_config(config),
+        strategy_id="sample_strategy",
+    )
     assert saved.success
     assert strategies.validate("sample_strategy")["success"]
     assert strategies.dry_run("sample_strategy")["success"]
@@ -112,6 +120,6 @@ def make_preflight_fixture(
     return workspace, PreflightRequest.model_validate(
         {
             "kind": kind,
-            "arguments": arguments,
+            "arguments": research_arguments(arguments),
         }
     )

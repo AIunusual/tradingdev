@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.integration.execution_fixtures import research_arguments
 from tests.preflight_fixtures import make_preflight_fixture
 
 from tradingdev.adapters.execution.preflight_worker import execute_preflight
@@ -55,11 +56,10 @@ def test_preflight_checks_effective_program_without_market_training_or_engine(
     workspace, request = make_preflight_fixture(tmp_path, monkeypatch, kind=kind)
     assert not list(workspace.processed_data.iterdir())
     request.arguments["parameters"] = {"threshold": 0.001}
-    request.arguments["backtest_overrides"] = {
-        "fees": 0.002,
-        "slippage": 0.003,
-        "position_size": 500.0,
-    }
+    research = request.arguments["research"]
+    assert isinstance(research, dict)
+    research.update(fees=0.002, slippage=0.003)
+    request.arguments["backtest_overrides"] = {"position_size": 500.0}
     if kind == "optimization":
         request.arguments["param_ranges"] = {"threshold": [0.001, 0.02]}
     _forbid_historical_execution(monkeypatch)
@@ -134,14 +134,18 @@ def test_bundled_preparation_does_not_construct_fit_or_score_untrained_models(
     monkeypatch.setattr(StrategyLoader, "create_from_execution", _unexpected_execution)
     request = PreflightRequest(
         kind=kind,
-        arguments={
-            "strategy_id": strategy_id,
-            "symbol": "BTC/USDT",
-            "timeframe": "1h",
-            "start_date": "2024-01-01",
-            "end_date": "2024-02-01",
-        },
+        arguments=research_arguments(
+            {
+                "strategy_id": strategy_id,
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-02-01",
+            }
+        ),
     )
+    if kind == "walk_forward":
+        request.arguments["validation_config"] = {"n_splits": 2, "train_ratio": 0.5}
     result = execute_preflight(
         request, source_workspace=workspace, directory=tmp_path / "preflight"
     )

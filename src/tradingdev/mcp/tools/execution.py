@@ -3,23 +3,29 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from mcp_types import ToolAnnotations
 from pydantic import JsonValue, ValidationError  # noqa: TC002
 
+from tradingdev.app.contracts.execution_requests import (
+    BacktestInput,
+    OptimizationInput,
+    WalkForwardInput,
+)
 from tradingdev.app.contracts.plans import (
     ExecutionDecision,  # noqa: TC001
     PlanRejected,
     PlanResponse,  # noqa: TC001
     PlanStarted,  # noqa: TC001
 )
+from tradingdev.domain.backtest.schemas import WalkForwardConfig  # noqa: TC001
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,  # noqa: TC001
 )
-from tradingdev.mcp.schemas import BacktestInput, OptimizationInput
+from tradingdev.domain.research import ResearchSpec  # noqa: TC001
 from tradingdev.mcp.tools.input_errors import invalid_arguments
 
 if TYPE_CHECKING:
@@ -39,13 +45,20 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
 
     async def prepare(
         kind: ExecutionKind,
-        arguments: BacktestInput | OptimizationInput,
+        arguments: dict[str, Any],
         presentation: ConfirmationPresentation,
     ) -> PlanResponse | PlanRejected:
         try:
+            parsed = (
+                OptimizationInput.model_validate(arguments)
+                if kind == "optimization"
+                else WalkForwardInput.model_validate(arguments)
+                if kind == "walk_forward"
+                else BacktestInput.model_validate(arguments)
+            )
             request = PreflightRequest(
                 kind=kind,
-                arguments=arguments.model_dump(mode="json"),
+                arguments=parsed.model_dump(mode="json", exclude_unset=True),
             )
         except ValidationError as exc:
             raise invalid_arguments(exc) from exc
@@ -68,10 +81,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_backtest(
         strategy_id: str,
-        symbol: str,
-        timeframe: str,
-        start_date: str,
-        end_date: str,
+        research: ResearchSpec,
         presentation: ConfirmationPresentation,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
@@ -82,58 +92,56 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         Requires a runnable/promoted revision. Supply presentation labels/units for
         every constructor parameter including defaults. Missing labels return exact
         required_parameter_paths. parameters recursively overrides base parameters;
-        backtest_overrides changes cost/capital/execution fields, not dates/market.
+        research requires strategy outline, market, timeframe and period, or explicit
+        inheritance with an explicit generated revision_id.
+        Costs belong only in research;
+        backtest_overrides changes other execution settings.
         Present the returned confirmation_summary verbatim and HTML link, end the turn,
         and wait for a later explicit user decision before submitting this exact plan.
         """
-        args = BacktestInput(
-            strategy_id=strategy_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            revision_id=revision_id,
-            parameters=parameters,
-            backtest_overrides=backtest_overrides,
-        )
+        args = {
+            "strategy_id": strategy_id,
+            "research": research,
+            "revision_id": revision_id,
+            "parameters": parameters,
+            "backtest_overrides": backtest_overrides,
+        }
         return await prepare("backtest", args, presentation)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_walk_forward(
         strategy_id: str,
-        symbol: str,
-        timeframe: str,
-        start_date: str,
-        end_date: str,
+        research: ResearchSpec,
         presentation: ConfirmationPresentation,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
+        validation_config: WalkForwardConfig | None = None,
     ) -> PlanResponse | PlanRejected:
         """Prepare a walk-forward plan without market data, training or backtests.
 
         Requires validation training/test windows and a runnable/promoted revision.
+        validation_config replaces the complete validation section; use automatic
+        folds or explicit inclusive UTC day windows within the research period.
+        Omission keeps the selected configuration.
         Supply human parameter presentation as for prepare_backtest. Program checks
         do not prove training or folds will succeed. Present confirmation_summary
         verbatim and its HTML link; end the turn and await the user's later decision.
         """
-        args = BacktestInput(
-            strategy_id=strategy_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            revision_id=revision_id,
-            parameters=parameters,
-            backtest_overrides=backtest_overrides,
-        )
+        args = {
+            "strategy_id": strategy_id,
+            "research": research,
+            "revision_id": revision_id,
+            "parameters": parameters,
+            "backtest_overrides": backtest_overrides,
+            "validation_config": validation_config,
+        }
         return await prepare("walk_forward", args, presentation)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_optimization(
         strategy_id: str,
-        symbol: str,
-        timeframe: str,
+        research: ResearchSpec,
         param_ranges: dict[str, list[JsonValue]],
         optimization_metric: str,
         train_start: str,
@@ -148,25 +156,26 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         """Prepare a pinned search with program and grid checks; no candidate backtests.
 
         Dates are inclusive UTC days: train_start < train_end < test_start < test_end.
+        Research covers exactly train_start 00:00 through
+        test_end 23:59:59.999999 UTC.
         Use human parameter descriptions. The HTML contains ranges, objective
         direction, costs and program-check limits. Present its
         link and verbatim confirmation_summary; end the turn and await a later decision.
         An approved search has no second worker-side confirmation.
         """
-        args = OptimizationInput(
-            strategy_id=strategy_id,
-            symbol=symbol,
-            timeframe=timeframe,
-            param_ranges=param_ranges,
-            optimization_metric=optimization_metric,
-            train_start=train_start,
-            train_end=train_end,
-            test_start=test_start,
-            test_end=test_end,
-            revision_id=revision_id,
-            parameters=parameters,
-            backtest_overrides=backtest_overrides,
-        )
+        args = {
+            "strategy_id": strategy_id,
+            "research": research,
+            "param_ranges": param_ranges,
+            "optimization_metric": optimization_metric,
+            "train_start": train_start,
+            "train_end": train_end,
+            "test_start": test_start,
+            "test_end": test_end,
+            "revision_id": revision_id,
+            "parameters": parameters,
+            "backtest_overrides": backtest_overrides,
+        }
         return await prepare("optimization", args, presentation)
 
     @mcp.tool(

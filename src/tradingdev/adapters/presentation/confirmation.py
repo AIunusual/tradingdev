@@ -50,6 +50,9 @@ def render_confirmation_summary(
             "單次投入金額",
             "手續費率",
             "滑價率",
+            "本金與成本來源",
+            "年化計算的每年日數",
+            "年化統計取樣",
             *({"初始資金"} if mode == "signal" else set()),
         },
         "optimization": {
@@ -60,7 +63,7 @@ def render_confirmation_summary(
             "參數組合總數",
         },
     }
-    lines = [document.title]
+    lines = ["回測前確認", "策略說明：" + document.summary]
     for section in document.sections:
         selected = labels.get(section.id, set())
         values = [
@@ -99,7 +102,7 @@ def render_confirmation_html(document: ConfirmationDocument) -> str:
     body = (
         "<header><span class='badge'>回測前確認</span>"
         f"<h1>{escape(document.title)}</h1>"
-        "<p class='muted'>策略名稱與下方說明由模型提供。</p>"
+        "<p class='muted'>頁面標題與下方說明由模型提供。</p>"
         f"<p>{escape(document.summary)}</p></header>"
         "<section><h2>閱讀後回到對話確認</h2>"
         "<p>請閱讀下方完整設定與檢查限制。確認後，在原對話回覆同意執行、拒絕，"

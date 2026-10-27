@@ -27,8 +27,10 @@ from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.execution_fixtures import execution_options
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.research_fixtures import research_for_config
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.research import NewResearchSpec, research_payload
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
 if TYPE_CHECKING:
@@ -61,10 +63,24 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
     args: dict[str, Any] = {
         "strategy_id": _strategy_id(kind),
         "revision_id": revision_id,
-        "backtest_overrides": _COSTS,
-        **_MARKET,
+        "research": {"kind": "inherit_selected_revision"},
     }
     if kind == "optimization":
+        args["research"] = research_payload(
+            NewResearchSpec.model_validate(
+                {
+                    "kind": "new",
+                    "strategy_outline": "比較 KD 指標不同週期的買賣規則",
+                    **_MARKET,
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-01-08T23:59:59.999999Z",
+                    "init_cash": 10000,
+                    "fees": 0,
+                    "slippage": 0,
+                    "annualization": 365,
+                }
+            )
+        )
         args.update(
             param_ranges={"k_period": [9, 14]},
             optimization_metric="total_return",
@@ -73,8 +89,6 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
             test_start="2024-01-04",
             test_end="2024-01-08",
         )
-    else:
-        args.update(start_date="2024-01-01", end_date="2024-01-08")
     return args
 
 
@@ -95,7 +109,11 @@ async def _seed_walk_forward(client: MCPClient) -> str:
         strategy_id=_WF_STRATEGY,
         code=contract["example_strategy_code"],
         yaml_config=yaml.safe_dump(config),
-        request_summary="已驗證的雙分段 SMA 測試策略。",
+        research=research_payload(
+            research_for_config(
+                config, strategy_outline="已驗證的雙分段 SMA 測試策略。"
+            )
+        ),
     )
     assert saved["success"], saved
     revision_id = str(saved["revision_id"])
@@ -133,7 +151,9 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
     return f"""透過 TradingDev MCP 完成{description}
 策略 strategy_id={_strategy_id(kind)}，revision_id={revision_id!r}。
 先 get_strategy 讀取目前策略原始碼與 YAML；不要 save 或修改策略。
-使用 prepare_{kind}，BTC/USDT、1h，backtest_overrides={json.dumps(_COSTS)}。
+使用 prepare_{kind}，research如下：
+{json.dumps(_arguments(kind, revision_id)["research"], ensure_ascii=False)}
+成本只透過 research 設定，不放進 backtest_overrides；修改費用時也在 research 明示。
 確認前只做離線程式驗證；正式執行所需行情已在快取，不需下載。
 presentation 提供繁體中文 title、summary、parameter_descriptions。
 每個有效建構子參數含預設值都要白話 label、description、unit。
@@ -197,10 +217,7 @@ def _assert_evidence(
     revision_id = manifest.config_copy()["strategy"].get("revision_id")
     expected_arguments = _arguments(kind, revision_id)
     if len(approval.plans) > 1:
-        expected_arguments["backtest_overrides"] = {
-            **_COSTS,
-            "fees": approval.revised_fees,
-        }
+        expected_arguments["research"]["fees"] = approval.revised_fees
     for name, value in expected_arguments.items():
         assert prepare_call.arguments.get(name) == value
     assert plan.preflight.schema_version == 2
@@ -233,7 +250,11 @@ def _assert_evidence(
         assert description["label"] != pointer.rsplit("/", 1)[-1]
         assert description["description"]
         assert description.get("unit") is None or description["unit"]
-    for name, value in expected_arguments["backtest_overrides"].items():
+    expected_costs = {
+        **_COSTS,
+        "fees": approval.revised_fees if len(approval.plans) > 1 else 0,
+    }
+    for name, value in expected_costs.items():
         assert manifest.config_copy()["backtest"][name] == value
     confirmations = [
         (index, call)
@@ -297,7 +318,9 @@ def _assert_evidence(
         ).model_dump(mode="json")
         for _, read in _successful(calls, "get_strategy"):
             source_config = yaml.safe_load(read.result["yaml_config"])
-            assert source_config["validation"] == _WF_VALIDATION
+            assert WalkForwardConfig.model_validate(
+                source_config["validation"]
+            ) == WalkForwardConfig.model_validate(_WF_VALIDATION)
             assert source_config["random_seed"] == 42
         confirmation = (
             Path(prepare_call.result["html_path"])

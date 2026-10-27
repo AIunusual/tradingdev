@@ -156,6 +156,7 @@ async def _complete_workflow(
             strategy_id=scenario.strategy_id,
             code=code,
             yaml_config=yaml.safe_dump(config),
+            research=scenario.research,
         )
         assert saved["success"], saved
         for name in ("validate_strategy", "dry_run_strategy"):
@@ -167,10 +168,7 @@ async def _complete_workflow(
             "prepare_backtest",
             strategy_id=scenario.strategy_id,
             revision_id=saved["revision_id"],
-            symbol="BTC/USDT",
-            timeframe="1h",
-            start_date="2024-01-01",
-            end_date="2024-01-08",
+            research={"kind": "inherit_selected_revision"},
             **execution_options(scenario.parameters),
             **({"parameters": scenario.overrides} if scenario.experiment else {}),
         )

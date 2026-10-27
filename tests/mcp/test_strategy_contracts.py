@@ -12,6 +12,8 @@ import yaml
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
 from pydantic import ValidationError
+from tests.integration.execution_fixtures import research_input
+from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.strategy import (
@@ -50,12 +52,14 @@ def _call(
     return payload
 
 
-def _save(service: StrategyService) -> None:
+def _save(service: StrategyService, *, expected_revision_id: str | None = None) -> None:
     contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     assert service.save_draft(
-        "contract_strategy",
         contract["example_strategy_code"],
         contract["example_yaml_config"],
+        research_for_config(contract["example_yaml_config"]),
+        strategy_id="contract_strategy",
+        expected_revision_id=expected_revision_id,
     ).success
 
 
@@ -72,6 +76,7 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "core",
         "example",
         "configuration",
+        "research",
     }
     content = contract["content"]
     assert set(content) == {"base_strategy_source", "requirements", "lifecycle"}
@@ -136,9 +141,9 @@ def test_invalid_config_guidance_leads_to_the_configuration_schema(
     example = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     config = yaml.safe_load(example["example_yaml_config"])
     config["backtest"]["random_seed"] = 42
-    assert service.save_draft(
-        "invalid_config", example["example_strategy_code"], yaml.safe_dump(config)
-    ).success
+    service._revisions.create(
+        "invalid_config", example["example_strategy_code"], config
+    )
 
     def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
         return []
@@ -202,7 +207,7 @@ def test_strategy_discovery_validates_bundled_and_generated_metadata(
         },
     ],
 )
-def test_draft_discovery_preserves_incomplete_requirements_for_repair(
+def test_draft_research_completes_market_fields_and_rejects_invalid_features(
     tmp_path: Path, requirements: dict[str, object]
 ) -> None:
     repaired: dict[str, object] = {
@@ -215,22 +220,35 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
     }
     with TemporaryDirectory(dir=tmp_path) as directory:
         server, _service = _server(Path(directory))
+        expected_revision_id = None
         for current in (requirements, repaired):
             saved = _call(
                 server,
                 "save_strategy",
                 {
                     "strategy_id": "repairable_draft",
+                    "expected_revision_id": expected_revision_id,
+                    "research": research_input(),
                     "code": "class DraftStrategy: pass\n",
                     "yaml_config": yaml.safe_dump(
                         {
                             "strategy": {"class_name": "DraftStrategy"},
-                            "data": {"requirements": current},
+                            "data": {
+                                "source": "binance_vision",
+                                "market_type": "spot",
+                                "requirements": current,
+                            },
                         }
                     ),
                 },
             )
-            assert saved["success"] is True
+            if current.get("features"):
+                assert saved["success"] is False
+                assert saved["code"] == "invalid_research_spec"
+                assert _service.load("repairable_draft") is None
+                continue
+            assert saved["success"] is True, saved
+            expected_revision_id = saved["revision_id"]
             listed = asyncio.run(server.call_tool("list_strategies", {}))
             assert isinstance(listed, CallToolResult)
             assert listed.structured_content is not None
@@ -249,7 +267,10 @@ def test_draft_discovery_preserves_incomplete_requirements_for_repair(
             assert retrieved["success"] is True
             yaml_config = retrieved["yaml_config"]
             assert isinstance(yaml_config, str)
-            assert yaml.safe_load(yaml_config)["data"]["requirements"] == current
+            resolved = yaml.safe_load(yaml_config)["data"]["requirements"]
+            assert resolved["market"] == repaired["market"]
+            if "features" in current:
+                assert resolved["features"] == current["features"]
 
 
 def test_generated_strategy_rejects_undeclared_nested_metadata(
@@ -303,7 +324,12 @@ def test_save_rejections_preserve_context_and_report_specific_codes(
     result = _call(
         server,
         "save_strategy",
-        {"strategy_id": strategy_id, "code": code, "yaml_config": yaml_config},
+        {
+            "strategy_id": strategy_id,
+            "code": code,
+            "yaml_config": yaml_config,
+            "research": research_input(),
+        },
     )
 
     assert result["success"] is False
@@ -317,9 +343,10 @@ def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) 
     server, service = _server(tmp_path)
     contract = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
     saved = service.save_draft(
-        "contract_strategy",
         "import os\n",
         contract["example_yaml_config"],
+        research_for_config(contract["example_yaml_config"]),
+        strategy_id="contract_strategy",
     )
     assert saved.success
 
@@ -452,10 +479,14 @@ def test_checking_an_older_revision_does_not_approve_current(
             "strategy_id": "contract_strategy",
             "code": contract["example_strategy_code"],
             "yaml_config": contract["example_yaml_config"],
+            "research": research_for_config(contract["example_yaml_config"]).model_dump(
+                mode="json", exclude_unset=True
+            ),
         },
     )
+    assert saved["success"], saved
     old = {"strategy_id": "contract_strategy", "revision_id": saved["revision_id"]}
-    _save(service)
+    _save(service, expected_revision_id=str(saved["revision_id"]))
 
     def quality_diagnostics(_path: Path) -> list[StrategyDiagnostic]:
         return []

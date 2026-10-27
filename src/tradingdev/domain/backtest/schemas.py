@@ -16,6 +16,8 @@ from pydantic import (
 
 from tradingdev.domain.data.requirements import FeatureSpec, MarketDataSpec
 from tradingdev.domain.data.schemas import DataConfig
+from tradingdev.domain.research import ResearchMetadata
+from tradingdev.domain.research_policy import DEFAULT_FEES, DEFAULT_SLIPPAGE
 from tradingdev.domain.strategies.capabilities import TrainingRequirement
 from tradingdev.domain.validation.date_windows import utc_calendar_day
 from tradingdev.shared.utils.json_values import strict_json_value
@@ -31,8 +33,8 @@ class BacktestConfig(BaseModel):
     start_date: dt.datetime
     end_date: dt.datetime
     init_cash: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    fees: float = 0.0006
-    slippage: float = 0.0005
+    fees: float = DEFAULT_FEES
+    slippage: float = DEFAULT_SLIPPAGE
     position_size: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
@@ -187,6 +189,7 @@ class StrategyRunConfig(BaseModel):
     version: str | None = None
     class_name: str | None = None
     description: str | None = None
+    display_name: str | None = None
     training_requirement: TrainingRequirement = Field(
         default="unknown",
         exclude=True,
@@ -238,6 +241,9 @@ class BacktestRunConfig(BaseModel):
     strategy: StrategyRunConfig
     backtest: BacktestConfig
     data: RunDataConfig = Field(default_factory=RunDataConfig)
+    research: ResearchMetadata | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     validation: WalkForwardConfig | None = None
     parallel: ParallelConfig | None = None
     random_seed: int | None = Field(

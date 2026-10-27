@@ -32,12 +32,14 @@ backtest:
   timeframe: "1h"
   periods_per_year: 365.0 # Daily crypto returns, independent of bar timeframe
   start_date: "2024-01-01"
-  end_date: "2025-12-31"
+  end_date: "2025-12-31T23:59:59.999999"
   init_cash: 10000.0
   fees: 0.0006
   slippage: 0.0005
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import yaml
+from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -78,7 +79,12 @@ def test_strategy_service_lifecycle(tmp_path: Path) -> None:
     service = StrategyService(workspace)
     service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
-    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
 
     assert saved.success is True
     assert saved.status == "draft"
@@ -116,8 +122,7 @@ def test_config_errors_are_reported_before_constructing_strategy(
         "self._engine = backtest_engine",
         'raise RuntimeError("Constructor must not run for an invalid config")',
     )
-    saved = service.save_draft("invalid_config", code, yaml.safe_dump(config))
-    assert saved.success
+    saved = service._revisions.create("invalid_config", code, config)
     if dry_run:
         # Simulate older validation evidence; dry-run must independently check config.
         recorded = service.record_validation_status(
@@ -181,8 +186,7 @@ def test_lossy_yaml_values_cannot_execute_or_advance_lifecycle(
         circular: list[Any] = []
         circular.append(circular)
         config["strategy"]["parameters"]["threshold"] = circular
-    saved = service.save_draft("invalid_json", _STRATEGY_CODE, yaml.safe_dump(config))
-    assert saved.success
+    saved = service._revisions.create("invalid_json", _STRATEGY_CODE, config)
     if dry_run:
         assert service.record_validation_status(
             "invalid_json",
@@ -240,7 +244,12 @@ def test_validation_and_dry_run_seed_constructor_and_signals(tmp_path: Path) -> 
             'result["signal"] = get_numpy_rng().integers(-1, 2, len(result))',
         )
     )
-    saved = service.save_draft("random_fixture", code, "random_seed: 42\n" + _YAML)
+    saved = service.save_draft(
+        code,
+        "random_seed: 42\n" + _YAML,
+        research_for_config("random_seed: 42\n" + _YAML),
+        strategy_id="random_fixture",
+    )
     assert saved.success
     first = service.validate("random_fixture")
     second = service.validate("random_fixture")
@@ -260,7 +269,12 @@ def test_strategy_service_loads_generated_and_bundled_specs(tmp_path: Path) -> N
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
 
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    ).success
 
     generated = service.load("fixture_strategy")
     bundled = service.load("kd_crossover")
@@ -278,7 +292,12 @@ def test_record_validation_status_updates_draft_metadata(tmp_path: Path) -> None
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
 
-    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
     assert saved.success
 
     response = service.record_validation_status(
@@ -305,7 +324,12 @@ def test_list_strategies_includes_requirements_and_recent_runs(
     workspace = WorkspacePaths(tmp_path / "workspace")
     store = SQLiteStore(workspace)
     service = StrategyService(workspace, store=store)
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    ).success
     store.create_run(
         run_id="run_a",
         job_id="job_a",
@@ -333,7 +357,10 @@ def test_strategy_service_rejects_banned_import(tmp_path: Path) -> None:
 
     code = "import os\n" + _STRATEGY_CODE
     assert service.save_draft(
-        "bad_strategy", code, _YAML.replace("fixture_strategy", "bad_strategy")
+        code,
+        _YAML.replace("fixture_strategy", "bad_strategy"),
+        research_for_config(_YAML.replace("fixture_strategy", "bad_strategy")),
+        strategy_id="bad_strategy",
     ).success
 
     validated = service.validate("bad_strategy")
@@ -359,7 +386,12 @@ def test_validate_fails_when_quality_gate_command_is_missing(
 
     monkeypatch.setattr(subprocess, "run", raise_missing)
 
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    ).success
 
     validated = service.validate("fixture_strategy")
 
@@ -382,7 +414,12 @@ def test_validate_rejects_runnable_strategy(tmp_path: Path) -> None:
     service = StrategyService(workspace)
     service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    ).success
     assert service.validate("fixture_strategy")["success"] is True
     assert service.dry_run("fixture_strategy")["status"] == "runnable"
 
@@ -398,7 +435,12 @@ def test_dry_run_only_accepts_validated_strategy(tmp_path: Path) -> None:
     service = StrategyService(workspace)
     service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
 
-    assert service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML).success
+    assert service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    ).success
 
     draft_dry_run = service.dry_run("fixture_strategy")
     assert draft_dry_run["success"] is False
@@ -422,7 +464,9 @@ def test_strategy_service_rejects_modified_snapshot_before_validation(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
-    saved = service.save_draft("syntax_strategy", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE, _YAML, research_for_config(_YAML), strategy_id="syntax_strategy"
+    )
     assert saved.success is True
     source_path = Path(saved.source_path)
     source_path.write_text("def broken(:\n", encoding="utf-8")
@@ -449,9 +493,10 @@ def test_strategy_service_rejects_removed_pandas_ta_import(
         f"{import_source}\n\nimport pandas as pd",
     )
     assert service.save_draft(
-        "bad_import_strategy",
         code,
         _YAML.replace("fixture_strategy", "bad_import_strategy"),
+        research_for_config(_YAML.replace("fixture_strategy", "bad_import_strategy")),
+        strategy_id="bad_import_strategy",
     ).success
 
     validated = service.validate("bad_import_strategy")
@@ -479,9 +524,10 @@ def test_strategy_service_rejects_invalid_signal_values(tmp_path: Path) -> None:
         'result.loc[moves > self._threshold, "signal"] = 2',
     )
     assert service.save_draft(
-        "bad_signal_strategy",
         code,
         _YAML.replace("fixture_strategy", "bad_signal_strategy"),
+        research_for_config(_YAML.replace("fixture_strategy", "bad_signal_strategy")),
+        strategy_id="bad_signal_strategy",
     ).success
 
     validated = service.validate("bad_signal_strategy")
@@ -499,9 +545,10 @@ def test_strategy_service_rejects_input_mutation(tmp_path: Path) -> None:
 
     code = _STRATEGY_CODE.replace("result = df.copy()", "result = df")
     assert service.save_draft(
-        "mutating_strategy",
         code,
         _YAML.replace("fixture_strategy", "mutating_strategy"),
+        research_for_config(_YAML.replace("fixture_strategy", "mutating_strategy")),
+        strategy_id="mutating_strategy",
     ).success
 
     validated = service.validate("mutating_strategy")
@@ -560,7 +607,12 @@ def test_strategy_service_validates_and_dry_runs_direct_talib_strategy(
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = StrategyService(workspace)
 
-    assert service.save_draft("talib_strategy", _TALIB_CODE, _TALIB_YAML).success
+    assert service.save_draft(
+        _TALIB_CODE,
+        _TALIB_YAML,
+        research_for_config(_TALIB_YAML),
+        strategy_id="talib_strategy",
+    ).success
 
     validated = service.validate("talib_strategy")
 
@@ -582,15 +634,22 @@ def test_validation_finishes_on_captured_revision_after_new_save(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
-    first = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    first = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
     assert first.revision_id is not None
     saved_revisions: list[str | None] = []
 
     def save_during_check(_path: Path) -> list[Any]:
         second = service.save_draft(
-            "fixture_strategy",
             _STRATEGY_CODE,
             _YAML.replace("threshold: 0.0", "threshold: 0.5"),
+            research_for_config(_YAML.replace("threshold: 0.0", "threshold: 0.5")),
+            strategy_id="fixture_strategy",
+            expected_revision_id=first.revision_id,
         )
         saved_revisions.append(second.revision_id)
         return []
@@ -624,8 +683,19 @@ def test_external_validation_result_cannot_validate_the_new_current_revision(
     tmp_path: Path,
 ) -> None:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
-    first = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
-    second = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    first = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
+    second = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+        expected_revision_id=first.revision_id,
+    )
 
     checked = service.record_validation_status(
         "fixture_strategy",
@@ -648,7 +718,12 @@ def test_source_changed_during_check_does_not_gain_validation_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
-    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
 
     def modify_source(path: Path) -> list[Any]:
         path.write_text(_STRATEGY_CODE + "\n# modified during validation\n")
@@ -670,7 +745,9 @@ def test_source_changed_during_check_does_not_gain_validation_evidence(
 
 def test_generated_save_cannot_shadow_bundled_strategy(tmp_path: Path) -> None:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
-    saved = service.save_draft("kd_crossover", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE, _YAML, research_for_config(_YAML), strategy_id="kd_crossover"
+    )
     assert not saved.success
     assert saved.code == "reserved_strategy_id"
 
@@ -694,7 +771,12 @@ def test_dry_run_cannot_replace_newer_validation_in_the_same_status(
 ) -> None:
     service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
     monkeypatch.setattr(service, "_quality_gate_diagnostics", lambda _path: [])
-    saved = service.save_draft("fixture_strategy", _STRATEGY_CODE, _YAML)
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="fixture_strategy",
+    )
     assert service.validate("fixture_strategy")["success"]
     original_check = service._contract_checker.check
 
@@ -725,3 +807,160 @@ def test_dry_run_cannot_replace_newer_validation_in_the_same_status(
     assert current.metadata.dry_run is None
     assert current.metadata.validation is not None
     assert current.metadata.validation.signal_analysis == {"newer_evidence": True}
+
+
+def test_anonymous_creation_saves_one_research_outline_and_a_readable_name(
+    tmp_path: Path,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    research = research_for_config(_YAML, strategy_outline="均線向上時買入，向下時賣出")
+
+    saved = service.save_draft(_STRATEGY_CODE, _YAML, research)
+
+    assert saved.success, saved.error
+    assert saved.strategy_id.startswith("strategy_")
+    config = yaml.safe_load(Path(saved.config_path).read_text())
+    assert config["research"]["strategy_outline"] == research.strategy_outline
+    assert config["strategy"]["display_name"] == research.strategy_outline
+    metadata = service.get_strategy(saved.strategy_id)["metadata"]
+    assert metadata["request_summary"] == research.strategy_outline
+    assert "display_name" not in metadata
+
+
+def test_display_name_is_distinct_from_the_automatically_generated_identity(
+    tmp_path: Path,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        display_name="  我的均線研究  ",
+    )
+    assert saved.success, saved.error
+    assert saved.strategy_id.startswith("strategy_")
+    config = yaml.safe_load(Path(saved.config_path).read_text())
+    assert config["strategy"]["display_name"] == "我的均線研究"
+
+
+def test_anonymous_creation_retries_reserved_legacy_and_occupied_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    research = research_for_config(_YAML)
+    original = service.save_draft(
+        _STRATEGY_CODE, _YAML, research, strategy_id="existing"
+    )
+    assert original.success
+    legacy = workspace.generated_strategies / "legacy.py"
+    legacy.write_text("legacy source")
+    residual = workspace.generated_strategies / "residual" / "revisions"
+    residual.mkdir(parents=True)
+    candidates = iter(["kd_crossover", "existing", "legacy", "residual", "unused"])
+    monkeypatch.setattr(service, "_new_strategy_id", lambda: next(candidates))
+
+    saved = service.save_draft(_STRATEGY_CODE, _YAML, research)
+
+    assert saved.success and saved.strategy_id == "unused"
+    current = service.load("existing")
+    assert current is not None and current.revision_id == original.revision_id
+    assert legacy.read_text() == "legacy source"
+    assert not (residual.parent / "current.json").exists()
+    assert not (workspace.generated_strategies / "kd_crossover").exists()
+
+
+def test_exhausted_anonymous_names_fail_without_revising_the_existing_strategy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    research = research_for_config(_YAML)
+    original = service.save_draft(
+        _STRATEGY_CODE, _YAML, research, strategy_id="occupied"
+    )
+    monkeypatch.setattr(service, "_new_strategy_id", lambda: "occupied")
+
+    saved = service.save_draft(_STRATEGY_CODE, _YAML, research)
+
+    assert not saved.success and saved.code == "strategy_id_generation_failed"
+    assert service._revisions.revision_ids("occupied") == [original.revision_id]
+
+
+def test_revisions_require_an_explicit_matching_current_revision(
+    tmp_path: Path,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    research = research_for_config(_YAML)
+    first = service.save_draft(_STRATEGY_CODE, _YAML, research, strategy_id="fixture")
+    duplicate = service.save_draft(
+        _STRATEGY_CODE, _YAML, research, strategy_id="fixture"
+    )
+    assert not duplicate.success and duplicate.code == "strategy_id_exists"
+    second = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research,
+        strategy_id="fixture",
+        expected_revision_id=first.revision_id,
+    )
+    assert second.success and second.revision_id != first.revision_id
+    stale = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research,
+        strategy_id="fixture",
+        expected_revision_id=first.revision_id,
+    )
+    assert not stale.success and stale.code == "strategy_revision_conflict"
+    current = service.load("fixture")
+    assert current is not None and current.revision_id == second.revision_id
+    assert len(service._revisions.revision_ids("fixture")) == 2
+
+
+def test_revision_cannot_supply_only_an_expected_revision(tmp_path: Path) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    saved = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        expected_revision_id="0123456789ab4def8123456789abcdef",
+    )
+    assert not saved.success and saved.code == "invalid_revision_request"
+    assert service._revisions.list_current() == []
+
+
+def test_research_yaml_conflict_is_repairable_without_publishing(
+    tmp_path: Path,
+) -> None:
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    research = research_for_config(_YAML).model_copy(update={"symbol": "ETH/USDT"})
+    saved = service.save_draft(
+        _STRATEGY_CODE, _YAML, research, strategy_id="conflicting"
+    )
+    assert not saved.success and saved.code == "invalid_research_spec"
+    assert service.load("conflicting") is None
+    assert service._revisions.revision_ids("conflicting") == []
+
+
+def test_inheritance_requires_and_uses_the_explicit_revision(tmp_path: Path) -> None:
+    from tradingdev.domain.research import InheritResearchSpec
+
+    service = StrategyService(WorkspacePaths(tmp_path / "workspace"))
+    first = service.save_draft(
+        _STRATEGY_CODE, _YAML, research_for_config(_YAML), strategy_id="fixture"
+    )
+    inherit = InheritResearchSpec(kind="inherit_selected_revision")
+    rejected = service.save_draft(_STRATEGY_CODE, _YAML, inherit)
+    assert not rejected.success and rejected.code == "invalid_research_spec"
+    revised = service.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        inherit,
+        strategy_id="fixture",
+        expected_revision_id=first.revision_id,
+    )
+    assert revised.success, revised.error
+    old = yaml.safe_load(Path(first.config_path).read_text())
+    new = yaml.safe_load(Path(revised.config_path).read_text())
+    assert new["research"]["strategy_outline"] == old["research"]["strategy_outline"]
+    assert new["backtest"] == old["backtest"]
