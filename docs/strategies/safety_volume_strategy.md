@@ -170,10 +170,13 @@ data:
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/safety_volume_strategy/config.yaml --walk-forward
 ```
 
-透過 MCP 操作時，先使用 `get_strategy` 與 `inspect_dataset(config_path)`
-確認設定及 workspace 或 `TRADINGDEV_DATA_ROOT` 的行情，再呼叫
-`prepare_walk_forward`。一般回測或最佳化的拒絕回覆會引導至此工具；仍須滿足
-設定與資料需求才能完成準備。執行契約見
+透過 MCP 操作時，先使用 `get_strategy` 確認設定，再呼叫
+`prepare_walk_forward`。一般回測或最佳化的拒絕回覆會引導至此工具。準備階段
+只離線檢查設定與執行模式，不讀取行情或特徵、不訓練模型，也不建立驗證分段；
+實際行情、特徵與可用訓練區間在使用者同意後的正式執行中檢查。
+若使用者另外要求檢視既有資料，可用 `inspect_dataset(config_path)` 檢查
+workspace 或 `TRADINGDEV_DATA_ROOT` 的本機快取，不會下載資料；這不是準備
+確認單的必要步驟，也不代表訓練必定成功。執行契約見
 [Training Before Scoring](../strategy_contract.md#training-before-scoring)。
 
 ## 與 XGBoost Direction Strategy 的比較

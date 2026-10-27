@@ -51,31 +51,20 @@ def _arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
 @pytest.mark.parametrize("tool_name", _PREPARE_TOOLS)
 @pytest.mark.parametrize(
-    ("changes", "field", "diagnostic", "schema_rejects"),
+    "field",
     [
-        ({"sample_bars": 32}, "sample_bars", "64", True),
-        ({"sample_bars": 4097}, "sample_bars", "4096", True),
-        ({"minimum_history_bars": 0}, "minimum_history_bars", "1", True),
-        ({"minimum_history_bars": 4097}, "minimum_history_bars", "4096", True),
-        (
-            {"minimum_history_bars": 129, "sample_bars": 128},
-            "minimum_history_bars",
-            "must not exceed sample_bars",
-            False,
-        ),
+        "sample_bars",
+        "minimum_history_bars",
     ],
 )
-def test_invalid_preparation_inputs_fail_before_preflight_or_plan_creation(
+def test_removed_market_sample_inputs_fail_before_validation_or_plan_creation(
     tmp_path: Path,
     protocol_mode: str,
     tool_name: str,
-    changes: dict[str, int],
     field: str,
-    diagnostic: str,
-    schema_rejects: bool,
 ) -> None:
     context = plan_context(tmp_path)
-    arguments = _arguments(tool_name, context.arguments) | changes
+    arguments = _arguments(tool_name, context.arguments) | {field: 128}
     arguments["parameters"] = {"private_note": "PRIVATE_INPUT"}
 
     async def check() -> None:
@@ -86,7 +75,8 @@ def test_invalid_preparation_inputs_fail_before_preflight_or_plan_creation(
                 if tool.name == tool_name
             )
             validator = Draft202012Validator(tool.input_schema)
-            assert validator.is_valid(arguments) is not schema_rejects
+            assert field not in tool.input_schema["properties"]
+            assert not validator.is_valid(arguments)
             result = await client.call_tool(tool_name, arguments)
             assert result.is_error
             assert result.structured_content is None
@@ -94,7 +84,7 @@ def test_invalid_preparation_inputs_fail_before_preflight_or_plan_creation(
                 item.text for item in result.content if isinstance(item, TextContent)
             )
             assert field in text
-            assert diagnostic in text
+            assert "Unknown arguments" in text
             assert text != f"Error executing tool {tool_name}"
             assert "PRIVATE_INPUT" not in text
 

@@ -51,8 +51,14 @@ requirement has been fulfilled.
 symbol examples, local timeframe choices, applicable `data.market_type` values and
 coverage limitations. Choose a name for `data.requirements.market.source` from that
 catalog. A `null` timeframe list means the adapter does not advertise an exhaustive
-local list, not that every interval is supported; sample preparation still checks
-availability. Discovery does not construct a crawler or download market data.
+local list, not that every interval is supported. Preparation rejects unknown
+source names and choices excluded by an explicit local timeframe or market-type
+list, without constructing a crawler. Actual availability is checked when the
+approved execution obtains its data. Discovery and plan preparation do not
+download market data.
+The market requirement's symbol and timeframe must match the backtest fields,
+which determine the actual data request. Direct CLI/Python preparation rejects
+contradictory declarations; MCP request overrides update both together.
 
 Generated code must:
 
@@ -176,7 +182,7 @@ or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
 training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
 training, and `null` for unknown capabilities. These describe intrinsic support,
 not model readiness, configuration validity, lifecycle permission or successful
-trial evidence. A supported walk-forward mode still requires valid `validation`
+validation evidence. A supported walk-forward mode still requires valid `validation`
 settings; bundled strategies may provide a separate `walkforward_config.yaml`.
 Conversely, a config with `validation` still cannot be used for a simple backtest
 or optimization just because its strategy intrinsically supports those modes.
@@ -399,31 +405,26 @@ Omit those inactive settings to keep the
 request clear. The backtest's data bounds still determine the history supplied
 to the splitter.
 
-`purged_split: true` with a missing, zero or negative horizon fails when the
-validator constructs its splitter. Purged splitting also rejects a nonpositive
-fold count, a negative embargo, a horizon at least as long as the input, too
-many blocks, or a gap that leaves no training rows. The YAML schema rejects
-unknown field names but does not enforce every numerical range or fold geometry;
-successful YAML parsing alone does not establish a usable validation run.
+Preparation rejects a missing, zero or negative purged horizon, a negative purged
+embargo, a nonpositive automatic fold count, and an ordinary automatic split ratio
+outside `(0, 1)`. The splitter repeats its applicable checks during execution and
+also rejects data-dependent problems such as a horizon at least as long as the
+input, too many blocks, or a gap that leaves no training rows. The YAML schema
+rejects unknown field names but does not enforce every numerical range or fold
+geometry; successful YAML parsing alone does not establish a usable validation run.
 The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
 that a strategy's labels are safe. Declare the actual forward horizon when the
 strategy uses such labels. This gate audits row-window geometry, not arbitrary
 feature code or a strategy's independently constructed labels.
 
-The MCP confirmation preflight uses the selected splitter on a bounded sample
-and runs only its first fold through `run_fold`. Purged mode ignores explicit
-dates, `train_ratio` and `expanding` here as in formal execution; it reports
-one tested fold out of `n_splits`, with a `single_fold_only` warning when more
-than one is configured. Plain explicit-date mode samples one train/test pair;
-plain automatic mode retains its ratio and expanding-window settings.
-The confirmation shows the effective mode and identifies inactive settings.
-
-Sample boundaries depend on the sampled history and need not equal full-run
-boundaries. Preflight does not execute the complete validator's pre-fold audit
-or establish that every formal fold can run. The full strategy walk-forward
-execution applies that gate before running its folds. A nonpositive horizon
-means the audit is disabled, not that labels are safe. This differs from the
-ML tool's timestamp/label-interval validation described below.
+MCP confirmation preparation validates configuration and execution mode without
+loading market data, constructing data-dependent folds, fitting a model or running
+any fold through the backtest engine. The confirmation shows the effective mode
+and identifies inactive settings; it does not claim that the requested history
+can form usable folds. The formal strategy walk-forward execution applies the
+complete pre-fold audit after approval and before running its folds.
+A nonpositive horizon means the audit is disabled, not that labels are safe.
+This differs from the ML tool's timestamp/label-interval validation described below.
 
 ## ML Research Contract
 
@@ -678,18 +679,18 @@ workspace.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
 5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: capture
-   an execution manifest, perform a bounded sample run, and prepare a plain-language
-   confirmation and HTML artifact. Only runnable or promoted generated strategies,
-   and promoted bundled strategies, are eligible. Preparation creates a plan,
+   an execution manifest, check code and configuration offline, and prepare a
+   plain-language confirmation and HTML artifact. Only runnable or promoted
+   generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
 6. Present `confirmation_summary` and a clickable link to the complete HTML,
    then end the conversation turn. Wait for the user to read it and explicitly
    approve, decline or request changes in a later turn. Do not paste the full
-   settings, search grid or trial evidence into the conversation.
+   settings, search grid or validation evidence into the conversation.
 7. `submit_execution_decision(plan_id, decision)` relays that decision:
    `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
    with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
-   trial and another user confirmation. Initial task instructions, silence,
+   code check and another user confirmation. Initial task instructions, silence,
    questions or ambiguous replies must not be treated as approval.
 
 The backend trusts the caller to relay the user's actual decision. It cannot
@@ -799,8 +800,8 @@ dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
-Every preparation requires `presentation` and `minimum_history_bars`; `sample_bars`
-defaults to 1024 and is bounded from 64 to 4096. Presentation has a `title`, `summary`,
+Every preparation requires `presentation`; callers do not supply historical
+sample budgets or minimum-history declarations. Presentation has a `title`, `summary`,
 and `parameter_descriptions`, which maps the union of captured constructor and
 effective candidate leaves to a distinct readable `label`, a `description`, and
 optional `unit`. Keys are
@@ -810,12 +811,14 @@ The confirmation builder rejects missing or extra descriptions. The assistant
 supplies this technical mapping; the user reviews readable names, values and units.
 Optional `backtest_overrides` capture execution costs and settings in the same plan.
 
-The preflight receipt records sampled date windows, checked paths, candidate/fold
-coverage, trade and execution-record counts, and limitations. Each sampled window
-must meet the declared minimum history. A zero-trade sample may pass its signal and
-engine checks, but the receipt says that the trading path was not exercised.
-Walk-forward and optimization samples cover only the reported fold and candidate;
-they do not establish that all later runs will pass. `get_execution_plan` reads the
+The preflight receipt records offline code/configuration checks and the fixed
+synthetic signal fixtures used for generated strategies. It does not contain market
+windows, trades or performance. Preparation neither loads real market data nor
+runs the backtest engine or model training. Bundled strategies receive configuration,
+execution-mode and parameter checks without calling `fit` or `generate_signals`;
+training-dependent signal checks are explicitly deferred. The confirmation lists
+market availability, data-dependent fold geometry, training and trade/performance
+behavior as unverified until formal execution. `get_execution_plan` reads the
 fixed confirmation, while `cancel_execution_plan` cancels an unsubmitted plan.
 Changing requested parameters requires a new preparation and approval.
 
@@ -860,15 +863,16 @@ dataframe output.
 
 Preparation is another code-execution boundary. MCP preparation runs under a
 supervised subprocess with a 60-second budget covering imports, constructor/default
-capture, generated signal-contract checks, sample engine execution and serialization.
-`StrategyLoader.resolve_execution` and `BacktestService.prepare_execution` load
+capture, generated signal-contract checks, parameter binding and manifest serialization.
+`StrategyLoader.resolve_execution` and `BacktestService.capture_execution` load
 generated module-level Python and create strategy instances. Generated strategies
 also run 80-row and 240-row contract fixtures with the captured settings, including
-when `parameters` is omitted or `null`. Optimization checks the captured base and
-the sampled candidate. Module-level code can execute more than once. These actions
+when `parameters` is omitted or `null`. Optimization checks signals for the captured
+base and validates every candidate's parameter binding; it does not run candidate
+signals, engines or performance calculations. Module-level code can execute more than once. These actions
 can have effects even when preparation fails without creating a formal job.
 
-The supervised timeout and process cleanup bound the sample attempt; they do not
+The supervised timeout and process cleanup bound the program checks; they do not
 isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
 preparation continue to execute generated Python in their calling process. A
 workspace path is an output location, not a security boundary.
@@ -876,7 +880,7 @@ workspace path is an output location, not a security boundary.
 For scheduled jobs, workers later repeat the generated execution-contract checks,
 then construct and execute the strategy using the captured settings; generated
 optimization candidates also undergo these checks before their trial runs.
-These execution steps are separate from validation, dry-run and sample checks.
+These execution steps are separate from validation, dry-run and plan preparation.
 The approval gate controls formal submission; it does not make earlier generated
 code execution safe. None of these checks provides a process sandbox. Generated
 strategies must therefore be reviewed as runtime code at all of these boundaries

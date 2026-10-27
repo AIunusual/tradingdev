@@ -86,7 +86,7 @@ data.requirements.features 為空。
 若不一致，修改 YAML 後重新 save、validate、dry-run，不可直接接受預設值。
 接著透過 MCP prepare_backtest 準備這個策略的執行計畫，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
-minimum_history_bars=20、sample_bars=128；presentation 必須提供中文 title、summary，
+presentation 必須提供中文 title、summary，
 及 parameter_descriptions；以每個建構子參數的 JSON pointer 為 key
 （例如 /fast_period、/slow_period 或 /lookback），各自提供 label、description、unit。
 說明每個參數的白話意義與單位，不要把程式識別字當作唯一說明。

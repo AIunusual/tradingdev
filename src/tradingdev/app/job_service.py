@@ -519,11 +519,11 @@ class JobService:
                 end_date=end_date,
             )
             apply_backtest_overrides(effective_config, backtest_overrides)
-            manifest = BacktestService(
+            checked = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
-            ).prepare_execution(effective_config, kind=kind, parameters=parameters)
+            ).capture_execution(effective_config, kind=kind, parameters=parameters)
         except (
             OSError,
             TypeError,
@@ -533,7 +533,9 @@ class JobService:
         ) as exc:
             return self._invalid_execution_request(exc)
 
-        return PreparedExecution(manifest, config_path)
+        return PreparedExecution(
+            checked.manifest, config_path, checked.synthetic_fixture_rows
+        )
 
     def _submit_prepared(
         self, prepared: PreparedExecution | dict[str, Any]

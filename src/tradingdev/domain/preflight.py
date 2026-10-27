@@ -1,25 +1,32 @@
-"""Bounded preparation requests and explicit sample-execution evidence."""
+"""Bounded offline preparation requests and explicit program-check evidence."""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-# Pydantic resolves both annotations when validating the wire schema.
+# Pydantic resolves these annotations when validating the wire schema.
 from tradingdev.domain.execution import ExecutionKind, ExecutionManifest  # noqa: TC001
-
-type MinimumHistoryBars = Annotated[int, Field(ge=1, le=4096)]
-type SampleBars = Annotated[int, Field(ge=64, le=4096)]
+from tradingdev.domain.strategies.capabilities import TrainingRequirement  # noqa: TC001
+from tradingdev.domain.strategies.contract import (
+    DRY_RUN_FIXTURE_ROWS,
+    VALIDATE_FIXTURE_ROWS,
+)
 
 type PreflightCheck = Literal[
     "configuration",
+    "execution_capabilities",
+    "parameter_binding",
+    "manifest_serialization",
     "signal_contract",
-    "signals",
-    "engine",
-    "serialization",
-    "fit",
     "candidate_binding",
+]
+type UnverifiedCheck = Literal[
+    "historical_data", "backtest_engine", "training", "performance"
+]
+type SignalCheck = Literal[
+    "synthetic_contract_passed", "deferred_until_training", "bundled_not_executed"
 ]
 
 
@@ -30,72 +37,94 @@ class PreflightModel(BaseModel):
 
 
 class PreflightRequest(PreflightModel):
-    """Prepare service arguments with a total sample budget and declared warm-up."""
+    """Capture a concrete execution request without authorizing historical work."""
 
     kind: ExecutionKind
     arguments: dict[str, JsonValue]
-    minimum_history_bars: MinimumHistoryBars
-    sample_bars: SampleBars = 1024
-
-    @model_validator(mode="after")
-    def sufficient_budget(self) -> Self:
-        if self.minimum_history_bars > self.sample_bars:
-            raise ValueError("minimum_history_bars must not exceed sample_bars")
-        return self
-
-
-class PreflightWindow(PreflightModel):
-    """The actual data passed to one sampled execution path."""
-
-    role: Literal["full", "train", "test"]
-    start: str
-    end: str
-    rows: int = Field(ge=1)
 
 
 class PreflightReceipt(PreflightModel):
-    """Successful sample evidence, never a promise about the complete run."""
+    """Offline evidence, explicitly excluding market, training and engine results."""
 
+    schema_version: Literal[2] = 2
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     elapsed_seconds: float = Field(ge=0)
-    sample_bars_requested: SampleBars
-    sample_bars_used: int = Field(ge=1, le=4096)
-    minimum_history_bars: MinimumHistoryBars
-    data_origin: Literal["market_data"] = "market_data"
-    data_source: str
-    windows: list[PreflightWindow]
     checked_paths: list[PreflightCheck]
-    trade_count: int = Field(ge=0)
-    execution_record_count: int | None = Field(default=None, ge=0)
-    trading_path_exercised: bool
-    tested_fold_count: int | None = Field(default=None, ge=1)
-    total_fold_count: int | None = Field(default=None, ge=1)
-    tested_candidates: int | None = Field(default=None, ge=1)
-    total_candidates: int | None = Field(default=None, ge=1)
-    warnings: list[str] = Field(default_factory=list)
+    synthetic_fixture_rows: list[int]
+    signal_check: SignalCheck
+    training_requirement: TrainingRequirement
+    parameter_combinations_checked: int | None = Field(default=None, ge=1)
+    not_checked: list[UnverifiedCheck]
 
     @model_validator(mode="after")
     def consistent_coverage(self) -> Self:
-        if (
-            not self.windows
-            or sum(window.rows for window in self.windows) != self.sample_bars_used
-        ):
-            raise ValueError("Preflight window rows differ from the sample count")
-        if self.sample_bars_used > self.sample_bars_requested:
-            raise ValueError("Preflight exceeded its total sample budget")
-        if any(window.rows < self.minimum_history_bars for window in self.windows):
-            raise ValueError("Preflight window is shorter than the declared warm-up")
-        if self.trading_path_exercised != (self.trade_count > 0):
-            raise ValueError("Trading coverage must agree with observed trades")
-        for tested, total in (
-            (self.tested_fold_count, self.total_fold_count),
-            (self.tested_candidates, self.total_candidates),
-        ):
-            if (tested is None) != (total is None) or (
-                tested is not None and total is not None and tested > total
+        checks = set(self.checked_paths)
+        required: set[PreflightCheck] = {
+            "configuration",
+            "execution_capabilities",
+            "parameter_binding",
+            "manifest_serialization",
+        }
+        if not required.issubset(checks) or len(checks) != len(self.checked_paths):
+            raise ValueError("Preflight requires every distinct program check")
+        if self.signal_check == "synthetic_contract_passed":
+            if (
+                self.synthetic_fixture_rows
+                != [
+                    VALIDATE_FIXTURE_ROWS,
+                    DRY_RUN_FIXTURE_ROWS,
+                ]
+                or "signal_contract" not in checks
             ):
-                raise ValueError("Invalid preflight execution coverage")
+                raise ValueError("Synthetic evidence requires both contract fixtures")
+            if self.training_requirement == "required":
+                raise ValueError(
+                    "Training-required signals cannot be checked untrained"
+                )
+        elif self.synthetic_fixture_rows or "signal_contract" in checks:
+            raise ValueError("Unexecuted signals cannot claim synthetic coverage")
+        if (self.signal_check == "deferred_until_training") != (
+            self.training_requirement == "required"
+        ):
+            raise ValueError("Deferred signals must match the training requirement")
+        if (self.parameter_combinations_checked is not None) != (
+            "candidate_binding" in checks
+        ):
+            raise ValueError("Candidate coverage must match parameter binding checks")
+        if (
+            set(self.not_checked)
+            != {
+                "historical_data",
+                "backtest_engine",
+                "training",
+                "performance",
+            }
+            or len(self.not_checked) != 4
+        ):
+            raise ValueError("Offline evidence must disclose every unverified path")
         return self
+
+    def verify_manifest(self, manifest: ExecutionManifest) -> None:
+        """Validate actual coverage against the exact execution used by every view."""
+        # Lists remain mutable after model construction. Revalidate their types and
+        # coverage before a receipt is reused by storage, approval or presentation.
+        type(self).model_validate(self.model_dump(mode="python"))
+        manifest.verify(expected_hash=self.manifest_hash)
+        generated = manifest.strategy_execution.kind == "generated"
+        if generated != (self.signal_check == "synthetic_contract_passed"):
+            raise ValueError("Signal evidence differs from the strategy execution kind")
+        if generated and self.training_requirement != "unknown":
+            raise ValueError(
+                "Generated strategies have no declared training capability"
+            )
+        if self.training_requirement == "required" and manifest.kind != "walk_forward":
+            raise ValueError(
+                "Training-required preparation needs walk-forward settings"
+            )
+        search = manifest.optimization
+        combinations = None if search is None else search.total_combinations
+        if self.parameter_combinations_checked != combinations:
+            raise ValueError("Candidate binding evidence differs from the search")
 
 
 class PreflightPayload(PreflightModel):
@@ -107,5 +136,5 @@ class PreflightPayload(PreflightModel):
 
     @model_validator(mode="after")
     def matching_manifest(self) -> Self:
-        self.manifest.verify(expected_hash=self.receipt.manifest_hash)
+        self.receipt.verify_manifest(self.manifest)
         return self

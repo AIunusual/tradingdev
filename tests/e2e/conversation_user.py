@@ -111,6 +111,15 @@ class ObservedPlanUser:
         plan = ExecutionPlan.model_validate_json(rows[0][0])
         assert prepared["plan_id"] == plan.plan_id
         assert prepared["manifest_hash"] == plan.manifest.manifest_hash
+        assert prepared["preflight"] == plan.preflight.model_dump(mode="json"), (
+            "The shown offline checks must match this saved plan"
+        )
+        assert set(plan.preflight.not_checked) == {
+            "historical_data",
+            "backtest_engine",
+            "training",
+            "performance",
+        }
         expected_path = (
             self.workspace.workspace
             / "execution_plans"

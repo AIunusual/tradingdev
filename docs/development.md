@@ -101,8 +101,9 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 ## 選擇性 LLM 測試
 
 `local` 與 `codex` 入口共用策略生成、修復、參數實驗、歷史查詢與報告、舊格式恢復
-及草稿清理情境。兩者使用真實模型與 stdio MCP；回測情境啟動受監督的試跑與正式
-worker，結束後清理臨時檔案及程序。Harness 以實際工具回覆與保存的產物驗證結果，
+及草稿清理情境。兩者使用真實模型與 stdio MCP；回測情境先啟動受監督的離線程式
+檢查程序，取得模擬使用者同意後才啟動正式 worker，結束後清理臨時檔案及程序。
+Harness 以實際工具回覆與保存的產物驗證結果，
 串接 `prepare_backtest` 的 plan ID、確認回覆的 job ID 及工作／結果的 manifest hash。
 
 報告情境另核對模型最終回覆的可點擊連結、執行身分及同一份報告的章節與評語，
@@ -132,10 +133,10 @@ Codex 測試在臨時工作區啟動獨立 MCP server，停用其他 server、�
 既有逐步情境仍用於定位特定生命週期問題，不能取代此情境。
 
 KD 最佳化與自建策略 walk-forward 情境核對巢狀參數、搜尋或折數、確認前狀態及
-執行產物。Walk-forward 另核對部分折數的試跑覆蓋、正式 purged 隔離區間，以及
+執行產物。Walk-forward 另核對確認前未執行行情試跑或訓練、正式 purged 隔離區間，以及
 原 revision／隨機種子未變。離線版本使用相同 MCP／worker 與證據檢查，不呼叫模型。
 離線 HTTP 回歸測試以 localhost Streamable HTTP、正式 server 及真實 MCP client
-驗證準備、確認單讀取與決策提交；行情試跑及 worker 使用替代實作。
+驗證準備、確認單讀取與決策提交；離線準備程序及正式 worker 使用替代實作。
 桌面客戶端的檔案呈現與對話按鈕須另行驗證。
 
 一般策略建立、修復及歷史查詢情境須沿用已驗證 YAML 基礎設定：`prepare_backtest`

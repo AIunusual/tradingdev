@@ -9,7 +9,10 @@ import pytest
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    execution_options,
+    synthetic_preflight_receipt,
+)
 
 
 @pytest.fixture
@@ -79,7 +82,7 @@ def legacy_calls() -> list[ToolCall]:
                 "confirmation_summary": "確認本次歷史研究設定。",
                 "html_path": "/fixture/confirmation.html",
                 "artifact_id": "plan:confirmation",
-                "preflight": {"status": "passed"},
+                "preflight": synthetic_preflight_receipt("a" * 64),
             },
         ),
         ToolCall(
