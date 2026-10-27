@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -94,7 +94,7 @@ def apply_threshold(
     proba: pd.DataFrame,
     threshold: float,
     cooldown: int = 1,
-) -> pd.Series[Any]:
+) -> pd.Series[int]:
     """Convert probability DataFrame to signals."""
     p_long = proba[1] if 1 in proba.columns else pd.Series(0.0, index=proba.index)
     p_short = proba[-1] if -1 in proba.columns else pd.Series(0.0, index=proba.index)

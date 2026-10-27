@@ -478,7 +478,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         threshold: float,
         min_hold: int = 5,
         max_hold: int = 30,
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """State machine that produces position-state signals.
 
         Returns an array of (1, -1, 0) where:
@@ -487,7 +487,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         - 0 = flat (no position)
         """
         n = len(risk_scores)
-        signals = np.zeros(n, dtype=int)
+        signals: npt.NDArray[np.int_] = np.zeros(n, dtype=int)
         state = 0
         bars_in_pos = 0
 
@@ -522,7 +522,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         risk_scores: npt.NDArray[np.floating[Any]],
         directions: npt.NDArray[np.floating[Any]],
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """Run the state machine with configured parameters."""
         return self._run_state_machine_with_threshold(
             risk_scores,
