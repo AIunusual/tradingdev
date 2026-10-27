@@ -1,63 +1,42 @@
-# TradingDev 專案介紹簡報
+# TradingDev 簡報編輯指南
 
-這份完整閱讀版簡報面向非技術背景的聽眾，先介紹現有產品與仍需完成的整合工作，
-說明 TradingDev 的定位，再展開研究流程、使用場景、詳細比較與後續方向。
-共 50 頁，沒有預設演講時間，可以按場合選擇段落。
+簡報內容與講者稿維護在 [slides.md](slides.md)，版型維護在 [theme.css](theme.css)；
+[index.html](index.html) 是產生後提交與發布的瀏覽器版本。
+大綱、章節整理與後續目標集中放在 `slides.md`，本文件只說明編輯與發布操作。
 
-- [瀏覽器版](index.html)：本機下載後直接開啟；在 GitHub 檔案頁看到的是 HTML 原始碼。
-- [Markdown 內容](slides.md)：可直接在 GitHub 閱讀；Raw 內容也包含講者稿。
-- [後續開發目標](#後續開發目標)：以穩定 ID 指定日後的調查與開發範圍。
+## 編輯與預覽
 
-## 閱讀與演講
+首次使用先依[開發指南](../../development.md#簡報的編輯與輸出)初始化環境與 Marp 工具鏈，
+再用 VS Code 開啟整個 repository 資料夾。
 
-瀏覽器版內含版型與播放程式，不需要連接 TradingDev 或模型服務，也沒有外部字型下載。
-使用左右方向鍵換頁，`F` 切換全螢幕，`P` 開啟講者模式。講者模式需要允許開啟新視窗；
-若本機檔案模式限制視窗通訊，可依[開發指南](../../development.md#簡報的編輯與輸出)使用本機 HTTP 預覽。
+1. 開啟命令選擇區，執行 **Tasks: Run Task → slides: watch**。
+2. 編輯並儲存 `slides.md` 或 `theme.css`，工作會自動更新同目錄的 `index.html`。
+3. 用瀏覽器開啟 `index.html`；每次儲存後重新整理瀏覽器查看結果。
+4. 結束時執行 **Tasks: Terminate Task → slides: watch**。
 
-| 頁次 | 主題 | 演講時的用途 |
-| --- | --- | --- |
-| 1–6 | 現有產品、整合需求、專案定位與閱讀路線 | 開場交代為什麼做 TradingDev |
-| 7–18 | 想法、回測、確認與結果追問 | 用產品流程說明如何完成整合 |
-| 19–24 | 主機、自由度、使用場合與基礎能力 | 展開整合價值 |
-| 25–35 | 各產品的詳細比較與目前範圍 | 依聽眾選擇相關案例 |
-| 36–38 | 兩種整合與工程回饋 | 說明發展方向 |
-| 39–47 | 後續開發目標與取捨 | 可帶過，留供會後閱讀 |
-| 48–50 | 結尾與來源 | 提供後續閱讀入口 |
+編譯訊息可在 `slides: watch` 的專用終端機查看。只需單次輸出時，執行
+**Tasks: Run Task → slides: build**。自動啟動監看、命令列操作與本機 HTTP
+預覽方式見[開發指南](../../development.md#簡報的編輯與輸出)。
+提交簡報內容或版型修改時，一併提交重新產生的 `index.html`。
 
-競品比較與開發參考附有來源，末尾也提供集中閱讀入口。講者稿保留必要的技術邊界與說明，
-未完成能力在頁面標示「待開發」「待評估」或情境限制。例子不包含虛構績效。
-
-## 後續開發目標
-
-以下是供未來任務指定的目標，不是已排定的開發承諾。開始開發時，仍須重新調查需求、
-目前程式、候選套件及驗證方式。可以直接指定「閱讀 TODO-04，再評估開發」。
-
-| ID | 目標與簡報區塊 |
-| --- | --- |
-| TODO-01 | [研究引導與診斷](slides.md#todo-01-研究引導與診斷)：依狀態與失敗原因選擇下一步。 |
-| TODO-02 | [研究記憶](slides.md#todo-02-可引用證據的研究記憶)：保存假說、結論與引用的實驗。 |
-| TODO-03 | [共用元件與工程回饋](slides.md#todo-03-共用元件與工程回饋)：以外部開發流程將確認過的經驗回饋專案。 |
-| TODO-04 | [多策略配置研究](slides.md#todo-04-多策略配置研究)：先統一基準與固定權重分析，再評估配置套件。 |
-| TODO-05 | [成熟引擎評估](slides.md#todo-05-成熟引擎評估)：比較 LEAN 等引擎的能力、整合成本及模擬假設。 |
-| TODO-06 | [多人服務身分與權限](slides.md#todo-06-多人服務身分與權限)：依使用情境關聯身分並安排隔離。 |
+瀏覽器版內含樣式與播放程式，可離線開啟。使用左右方向鍵換頁，`F` 切換全螢幕，
+`P` 開啟講者模式；講者模式須允許新視窗，本機檔案模式有通訊限制時改用 HTTP 預覽。
 
 ## 在 GitHub 網頁上播放
 
-GitHub repository 的一般檔案頁不會播放 HTML 簡報。可以使用同一個 repository 的
-GitHub Pages，無須另開倉庫或執行回測服務。
+GitHub 的一般檔案頁只會顯示 HTML 原始碼。若要直接播放，可使用同一 repository
+的 GitHub Pages。
 
-取得發布授權並將內容透過 PR 合併至主線後，由 repository 管理者在
+取得發布授權並透過 PR 合併至主線後，由管理者在
 **Settings → Pages → Deploy from a branch** 選擇主線與 `/docs`。
-此設定會發布 `/docs` 下的內容；其中的 `.nojekyll` 讓 GitHub 直接提供靜態檔案。
-既有 Pages 設定不同時，應先確認原網站的發布方式。
+這會發布 `/docs` 下的內容，`.nojekyll` 讓 GitHub 直接提供靜態檔案；
+已有 Pages 網站時，先確認原有發布設定。
 
-沒有自訂網域且使用目前 repository 名稱時，簡報預期位址為：
+沒有自訂網域且使用目前 repository 名稱時，預期位址為：
 
 ```text
 https://kuan-lun.github.io/tradingdev/talks/tradingdev-introduction/
 ```
 
-這是配置完成後的預期位址，不代表已經發布。
-完整設定依 [GitHub Pages 官方說明](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)。
-
-編輯、重新輸出與預覽方式見[開發指南](../../development.md#簡報的編輯與輸出)。
+此位址不代表已發布；完整設定見
+[GitHub Pages 官方說明](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)。
