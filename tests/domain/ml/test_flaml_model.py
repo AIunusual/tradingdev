@@ -144,6 +144,45 @@ def isolated_search_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 class TestTrainContract:
+    @pytest.mark.parametrize("empty_input", ["training", "validation"])
+    @pytest.mark.parametrize("already_trained", [False, True])
+    def test_empty_training_inputs_preserve_model_state(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        empty_input: str,
+        already_trained: bool,
+    ) -> None:
+        created = _install_fake_flaml(monkeypatch)
+        model = FLAMLAutoMLDirectionModel()
+        before_predictions: pd.DataFrame | None = None
+        if already_trained:
+            model.train(_frame())
+            before_predictions = model.predict_proba(_frame())
+        before_automl = model._automl
+        before_features = model._feature_names.copy()
+        before_classes = model._classes
+        before_searches = len(created)
+        changed = _frame().rename(columns={"f1": "replacement_feature"})
+        train = changed.iloc[:0] if empty_input == "training" else changed
+        validation = changed.iloc[:0] if empty_input == "validation" else None
+
+        with pytest.raises(
+            ValueError, match=f"{empty_input.title()} data.*labelled row"
+        ):
+            model.train(train, eval_df=validation)
+
+        assert len(created) == before_searches
+        assert model._automl is before_automl
+        assert model._feature_names == before_features
+        assert model._classes == before_classes
+        if before_predictions is not None:
+            pd.testing.assert_frame_equal(
+                model.predict_proba(_frame()), before_predictions
+            )
+        else:
+            with pytest.raises(RuntimeError, match="not been trained"):
+                model.predict_proba(_frame())
+
     def test_only_feature_columns_reach_the_search(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

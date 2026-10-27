@@ -6,19 +6,22 @@ from tradingdev.domain.ml.features.features import FeatureEngineer
 
 
 class TestFeatureEngineer:
-    def test_preserve_index_keeps_source_identity_without_changing_features(
+    def test_transform_keeps_source_identity_without_changing_features(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
         df = large_ohlcv_df.set_index("timestamp")
         original = df.copy(deep=True)
         fe = FeatureEngineer(lookback=12)
-        indexed = fe.transform(df, include_target=False, preserve_index=True)
+        indexed = fe.transform(df, include_target=False)
         indexed_names = fe.get_feature_names()
-        default = fe.transform(df, include_target=False)
+        positional = fe.transform(df.reset_index(drop=True), include_target=False)
 
         assert 0 < len(indexed) < len(df)
         pd.testing.assert_index_equal(indexed.index, df.index[-len(indexed) :])
-        pd.testing.assert_frame_equal(indexed.reset_index(drop=True), default)
+        pd.testing.assert_index_equal(positional.index, pd.RangeIndex(33, len(df)))
+        pd.testing.assert_frame_equal(
+            indexed.reset_index(drop=True), positional.reset_index(drop=True)
+        )
         assert indexed_names == fe.get_feature_names()
         pd.testing.assert_frame_equal(df, original)
 

@@ -458,6 +458,33 @@ or label rows and reports their count. `horizon` is a positive number of source
 bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
 the model's declared feature list.
 
+XGBoost and SafetyVolume's optional direction model label their training frames
+through `FeatureEngineer`: negative, zero and positive forward returns map to
+`-1`, `0` and `1`. GLFT-ML uses `DirectionFeatureEngineer`, where `1` means a
+positive return and `0` means a non-positive return. Both omit rows whose label
+endpoint is unavailable, including the final horizon bars and missing interior
+prices. Inference without targets retains those rows when their features are
+complete. Quantile and SafetyVolume's risk model use their separate target
+builders; they also leave outcomes beyond the supplied frame unavailable.
+
+`FeatureEngineer.transform()` preserves surviving source index labels; there is
+no index-reset option. Callers needing row positions supply a positional index.
+SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
+prediction skips a bar whose own features are unavailable, rather than reusing
+an earlier prediction. Its threshold search evaluates the complete source frame,
+leaves unavailable rows without entry signals, and measures cooldown in source
+bars, including gaps.
+
+The XGBoost and FLAML direction model training APIs require at least one labelled
+training row. A supplied validation frame must also be non-empty. Empty inputs
+raise `ValueError` before model state changes or external training starts,
+preserving any previously fitted model. XGBoost's lookback search requires at
+least 10 mature training rows and 5 mature validation rows per candidate, after
+feature and label filtering. It skips insufficient candidates and raises
+`ValueError` if none qualifies, without installing a default lookback or refitting
+the model. Rolling retraining retains its previous model when the available
+window has fewer than 10 complete labelled rows.
+
 Both `build_dataset` and `build_panel` pass their date bounds to
 `DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
 bounds with an offset are converted to UTC. Rows are selected with

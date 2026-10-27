@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -52,16 +52,16 @@ class ThresholdOptimizer:
             Selected threshold value.
         """
         fe = feature_engineer if feature_engineer is not None else FeatureEngineer()
-        feat_val = fe.transform(val_df, include_target=False)
+        source = val_df.reset_index(drop=True)
+        feat_val = fe.transform(source, include_target=False)
         if len(feat_val) == 0:
             return default_threshold
 
-        proba = model.predict_proba(feat_val)
+        proba = model.predict_proba(feat_val).reindex(source.index)
 
         for threshold in sorted(candidates):
             signals = apply_threshold(proba, threshold, self._cooldown)
-            signal_df = val_df.iloc[-len(signals) :].copy()
-            signal_df = signal_df.reset_index(drop=True)
+            signal_df = val_df.copy()
             signal_df["signal"] = signals.values
 
             result = self._engine.run(signal_df)
@@ -94,14 +94,15 @@ def apply_threshold(
     proba: pd.DataFrame,
     threshold: float,
     cooldown: int = 1,
-) -> pd.Series[Any]:
+) -> pd.Series[int]:
     """Convert probability DataFrame to signals."""
     p_long = proba[1] if 1 in proba.columns else pd.Series(0.0, index=proba.index)
     p_short = proba[-1] if -1 in proba.columns else pd.Series(0.0, index=proba.index)
 
     signals = pd.Series(0, index=proba.index, dtype=int)
-    long_mask = (p_long >= threshold) & (p_long >= p_short)
-    short_mask = (p_short >= threshold) & (~long_mask)
+    ready = proba.notna().all(axis=1)
+    long_mask = ready & (p_long >= threshold) & (p_long >= p_short)
+    short_mask = ready & (p_short >= threshold) & (~long_mask)
     signals = signals.where(~long_mask, 1)
     signals = signals.where(~short_mask, -1)
 
