@@ -14,6 +14,10 @@ Strategy development workflow
      bar counts, a default timeframe or a bundled strategy's sample configuration.
    - An explicit request to reuse saved research may inherit its selected revision.
      Read it first; absence of a choice is not an instruction to inherit.
+   - Before proposing or asking about omitted capital, costs or annualization,
+     read get_strategy_contract(section="research") and the relevant source's
+     capabilities. Use applicable policy; omission does not mean zero costs or
+     unavailable annualization. Keep questions focused on unresolved choices.
    - Names are optional. Use automatic naming when none was requested; keep routine
      names and internal IDs in the HTML, not as questions the user must answer.
 
