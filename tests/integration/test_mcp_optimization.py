@@ -72,7 +72,9 @@ def _opposite_trends() -> pd.DataFrame:
 async def _save_runnable(
     client: MCPClient, *, walk_forward: bool = False
 ) -> dict[str, Any]:
-    contract = await client.call("get_strategy_contract")
+    contract = (await client.call("get_strategy_contract", section="example"))[
+        "content"
+    ]
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"].update(
         class_name="DirectionStrategy", parameters={"direction": -1}
@@ -118,7 +120,7 @@ async def test_optimization_rejects_walk_forward_config_through_mcp(
         assert rejected["success"] is False
         assert rejected["code"] == "invalid_optimization_request"
         assert "must not contain validation settings" in rejected["error"]
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
 
 
 async def test_optimization_confirmation_search_and_persisted_oos(
@@ -148,7 +150,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         )
         assert not overlapping["success"]
         assert "without overlap" in overlapping["error"]
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
         prepared = await client.call(
             "prepare_optimization",
             strategy_id=STRATEGY_ID,
@@ -169,8 +171,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert prepared["preflight"]
         retained = await client.call("get_execution_plan", plan_id=prepared["plan_id"])
         assert retained["manifest_hash"] == manifest_hash
-        assert await client.call("list_jobs") == []
-        assert await client.call("list_runs") == []
+        assert (await client.call("list_jobs"))["items"] == []
+        assert (await client.call("list_runs"))["items"] == []
         assert not list(mcp_workspace.workspace.rglob("result.json"))
         replacement = await client.call(
             "save_strategy",
@@ -191,7 +193,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 3
-        assert (await client.call("list_jobs"))[0]["completed"] == 3
+        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 3
         # warmup=2 is a captured constructor default, not a grid parameter.
         # The engine enters one
         # bar later (index 3), and training must include the entire last day.
@@ -210,7 +212,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "submit_execution_decision", plan_id=prepared["plan_id"], decision="approve"
         )
         assert repeated["success"] and repeated["job_id"] == job_id
-        assert len(await client.call("list_jobs")) == 1
+        assert len(await client.read_all_pages("list_jobs")) == 1
         run = (await client.call("get_run", run_id=completed["run_id"]))["run"]
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
@@ -272,14 +274,12 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert flat["metadata"]["unavailable"]["win_rate"] == "no_trades"
         artifacts = {
             item["artifact_type"]: item
-            for item in await client.call("list_artifacts", run_id=job_id)
+            for item in await client.read_all_pages("list_artifacts", run_id=job_id)
         }
-        specification = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["execution_manifest"]["artifact_id"],
-            include_content=True,
+        specification = await client.read_artifact_text(
+            artifacts["execution_manifest"]["artifact_id"]
         )
-        manifest = ExecutionManifest.model_validate_json(specification["content"])
+        manifest = ExecutionManifest.model_validate_json(specification)
         manifest.verify(manifest_hash)
         assert manifest.kind == "optimization"
         assert manifest.strategy_execution.constructor_kwargs == {
@@ -298,25 +298,21 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert search.trial_timeout_seconds == 300
         assert "confirmation_timeout_seconds" not in type(search).model_fields
         assert "confirmation_poll_interval" not in type(search).model_fields
-        stored = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["result_json"]["artifact_id"],
-            include_content=True,
+        stored = await client.read_artifact_text(
+            artifacts["result_json"]["artifact_id"]
         )
-        assert "Infinity" not in stored["content"]
-        assert "NaN" not in stored["content"]
-        result = json.loads(stored["content"])
+        assert "Infinity" not in stored
+        assert "NaN" not in stored
+        result = json.loads(stored)
         assert result["best_params"] == completed["best_params"]
         assert result["train_metrics"] == train_detail["metrics"]
         assert result["test_metrics"] == test_detail["metrics"]
         assert result["best_train_metric_value"] == pytest.approx(train_return)
         assert result["best_oos_metric_value"] == pytest.approx(oos_return)
-        original_observations = await client.call(
-            "get_artifact",
-            artifact_id=artifacts["observations_json"]["artifact_id"],
-            include_content=True,
+        original_observations = await client.read_artifact_text(
+            artifacts["observations_json"]["artifact_id"]
         )
-        observations = json.loads(original_observations["content"])
+        observations = json.loads(original_observations)
         assert observations["manifest_hash"] == manifest_hash
         assert set(observations["scopes"]) == set(run["available_scopes"])
         for scope_id in ["trial/0/train", "trial/1/train", "trial/2/train"]:
@@ -361,4 +357,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             metric_ids=["total_return", "daily_pnl_median"],
         )
         assert reloaded_trial == losing
-        assert any(item["run_id"] == job_id for item in await client.call("list_runs"))
+        assert any(
+            item["run_id"] == job_id
+            for item in await client.read_all_pages("list_runs")
+        )

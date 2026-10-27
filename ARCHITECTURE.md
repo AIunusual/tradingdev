@@ -42,10 +42,10 @@ flowchart LR
 | ---- | -------- |
 | `mcp/server.py`、`mcp/tools/` | 組裝 services、註冊工具、驗證協定輸入與輸出 |
 | `mcp/workers/` | 背景工作入口、狀態更新及流程協調；最佳化 worker 直接協調搜尋與樣本外測試 |
-| `app/` | 策略生命週期、設定固定、限時試跑、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義回覆 DTO |
+| `app/` | 策略生命週期、設定固定、限時程式檢查、確認計畫、工作提交、ML 研究、結果保存與查詢；`contracts/` 定義回覆 DTO |
 | `domain/strategies/` | 策略介面、來源探索與載入、參數解析、訊號契約及 bundled strategies |
 | `domain/execution.py`、`domain/randomness.py` | 執行規格與完整性檢查、每次執行的亂數 context |
-| `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時試跑請求及覆蓋證據 |
+| `domain/execution_plan.py`、`domain/preflight.py` | 確認內容與執行身分綁定、限時離線檢查請求及驗證證據 |
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
@@ -94,7 +94,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | ---- | ---------- |
 | Strategy revision | 一份生成策略的固定程式與基礎設定，由 StrategyService 管理狀態與驗證證據 |
 | Execution manifest | 一次執行的固定請求，綁定策略身分、有效設定、建構子參數及可選的最佳化規格 |
-| Execution plan | 通過短試跑的固定 manifest、使用者確認文件與證據，附有效期限及獨立確認狀態 |
+| Execution plan | 通過程式與設定檢查的固定 manifest、使用者確認文件與證據，附有效期限及獨立確認狀態 |
 | Job | 背景工作的進度、程序身分與控制紀錄，由 JobService／OptimizationService 提交，透過 JobStore 保存 |
 | Run | 一次已保存的執行結果，記錄策略、設定與資料來源資訊，由 RunService 查詢 |
 | Artifact | 與執行或研究相關的檔案及其索引，由 ArtifactService 提供探索與讀取 |
@@ -171,14 +171,14 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
 MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization`
 準備執行計畫：套用交易對、期間等請求設定，再解析資料位置與策略建構子參數，形成 manifest。
-ExecutionPlanService 經 PreflightService 完成受限試跑，確認程序已停止並清理臨時內容後，
+ExecutionPlanService 經 PreflightService 完成離線程式與設定檢查，確認程序已停止並清理臨時內容後，
 才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
 
 JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載入前，依
 註冊策略的能力拒絕無法完成必要訓練的模式；呼叫端的 YAML 宣告不能覆寫註冊能力。
 `strategy_requires_training` 的模式與設定指引經 preflight worker、PreflightService
 及 ExecutionPlanService 保留，MCP adapter 再映射為 `next_tool`。這個回覆不會建立
-可執行計畫，也不免除後續試跑與使用者確認。
+可執行計畫，也不免除後續程式檢查與使用者確認。
 
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
@@ -187,33 +187,16 @@ PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmi
 但 MCP 不暴露直接啟動工具。原本的 MCP `start_backtest`、`start_walk_forward`、
 `start_optimization` 與 `confirm_optimization` 已移除。
 
-PreflightService 將設定準備、策略匯入、生成策略訊號契約、受限行情取得、實際引擎執行
-與結果序列化放入受監督的子程序；預設總預算為 60 秒，程序清理另計。
-一般回測試跑一段行情，walk-forward 試跑一組訓練／測試分段，最佳化試跑第一組候選的
-訓練與保留測試區間。每個區間須達到請求宣告的最低歷史資料需求，且受總 K 線筆數預算限制。
-試跑用本次設定的行情資料管道，不以人工資料替代失敗的資料取得；離線測試可替代 provider，
-不能因此宣稱已驗證真實外部資料。零交易仍可準備成功，但必須指出成交與交易成本路徑未覆蓋。
-短樣本不保證完整期間、所有分段或所有候選一定成功，也不是完整 Python sandbox。
+PreflightService 將設定準備、策略匯入、建構子與執行模式檢查，以及生成策略的固定合成資料
+訊號契約檢查放入受監督的子程序；預設總預算為 60 秒，程序清理另計。
+確認前不載入快取或下載真實行情、不執行回測引擎，也不呼叫策略訓練。
+內建策略只檢查配置、模式與參數綁定，不執行訊號；需要先訓練的策略明列訊號檢查待訓練後進行。
+最佳化在此固定候選與有效參數，不以行情評估候選或先挑選參數。
+檢查證據明列已檢查與尚未驗證的項目；資料可用性、實際分折、訓練、成交、成本與績效
+須等待使用者同意後的正式執行。合成訊號通過不證明交易規則完全正確、沒有前視或可獲利。
+受監督子程序的標準暫存環境指向本次受管理目錄；程序監督不是完整 Python sandbox。
 
-DataService 透過 application 層的 market_sample 協調受限取樣；storage adapter
-負責分批讀取 Parquet，將無時區時間視為 UTC，與一般行情載入保持一致。
-取樣以有限日曆區間逐段尋找有效 K 線，跳過休市空窗，直到達到筆數預算或請求結束日；
-每段先以請求期間限制長度，再建立時間差，避免月線等長週期溢位。
-特徵快取只投影時間戳與所需欄位，分批篩選實際樣本的時間戳；保留既有精確合併與
-前後填補語義，合併前先計算重複鍵造成的筆數，超過預算即拒絕。
-取樣不改寫原行情或特徵快取。
-所有 crawler 都提供獨立的 `fetch_sample(..., max_rows=...)`，在來源請求與解析階段
-限制資料量，支援包含終點及單一時間戳的區間；一般 `fetch()` 保留完整資料載入用途。
-新增資料來源也必須實作此取樣介面，不能先完整載入後再截斷。
-Binance Vision 取樣優先日檔，缺檔時才以月檔補取；下載串流寫入有記憶體門檻的暫存檔，
-單一 CSV 以每批最多 1024 列完整掃描，只保留最早的所需 K 線；達到預算後不再讀後續日期檔。
-每個壓縮檔下載上限 16 MiB，單次 `fetch_sample` 累計上限 32 MiB，
-ZIP 宣告的 CSV 解壓大小上限 128 MiB；超限即回報失敗。
-串流取樣 HTTP 拒絕重新導向及額外內容壓縮，避免用戶端在串流檢查前先緩衝或解壓回覆。
-這仍需要完整下載選中的壓縮檔，不能把行數預算解讀為等比例的網路流量上限。
-受監督子程序的標準暫存環境也指向本次受管理目錄，涵蓋第三方模型建立的臨時檔案。
-
-確認計畫保存不可變 manifest、試跑證據及呈現內容；計畫摘要共同綁定這些資料。
+確認計畫保存不可變 manifest、程式檢查證據及呈現內容；計畫摘要共同綁定這些資料。
 模型提供策略名稱、摘要與每個參數的白話名稱／說明／單位，後端提供全部有效數值、
 必備章節及實際檢查結果。參數說明必須完整對應固定建構子與搜尋候選的各個葉節點，
 包括巢狀設定及內建策略的訓練設定；遺漏時回傳可供模型補齊的欄位路徑。
@@ -227,7 +210,7 @@ ZIP 宣告的 CSV 解壓大小上限 128 MiB；超限即回報失敗。
 助手提供簡短摘要與可點的 HTML 連結後結束回合，等待使用者閱讀並在後續回合明確回覆。
 `submit_execution_decision(plan_id, decision)` 接受 `approve`、`decline` 或 `revise`；
 只有明確同意才提交原計畫，拒絕與修改要求都取消計畫。修改要求回傳
-`confirmation_adjustment_requested`，助手收集修改內容、重新準備與試跑，再等待新確認。
+`confirmation_adjustment_requested`，助手收集修改內容、重新準備與檢查，再等待新確認。
 提問、沉默、模糊回覆與最初的回測請求都不是對尚未閱讀計畫的同意。
 原 `request_execution_confirmation` 與 MCP 原生表單路徑已移除，不保留相容轉接。
 
@@ -237,7 +220,7 @@ elicitation capability，也不維持等待使用者五分鐘的工具呼叫。
 伺服器信任助手如實轉交使用者的對話決策，無法獨立證明人類同意；模型可讀的
 token 或原話也不能提供這種證明。計畫在對話等待期間保持 ready，預設一小時有效。
 提交時再次核對設定、策略完整性與資格；內部 reservation 防止並行提交競爭，
-重複提交已成功計畫回傳原 job，不重複執行。修改程式或有效設定須重新準備、試跑及確認。
+重複提交已成功計畫回傳原 job，不重複執行。修改程式或有效設定須重新準備、檢查及確認。
 提交使用固定的計畫 ID 作為 job ID。若 worker 已啟動但最後的計畫狀態寫入失敗，
 回覆仍提供原 job 與警告；計畫查詢保留 submitting 及該 job ID。
 重新要求確認時，只有相同 manifest 且保存完整 worker 控制身分的既有 job，
@@ -249,15 +232,15 @@ sequenceDiagram
     participant User as 使用者
     participant MCP as MCP tool
     participant Plan as ExecutionPlanService
-    participant Preflight as 限時試跑程序
+    participant Preflight as 限時離線檢查程序
     participant Submit as ExecutionSubmissionService
     participant Execute as BacktestService
     participant Store as JobStore
     participant Supervisor
     participant Worker
     MCP->>Plan: prepare_* 策略與執行設定
-    Plan->>Preflight: 固定設定並完成受限試跑
-    Preflight-->>Plan: manifest、試跑證據與清理確認
+    Plan->>Preflight: 固定設定並檢查程式與合成訊號
+    Preflight-->>Plan: manifest、檢查證據與清理確認
     Plan-->>MCP: 簡短摘要與完整 HTML 位置
     MCP->>User: 提供連結並結束回合等待
     User-->>MCP: 閱讀後在下一回合明確同意
@@ -312,11 +295,11 @@ OptimizationService 在準備時固定搜尋參數、訓練／測試期間、指
 不能同時套用 walk-forward 設定；候選檢查也不代表所有策略建構與執行一定成功。
 
 MCP 的最佳化與其他回測共用前述計畫與確認流程，正式 worker 不再等待第二次確認。
-使用者接受後，worker 才下載正式資料並執行完整搜尋；短試跑證據不取代正式 trial 結果。
+使用者接受後，worker 才取得真實行情並執行搜尋；確認前的程式檢查不評估 trial 績效。
 worker 依 manifest 記錄的最大化或最小化方向選出參數，再進行樣本外測試，
 保存各 trial 與選定參數的測試結果。
-第一組正式訓練計算用於估時，受 manifest 的試跑時限約束；其餘候選及保留區間測試
-不受此時限限制。這與確認前涵蓋整個準備程序的 60 秒預算不同。
+第一組正式訓練計算用於估時，受 manifest 的 trial 時限約束；其餘候選及保留區間測試
+不受此時限限制。這與確認前涵蓋整個離線準備程序的 60 秒預算不同。
 
 不可計算的指標不參與排名，沒有可排名候選時工作失敗。
 使用者操作範例見 [README](README.md#使用樣本外驗證與最佳化)。
@@ -336,6 +319,25 @@ CLI 的 pipeline pickle 位於資料快取目錄，manifest 與績效 JSON 則�
 RunService 提供 run 與指標查詢，ArtifactService 提供檔案探索與讀取。
 Dashboard 透過這兩個 services 取得已保存結果。檔案清單、資料表與保存位置見
 [執行產物契約](docs/run_artifacts.md)。
+
+### 獨立行情取樣
+
+獨立的資料取樣能力不屬於 MCP 確認前檢查。DataService 透過 application 層的
+market_sample 協調受限取樣；storage adapter 負責分批讀取 Parquet，將無時區時間視為 UTC，與一般行情載入保持一致。
+取樣以有限日曆區間逐段尋找有效 K 線，跳過休市空窗，直到達到筆數預算或請求結束日；
+每段先以請求期間限制長度，再建立時間差，避免月線等長週期溢位。
+特徵快取只投影時間戳與所需欄位，分批篩選實際樣本的時間戳；保留既有精確合併與
+前後填補語義，合併前先計算重複鍵造成的筆數，超過預算即拒絕。
+取樣不改寫原行情或特徵快取。
+所有 crawler 都提供獨立的 `fetch_sample(..., max_rows=...)`，在來源請求與解析階段
+限制資料量，支援包含終點及單一時間戳的區間；一般 `fetch()` 保留完整資料載入用途。
+新增資料來源也必須實作此取樣介面，不能先完整載入後再截斷。
+Binance Vision 取樣優先日檔，缺檔時才以月檔補取；下載串流寫入有記憶體門檻的暫存檔，
+單一 CSV 以每批最多 1024 列完整掃描，只保留最早的所需 K 線；達到預算後不再讀後續日期檔。
+每個壓縮檔下載上限 16 MiB，單次 `fetch_sample` 累計上限 32 MiB，
+ZIP 宣告的 CSV 解壓大小上限 128 MiB；超限即回報失敗。
+串流取樣 HTTP 拒絕重新導向及額外內容壓縮，避免用戶端在串流檢查前先緩衝或解壓回覆。
+這仍需要完整下載選中的壓縮檔，不能把行數預算解讀為等比例的網路流量上限。
 
 ## ML 訊號研究
 
@@ -365,13 +367,17 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
 驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
 
-`predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，再載入
-pickle 產生訊號。它不判斷資料是否曾用於訓練或選參。`evaluate_signal` 接收
-單一商品的訊號與實際未來報酬，計算訊號品質、分層描述與簡化報酬；提供資料集 ID
-時核對保存資料集的報酬、順序與 horizon 並拒絕 panel，指定記錄才將有限指標交
-leaderboard store 保存。簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
+`MLService.predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，
+再載入 pickle 產生完整訊號；MCP `predict` 經 `predict_page` 只回傳指定預覽頁。
+它不判斷資料是否曾用於訓練或選參。MCP `evaluate_signal` 以 model／dataset ID
+呼叫 `evaluate_prediction`，由後端對完整資料產生訊號並核對資料列、報酬、horizon
+及非重疊標籤區間，拒絕 panel。Python `MLService.evaluate_signal` 保留陣列計算入口；
+提供 dataset ID 時仍須符合完整資料集契約。指定記錄才將有限指標交 leaderboard store
+保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
+簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。這些排名不提供獲利、樣本外來源或執行安全的證明。
+並提供候選數與多重比較限制。MCP 在完整候選集合完成比較與排序後分頁，拒絕時
+只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
 讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
@@ -494,6 +500,18 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 ### MCP 回覆契約
 
+`mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
+及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、configuration、
+example 章節提供，每個回覆列出可讀章節；ML 研究解讀集中在 `get_ml_contract`，
+資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由
+`get_report_sections` 提供。工具描述與輸入 schema 保留呼叫前需要的條件與參數說明，
+不另載入整份研究手冊。這些入口都是標準 MCP tools，不依賴客戶端能讀取伺服器檔案
+或自動載入 resource。
+
+`tooling/context_budget.py` 量測實際註冊的 instructions 與工具投影；Local 測試記錄
+序列化 request 的大小及峰值。這些開發量測不改變產品工具內容，也不推測其他客戶端
+如何選工具、壓縮歷史或預留輸出，使用方式見[開發指南](docs/development.md#量測模型上下文)。
+
 MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。
 預期的應用失敗使用穩定 code 或診斷；參數錯誤、非預期例外與回覆契約錯誤則使用
@@ -503,6 +521,12 @@ MCP error。動態策略參數與指標映射有明確的 JSON 邊界，不受�
 `structuredContent`：單一物件回覆直接位於根層；清單與成功／失敗聯集回覆
 放在 `structuredContent.result`。舊自訂客戶端若直接從根層讀取 `success`、
 `job_id` 等欄位，須依目前 schema 調整；此回覆格式不會遷移或改寫工作區資料。
+
+會隨工作區成長的五項探索清單由 application services 篩選、排序並投影為共用
+`Page[T]`，MCP 回傳 `items` 與續頁資訊；內部 Python 全量查詢保留原用途。
+策略、執行與 artifact 清單只傳識別摘要，詳細 metadata、指標與原始碼由單筆查詢取得。
+這限制每次傳回的筆數及欄位，不限制後端儲存量，也不提供跨寫入的一致快照；
+欄位、篩選與排序見[探索分頁契約](docs/run_artifacts.md#discovery-pages)。
 
 預期的操作失敗保留 `success: false` 或空 `job_id` 等工具語意，並提供穩定的
 `code`；驗證失敗的 `diagnostics` 包含 `code`、`phase` 與 `fix`。

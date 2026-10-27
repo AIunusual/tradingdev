@@ -10,6 +10,9 @@ from tradingdev.adapters.storage.performance import (
     PerformanceStore,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.research import RunSummary
+from tradingdev.app.pagination import paginate
 from tradingdev.domain.performance.catalog import metric_catalog
 
 if TYPE_CHECKING:
@@ -46,6 +49,32 @@ class RunService:
     def list_runs(self) -> list[dict[str, Any]]:
         """List compact default-scope values with explicit detail discovery."""
         return [self._summarize_run(run) for run in self._store.list_runs()]
+
+    def list_runs_page(
+        self,
+        *,
+        strategy_id: str | None = None,
+        revision_id: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[RunSummary]:
+        """Page completed identities, newest first, without loading performance."""
+        rows = [
+            run
+            for run in self._store.list_runs()
+            if (strategy_id is None or run["strategy_id"] == strategy_id)
+            and (revision_id is None or run.get("revision_id") == revision_id)
+        ]
+        rows.sort(key=lambda row: str(row["run_id"]))
+        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        return paginate(
+            rows,
+            project=lambda row: RunSummary.model_validate(
+                {name: row.get(name) for name in RunSummary.model_fields}
+            ),
+            offset=offset,
+            limit=limit,
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         """Return run identity, summary, and available recorded metric scopes."""

@@ -31,12 +31,34 @@ These APIs do not seed arbitrary global RNG calls, third-party engines, or GPU
 operations. Separate concurrent strategy executions must each open a context;
 strategy-created threads or processes must explicitly initialize their own streams.
 
-`get_strategy_contract.config_schema` describes the complete YAML shape. Fixed
+`get_strategy_contract(section="core")` returns the required Python/signal rules,
+base interface and revision lifecycle. Each reply identifies its selected section
+and lists `available_sections` with their purposes. The `content` object contains
+only that complete section: request `section="example"` for the Python/YAML pair,
+or `section="configuration"` for the executable YAML schema and financial-setting
+notes. Unknown sections fail; a missing core reference does not produce an empty
+or partial contract. The default no longer embeds examples and the entire schema.
+
+`get_strategy_contract(section="configuration").content.config_schema` describes
+the complete YAML shape. Fixed
 configuration sections reject unknown fields; strategy parameters remain dynamic.
 Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+
+`list_data_sources` returns registered source descriptions, including asset classes,
+symbol examples, local timeframe choices, applicable `data.market_type` values and
+coverage limitations. Choose a name for `data.requirements.market.source` from that
+catalog. A `null` timeframe list means the adapter does not advertise an exhaustive
+local list, not that every interval is supported. Preparation rejects unknown
+source names and choices excluded by an explicit local timeframe or market-type
+list, without constructing a crawler. Actual availability is checked when the
+approved execution obtains its data. Discovery and plan preparation do not
+download market data.
+The market requirement's symbol and timeframe must match the backtest fields,
+which determine the actual data request. Direct CLI/Python preparation rejects
+contradictory declarations; MCP request overrides update both together.
 
 Generated code must:
 
@@ -154,13 +176,13 @@ fit on the entire evaluation frame and then replay signals over that frame:
 earlier signals would use information from later rows. Strategies that do not
 require training need no additional `fit()` step.
 
-`list_strategies` and `get_strategy` return `execution_capabilities` for bundled,
+`list_strategies` page items and `get_strategy` return `execution_capabilities` for bundled,
 generated and legacy strategies. `training_requirement` is `required`, `optional`
 or `unknown`. `supported_execution_modes` is `["walk_forward"]` for required
 training, all three modes (`backtest`, `walk_forward`, `optimization`) for optional
 training, and `null` for unknown capabilities. These describe intrinsic support,
 not model readiness, configuration validity, lifecycle permission or successful
-trial evidence. A supported walk-forward mode still requires valid `validation`
+validation evidence. A supported walk-forward mode still requires valid `validation`
 settings; bundled strategies may provide a separate `walkforward_config.yaml`.
 Conversely, a config with `validation` still cannot be used for a simple backtest
 or optimization just because its strategy intrinsically supports those modes.
@@ -174,6 +196,11 @@ and parameter overrides cannot replace the registered capability. Generated and
 legacy source remains `unknown` even if it defines `fit()`, declares this YAML
 field or has passed validation/dry-run. No generated source is executed merely
 to discover its capabilities.
+
+Strategy discovery uses the shared [discovery page contract](run_artifacts.md#discovery-pages).
+Its compact items omit full metadata, YAML requirements and recent runs; read
+`get_strategy` for a selected identity instead of assuming the list contains
+all configuration or validation evidence.
 
 Simple-backtest and optimization preparation reject registered strategies that
 require training before data loading or a formal job. The application error code
@@ -189,12 +216,39 @@ training job, or using the separate ML `train_model` tool does not prepare this
 strategy instance. Other preparation errors retain their own codes.
 
 As a final strategy-level guard, bundled `QuantileStrategy.generate_signals()`
-raises `RuntimeError` when
-its regime model or feature engineer is absent. Its `fit(train_df)` requires an
-injected backtest engine; calling it without one skips training and does not
-satisfy model readiness. This guard checks readiness, not the correctness of all
+raises `RuntimeError` when its regime model, feature engineer, or training history
+is absent. Its `fit(train_df)` requires an injected backtest engine; calling it
+without one skips training and does not satisfy model readiness. This guard
+checks readiness, not the correctness of all
 training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
+
+Scoring a window that overlaps the training history must not duplicate that
+history or replay future bars into it. `QuantileStrategy.generate_signals()`
+treats only the training rows that strictly precede the scored frame as history,
+matched on timestamps taken from a `timestamp` column or a `DatetimeIndex` and
+normalized to UTC (naive values are interpreted as UTC). Both frames must carry
+non-missing, unique, strictly increasing timestamps; missing or invalid time
+identities are rejected rather than assuming the training frame precedes scoring.
+When warm-up or immature horizon labels leave a rolling training slice with no
+usable observations, scoring retains the fitted model until observations mature.
+
+Predictions are mapped back by source row. Feature warm-up and missing indicator
+values may remove rows; recursive indicators can also leave subsequent rows
+unavailable. A bar without
+features emits `signal=0` and resets the position, holding count, entry price,
+and size weight. Once features become available, entry conditions are evaluated
+again. A single state machine processes every input row, including unscorable
+rows and chunk boundaries; output length and index match the input.
+Parameter-search evaluation uses the same gap handling on the full source frame.
+Its scoring features omit targets, so a missing future label does not prevent
+prediction on an otherwise usable tail bar.
+Model probability arrays must contain one finite four-class vector per scored
+feature row; malformed model output is rejected instead of treated as missing
+features. Float32 and float64 model outputs are normalized to float64.
+`QuantileFeatureEngineer.transform()` always preserves surviving input index
+labels; callers that need positional mapping supply a positional index.
+
 See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
 data prerequisites and execution-mode restrictions.
 
@@ -351,31 +405,26 @@ Omit those inactive settings to keep the
 request clear. The backtest's data bounds still determine the history supplied
 to the splitter.
 
-`purged_split: true` with a missing, zero or negative horizon fails when the
-validator constructs its splitter. Purged splitting also rejects a nonpositive
-fold count, a negative embargo, a horizon at least as long as the input, too
-many blocks, or a gap that leaves no training rows. The YAML schema rejects
-unknown field names but does not enforce every numerical range or fold geometry;
-successful YAML parsing alone does not establish a usable validation run.
+Preparation rejects a missing, zero or negative purged horizon, a negative purged
+embargo, a nonpositive automatic fold count, and an ordinary automatic split ratio
+outside `(0, 1)`. The splitter repeats its applicable checks during execution and
+also rejects data-dependent problems such as a horizon at least as long as the
+input, too many blocks, or a gap that leaves no training rows. The YAML schema
+rejects unknown field names but does not enforce every numerical range or fold
+geometry; successful YAML parsing alone does not establish a usable validation run.
 The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
 that a strategy's labels are safe. Declare the actual forward horizon when the
 strategy uses such labels. This gate audits row-window geometry, not arbitrary
 feature code or a strategy's independently constructed labels.
 
-The MCP confirmation preflight uses the selected splitter on a bounded sample
-and runs only its first fold through `run_fold`. Purged mode ignores explicit
-dates, `train_ratio` and `expanding` here as in formal execution; it reports
-one tested fold out of `n_splits`, with a `single_fold_only` warning when more
-than one is configured. Plain explicit-date mode samples one train/test pair;
-plain automatic mode retains its ratio and expanding-window settings.
-The confirmation shows the effective mode and identifies inactive settings.
-
-Sample boundaries depend on the sampled history and need not equal full-run
-boundaries. Preflight does not execute the complete validator's pre-fold audit
-or establish that every formal fold can run. The full strategy walk-forward
-execution applies that gate before running its folds. A nonpositive horizon
-means the audit is disabled, not that labels are safe. This differs from the
-ML tool's timestamp/label-interval validation described below.
+MCP confirmation preparation validates configuration and execution mode without
+loading market data, constructing data-dependent folds, fitting a model or running
+any fold through the backtest engine. The confirmation shows the effective mode
+and identifies inactive settings; it does not claim that the requested history
+can form usable folds. The formal strategy walk-forward execution applies the
+complete pre-fold audit after approval and before running its folds.
+A nonpositive horizon means the audit is disabled, not that labels are safe.
+This differs from the ML tool's timestamp/label-interval validation described below.
 
 ## ML Research Contract
 
@@ -409,6 +458,33 @@ close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
 or label rows and reports their count. `horizon` is a positive number of source
 bars, not elapsed calendar days. OHLCV and bookkeeping columns are not added to
 the model's declared feature list.
+
+XGBoost and SafetyVolume's optional direction model label their training frames
+through `FeatureEngineer`: negative, zero and positive forward returns map to
+`-1`, `0` and `1`. GLFT-ML uses `DirectionFeatureEngineer`, where `1` means a
+positive return and `0` means a non-positive return. Both omit rows whose label
+endpoint is unavailable, including the final horizon bars and missing interior
+prices. Inference without targets retains those rows when their features are
+complete. Quantile and SafetyVolume's risk model use their separate target
+builders; they also leave outcomes beyond the supplied frame unavailable.
+
+`FeatureEngineer.transform()` preserves surviving source index labels; there is
+no index-reset option. Callers needing row positions supply a positional index.
+SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
+prediction skips a bar whose own features are unavailable, rather than reusing
+an earlier prediction. Its threshold search evaluates the complete source frame,
+leaves unavailable rows without entry signals, and measures cooldown in source
+bars, including gaps.
+
+The XGBoost and FLAML direction model training APIs require at least one labelled
+training row. A supplied validation frame must also be non-empty. Empty inputs
+raise `ValueError` before model state changes or external training starts,
+preserving any previously fitted model. XGBoost's lookback search requires at
+least 10 mature training rows and 5 mature validation rows per candidate, after
+feature and label filtering. It skips insufficient candidates and raises
+`ValueError` if none qualifies, without installing a default lookback or refitting
+the model. Rolling retraining retains its previous model when the available
+window has fewer than 10 complete labelled rows.
 
 Both `build_dataset` and `build_panel` pass their date bounds to
 `DataService.load_cached`. Bounds without a timezone are interpreted as UTC;
@@ -469,9 +545,13 @@ fits additional models for its folds; it does not replace the artifact with a
 fold model or persist an out-of-fold prediction stream. Preserve the returned
 validation evidence if it is needed later.
 
-`predict` verifies the saved dataset and model blob, requires an exact ordered
-feature-column match, then returns `signal` and `forward_returns` in dataset row
-order with their `model_id`, `dataset_id` and horizon. It does not establish
+MCP `predict` verifies the saved dataset and model blob, requires an exact ordered
+feature-column match, then returns one page of `signal` and `forward_returns` in
+dataset row order with their `model_id`, `dataset_id` and horizon. `offset` starts
+at zero; `limit` defaults to 100 and accepts 1–500. `n_rows` is the complete
+dataset count, not the page length; `next_offset=null` marks the final page.
+`MLService.predict` retains complete arrays for backend and Python callers.
+MCP evaluation does not require retrieving every preview page. Prediction does not establish
 whether the requested data or its label interval was used for fitting or
 parameter selection. Evaluating the final artifact on its training dataset is
 in-sample even when the training response includes validation scores. A separate
@@ -519,10 +599,13 @@ distinguishes the final artifact from the fold models. `leakage_audit_clean`
 describes the implemented split and label-overlap checks only; it cannot prove
 that features, research choices or external inputs are free of future knowledge.
 
-`evaluate_signal` takes one asset's chronological sequence of consecutive bars,
-as equal-length, finite numeric arrays in the same row order, with enough
-observations for the chosen IC `window` and `n_quantiles`
-(2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
+MCP `evaluate_signal(model_id, dataset_id, window=60, n_quantiles=5, record=False)`
+evaluates a verified saved model on the complete single-symbol dataset. The
+backend produces the signal, obtains saved forward returns in the same row
+order and adopts the dataset horizon; the MCP input does not accept arrays or
+a caller-selected horizon. A preview's `offset` or `limit` never restricts
+evaluation. There must be enough observations for the chosen IC `window` and
+`n_quantiles` (2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
 prediction strata and simplified return summaries. These signal statistics are
 separate from backtest performance metrics and do not model transaction costs,
 slippage or order execution. Full-sample strata and their quantile means are
@@ -539,20 +622,24 @@ holding intervals do not overlap. Other rows contribute zero. Cumulative values
 compound these holding-interval returns; means include the inactive rows.
 Returns are indexed by decision row, not realization time, and do not form a
 mark-to-market equity curve. A constant signal cannot form a long/short book and
-is rejected. With no dataset ID, the caller is responsible for chronological
-single-asset alignment and the correct horizon; omission defaults to one bar.
+is rejected.
 
-Whenever `dataset_id` is supplied, evaluation requires a single-symbol dataset,
+The separate Python `MLService.evaluate_signal` accepts equal-length, finite
+numeric signal and forward-return arrays. Without a dataset ID, that caller is
+responsible for chronological single-asset alignment and the correct horizon;
+omission defaults to one bar. Whenever `dataset_id` is supplied, including by
+the MCP backend, evaluation requires a single-symbol dataset,
 all of its rows, exact saved forward returns in order, and a matching horizon
 (or omission to adopt the saved value), including when `record=False`.
 Dataset rows must be strictly chronological, and saved label end times must
 show non-overlapping holding intervals on the simulation grid. Datasets without
 label intervals must be rebuilt for evaluation.
-Panel evaluation is rejected; build a single-symbol dataset and call `predict`
-on it before evaluation. Do not concatenate different assets into one time
-series. `record=True` additionally requires the dataset ID.
-`model_id` is a caller-declared label, not proof of signal origin or a held-out
-evaluation. Recording and candidate-replacement semantics are defined in the
+Panel evaluation is rejected; build a single-symbol dataset for evaluation.
+Do not concatenate different assets into one time series. `record=True`
+additionally requires the dataset ID for Python array callers.
+The MCP path verifies which saved model produced the signal; it does not prove
+a held-out evaluation. Python array callers and existing records may use a
+caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
 [artifact contract](run_artifacts.md#recorded-signal-evaluations).
 `leaderboard` ranks only a metric with a declared direction and, by default,
 only matching measurement contexts. Its optional `dataset_id` filter selects a
@@ -562,6 +649,14 @@ manifest; differences in evaluation settings still require compatible context.
 contexts and must not be presented as a controlled comparison. Retain its
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
+
+MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
+`top_k`. The complete filtered candidate set is compared and ranked before
+paging. `ranked` and `skipped` each return at most `limit` entries at the same
+offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
+shared `next_offset` until `null`, even if one list has no entries on a page.
+Mixed-context rejection reports the full context count, limited examples and
+filter guidance, not every context's text.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -584,18 +679,18 @@ workspace.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
 5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: capture
-   an execution manifest, perform a bounded sample run, and prepare a plain-language
-   confirmation and HTML artifact. Only runnable or promoted generated strategies,
-   and promoted bundled strategies, are eligible. Preparation creates a plan,
+   an execution manifest, check code and configuration offline, and prepare a
+   plain-language confirmation and HTML artifact. Only runnable or promoted
+   generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
 6. Present `confirmation_summary` and a clickable link to the complete HTML,
    then end the conversation turn. Wait for the user to read it and explicitly
    approve, decline or request changes in a later turn. Do not paste the full
-   settings, search grid or trial evidence into the conversation.
+   settings, search grid or validation evidence into the conversation.
 7. `submit_execution_decision(plan_id, decision)` relays that decision:
    `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
    with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
-   trial and another user confirmation. Initial task instructions, silence,
+   code check and another user confirmation. Initial task instructions, silence,
    questions or ambiguous replies must not be treated as approval.
 
 The backend trusts the caller to relay the user's actual decision. It cannot
@@ -705,8 +800,8 @@ dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
-Every preparation requires `presentation` and `minimum_history_bars`; `sample_bars`
-defaults to 1024 and is bounded from 64 to 4096. Presentation has a `title`, `summary`,
+Every preparation requires `presentation`; callers do not supply historical
+sample budgets or minimum-history declarations. Presentation has a `title`, `summary`,
 and `parameter_descriptions`, which maps the union of captured constructor and
 effective candidate leaves to a distinct readable `label`, a `description`, and
 optional `unit`. Keys are
@@ -716,12 +811,14 @@ The confirmation builder rejects missing or extra descriptions. The assistant
 supplies this technical mapping; the user reviews readable names, values and units.
 Optional `backtest_overrides` capture execution costs and settings in the same plan.
 
-The preflight receipt records sampled date windows, checked paths, candidate/fold
-coverage, trade and execution-record counts, and limitations. Each sampled window
-must meet the declared minimum history. A zero-trade sample may pass its signal and
-engine checks, but the receipt says that the trading path was not exercised.
-Walk-forward and optimization samples cover only the reported fold and candidate;
-they do not establish that all later runs will pass. `get_execution_plan` reads the
+The preflight receipt records offline code/configuration checks and the fixed
+synthetic signal fixtures used for generated strategies. It does not contain market
+windows, trades or performance. Preparation neither loads real market data nor
+runs the backtest engine or model training. Bundled strategies receive configuration,
+execution-mode and parameter checks without calling `fit` or `generate_signals`;
+training-dependent signal checks are explicitly deferred. The confirmation lists
+market availability, data-dependent fold geometry, training and trade/performance
+behavior as unverified until formal execution. `get_execution_plan` reads the
 fixed confirmation, while `cancel_execution_plan` cancels an unsubmitted plan.
 Changing requested parameters requires a new preparation and approval.
 
@@ -766,15 +863,16 @@ dataframe output.
 
 Preparation is another code-execution boundary. MCP preparation runs under a
 supervised subprocess with a 60-second budget covering imports, constructor/default
-capture, generated signal-contract checks, sample engine execution and serialization.
-`StrategyLoader.resolve_execution` and `BacktestService.prepare_execution` load
+capture, generated signal-contract checks, parameter binding and manifest serialization.
+`StrategyLoader.resolve_execution` and `BacktestService.capture_execution` load
 generated module-level Python and create strategy instances. Generated strategies
 also run 80-row and 240-row contract fixtures with the captured settings, including
-when `parameters` is omitted or `null`. Optimization checks the captured base and
-the sampled candidate. Module-level code can execute more than once. These actions
+when `parameters` is omitted or `null`. Optimization checks signals for the captured
+base and validates every candidate's parameter binding; it does not run candidate
+signals, engines or performance calculations. Module-level code can execute more than once. These actions
 can have effects even when preparation fails without creating a formal job.
 
-The supervised timeout and process cleanup bound the sample attempt; they do not
+The supervised timeout and process cleanup bound the program checks; they do not
 isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
 preparation continue to execute generated Python in their calling process. A
 workspace path is an output location, not a security boundary.
@@ -782,7 +880,7 @@ workspace path is an output location, not a security boundary.
 For scheduled jobs, workers later repeat the generated execution-contract checks,
 then construct and execute the strategy using the captured settings; generated
 optimization candidates also undergo these checks before their trial runs.
-These execution steps are separate from validation, dry-run and sample checks.
+These execution steps are separate from validation, dry-run and plan preparation.
 The approval gate controls formal submission; it does not make earlier generated
 code execution safe. None of these checks provides a process sandbox. Generated
 strategies must therefore be reviewed as runtime code at all of these boundaries

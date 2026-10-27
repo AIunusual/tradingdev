@@ -57,6 +57,14 @@ class StrategyExecutionGate(Protocol):
 
 
 @dataclass(frozen=True)
+class CheckedExecution:
+    """A captured manifest and the synthetic inputs actually checked for it."""
+
+    manifest: ExecutionManifest
+    synthetic_fixture_rows: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class BacktestRun:
     """Result and metadata from a backtest service run."""
 
@@ -115,6 +123,19 @@ class BacktestService:
         parameters: dict[str, Any] | None = None,
     ) -> ExecutionManifest:
         """Bind the strategy and resolve application defaults before execution."""
+        return self.capture_execution(
+            raw_config, kind=kind, optimization=optimization, parameters=parameters
+        ).manifest
+
+    def capture_execution(
+        self,
+        raw_config: dict[str, Any],
+        *,
+        kind: Literal["backtest", "walk_forward", "optimization"],
+        optimization: OptimizationSpec | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> CheckedExecution:
+        """Return the same preparation with evidence from completed contract checks."""
         config = deepcopy(raw_config)
         run_config = BacktestRunConfig.model_validate(config)
         spec = self.prepare_strategy(config)
@@ -125,6 +146,9 @@ class BacktestService:
         if kind == "walk_forward" and not run_config.is_walk_forward:
             msg = "Config has no validation section for walk-forward."
             raise ValueError(msg)
+        if kind == "walk_forward":
+            assert run_config.validation is not None
+            self._check_validation_settings(run_config.validation)
         config["data"] = self._data_service.execution_config(
             config, run_config.backtest
         )
@@ -149,8 +173,24 @@ class BacktestService:
             optimization=optimization,
             strategy_execution=strategy_execution,
         )
-        self.check_execution(manifest.config_for_execution(), strategy_execution)
-        return manifest
+        fixture_rows = self.check_execution(
+            manifest.config_for_execution(), strategy_execution
+        )
+        return CheckedExecution(manifest, fixture_rows)
+
+    @staticmethod
+    def _check_validation_settings(config: WalkForwardConfig) -> None:
+        """Check active split settings without claiming data-dependent fold coverage."""
+        if config.purged_split:
+            if config.label_horizon < 1:
+                raise ValueError("Purged validation requires a positive label horizon")
+            if config.embargo_bars < 0:
+                raise ValueError("Purged validation embargo must not be negative")
+        explicit = not config.purged_split and config.train_start is not None
+        if not explicit and config.n_splits < 1:
+            raise ValueError("Automatic validation requires positive n_splits")
+        if not explicit and not config.purged_split and not 0 < config.train_ratio < 1:
+            raise ValueError("Automatic validation train_ratio must be between 0 and 1")
 
     def check_execution(
         self,
@@ -158,11 +198,12 @@ class BacktestService:
         execution: StrategyExecution,
         *,
         parameter_overrides: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> tuple[int, ...]:
         """Check generated experiment settings at both fixture depths, read-only."""
         if execution.kind != "generated":
-            return
+            return ()
         checker = SignalContractChecker(self._strategy_loader)
+        checked_rows: list[int] = []
         for fixture_rows in (VALIDATE_FIXTURE_ROWS, DRY_RUN_FIXTURE_ROWS):
             checked = checker.check_config(
                 raw_config,
@@ -177,6 +218,8 @@ class BacktestService:
                     f"Strategy execution contract failed ({fixture_rows} rows): "
                     f"{detail}"
                 )
+            checked_rows.append(fixture_rows)
+        return tuple(checked_rows)
 
     def run_manifest(self, manifest: ExecutionManifest) -> BacktestRun:
         """Execute a verified specification without rebuilding its defaults."""

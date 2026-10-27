@@ -1,4 +1,4 @@
-"""Real plan storage and MCP dispatch with an explicitly substituted sample worker."""
+"""Real plan storage and MCP dispatch with substituted offline validation."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from tradingdev.domain.preflight import (
     PreflightCheck,
     PreflightReceipt,
     PreflightRequest,
-    PreflightWindow,
 )
 from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import execution
@@ -37,7 +36,7 @@ class RecordingRunner(ProcessRunner):
 
 
 class FixedPreflight(PreflightService):
-    """Protocol tests do not claim to execute a real sample engine."""
+    """Protocol tests substitute code checks and never claim historical execution."""
 
     def __init__(self, prepared: PreparedExecution) -> None:
         self.prepared = prepared
@@ -47,35 +46,30 @@ class FixedPreflight(PreflightService):
         self.requests.append(request)
         checked_paths: list[PreflightCheck] = [
             "configuration",
-            "signals",
-            "engine",
-            "serialization",
+            "execution_capabilities",
+            "parameter_binding",
+            "manifest_serialization",
         ]
-        if self.prepared.manifest.strategy_execution.kind == "generated":
+        generated = self.prepared.manifest.strategy_execution.kind == "generated"
+        if generated:
             checked_paths.append("signal_contract")
         return PreflightResult(
             self.prepared,
             PreflightReceipt(
                 manifest_hash=self.prepared.manifest.manifest_hash,
                 elapsed_seconds=0.5,
-                sample_bars_requested=request.sample_bars,
-                sample_bars_used=128,
-                minimum_history_bars=request.minimum_history_bars,
-                data_source=self.prepared.manifest.config_copy()["data"][
-                    "requirements"
-                ]["market"]["source"],
-                windows=[
-                    PreflightWindow(
-                        role="full",
-                        start="2024-01-01",
-                        end="2024-01-06",
-                        rows=128,
-                    )
-                ],
                 checked_paths=checked_paths,
-                trade_count=1,
-                execution_record_count=2,
-                trading_path_exercised=True,
+                synthetic_fixture_rows=[80, 240] if generated else [],
+                signal_check=(
+                    "synthetic_contract_passed" if generated else "bundled_not_executed"
+                ),
+                training_requirement="unknown" if generated else "optional",
+                not_checked=[
+                    "historical_data",
+                    "backtest_engine",
+                    "training",
+                    "performance",
+                ],
             ),
         )
 

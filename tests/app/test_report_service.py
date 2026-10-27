@@ -654,7 +654,9 @@ def test_csv_downloads_bind_every_run_and_scope_to_its_own_complete_records(
     assert "atob(button.dataset.json)" in path.read_text()
 
 
-@pytest.mark.parametrize("previous_version", ["6", "7", "8", "9", "10", "11", "12"])
+@pytest.mark.parametrize(
+    "previous_version", ["6", "7", "8", "9", "10", "11", "12", "17"]
+)
 def test_template_upgrade_publishes_new_report_and_keeps_previous_report(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
     monkeypatch: pytest.MonkeyPatch,
@@ -862,6 +864,8 @@ def test_reports_without_details_keep_selected_sections_in_main_view(
     assert re.findall(r"<section data-section='([^']+)'>", main) == expected
     if "overview" in sections:
         assert "本報告未選取單組詳情章節" in main
+        assert "class='table-navigation'" not in main
+        assert "查看明細 →</a>" not in main
         encoded = re.search(r"data-table-json='comparison' data-json='([^']+)'", main)
         assert encoded is not None
         assert json.loads(base64.b64decode(encoded[1])) == comparison
@@ -893,6 +897,20 @@ def test_selected_detail_sections_have_unique_destinations(
         target[1:] for target in targets
     ]
     assert set(re.findall(r"href='(#result-\d+-\d+)'", text)) == set(targets)
+    if include_overview:
+        overview = text.split("<div id='overview-view'>", 1)[1].split(
+            "<div id='result-view' hidden>", 1
+        )[0]
+        assert "<strong>如何查看詳細結果：</strong>" in overview
+        assert "交易紀錄" not in overview
+        assert re.findall(
+            r"<a href='(#result-\d+-\d+)' aria-label='查看結果 (\d+) 的明細'>"
+            r"\d+ · 查看明細 →</a>",
+            overview,
+        ) == [(target, str(index)) for index, target in enumerate(targets, 1)]
+        first_column = comparison["columns"][0]
+        assert first_column["field"] == "sequence" and first_column["visible"]
+        assert "明細" in first_column["title"]
     details = text.split("<div id='result-view' hidden>", 1)[1].split("<footer>", 1)[0]
     assert re.findall(r"<section data-section='([^']+)'>", details) == [
         "provenance",

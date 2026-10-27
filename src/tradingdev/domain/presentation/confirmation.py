@@ -36,7 +36,7 @@ SECTION_TITLES: dict[SectionId, str] = {
     "execution": "資金、交易成本與執行設定",
     "validation": "分段驗證方式",
     "optimization": "參數搜尋方式",
-    "preflight": "確認前的試跑結果",
+    "preflight": "確認前的程式檢查",
     "limitations": "限制與待確認事項",
 }
 
@@ -58,7 +58,15 @@ class ConfirmationPresentation(_ConfirmationModel):
 
     title: NonemptyText
     summary: NonemptyText
-    parameter_descriptions: dict[str, ParameterDescription]
+    parameter_descriptions: dict[str, ParameterDescription] = Field(
+        description=(
+            "Human labels, meanings and units for every effective constructor "
+            "parameter, including defaults; never executable values. Keys are JSON "
+            "pointers into constructor arguments: /fast_period for generated "
+            "strategies, /config/k_period or /fit_config/... for bundled strategies. "
+            "Preparation returns required_parameter_paths for missing descriptions."
+        )
+    )
 
 
 class ConfirmationField(_ConfirmationModel):
@@ -92,7 +100,7 @@ class ConfirmationIdentity(_ConfirmationModel):
 class ConfirmationDocument(_ConfirmationModel):
     """The complete built-in template, without caller-selected omissions."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     title: NonemptyText
     summary: NonemptyText
     sections: tuple[ConfirmationSection, ...]
@@ -741,141 +749,63 @@ def _optimization_section(
 
 _CHECK_NAMES = {
     "configuration": "完整設定解析",
-    "signal_contract": "策略訊號契約檢查",
-    "signals": "以本次設定產生訊號",
-    "fit": "策略訓練流程",
-    "engine": "實際回測引擎執行",
-    "serialization": "結果資料序列化",
-    "candidate_binding": "搜尋候選與執行設定綁定",
+    "execution_capabilities": "執行模式與訓練需求檢查",
+    "parameter_binding": "策略參數綁定",
+    "manifest_serialization": "固定執行設定序列化",
+    "signal_contract": "合成資料的訊號契約檢查",
+    "candidate_binding": "搜尋候選參數綁定",
 }
-_WARNING_TEXT = {
-    "no_trades_observed": (
-        "試跑沒有觀察到交易；已完成執行流程，"
-        "但尚未驗證此策略在樣本中的成交與交易成本路徑。"
-    ),
-    "partial_historical_sample": (
-        "試跑只涵蓋受限的歷史資料樣本，完整期間仍可能遇到樣本未涵蓋的資料或執行情況。"
-    ),
-    "single_fold_only": "試跑未涵蓋所有驗證分段；其餘分段會在正式回測執行。",
-    "single_candidate_only": "試跑未涵蓋全部參數組合；其餘候選會在正式參數搜尋執行。",
+_NOT_CHECKED_TEXT = {
+    "historical_data": "尚未取得或檢查真實行情；實際可用日期、筆數與資料缺口尚未驗證。",
+    "backtest_engine": "尚未執行回測引擎，成交、成本與停損停利路徑尚未驗證。",
+    "training": "尚未訓練模型或執行驗證分段；訓練與訓練後訊號可能在正式執行時失敗。",
+    "performance": "尚未計算績效；程式檢查通過不代表策略會獲利。",
 }
 
 
 def _preflight_sections(
     manifest: ExecutionManifest, preflight: PreflightReceipt
 ) -> tuple[ConfirmationSection, ConfirmationSection]:
-    manifest.verify(expected_hash=preflight.manifest_hash)
-    checked = set(preflight.checked_paths)
-    required = {
-        "configuration",
-        "signals",
-        "engine",
-        "serialization",
-    }
-    if manifest.strategy_execution.kind == "generated":
-        required.add("signal_contract")
-    if manifest.kind == "walk_forward":
-        required.add("fit")
-    if manifest.kind == "optimization":
-        required.add("candidate_binding")
-    if checked != required or len(checked) != len(preflight.checked_paths):
-        raise ValueError("Preflight evidence differs from the required execution paths")
-    roles = tuple(window.role for window in preflight.windows)
-    expected_roles = ("full",) if manifest.kind == "backtest" else ("train", "test")
-    if roles != expected_roles:
-        raise ValueError("Preflight windows do not cover the selected execution path")
-    config = manifest.config_copy()
-    if preflight.data_source != config["data"]["requirements"]["market"]["source"]:
-        raise ValueError("Preflight data source differs from the manifest")
-    if manifest.optimization is not None:
-        if preflight.total_candidates != manifest.optimization.total_combinations:
-            raise ValueError("Preflight candidate coverage differs from the manifest")
-    elif preflight.total_candidates is not None:
-        raise ValueError("Non-optimization preflight cannot claim candidate coverage")
-    if manifest.kind == "walk_forward":
-        validation = config["validation"]
-        explicit = not validation["purged_split"] and all(
-            validation[key] is not None
-            for key in ("train_start", "train_end", "test_start", "test_end")
-        )
-        expected_folds = 1 if explicit else validation["n_splits"]
-        if preflight.total_fold_count != expected_folds:
-            raise ValueError("Preflight fold coverage differs from the manifest")
-    if manifest.kind != "walk_forward" and preflight.total_fold_count is not None:
-        raise ValueError("Non-validation preflight cannot claim fold coverage")
+    preflight.verify_manifest(manifest)
     fields = [
-        _field("試跑狀態", "已完成必要檢查，可供使用者確認"),
-        _field("試跑耗時", preflight.elapsed_seconds, unit="秒"),
+        _field("程式檢查狀態", "已完成必要檢查，可供使用者確認"),
+        _field("程式檢查耗時", preflight.elapsed_seconds, unit="秒"),
         _field(
-            "試跑資料管道",
-            "本次設定的行情資料管道",
-            "此項不代表已向外部資料供應商驗證完整行情。",
+            "訊號檢查範圍",
+            {
+                "synthetic_contract_passed": "已通過固定合成資料的訊號契約檢查",
+                "deferred_until_training": "此策略須先訓練；本次只檢查設定與執行模式",
+                "bundled_not_executed": "內建策略只檢查設定與執行模式，未執行訊號",
+            }[preflight.signal_check],
+            "合成測資不是歷史行情，不能據此宣稱已驗證策略的所有交易規則。",
         ),
-        _field("試跑資料來源", _source(preflight.data_source)),
-        _field("試跑資料上限", preflight.sample_bars_requested, unit="根 K 線"),
-        _field("實際使用資料", preflight.sample_bars_used, unit="根 K 線"),
-        _field(
-            "宣告的最低歷史資料需求",
-            preflight.minimum_history_bars,
-            "每個試跑區間均達此需求；此需求由策略準備階段宣告。",
-            unit="根 K 線",
-        ),
-        _field("觀察到的交易", preflight.trade_count, unit="筆"),
-        _field(
-            "保存的執行紀錄",
-            preflight.execution_record_count,
-            missing="此引擎未提供",
-            unit="筆",
-        ),
-        _field("樣本觸發交易路徑", preflight.trading_path_exercised),
     ]
+    if preflight.synthetic_fixture_rows:
+        fields.append(
+            _field(
+                "合成訊號檢查筆數",
+                "、".join(str(rows) for rows in preflight.synthetic_fixture_rows),
+                "分別檢查兩段固定合成測資，不代表歷史暖機或行情覆蓋量。",
+                unit="根 K 線",
+            )
+        )
     fields.extend(
         _field(_CHECK_NAMES[check], "通過") for check in preflight.checked_paths
     )
-    for index, window in enumerate(preflight.windows, 1):
-        role = {"full": "策略樣本", "train": "訓練樣本", "test": "測試樣本"}[
-            window.role
-        ]
-        fields.extend(
-            [
-                _field(f"區間 {index}（{role}）開始", window.start),
-                _field(f"區間 {index}（{role}）結束", window.end),
-                _field(f"區間 {index}（{role}）筆數", window.rows, unit="根 K 線"),
-            ]
+    if preflight.parameter_combinations_checked is not None:
+        fields.append(
+            _field(
+                "已檢查參數綁定的組合數",
+                preflight.parameter_combinations_checked,
+                "只檢查參數合法性，不代表已執行候選的歷史回測或比較績效。",
+                unit="組",
+            )
         )
-    warnings = set(preflight.warnings)
-    warnings.add("partial_historical_sample")
-    if preflight.trade_count == 0:
-        warnings.add("no_trades_observed")
-    for tested, total, label, warning in (
-        (
-            preflight.tested_fold_count,
-            preflight.total_fold_count,
-            "已試跑的驗證分段",
-            "single_fold_only",
-        ),
-        (
-            preflight.tested_candidates,
-            preflight.total_candidates,
-            "已試跑的參數組合",
-            "single_candidate_only",
-        ),
-    ):
-        if tested is not None and total is not None:
-            fields.append(_field(label, f"{tested} / {total}"))
-            if tested < total:
-                warnings.add(warning)
-            else:
-                warnings.discard(warning)
-    if warnings - _WARNING_TEXT.keys():
-        raise ValueError("Preflight warning lacks a built-in confirmation description")
-    limitations = tuple(
-        _WARNING_TEXT[warning] for warning in _WARNING_TEXT if warning in warnings
-    ) + (
-        "試跑通過不代表策略會獲利，也不能保證完整回測不會出錯。",
-        "策略名稱、摘要與參數解釋由模型提供；參數值、執行設定與試跑結果由後端固定。",
-        "確認後只執行這個版本。若程式或有效設定需要修改，必須重新試跑並再次確認；暫時性錯誤可在相同設定下重試。",
-        "請選擇開始正式回測、要求調整設定，或取消。確認前不會啟動完整回測。",
+    limitations = tuple(_NOT_CHECKED_TEXT[check] for check in preflight.not_checked) + (
+        "程式檢查不保證完整回測成功，也不是程式安全隔離。",
+        "策略名稱、摘要與參數解釋由模型提供；參數值、執行設定與程式檢查結果由後端固定。",
+        "確認後只執行這個版本。若程式或有效設定需要修改，必須重新檢查並再次確認。",
+        "請選擇開始正式回測、要求調整設定，或取消。確認前不取得真實行情、不訓練模型、不執行回測。",
     )
     return _section("preflight", fields), _section(
         "limitations", paragraphs=limitations
@@ -889,7 +819,7 @@ def build_confirmation_document(
     *,
     plan_id: str | None = None,
 ) -> ConfirmationDocument:
-    """Project every effective setting and verified sample into the fixed template."""
+    """Project effective settings and program evidence into the fixed template."""
     preflight = PreflightReceipt.model_validate(preflight.model_dump(mode="python"))
     validate_presentation(manifest, presentation)
     config = _object(manifest.config_for_execution(), "execution")

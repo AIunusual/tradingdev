@@ -105,8 +105,8 @@ Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
 `plan_id`; they do not create a job. `submit_execution_decision` with `approve`
 returns the job ID after the caller relays the user's explicit consent.
-Job status, job lists, and run
-records carry the same digest; historical entries without an execution manifest
+Job status, job-list items, and `get_run` records
+carry the same digest; historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
@@ -115,7 +115,7 @@ specification. The old MCP `start_backtest`, `start_walk_forward`,
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
 `cancel_job` reject their responses at the MCP boundary; even one such record
-causes the entire `list_jobs` response to fail validation. Preparing another plan
+causes a `list_jobs` page containing that record to fail validation. Preparing another plan
 in the same workspace does not repair those records. After using the version that
 created the jobs to stop its workers and server and verify cleanup, preserve the
 old workspace at its original location and configure the new MCP server with a
@@ -290,7 +290,11 @@ its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-`evaluate_signal(record=True)` requires a verified saved single-symbol dataset.
+MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
+signal from a verified saved model and single-symbol dataset, then records its
+evaluation. Preview pages are not persisted prediction artifacts and are never
+the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
+arrays and requires a verified dataset when recording.
 Whenever `dataset_id` is supplied, including without recording, the signal must
 cover all its rows, the supplied forward returns must exactly match the saved
 `forward_return` values in row order, and an explicit horizon must equal the
@@ -314,12 +318,15 @@ IDs fail. Other filters combine with this selector. Different IC windows or
 quantile counts require `allow_mixed=True`, which never bypasses dataset
 verification.
 
-The entry ID includes the dataset, evaluation context and caller-supplied model
-ID. With no model ID, it also includes a signal fingerprint computed from a
+The entry ID includes the dataset, evaluation context and model ID.
+With no model ID, it also includes a signal fingerprint computed from a
 canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. With a model ID, that ID is a caller-declared label:
-recording does not prove that this model produced the supplied signal or that
-the signal was generated out of sample. Repeating a model/dataset/context entry
+boundaries are preserved. MCP evaluation validates the model that generated its
+signal. Existing records and Python array callers may instead use a
+caller-declared model label: their ID alone does not prove signal origin. The
+stored format has no provenance discriminator, so a leaderboard must not label
+all historical rows as verified-origin. Neither path proves out-of-sample
+evaluation. Repeating a model/dataset/context entry
 replaces its earlier metrics, including when the caller supplies different
 signal values. Distinct unlabelled signals remain separate candidates.
 
@@ -446,29 +453,12 @@ on a later run. Integrity verification assumes the job's expected digest remains
 trusted; it is not a security boundary against someone controlling both the
 database and workspace files.
 
-## Execution Plans and Confirmation Documents
+## Bounded Historical Sampling
 
-`ExecutionPlan` schema version 1 binds a unique 32-character `plan_id`, the full
-execution manifest, `original_config_path`, `PreflightReceipt`,
-`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
-The hash covers canonical JSON of every field except itself. The document and
-preflight hashes must identify the same manifest; the document also identifies
-the same plan. Plans currently expire one hour after preparation. The content
-does not change when approval state changes.
-
-`PreflightService` runs preparation and sample execution in a supervised child
-with a default 60-second budget, including imports, configuration resolution,
-generated signal-contract checks, sample data acquisition, engine execution and
-result serialization. Process cleanup has its own deadline. Success is returned
-only after verified worker cleanup. The request supplies
-`minimum_history_bars` and `sample_bars` (default 1024, allowed 64–4096), with
-the minimum required history bounded by that total budget. Every actual sample
-window must satisfy the declared history requirement. A split execution needs
-enough total budget for its training and test windows separately.
-
-The sample uses the selected market-data pipeline and effective settings.
-It searches bounded calendar windows within the requested dates, continuing
-past empty market-closure windows until it reaches the bar budget or end date.
+`DataService.load_sample` and crawler `fetch_sample` remain independent data
+utilities; MCP confirmation preparation does not call them. Sampling uses the
+selected market-data pipeline and effective settings and searches bounded calendar
+windows within the requested dates, continuing past empty market-closure windows until it reaches the bar budget or end date.
 Cached Parquet data is read in batches, interpreting timezone-naive timestamps
 as UTC just like ordinary loading. Feature caches project only the timestamp
 and requested value column, retaining exact matches to selected market bars.
@@ -489,47 +479,70 @@ Each selected CSV is scanned in batches of at most 1024 rows, retaining only
 the earliest requested bars even when stored rows are out of order. Later-date
 archives are not read once the output budget is satisfied. Downloads are limited
 to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
-is limited to 128 MiB. Exceeding a limit fails preparation.
+is limited to 128 MiB. Exceeding a limit fails the sampling operation.
 An archive is still downloaded in full before parsing, so sample bar counts do
 not imply proportionate network traffic. These are application-level resource
 controls, not an operating-system memory limit or a Python sandbox.
-Backtests sample one window; walk-forward samples one train/test fold;
-optimization samples its first candidate on both training and held-out periods.
-Temporary sample results, data and tool caches live in an independent temporary
-directory, outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP`
-also point inside that directory, containing standard temporary files created
-by third-party model training without changing the parent's environment.
-Successful, failed and timed-out workers
-are stopped and verified before their files are deleted. If process cleanup
-cannot be verified, the directory is retained and the operation reports failure;
-file cleanup failure is also an error. No successful sample publishes a regular
-job or run. This process supervision is not a complete generated-Python sandbox.
 
-The receipt records:
+## Execution Plans and Confirmation Documents
 
-- `manifest_hash`, elapsed seconds, requested/used sample bars and declared
-  minimum history;
-- `data_origin: market_data`, provider ID, and actual `windows` with role,
-  start/end timestamps and row count;
-- `checked_paths`: backend-issued check codes for configuration, signals,
-  actual engine execution and serialization, plus generated signal-contract
-  checks, walk-forward fitting or optimization candidate binding when applicable;
-- observed trade count, optional native execution-record count and whether the
-  sample exercised the trading path;
-- tested/total fold or candidate counts, and explicit coverage warnings.
+`ExecutionPlan` schema version 2 binds a unique 32-character `plan_id`, the full
+execution manifest, `original_config_path`, `PreflightReceipt`,
+`ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
+The hash covers canonical JSON of every field except itself. The document and
+preflight hashes must identify the same manifest; the document also identifies
+the same plan. Plans currently expire one hour after preparation. The content
+does not change when approval state changes.
 
-`market_data` means the configured data pipeline was used. Offline tests may
-substitute the provider; their receipts do not prove live external-market
-verification. Zero trades alone do not fail preparation: the document says the
-engine completed but this sample did not cover the strategy's trade/cost path.
-Optimization additionally requires the first candidate's sampled training
-objective to be available and finite. Otherwise preparation fails with
-`unrankable_sample_objective`, even if another candidate or the full training
-period could yield a rankable value. Enlarge the sample within its allowed budget
-or revise the settings and prepare again. A zero-trade sample can therefore fail
-when the selected objective cannot be calculated without trades.
-The document also states that remaining dates, folds and candidate combinations
-may still fail during full execution. Sample success is not a profitability claim.
+`PreflightService` performs offline preparation in a supervised child with a
+60-second default budget covering imports, configuration resolution, execution-mode
+and parameter binding checks, generated signal-contract checks, and manifest
+serialization. Process cleanup has its own deadline. The request contains only
+`kind` and `arguments`; MCP preparation no longer accepts `minimum_history_bars`
+or `sample_bars`. It does not load cached or remote market data, run a backtest
+engine, train a model or serialize performance results.
+
+Generated strategies use the existing fixed 80- and 240-row synthetic fixtures
+with the captured base execution parameters. These check the returned DataFrame,
+input preservation and the `signal` contract, including values in `{-1, 0, 1}`.
+They do not prove the requested trading semantics, absence of look-ahead or
+sufficient warm-up for real history. Bundled strategies receive configuration,
+execution-mode and parameter checks without calling `fit` or `generate_signals`.
+Training-dependent signal execution is deferred until formal training. Optimization
+checks candidate bindings without evaluating any candidate's historical objective;
+a successful plan does not imply that a rankable objective will be available.
+
+The version 2 receipt records:
+
+- `manifest_hash` and `elapsed_seconds`;
+- `checked_paths`: `configuration`, `execution_capabilities`, `parameter_binding`
+  and `manifest_serialization`, plus `signal_contract` for generated strategies
+  and `candidate_binding` for optimization;
+- `synthetic_fixture_rows`: the generated strategy fixture sizes, or an empty
+  list for bundled strategies;
+- `signal_check`: `synthetic_contract_passed`, `deferred_until_training` or
+  `bundled_not_executed`, together with `training_requirement`;
+- `parameter_combinations_checked`: the number of parameter combinations whose
+  bindings were checked, not the number of backtests or performance trials;
+- `not_checked`: `historical_data`, `backtest_engine`, `training` and `performance`.
+
+There are no market windows, fold coverage, trade counts or profitability claims
+in this evidence. The confirmation explicitly states that data availability,
+actual folds, model training, execution costs and performance remain unverified
+until the user approves formal execution. Data or execution failures may therefore
+occur after a successful preparation.
+
+Temporary requests, responses and tool caches live in an independent directory,
+outside regular run history. The child's `TMPDIR`, `TMP` and `TEMP` also point
+inside that directory without changing the parent's environment. Successful,
+failed and timed-out workers are stopped and verified before files are deleted.
+If process cleanup cannot be verified, the directory is retained and the operation
+reports failure; file cleanup failure is also an error. Preparation publishes no
+regular job or run. These resource controls are not a generated-Python sandbox.
+
+Plan and confirmation-document schemas are both version 2. Older confirmation
+plans must be prepared and approved again; they are not automatically migrated
+or deleted. Existing run results and reports do not need to be recomputed.
 
 `ConfirmationPresentation` accepts only model-authored title, summary and
 `parameter_descriptions`. Description keys are JSON pointers relative to captured
@@ -546,7 +559,7 @@ extra descriptions return `invalid_confirmation_presentation` with
 `required_parameter_paths`, allowing the model to repair wording without changing
 the source revision. Model units do not rescale captured values.
 
-The backend builds a typed document with fixed strategy, market, parameters,
+The backend builds a version 2 typed document with fixed strategy, market, parameters,
 execution, validation, optimization, preflight and limitations sections.
 Non-applicable sections remain explicit. Known cost/rate semantics have backend
 formatters; unknown effective setting fields fail preparation rather than being
@@ -613,6 +626,67 @@ and do not use this conversation workflow.
 - `list_artifacts` / `get_artifact`: result JSON and other artifact lookup.
 - `promote_strategy`: generated strategy artifact promotion.
 - `record_feature_request`: structured unsupported feature requests.
+
+### Discovery Pages
+
+MCP `list_strategies`, `list_runs`, `list_jobs`, `list_available_data` and
+`list_artifacts` return an object with `items`, `offset`, `limit`, `total` and
+`next_offset`, rather than a bare list. `offset` is a nonnegative integer;
+`limit` defaults to 20 and accepts 1–100. Booleans and numeric strings are not
+valid page bounds. `total` counts all matching items before paging, while an
+offset at or beyond the total returns an empty page. Follow `next_offset` until
+it is `null`; do not treat a first page as the complete inventory.
+
+| Tool | Filters applied before paging | Order |
+| --- | --- | --- |
+| `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
+| `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
+| `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
+| `list_available_data` | `symbol`, `timeframe` | symbol, timeframe |
+| `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
+
+Filters are exact matches except cached-data symbols, which normalize case and
+remove `/`. Ordering is deterministic for unchanged data; separate page calls
+are not a snapshot across concurrent writes. Restart at offset zero if the
+inventory changes before claiming complete discovery.
+
+Strategy pages retain identities, lifecycle status and execution capabilities;
+`get_strategy` provides source, configuration and full metadata. Run pages
+contain identities, not metrics or growing scope catalogs; use `get_run` and
+scoped metric/history tools for details. Artifact pages omit producer metadata;
+`get_artifact` retrieves it. These are record-count bounds and deliberately
+small projections, not a universal byte or token budget for arbitrary fields.
+The internal Python service list APIs remain complete lists for their existing
+application callers; only the MCP discovery contract uses these pages.
+
+### Reading Artifact Text
+
+`get_artifact` returns metadata by default. With `include_content=true`, it
+returns one original UTF-8 text page: `offset` counts Unicode code points and
+`limit` defaults to 8192, with a maximum of 32768. `content_page` reports
+`offset`, `limit`, `total_characters`, `next_offset` and `content_sha256`.
+Follow `next_offset` until it is `null`; concatenate every page before parsing
+JSON or hashing a whole report. Use structured result/trade queries when only
+selected observations are needed, rather than reading the entire artifact.
+
+Every content request streams the complete file to validate UTF-8, count
+characters and hash its original bytes, while retaining only the requested
+page. `content_sha256` identifies the bytes observed by that read; it is not a
+claim that the file still matches the registered `artifact.sha256`. Send the
+first page's `content_sha256` as `expected_sha256` on subsequent requests to
+reject changed content. Reading pages does not rewrite files or normalize JSON.
+
+Unknown IDs return `artifact_not_found`; missing files return
+`artifact_file_missing`; other file I/O failures return
+`artifact_file_unreadable`. Invalid UTF-8 returns `artifact_not_text`, including
+invalid bytes outside the requested page. Observed mutation or a mismatched
+expected digest returns `artifact_content_changed`. Invalid page bounds or
+paging options without `include_content=true` return `invalid_artifact_request`;
+the MCP input schema may reject malformed arguments before service execution.
+Metadata lookup does not read file content and remains available for binary
+artifacts. A server-local path is not a public download URL.
+
+### Completed Run Files
 
 The generated revision's `config.yaml` holds its base settings;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
@@ -888,15 +962,27 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 17 uses two navigation levels within one offline HTML
+Report schema 2 / template 18 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
-effective parameters,
-date coverage, train/test role and principal saved metrics. A result link opens
+effective parameters, date coverage, train/test role and principal saved metrics.
+Interactive and static overview tables show explicit `查看明細 →` links in the
+result-sequence column, with a separate navigation hint beside the table.
+The interactive table also supports plain row clicks; keyboard focus alone does
+not navigate. A result link opens
 the matching detail view (`#result-<run-index>-<scope-index>`); a return link brings
 the reader back to the overview. This keeps all optimization training trials and
 the selected parameter's test result distinct. A report is generated explicitly
 after completed or historical result inspection, not automatically by execution.
+MCP instructions request a standard report when completing an execution with
+performance/risk interpretation, unless the user asks for summary/metrics only
+or opts out. This is a client workflow requirement, not an automatic worker step.
+The final user-facing response must deliver the returned report link, identify
+the runs/scopes and explain the selected detail views. Tool success and an
+intermediate link do not establish delivery. Reports and their source runs remain
+workspace artifacts after server shutdown; shutdown does not authorize cleanup.
+If report generation or delivery fails, the client should preserve those sources
+and retry reporting instead of running the strategy again.
 Without `overview`, a result chooser links to the selected detail sections.
 Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.
@@ -1088,11 +1174,11 @@ including values inside nested objects and arrays such as optimization metrics.
 
 Legacy results are also normalized in memory when `JobStore.load_result` reads a
 result file or `SQLiteStore` reads run metrics. These reads do not rewrite the
-stored file or database row. Consequently, `get_run`, `list_runs`, and completed
+stored file or database row. Consequently, `get_run` and completed
 `get_job_status` responses expose legacy non-finite metric values as `null`.
 
-In contrast, `get_artifact(include_content=true)` returns the original UTF-8 file
-text without parsing or normalizing its contents. A legacy `result.json` may
+In contrast, `get_artifact(include_content=true)` returns pages of the original
+UTF-8 file text without parsing or normalizing its contents. A legacy `result.json` may
 therefore still contain `NaN` or `Infinity` even when result lookup returns `null`;
 the content-equivalence statement above does not apply to these legacy artifacts.
 The CLI displays missing or non-finite metrics as `N/A`, while keeping finite zero

@@ -44,8 +44,6 @@ def guidance_arguments(tool: str) -> dict[str, Any]:
         "strategy_id": STRATEGY_ID,
         "symbol": "BTC/USDT",
         "timeframe": "1h",
-        "minimum_history_bars": 20,
-        "sample_bars": 128,
         "presentation": _PRESENTATION,
     }
     if tool == "prepare_backtest":
@@ -108,10 +106,12 @@ def assert_guidance_workflow(calls: list[ToolCall], turns: list[ModelTurn]) -> N
     )
     assert turns[0].calls == calls, "Final turn must contain the actual tool evidence"
     listed = _payload(calls[0])
-    assert isinstance(listed, list), "list_strategies must return a list"
+    assert isinstance(listed, dict) and isinstance(listed.get("items"), list), (
+        "list_strategies must return a page of items"
+    )
     selected = [
         item
-        for item in listed
+        for item in listed["items"]
         if isinstance(item, dict) and item.get("strategy_id") == STRATEGY_ID
     ]
     assert len(selected) == 1, "Discovery must identify the requested strategy"

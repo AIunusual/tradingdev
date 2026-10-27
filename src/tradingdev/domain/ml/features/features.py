@@ -65,14 +65,13 @@ class FeatureEngineer:
         df: pd.DataFrame,
         *,
         include_target: bool = True,
-        preserve_index: bool = False,
     ) -> pd.DataFrame:
-        """Transform OHLCV, optionally retaining source indices after dropping NaNs."""
+        """Transform OHLCV and retain source index labels after dropping NaNs."""
         close = df["close"].astype(float)
         volume = df["volume"].astype(float)
         log_ret = close.apply(np.log).diff()
 
-        features: dict[str, pd.Series] = {"log_return": log_ret}
+        features: dict[str, pd.Series[float]] = {"log_return": log_ret}
 
         for lag in _sampled_lags(self._lookback):
             features[f"ret_lag_{lag}"] = log_ret.shift(lag)
@@ -87,16 +86,19 @@ class FeatureEngineer:
 
         if include_target:
             next_ret = close.shift(-self._target_horizon) / close - 1
-            features["target"] = np.sign(next_ret).fillna(0).astype(int)
+            # The last ``target_horizon`` rows have no realised outcome yet.
+            # Leave them unlabelled so the shared ``dropna`` removes them;
+            # filling them with 0 would invent a flat label that the bars
+            # arriving later contradict.
+            features["target"] = np.sign(next_ret)
 
         result = pd.concat(
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
         result = result.dropna()
-        if not preserve_index:
-            result = result.reset_index(drop=True)
-
+        if include_target:
+            result["target"] = result["target"].astype(int)
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result
 

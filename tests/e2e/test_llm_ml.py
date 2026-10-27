@@ -52,6 +52,7 @@ TRAINING_ARGUMENTS = {
     "embargo": 1,
     "min_train_bars": 20,
 }
+PREDICTION_ARGUMENTS = {"offset": 0, "limit": 20}
 IN_SAMPLE_STATEMENT = "本次 predict／evaluate_signal 使用訓練集，屬 in-sample。"
 VALIDATION_STATEMENT = (
     "validation 衡量訓練流程的樣本外表現，不是此 artifact 的樣本外預測。"
@@ -62,10 +63,11 @@ ML_PROMPT = f"""請透過 TradingDev MCP 完成一個小型 ML 研究流程。
 行情已預先放入後端快取；不要下載行情或寫入策略，也不必啟動回測確認單。
 接著 train_model，dataset_id 使用剛回傳的 ID，其餘參數為
 {json.dumps(TRAINING_ARGUMENTS)}。檢查 validation 成功及 leakage_audit_clean=true。
-之後 predict，以剛回傳 model_id 與同一 dataset_id 產生訊號。
-將 predict 回覆的完整 signal 和 forward_returns 原值傳給 evaluate_signal，
-不可取樣、截短、四捨五入、編造或重新計算。設 window=12、n_quantiles=2、horizon=1，
-record=true，model_id 與 dataset_id 同上。若工具回報錯誤，讀取原因再修正。
+之後 predict，以剛回傳 model_id 與同一 dataset_id 取得預覽，
+使用 offset=0、limit=20。檢查 n_rows 是完整資料集筆數，next_offset 可續讀。
+再 evaluate_signal，使用同一 model_id、dataset_id，設 window=12、n_quantiles=2、
+record=true，讓後端評估全部資料列；不需把預覽陣列傳入或讀完每一頁。
+若工具回報錯誤，讀取原因再修正。
 最後 leaderboard(metric="hit_rate", dataset_id=同一資料集ID)，
 確認排名中包含這次 recorded.entry_id，
 與相同 model_id、dataset_id。讀取 caveats，不要把最高排名當作獲利保證。
@@ -104,7 +106,7 @@ class MLEvidence:
 
 
 def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
-    """Require successful linked responses, exact prediction arrays and ordering."""
+    """Require linked identities, bounded previews and complete backend evaluation."""
     calls = effective_workflow_calls(calls)
     assert all(call.name in ML_TOOLS for call in calls), "Unexpected non-ML tool"
     previous = -1
@@ -155,21 +157,27 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert validation["purged_bars"] >= 3 and validation["embargoed_bars"] >= 3
     assert all(fold["train_bars"] >= 20 for fold in validation["folds"])
     identity = {"model_id": model["model_id"], "dataset_id": dataset_id}
-    assert predicted.arguments == identity, "Prediction identity mismatch"
+    assert predicted.arguments == {**identity, **PREDICTION_ARGUMENTS}, (
+        "Prediction identity or preview bounds mismatch"
+    )
     prediction = predicted.result["prediction"]
     for key, value in identity.items():
         assert prediction[key] == value, "Prediction result identity mismatch"
         assert evaluated.arguments.get(key) == value, "Evaluation identity mismatch"
     assert prediction["n_rows"] == dataset["rows"]
     assert prediction["horizon"] == 1
+    assert prediction["offset"] == 0
+    assert prediction["limit"] == prediction["next_offset"] == 20
     for key in ("signal", "forward_returns"):
-        assert len(prediction[key]) == dataset["rows"]
-        assert evaluated.arguments.get(key) == prediction[key], (
-            f"Evaluation must retain every exact predicted {key} value"
-        )
+        assert len(prediction[key]) == 20, "Prediction preview must be bounded"
+    assert not {"signal", "forward_returns", "horizon"} & evaluated.arguments.keys(), (
+        "Evaluation must use saved identities, not caller arrays or horizon"
+    )
     for key, value in {"record": True, "window": 12, "n_quantiles": 2}.items():
         assert evaluated.arguments.get(key) == value
     evaluation = evaluated.result
+    for key, value in identity.items():
+        assert evaluation[key] == value, "Evaluation result identity mismatch"
     assert evaluation["horizon"] == 1 and evaluation["window"] == 12
     assert evaluation["n_observations"] == dataset["rows"]
     assert evaluation["recorded"]["n_candidates"] == 1
@@ -200,7 +208,9 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     expected = (seed["close"].shift(-1) / seed["close"] - 1).loc[frame["timestamp"]]
     np.testing.assert_allclose(frame["forward_return"], expected, rtol=0, atol=1e-14)
     np.testing.assert_array_equal(frame["target"], np.sign(expected))
-    np.testing.assert_array_equal(evidence.prediction["forward_returns"], expected)
+    np.testing.assert_array_equal(
+        evidence.prediction["forward_returns"], expected.iloc[:20]
+    )
 
     models = ModelArtifactStore(paths.models)
     artifact = models.load(evidence.model["model_id"])
@@ -208,8 +218,8 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert list(artifact.feature_names) == dataset["feature_columns"]
     assert artifact.parameters == evidence.model["parameters"]
     fitted = pickle.loads(models.path_for(evidence.model["model_id"]).read_bytes())
-    np.testing.assert_array_equal(fitted.predict(frame), evidence.prediction["signal"])
-    signal = np.asarray(evidence.prediction["signal"])
+    signal = fitted.predict(frame).to_numpy()
+    np.testing.assert_array_equal(signal[:20], evidence.prediction["signal"])
     realized = expected.to_numpy()
     scored = (signal != 0) & (realized != 0)
     hit_rate = float((np.sign(signal[scored]) == np.sign(realized[scored])).mean())

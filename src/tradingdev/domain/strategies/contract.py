@@ -109,7 +109,8 @@ class SignalContractChecker:
                         phase="config",
                         message=str(exc),
                         fix=(
-                            "Follow get_strategy_contract.config_schema. Use finite "
+                            'Follow get_strategy_contract(section="configuration")'
+                            ".content.config_schema. Use finite "
                             "JSON values, string object keys, and no cycles. Put the "
                             "run random_seed at the YAML root and correct unknown "
                             "fields; backtest.random_seed is not supported."

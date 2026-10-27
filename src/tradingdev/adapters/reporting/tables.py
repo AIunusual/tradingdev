@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -109,8 +110,15 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
                 else ""
             )
             if item["field"] == "sequence" and spec.get("navigate_field"):
-                # Only renderer-generated result hashes are ever used here.
-                cell = f"<a href='{escape(row[spec['navigate_field']])}'>{cell}</a>"
+                destination = row.get(spec["navigate_field"])
+                cell = (
+                    f"<a href='{escape(destination)}' "
+                    f"aria-label='查看結果 {escape(value)} 的明細'>"
+                    f"{cell} · 查看明細 →</a>"
+                    if isinstance(destination, str)
+                    and re.fullmatch(r"#result-\d+-\d+", destination)
+                    else "無可用明細"
+                )
             cells.append(f"<td{attributes}>{cell}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     encoded = base64.b64encode(table_csv(spec)).decode("ascii")
@@ -136,7 +144,14 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
         "<p class='muted'>預設四捨五入至小數點後兩位；"
         "請勾選完整精度後再核算數量 × 價格與費用。"
         "例如顯示 0.10 的成交量不一定等於精確的 0.1。</p>"
-        f"<div class='bokeh-table' data-table-key='{escape(key)}'></div>"
+        + (
+            "<p class='table-navigation'><strong>如何查看詳細結果：</strong>"
+            "點選每列的「查看明細 →」，開啟這組結果的詳細內容。"
+            "互動表格也可直接點選資料列。</p>"
+            if spec.get("navigate_field")
+            else ""
+        )
+        + f"<div class='bokeh-table' data-table-key='{escape(key)}'></div>"
         "<details class='static-table' open><summary>"
         "文字版完整表格（不需 JavaScript）</summary>"
         f"<p>共 {len(rows)} 筆；全部欄位與資料均保留。</p>"
@@ -157,7 +172,12 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
 def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, Any]:
     """Compare every saved result without combining train/test or fold equity."""
     columns = [
-        column("sequence", "結果序號", "integer", width=85),
+        column(
+            "sequence",
+            "結果序號／明細" if navigate else "結果序號",
+            "integer",
+            width=190 if navigate else 85,
+        ),
         column("period", "涵蓋日期（UTC；精確時間可勾選）", width=260),
         column("start", "開始時間（UTC）", visible=False),
         column("end", "結束時間（UTC）", visible=False),

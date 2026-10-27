@@ -16,6 +16,8 @@ from tradingdev.adapters.execution.process_runner import (
     request_worker_stop,
 )
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.jobs import JobState, JobSummary
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
@@ -27,6 +29,7 @@ from tradingdev.app.job_config import (
     bind_strategy_revision,
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.pagination import paginate
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -369,28 +372,58 @@ class JobService:
         """List job summaries newest first."""
         jobs = self._job_store.list_all_jobs()
         now = datetime.now(UTC)
-        summaries = []
-        for job in jobs:
-            created_at = datetime.fromisoformat(str(job["created_at"]))
-            summary: dict[str, Any] = {
-                "job_id": job["job_id"],
-                "job_type": job.get("job_type", "backtest"),
-                "status": job["status"],
-                "strategy_name": job.get("strategy_name"),
-                "revision_id": job.get("revision_id"),
-                "manifest_hash": job.get("manifest_hash"),
-                "symbol": job.get("symbol"),
-                "timeframe": job.get("timeframe"),
-                "start_date": job.get("start_date"),
-                "end_date": job.get("end_date"),
-                "elapsed_seconds": round((now - created_at).total_seconds(), 1),
-                "data_downloaded": job.get("data_downloaded", False),
-            }
-            if job.get("job_type") == "optimization":
-                summary["total_combinations"] = job.get("total_combinations")
-                summary["completed"] = job.get("completed", 0)
-            summaries.append(summary)
-        return summaries
+        return [self._summarize_job(job, now) for job in jobs]
+
+    def list_jobs_page(
+        self,
+        *,
+        status: JobState | None = None,
+        job_type: str | None = None,
+        strategy_name: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[JobSummary]:
+        """Page saved job progress without polling or changing worker state."""
+        rows = [
+            job
+            for job in self._job_store.list_all_jobs()
+            if (status is None or job["status"] == status)
+            and (job_type is None or job.get("job_type", "backtest") == job_type)
+            and (strategy_name is None or job.get("strategy_name") == strategy_name)
+        ]
+        rows.sort(key=lambda row: str(row["job_id"]))
+        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        now = datetime.now(UTC)
+        return paginate(
+            rows,
+            project=lambda row: JobSummary.model_validate(
+                self._summarize_job(row, now)
+            ),
+            offset=offset,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _summarize_job(job: dict[str, Any], now: datetime) -> dict[str, Any]:
+        created_at = datetime.fromisoformat(str(job["created_at"]))
+        summary: dict[str, Any] = {
+            "job_id": job["job_id"],
+            "job_type": job.get("job_type", "backtest"),
+            "status": job["status"],
+            "strategy_name": job.get("strategy_name"),
+            "revision_id": job.get("revision_id"),
+            "manifest_hash": job.get("manifest_hash"),
+            "symbol": job.get("symbol"),
+            "timeframe": job.get("timeframe"),
+            "start_date": job.get("start_date"),
+            "end_date": job.get("end_date"),
+            "elapsed_seconds": round((now - created_at).total_seconds(), 1),
+            "data_downloaded": job.get("data_downloaded", False),
+        }
+        if job.get("job_type") == "optimization":
+            summary["total_combinations"] = job.get("total_combinations")
+            summary["completed"] = job.get("completed", 0)
+        return summary
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued or running background job."""
@@ -486,11 +519,11 @@ class JobService:
                 end_date=end_date,
             )
             apply_backtest_overrides(effective_config, backtest_overrides)
-            manifest = BacktestService(
+            checked = BacktestService(
                 data_service=self._data_service,
                 strategy_gate=self._strategy_service,
                 strategy_loader=self._strategy_loader,
-            ).prepare_execution(effective_config, kind=kind, parameters=parameters)
+            ).capture_execution(effective_config, kind=kind, parameters=parameters)
         except (
             OSError,
             TypeError,
@@ -500,7 +533,9 @@ class JobService:
         ) as exc:
             return self._invalid_execution_request(exc)
 
-        return PreparedExecution(manifest, config_path)
+        return PreparedExecution(
+            checked.manifest, config_path, checked.synthetic_fixture_rows
+        )
 
     def _submit_prepared(
         self, prepared: PreparedExecution | dict[str, Any]

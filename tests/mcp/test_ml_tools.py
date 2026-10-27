@@ -5,19 +5,20 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pytest
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult
+from tests.mcp.ml_fixtures import model_pair, seed_bars
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.contracts.ml import MlContractResponse, SignalEvaluationResponse
+from tradingdev.app.contracts.ml import MlContractResponse, PredictionEvaluationResponse
 from tradingdev.app.ml_service import MLService
+from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import ml
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-_PERFECT = np.linspace(-1.0, 1.0, 120).tolist()
 
 
 def _dispatch(
@@ -59,55 +60,53 @@ def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None
 
 
 def test_evaluate_signal_runs_the_signal_suite(tmp_path: Path) -> None:
-    mcp = MCPServer("ml-eval-test")
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    seed_bars(workspace)
+    service = MLService(workspace)
+    identity = model_pair(service)
+    mcp = StrictMCPServer("ml-eval-test")
+    ml.register(mcp, service)
+    response = PredictionEvaluationResponse.model_validate(
+        _dispatch(mcp, "evaluate_signal", {**identity})
+    )
+    complete = service.predict(**identity)["prediction"]
+    expected = service.evaluate_signal(
+        complete["signal"],
+        complete["forward_returns"],
+        model_id=identity["model_id"],
+        dataset_id=identity["dataset_id"],
+    )
+    assert response.n_observations == complete["n_rows"] > 100
+    assert response.evaluation_id == expected["evaluation_id"]
+    assert response.metrics == expected["metrics"]
+    assert response.n_bins == 5
+    assert len(response.strata) == len(response.simulated.quantile_means) == 2
+
+
+def test_evaluate_signal_rejects_an_unknown_model(tmp_path: Path) -> None:
+    mcp = StrictMCPServer("ml-eval-err")
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
-    forward = [s * 0.01 for s in _PERFECT]
-    response = SignalEvaluationResponse.model_validate(
+    payload = _dispatch(
+        mcp,
+        "evaluate_signal",
+        {"model_id": "not-a-model", "dataset_id": "ds_" + "0" * 16},
+    )
+    assert payload["success"] is False
+    assert payload["code"] == "invalid_signal"
+
+
+@pytest.mark.parametrize("field", ["signal", "forward_returns", "horizon"])
+def test_evaluate_signal_rejects_caller_supplied_data(
+    tmp_path: Path, field: str
+) -> None:
+    mcp = StrictMCPServer("ml-eval-identity")
+    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
+    with pytest.raises(ToolError, match="Unknown arguments"):
         _dispatch(
             mcp,
             "evaluate_signal",
-            {"signal": _PERFECT, "forward_returns": forward},
+            {"model_id": "0" * 16, "dataset_id": "ds_" + "0" * 16, field: []},
         )
-    )
-    assert response.n_observations == 120
-    rank_ic_mean = response.metrics["rank_ic_mean"]
-    assert rank_ic_mean is not None and rank_ic_mean > 0.9
-    assert (
-        response.strata_monotonicity is not None and response.strata_monotonicity > 0.9
-    )
-    assert response.long_short_spread is not None and response.long_short_spread > 0
-    assert response.simulated.long_short_mean is not None
-    assert response.simulated.long_short_mean > 0
-    assert len(response.strata) == 5
-    assert len(response.simulated.quantile_means) == 5
-
-
-def test_evaluate_signal_rejects_length_mismatch(tmp_path: Path) -> None:
-    mcp = MCPServer("ml-eval-err")
-    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
-    payload = _dispatch(
-        mcp,
-        "evaluate_signal",
-        {"signal": [1.0, 2.0], "forward_returns": [1.0]},
-    )
-    assert payload["success"] is False
-    assert payload["code"] == "invalid_signal"
-
-
-def test_evaluate_signal_rejects_too_few_observations(tmp_path: Path) -> None:
-    mcp = MCPServer("ml-eval-short")
-    ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
-    payload = _dispatch(
-        mcp,
-        "evaluate_signal",
-        {
-            "signal": [1.0, 2.0, 3.0],
-            "forward_returns": [0.1, 0.2, 0.3],
-            "window": 60,
-        },
-    )
-    assert payload["success"] is False
-    assert payload["code"] == "invalid_signal"
 
 
 def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) -> None:

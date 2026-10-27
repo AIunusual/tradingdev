@@ -7,10 +7,17 @@ from typing import TYPE_CHECKING
 from mcp_types import ToolAnnotations
 from pydantic import TypeAdapter
 
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    Page,
+    PageLimit,
+    PageOffset,
+)
 from tradingdev.app.contracts.jobs import (
     JobActionFailed,
     JobCancelled,
     JobNotFound,
+    JobState,
     JobStatus,
     JobSummary,
 )
@@ -51,9 +58,26 @@ def register(mcp: MCPServer, service: JobService) -> None:
             open_world_hint=False,
         )
     )
-    def list_jobs() -> list[JobSummary]:
-        """List persisted job summaries; use get_job_status to check worker liveness."""
-        return [JobSummary.model_validate(job) for job in service.list_jobs()]
+    def list_jobs(
+        status: JobState | None = None,
+        job_type: str | None = None,
+        strategy_name: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[JobSummary]:
+        """Discover persisted job progress; get_job_status checks worker liveness.
+
+        Exact filters precede paging; order is created_at descending, job_id ascending.
+        total counts matches; follow next_offset. Restart at offset=0 after inventory
+        changes because pages do not retain a cross-call snapshot.
+        """
+        return service.list_jobs_page(
+            status=status,
+            job_type=job_type,
+            strategy_name=strategy_name,
+            offset=offset,
+            limit=limit,
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(

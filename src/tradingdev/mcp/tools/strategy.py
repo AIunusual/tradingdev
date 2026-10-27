@@ -6,25 +6,33 @@ from typing import TYPE_CHECKING
 
 from mcp_types import ToolAnnotations
 
-from tradingdev.app.contracts.common import ErrorResponse
+from tradingdev.app.contracts.common import (
+    DEFAULT_PAGE_LIMIT,
+    ErrorResponse,
+    Page,
+    PageLimit,
+    PageOffset,
+)
 from tradingdev.app.contracts.strategy import (
     BundledStrategyResponse,
-    BundledStrategySummary,
     GeneratedStrategyResponse,
-    GeneratedStrategySummary,
     LegacyStrategyResponse,
-    LegacyStrategySummary,
     StrategyContractResponse,
     StrategyDryRunFailure,
     StrategyDryRunSuccess,
+    StrategyKind,
     StrategyPromoteSuccess,
     StrategySaveFailure,
     StrategySaveSuccess,
     StrategyStateError,
+    StrategySummary,
     StrategyValidationFailure,
     StrategyValidationSuccess,
 )
-from tradingdev.domain.strategies.templates import strategy_contract_payload
+from tradingdev.domain.strategies.templates import (
+    StrategyContractTopic,  # noqa: TC001 — MCP resolves tool annotations.
+    strategy_contract_payload,
+)
 from tradingdev.mcp.schemas import SaveStrategyInput
 
 if TYPE_CHECKING:
@@ -46,10 +54,17 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
             open_world_hint=False,
         )
     )
-    def get_strategy_contract() -> StrategyContractResponse:
-        """Read source and YAML requirements before drafting a new strategy."""
+    def get_strategy_contract(
+        section: StrategyContractTopic = "core",
+    ) -> StrategyContractResponse:
+        """Read core authoring rules first; request example/configuration as needed.
+
+        Each response contains one complete content section and lists all available
+        sections. configuration is the executable YAML schema; example is a complete
+        Python/YAML pair. Missing reference files fail; no partial contract is returned.
+        """
         return StrategyContractResponse.model_validate(
-            strategy_contract_payload(package_root)
+            strategy_contract_payload(package_root, section)
         )
 
     @mcp.tool(
@@ -60,18 +75,22 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
             open_world_hint=False,
         )
     )
-    def list_strategies() -> list[
-        BundledStrategySummary | GeneratedStrategySummary | LegacyStrategySummary
-    ]:
-        """List strategies; read and explicitly resave any legacy entries."""
-        return [
-            BundledStrategySummary.model_validate(item)
-            if item.get("kind") == "bundled"
-            else LegacyStrategySummary.model_validate(item)
-            if item.get("kind") == "legacy"
-            else GeneratedStrategySummary.model_validate(item)
-            for item in service.list_strategies()
-        ]
+    def list_strategies(
+        kind: StrategyKind | None = None,
+        strategy_id: str | None = None,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> Page[StrategySummary]:
+        """Discover strategy identities/capabilities; get_strategy reads full details.
+
+        Exact filters apply before paging. Order is strategy_id, kind, revision_id.
+        Follow next_offset; total counts matches. Pages are not a snapshot across
+        changes: restart at offset=0 if the inventory changes. Legacy entries must
+        be explicitly resaved before validation or execution.
+        """
+        return service.list_strategies_page(
+            kind=kind, strategy_id=strategy_id, offset=offset, limit=limit
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(

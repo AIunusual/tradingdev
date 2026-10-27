@@ -43,6 +43,10 @@ designed for research on market-making volume targets, not live execution.
 ## Signal Logic
 
 - `fit()` searches candidate lookback windows by validation accuracy.
+  It rejects the call if no candidate has sufficient mature training and
+  validation samples, preserving any previously fitted state. Use more history
+  or a shorter prediction horizon; see the
+  [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
 - Optional threshold search evaluates `signal_threshold_candidates` in ascending
   order using the backtest engine. It selects the lowest threshold with finite,
   non-negative `total_pnl` after fees and slippage. Unavailable or non-finite
@@ -50,6 +54,10 @@ designed for research on market-making volume targets, not live execution.
   `signal_threshold`.
 - `generate_signals()` requires a fitted model and rolling retrains according to
   `retrain_interval`.
+- A bar with unavailable features emits no entry signal; it does not reuse the
+  preceding bar's prediction. Cooldown counts all source bars, including gaps,
+  and threshold selection uses the same timing. See the
+  [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
 ## Data Requirements
@@ -83,10 +91,14 @@ cover both training and test periods. From the repository root:
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml --walk-forward
 ```
 
-For MCP, use `get_strategy` and `inspect_dataset(config_path)` to inspect the
-configuration and data, then call `prepare_walk_forward`. A rejected simple
-backtest or optimization directs the client to this tool; valid configuration
-and sufficient data are still required before preparation can succeed. See
+For MCP, use `get_strategy` to inspect the configuration, then call
+`prepare_walk_forward`. A rejected simple backtest or optimization directs the
+client to this tool. Preparation checks configuration and execution mode offline;
+it does not require cached history, load market data, fit a model or construct folds.
+Sufficient history and usable training windows are checked during the formal
+execution after approval. For a separate request to inspect existing data,
+`inspect_dataset(config_path)` can inspect the local cache without downloading it;
+this is not a preparation prerequisite or proof that training will succeed. See
 [Training Before Scoring](../strategy_contract.md#training-before-scoring) for
 the execution contract.
 

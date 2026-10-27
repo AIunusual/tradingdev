@@ -20,6 +20,7 @@ class PreparedExecution:
 
     manifest: ExecutionManifest
     original_config_path: Path
+    synthetic_fixture_rows: tuple[int, ...] = ()
 
 
 class ExecutionSubmissionService:

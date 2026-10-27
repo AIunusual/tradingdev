@@ -79,7 +79,7 @@ class ExecutionPlanService:
     def prepare(
         self, request: PreflightRequest, presentation: ConfirmationPresentation
     ) -> PlanResponse | PlanRejected:
-        """Return a ready document only after bounded end-to-end trial success."""
+        """Return a ready document after bounded program checks, without market data."""
         try:
             checked = self.preflight.prepare(request)
             plan_id = uuid4().hex
@@ -89,7 +89,7 @@ class ExecutionPlanService:
             )
             created = datetime.now(UTC)
             payload = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "plan_id": plan_id,
                 "manifest": manifest.model_dump(mode="json"),
                 "original_config_path": str(checked.prepared.original_config_path),
@@ -184,7 +184,7 @@ class ExecutionPlanService:
                 else "confirmation_declined",
                 error=(
                     "使用者要求修改設定，原計畫已取消，正式回測未啟動。"
-                    "請收集修改內容，重新準備、試跑並等待使用者確認新計畫。"
+                    "請收集修改內容，重新準備、檢查程式並等待使用者確認新計畫。"
                     if decision == "revise"
                     else "使用者未同意，計畫已取消，正式回測未啟動。"
                 ),
@@ -273,7 +273,9 @@ class ExecutionPlanService:
     def _verify_ready(self, plan: ExecutionPlan) -> None:
         plan.verify()
         if datetime.now(UTC) >= plan.expires_at:
-            raise PlanOperationError("plan_expired", "計畫已過期，請重新準備與試跑。")
+            raise PlanOperationError(
+                "plan_expired", "計畫已過期，請重新準備與檢查程式。"
+            )
         config = plan.manifest.config_for_execution()
         strategy = config["strategy"]
         selected = self.strategies.resolve_executable(

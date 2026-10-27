@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.domain.preflight import PreflightReceipt
+
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient
 
@@ -37,12 +39,29 @@ def confirmation_presentation(parameters: dict[str, Any]) -> dict[str, Any]:
 
 
 def execution_options(parameters: dict[str, Any]) -> dict[str, Any]:
-    """Provide deliberately small bounded preflight settings for cached fixtures."""
+    """Describe offline preparation without requesting market samples."""
     return {
         "presentation": confirmation_presentation(parameters),
-        "minimum_history_bars": 20,
-        "sample_bars": 128,
     }
+
+
+def synthetic_preflight_receipt(manifest_hash: str) -> dict[str, Any]:
+    """A substituted receipt for generated-code evidence verifier unit tests."""
+    return PreflightReceipt(
+        manifest_hash=manifest_hash,
+        elapsed_seconds=0.5,
+        checked_paths=[
+            "configuration",
+            "execution_capabilities",
+            "parameter_binding",
+            "manifest_serialization",
+            "signal_contract",
+        ],
+        synthetic_fixture_rows=[80, 240],
+        signal_check="synthetic_contract_passed",
+        training_requirement="unknown",
+        not_checked=["historical_data", "backtest_engine", "training", "performance"],
+    ).model_dump(mode="json")
 
 
 async def confirm_prepared(

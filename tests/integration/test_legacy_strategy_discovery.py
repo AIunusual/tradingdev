@@ -80,7 +80,7 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
         assert current["success"]
         # The harness validates every structured response against outputSchema
         # and rejects isError replies from the actual stdio server.
-        listed = await client.call("list_strategies")
+        listed = await client.read_all_pages("list_strategies")
         assert {"bundled", "generated", "legacy"} <= {item["kind"] for item in listed}
         legacy = next(item for item in listed if item["strategy_id"] == _LEGACY_ID)
         assert legacy == {
@@ -118,7 +118,7 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
         )
         assert rejected_run["success"] is False
         assert rejected_run["code"] == "strategy_not_executable"
-        assert await client.call("list_jobs") == []
+        assert (await client.call("list_jobs"))["items"] == []
         missing_revision = await client.call(
             "get_strategy",
             strategy_id=_LEGACY_ID,
@@ -144,7 +144,7 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
         assert generated["metadata"]["dry_run"] is None
         replacement = [
             item
-            for item in await client.call("list_strategies")
+            for item in await client.read_all_pages("list_strategies")
             if item["strategy_id"] == _LEGACY_ID
         ]
         assert len(replacement) == 1
@@ -158,7 +158,7 @@ async def test_legacy_bundled_id_collision_can_be_recovered_under_another_id(
     mcp_workspace: MCPWorkspace,
 ) -> None:
     async with mcp_workspace.connect() as client:
-        original_listing = await client.call("list_strategies")
+        original_listing = await client.read_all_pages("list_strategies")
         bundled = next(item for item in original_listing if item["kind"] == "bundled")
         strategy_id = bundled["strategy_id"]
         original_bundle = await client.call("get_strategy", strategy_id=strategy_id)
@@ -172,7 +172,7 @@ async def test_legacy_bundled_id_collision_can_be_recovered_under_another_id(
         original_bytes = {path: path.read_bytes() for path in legacy_paths}
         collisions = [
             item
-            for item in await client.call("list_strategies")
+            for item in await client.read_all_pages("list_strategies")
             if item["strategy_id"] == strategy_id
         ]
         assert len(collisions) == 2
@@ -252,7 +252,7 @@ async def test_unreadable_legacy_source_keeps_discovery_available(
         target.symlink_to(outside)
 
     async with mcp_workspace.connect() as client:
-        listed = await client.call("list_strategies")
+        listed = await client.read_all_pages("list_strategies")
         assert any(item["kind"] == "bundled" for item in listed)
         legacy = next(item for item in listed if item["strategy_id"] == _LEGACY_ID)
         assert legacy["kind"] == "legacy"
@@ -262,4 +262,4 @@ async def test_unreadable_legacy_source_keeps_discovery_available(
         assert retrieved["code"] == "strategy_revision_invalid"
         assert "source_code" not in retrieved
         assert "yaml_config" not in retrieved
-        assert await client.call("list_strategies") == listed
+        assert await client.read_all_pages("list_strategies") == listed

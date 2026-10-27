@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ from tests.e2e.codex_harness import verify_generated_strategy
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.test_llm_workflows import assert_workflow
+from tests.e2e.verify_strategy import verify_execution_snapshot
 from tests.integration.execution_fixtures import execution_options
 from tests.integration.mcp_harness import (
     MCPWorkspace,
@@ -128,7 +130,7 @@ async def _complete_workflow(
             calls.append(ToolCall(name, arguments, result))
             return result
 
-        contract = await call("get_strategy_contract")
+        contract = (await call("get_strategy_contract", section="example"))["content"]
         config = yaml.safe_load(contract["example_yaml_config"])
         if scenario.name == "momentum":
             code = _MOMENTUM_CODE
@@ -411,3 +413,89 @@ def test_workflow_evidence_requires_model_to_query_result(
     incomplete = [call for call in completed_workflow.calls if call.name != "get_run"]
     with pytest.raises((AssertionError, StopIteration, ValueError)):
         assert_workflow(incomplete, completed_workflow.scenario)
+
+
+@pytest.fixture
+def snapshot_requirements() -> dict[str, Any]:
+    """User requirements, independent of a generated execution manifest."""
+    return {
+        "strategy": {"parameters": SCENARIOS["sma"].parameters},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-08",
+            "init_cash": 10000,
+            "fees": 0,
+            "slippage": 0,
+            "mode": "signal",
+            "periods_per_year": 365,
+        },
+        "random_seed": 42,
+    }
+
+
+def test_execution_snapshot_accepts_experiment_and_runtime_resolution(
+    snapshot_requirements: dict[str, Any], tmp_path: Path
+) -> None:
+    scenario = SCENARIOS["experiment"]
+    snapshot = deepcopy(snapshot_requirements)
+    snapshot["strategy"].update(
+        parameters=scenario.overrides,
+        revision_id="verified-revision",
+        source_path=str(tmp_path / "source.py"),
+    )
+    snapshot["data"] = {
+        "data_root": str(tmp_path / "resolved-cache"),
+        "requirements": {"market": {"source": "binance_vision"}, "features": []},
+    }
+    snapshot["backtest"].update(
+        start_date="2024-01-01T00:00:00Z",
+        end_date="2024-01-08T08:00:00+08:00",
+        risk_free_rate=0.0,
+    )
+    verify_execution_snapshot(
+        snapshot,
+        snapshot_requirements,
+        parameters=scenario.overrides,
+        revision_id="verified-revision",
+    )
+    assert snapshot_requirements["strategy"]["parameters"] == scenario.parameters
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("backtest", "periods_per_year", 252),
+        ("backtest", "start_date", "2024-01-02"),
+        ("backtest", "end_date", "2024-01-09"),
+        ("backtest", "fees", 0.0006),
+        ("backtest", "slippage", 0.0005),
+        ("backtest", "init_cash", 20000),
+        (None, "random_seed", 7),
+        (None, "random_seed", None),
+        ("strategy", "parameters", {"fast_period": 3, "slow_period": 8}),
+        ("strategy", "revision_id", "unverified-revision"),
+    ],
+)
+def test_execution_snapshot_rejects_overrides_that_change_verified_requirements(
+    snapshot_requirements: dict[str, Any],
+    section: str | None,
+    field: str,
+    value: Any,
+) -> None:
+    snapshot = deepcopy(snapshot_requirements)
+    snapshot["strategy"]["revision_id"] = "verified-revision"
+    if section is None:
+        snapshot[field] = value
+    else:
+        snapshot[section][field] = value
+    # Params/revision alone used to pass even when prepare_backtest silently
+    # replaced the annualization or costs. The actual snapshot must bind both.
+    with pytest.raises(AssertionError, match="Execution"):
+        verify_execution_snapshot(
+            snapshot,
+            snapshot_requirements,
+            parameters=SCENARIOS["sma"].parameters,
+            revision_id="verified-revision",
+        )

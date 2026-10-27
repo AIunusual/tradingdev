@@ -5,10 +5,70 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
 from tradingdev.domain.backtest.schemas import BacktestConfig
+
+
+@pytest.mark.parametrize(
+    ("source", "timeframe", "market_type", "error"),
+    [
+        ("misspelled", "1h", "futures/um", "Unknown data source"),
+        ("yahoo_finance", "3h", "futures/um", "timeframe '3h'"),
+        ("binance_vision", "1h", "unsupported", "market_type 'unsupported'"),
+        ("yahoo_finance", "1h", "unused", None),
+        ("binance_api", "3h", "unused", None),
+        ("binance_vision", "3h", "spot", None),
+    ],
+)
+def test_execution_checks_source_catalog_without_market_access(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    source: str,
+    timeframe: str,
+    market_type: str,
+    error: str | None,
+) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Preparing settings must not construct a crawler or load prices")
+
+    monkeypatch.setattr("tradingdev.app.data_service.create_crawler", forbidden)
+    monkeypatch.setattr(DataService, "load", forbidden)
+    monkeypatch.setattr(DataService, "load_sample", forbidden)
+    workspace = WorkspacePaths(tmp_path / "source-check")
+    service = DataService(workspace)
+    backtest = BacktestConfig(
+        symbol="EXPLICIT/INSTRUMENT",
+        timeframe=timeframe,
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        init_cash=10000,
+    )
+    # The actual requirement takes precedence over an unused fallback source.
+    raw = {
+        "data": {
+            "source": "unused-fallback",
+            "market_type": market_type,
+            "requirements": {
+                "market": {
+                    "source": source,
+                    "symbol": backtest.symbol,
+                    "timeframe": timeframe,
+                }
+            },
+        }
+    }
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            service.execution_config(raw, backtest)
+    else:
+        result = service.execution_config(raw, backtest)
+        assert result["requirements"]["market"]["source"] == source
+        assert result["requirements"]["market"]["timeframe"] == timeframe
+    assert not list(workspace.processed_data.rglob("*.parquet"))
+
 
 if TYPE_CHECKING:
     from pathlib import Path

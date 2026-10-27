@@ -23,8 +23,6 @@ _PREPARE: dict[str, TypeAdapter[Any]] = {
     "presentation": TypeAdapter(ConfirmationPresentation),
     "parameters": TypeAdapter(dict[str, JsonValue] | None),
     "backtest_overrides": TypeAdapter(dict[str, JsonValue] | None),
-    "minimum_history_bars": TypeAdapter(int),
-    "sample_bars": TypeAdapter(int),
 }
 _PAGE: dict[str, TypeAdapter[Any]] = {
     "limit": TypeAdapter(int),
@@ -38,10 +36,9 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "embargo": TypeAdapter(int),
         "min_train_bars": TypeAdapter(int | None),
     },
+    "predict": _PAGE,
+    "leaderboard": _PAGE,
     "evaluate_signal": {
-        "signal": TypeAdapter(list[float]),
-        "forward_returns": TypeAdapter(list[float]),
-        "horizon": TypeAdapter(int | None),
         "window": TypeAdapter(int),
         "n_quantiles": TypeAdapter(int),
         "record": TypeAdapter(bool),

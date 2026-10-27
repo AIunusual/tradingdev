@@ -14,14 +14,15 @@ from pydantic import TypeAdapter, ValidationError
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
-from tradingdev.app.contracts.common import ErrorResponse
+from tradingdev.app.contracts.common import ErrorResponse, Page
 from tradingdev.app.contracts.research import (
+    ArtifactIdentity,
     ArtifactRecord,
     ArtifactResponse,
     CompareRunsResponse,
     FeatureRequestArtifact,
-    RunRecord,
     RunResponse,
+    RunSummary,
 )
 from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.run_service import RunService
@@ -80,7 +81,7 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
 
     async def check() -> None:
         listed = await call("list_runs", {})
-        records = TypeAdapter(list[RunRecord]).validate_python(listed["result"])
+        records = Page[RunSummary].model_validate(listed).items
         assert {record.run_id for record in records} == {"run_1", "run_2"}
         response = RunResponse.model_validate(
             (await call("get_run", {"run_id": "run_1"}))["result"]
@@ -92,8 +93,8 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
         assert comparison.runs[0].metrics == {"total_return": 0.1}
 
         listed_artifacts = await call("list_artifacts", {"run_id": "run_1"})
-        records_artifacts = TypeAdapter(list[ArtifactRecord]).validate_python(
-            listed_artifacts["result"]
+        records_artifacts = (
+            Page[ArtifactIdentity].model_validate(listed_artifacts).items
         )
         assert len(records_artifacts) == 3
         artifact = ArtifactResponse.model_validate(

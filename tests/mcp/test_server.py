@@ -154,28 +154,72 @@ def test_execution_manifest_hash_is_required_for_prepared_and_accepted_plans(
         assert accepted["properties"]["manifest_hash"]["pattern"] == "^[0-9a-f]{64}$"
 
 
-def test_confirmation_instructions_preserve_backend_summary_wording(
+def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     runtime_root: Path,
 ) -> None:
     server = create_server(WorkspacePaths(runtime_root / "workspace"))
     assert server.instructions is not None
     instructions = " ".join(server.instructions.split())
     assert "Quote confirmation_summary verbatim" in instructions
-    assert "ordinary explanations and answers" in instructions
+    assert "Preserve every label, value, unit and train/test role" in instructions
+    assert "answer or clarify and wait" in instructions
     assert "[閱讀確認單](<FULL_HTML_PATH>)" in instructions
-    assert "get_artifact" in instructions and "not a public URL" in instructions
+    assert "exact returned html_path" in instructions
+    assert "No code block, file:// or invented URI" in instructions
+    assert "not a public URL" in instructions
+    assert "End the turn after the user can read the HTML" in instructions
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    assert "get_artifact" in tools
     for name in (
         "prepare_backtest",
         "prepare_walk_forward",
         "prepare_optimization",
-        "submit_execution_decision",
     ):
         description = " ".join((tools[name].description or "").split())
-        assert "confirmation_summary verbatim" in description, name
-        assert "labels, values, units" in description, name
-        assert "train/test roles" in description, name
-        assert "blockquote" in description and "HTML link" in description, name
-        assert "[閱讀確認單](<FULL_HTML_PATH>)" in description, name
-        assert "exact returned html_path" in description, name
-        assert "Do not add file://" in description, name
+        assert "confirmation_summary" in description and "verbatim" in description, name
+        assert "HTML" in description and "end the turn" in description, name
+        schema = tools[name].output_schema
+        assert schema is not None
+        assert {"plan_id", "confirmation_summary", "html_path"} <= set(
+            schema["$defs"]["PlanResponse"]["required"]
+        )
+    decision = " ".join((tools["submit_execution_decision"].description or "").split())
+    assert "explicit later decision" in decision
+    assert "questions and ambiguous replies are not consent" in decision
+    assert "newly prepared plan and fresh approval" in decision
+    assert "cannot prove the decision's human origin" in decision
+
+
+def test_preparation_schema_separates_code_checks_from_historical_execution(
+    runtime_root: Path,
+) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    discovery = " ".join((tools["list_data_sources"].description or "").split())
+    assert "local capabilities offline" in discovery
+    assert "data after approval" in discovery
+    assert "sample is available" not in discovery
+    for name in ("prepare_backtest", "prepare_walk_forward", "prepare_optimization"):
+        tool = tools[name]
+        assert not {"sample_bars", "minimum_history_bars"}.intersection(
+            tool.input_schema["properties"]
+        )
+        schema = tool.output_schema
+        assert schema is not None
+        receipt = schema["$defs"]["PreflightReceipt"]
+        assert receipt["properties"]["schema_version"]["const"] == 2
+        assert {
+            "synthetic_fixture_rows",
+            "signal_check",
+            "training_requirement",
+            "not_checked",
+        } <= set(receipt["required"])
+        assert not {
+            "data_source",
+            "windows",
+            "trade_count",
+            "execution_record_count",
+            "trading_path_exercised",
+            "tested_fold_count",
+            "sample_bars_used",
+        }.intersection(receipt["properties"])

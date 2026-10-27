@@ -25,7 +25,7 @@ class ExecutionPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     plan_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     manifest: ExecutionManifest
     original_config_path: str
@@ -54,8 +54,7 @@ class ExecutionPlan(BaseModel):
 
     def verify(self) -> None:
         self.manifest.verify()
-        if self.preflight.manifest_hash != self.manifest.manifest_hash:
-            raise ValueError("Preflight evidence belongs to another execution")
+        self.preflight.verify_manifest(self.manifest)
         if self.document.identity.manifest_hash != self.manifest.manifest_hash:
             raise ValueError("Confirmation document belongs to another execution")
         if self.document.identity.plan_id != self.plan_id:

@@ -17,10 +17,13 @@ from tradingdev.adapters.storage.filesystem import (
     sha256_file,
     sha256_text,
 )
+from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
+from tradingdev.app.contracts.data import CachedDataset
 from tradingdev.app.market_sample import load_market_sample
+from tradingdev.app.pagination import paginate
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
-from tradingdev.domain.data.crawlers.registry import create_crawler
+from tradingdev.domain.data.crawlers.registry import create_crawler, describe_sources
 from tradingdev.domain.data.data_manager import DataManager, market_data_filename
 from tradingdev.domain.data.loader import DataLoader
 from tradingdev.domain.data.requirements import (
@@ -99,6 +102,15 @@ class DataService:
         for key in ("raw_dir", "processed_dir"):
             data[key] = str(self._resolve_data_path(data[key]))
         requirements = self.requirements(raw_config, backtest_config)
+        if (
+            requirements.market.symbol != backtest_config.symbol
+            or requirements.market.timeframe != backtest_config.timeframe
+        ):
+            raise ValueError(
+                "data.requirements.market symbol/timeframe must match backtest; "
+                "the backtest fields determine the actual data request"
+            )
+        self._check_market_settings(requirements.market, str(data["market_type"]))
         request = self._request_from_backtest(backtest_config)
         features = []
         for feature in requirements.features:
@@ -125,6 +137,29 @@ class DataService:
             "features": features,
         }
         return data
+
+    @staticmethod
+    def _check_market_settings(market: MarketDataSpec, market_type: str) -> None:
+        """Reject known configuration errors without constructing any provider."""
+        sources = {item["source"]: item for item in describe_sources()}
+        details = sources.get(market.source)
+        if details is None:
+            raise ValueError(
+                f"Unknown data source {market.source!r}. "
+                f"Known sources: {', '.join(sorted(sources))}"
+            )
+        timeframes = details["timeframes"]
+        if timeframes is not None and market.timeframe not in timeframes:
+            raise ValueError(
+                f"Data source {market.source!r} does not support "
+                f"timeframe {market.timeframe!r}. Supported: {', '.join(timeframes)}"
+            )
+        market_types = details["market_types"]
+        if market_types and market_type not in market_types:
+            raise ValueError(
+                f"Data source {market.source!r} does not support "
+                f"market_type {market_type!r}. Supported: {', '.join(market_types)}"
+            )
 
     def load(
         self,
@@ -318,6 +353,29 @@ class DataService:
             }
             for (symbol, timeframe), years in sorted(grouped.items())
         ]
+
+    def list_available_data_page(
+        self,
+        *,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> Page[CachedDataset]:
+        """Page cache identities in symbol/timeframe order without opening files."""
+        selected_symbol = (
+            symbol.upper().replace("/", "") if symbol is not None else None
+        )
+        rows = [
+            row
+            for row in self.list_available_data()
+            if (selected_symbol is None or row["symbol"] == selected_symbol)
+            and (timeframe is None or row["timeframe"] == timeframe)
+        ]
+        rows.sort(key=lambda row: (str(row["symbol"]), str(row["timeframe"])))
+        return paginate(
+            rows, project=CachedDataset.model_validate, offset=offset, limit=limit
+        )
 
     def data_available(
         self,

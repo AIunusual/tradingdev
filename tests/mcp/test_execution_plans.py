@@ -1,4 +1,4 @@
-"""Real MCP plan decisions and storage with substituted sample/worker execution."""
+"""Real MCP plan decisions and storage with substituted validation/worker execution."""
 
 from __future__ import annotations
 
@@ -38,8 +38,6 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
         context.arguments["presentation"] = json.dumps(
             context.arguments["presentation"]
         )
-        context.arguments["minimum_history_bars"] = "20"
-        context.arguments["sample_bars"] = "128"
         context.arguments["parameters"] = "null"
         context.arguments["backtest_overrides"] = "null"
 
@@ -57,8 +55,10 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
             )
             assert retained == prepared
             assert len(context.preflight.requests) == 1
-            assert context.preflight.requests[0].minimum_history_bars == 20
-            assert context.preflight.requests[0].sample_bars == 128
+            assert set(context.preflight.requests[0].model_dump()) == {
+                "kind",
+                "arguments",
+            }
             assert context.runner.calls == []
             assert context.service.jobs.list_all_jobs() == []
             assert context.service.jobs.list_runs() == []

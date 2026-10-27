@@ -46,7 +46,16 @@ class XGBoostDirectionModel(BaseModel):
             df: Training DataFrame with feature columns and a
                 ``target`` column.
             eval_df: Optional validation DataFrame for early stopping.
+
+        Raises:
+            ValueError: If training data or supplied validation data has no rows.
+                Rejected empty inputs leave the previously fitted model intact.
         """
+        if df.empty:
+            raise ValueError("Training data must contain at least one labelled row")
+        if eval_df is not None and eval_df.empty:
+            raise ValueError("Validation data must contain at least one labelled row")
+
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
         self._feature_names = feature_cols
 

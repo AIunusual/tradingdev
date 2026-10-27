@@ -1,23 +1,62 @@
 """Public response contracts for strategy discovery and lifecycle operations."""
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, JsonValue
+from pydantic import JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.schemas import StrategyStatus
 
 
-class StrategyContractResponse(ContractModel):
-    """Reference source and lifecycle instructions for generated strategies."""
+class StrategyContractSection(ContractModel):
+    """Discoverable purpose of one complete contract section."""
+
+    id: Literal["core", "example", "configuration"]
+    description: str
+
+
+class StrategyCoreContract(ContractModel):
+    """Required authoring and lifecycle rules, without optional examples."""
 
     base_strategy_source: str
+    requirements: list[str]
+    lifecycle: list[str]
+
+
+class StrategyExampleContract(ContractModel):
+    """A complete Python/YAML example to adapt to a user's strategy."""
+
     example_strategy_code: str
     example_yaml_config: str
-    api_reference: str
-    lifecycle: str
+
+
+class StrategyConfigurationContract(ContractModel):
+    """Executable configuration schema and interpretation of its financial fields."""
+
     config_schema: dict[str, JsonValue]
+    notes: list[str]
+
+
+class StrategyContractResponse(ContractModel):
+    """A selected section, with references to the remaining contract material."""
+
+    section: Literal["core", "example", "configuration"]
+    available_sections: list[StrategyContractSection]
+    content: (
+        StrategyCoreContract | StrategyExampleContract | StrategyConfigurationContract
+    )
+
+    @model_validator(mode="after")
+    def validate_section_content(self) -> Self:
+        expected = {
+            "core": StrategyCoreContract,
+            "example": StrategyExampleContract,
+            "configuration": StrategyConfigurationContract,
+        }
+        if not isinstance(self.content, expected[self.section]):
+            raise ValueError("Contract content does not match its section")
+        return self
 
 
 class StrategyDiagnosticResponse(ContractModel):
@@ -73,26 +112,6 @@ class GeneratedStrategyMetadata(ContractModel):
     dry_run: StrategyValidationRecord | None
 
 
-class StrategyRecentRun(ContractModel):
-    """A recent run with extensible JSON metrics."""
-
-    revision_id: str | None
-    run_id: str
-    job_id: str
-    created_at: str
-    dataset_id: str | None
-    metrics: dict[str, JsonValue]
-
-
-class BundledStrategySummaryMetadata(ContractModel):
-    """Version, source, and configurable parameters of a bundled strategy."""
-
-    revision_id: None
-    version: str | None
-    source_path: str | None
-    parameters: dict[str, JsonValue]
-
-
 class BundledStrategySummary(ContractModel):
     """One bundled strategy discovery entry."""
 
@@ -103,12 +122,6 @@ class BundledStrategySummary(ContractModel):
     kind: Literal["bundled"]
     execution_capabilities: StrategyCapabilities
     status: Literal["promoted"]
-    config_path: str
-    metadata: BundledStrategySummaryMetadata
-    data_requirements: dict[str, JsonValue] | None = Field(
-        description="Unvalidated user config, preserved for inspection and repair."
-    )
-    recent_runs: list[StrategyRecentRun]
 
 
 class GeneratedStrategySummary(ContractModel):
@@ -120,13 +133,6 @@ class GeneratedStrategySummary(ContractModel):
     kind: Literal["generated"]
     execution_capabilities: StrategyCapabilities
     status: StrategyStatus
-    source_path: str
-    config_path: str
-    metadata: GeneratedStrategyMetadata
-    data_requirements: dict[str, JsonValue] | None = Field(
-        description="Unvalidated user config, preserved for inspection and repair."
-    )
-    recent_runs: list[StrategyRecentRun]
 
 
 class BundledStrategySourceMetadata(ContractModel):
@@ -156,6 +162,12 @@ class LegacyStrategyResponse(LegacyStrategySummary):
     success: Literal[True]
     source_code: str
     yaml_config: str
+
+
+type StrategyKind = Literal["bundled", "generated", "legacy"]
+type StrategySummary = (
+    BundledStrategySummary | GeneratedStrategySummary | LegacyStrategySummary
+)
 
 
 class BundledStrategyResponse(ContractModel):

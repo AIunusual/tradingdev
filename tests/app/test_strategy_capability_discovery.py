@@ -89,7 +89,7 @@ def test_mcp_discovery_exposes_capabilities_and_preserves_kd_walk_forward_suppor
         listed = await server.call_tool("list_strategies", {})
         assert isinstance(listed, CallToolResult)
         assert listed.structured_content is not None
-        entries = listed.structured_content["result"]
+        entries = listed.structured_content["items"]
         quantile = next(
             item for item in entries if item["strategy_id"] == "quantile_volume"
         )

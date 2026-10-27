@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from tradingdev.domain.backtest.base_engine import (
         BaseBacktestEngine,
     )
+    from tradingdev.domain.ml.features.features import FeatureEngineer
     from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
         SafetyVolumeStrategyConfig,
     )
@@ -59,7 +60,7 @@ class SafetyVolumeStrategy(BaseStrategy):
 
         # Optional ML direction model
         self._dir_model: XGBoostDirectionModel | None = None
-        self._dir_fe: Any = None  # FeatureEngineer (lazy import)
+        self._dir_fe: FeatureEngineer | None = None
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -434,9 +435,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             return out
         # Preserve source positions through dropna, including interior gaps.
         # The copied RangeIndex is metadata, never an input feature for the model.
-        feat = self._dir_fe.transform(
-            df.reset_index(drop=True), include_target=False, preserve_index=True
-        )
+        feat = self._dir_fe.transform(df.reset_index(drop=True), include_target=False)
         if feat.empty:
             return out
         preds = self._dir_model.predict(feat)
@@ -479,7 +478,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         threshold: float,
         min_hold: int = 5,
         max_hold: int = 30,
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """State machine that produces position-state signals.
 
         Returns an array of (1, -1, 0) where:
@@ -488,7 +487,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         - 0 = flat (no position)
         """
         n = len(risk_scores)
-        signals = np.zeros(n, dtype=int)
+        signals: npt.NDArray[np.int_] = np.zeros(n, dtype=int)
         state = 0
         bars_in_pos = 0
 
@@ -523,7 +522,7 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         risk_scores: npt.NDArray[np.floating[Any]],
         directions: npt.NDArray[np.floating[Any]],
-    ) -> npt.NDArray[np.floating[Any]]:
+    ) -> npt.NDArray[np.int_]:
         """Run the state machine with configured parameters."""
         return self._run_state_machine_with_threshold(
             risk_scores,

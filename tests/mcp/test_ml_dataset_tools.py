@@ -150,16 +150,16 @@ def test_build_train_predict_through_mcp(service: MLService) -> None:
     assert (
         len(predicted.prediction.signal)
         == len(predicted.prediction.forward_returns)
-        == built.dataset.rows
+        == 100
     )
+    assert predicted.prediction.next_offset == 100
 
     verdict = _dispatch(
         mcp,
         "evaluate_signal",
         {
-            "signal": predicted.prediction.signal,
-            "forward_returns": predicted.prediction.forward_returns,
-            "horizon": predicted.prediction.horizon,
+            "model_id": trained.model.model_id,
+            "dataset_id": built.dataset.dataset_id,
         },
     )
     assert verdict["success"] is True

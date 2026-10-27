@@ -62,6 +62,15 @@ class Scenario:
             if self.history
             else "不需要額外取得 artifact 內容或撰寫回測報告。"
         )
+        completion = (
+            "最後回覆須提供 run_id、[閱讀完整回測報告](<REPORT_PATH>)，"
+            "REPORT_PATH 必須替換為 generate_report 回傳的實際完整 path，"
+            "不可放在 code block；簡短說明可從總覽依參數選擇結果，"
+            "查看委託與帳戶核對表及配對交易明細。"
+            "報告連結必須出現在最終回覆，不可只出現在中途說明或工具輸出。"
+            if self.history
+            else "確認結果後就結束，只回答「完成」與 run_id。"
+        )
         return f"""請透過 TradingDev MCP 開發策略 {self.strategy_id}。
 {preparation}
 讀取 get_strategy_contract，依照契約完成 Python 與 YAML。{self.requirement}
@@ -77,7 +86,7 @@ data.requirements.features 為空。
 若不一致，修改 YAML 後重新 save、validate、dry-run，不可直接接受預設值。
 接著透過 MCP prepare_backtest 準備這個策略的執行計畫，
 symbol=BTC/USDT、timeframe=1h、start_date=2024-01-01、end_date=2024-01-08。
-minimum_history_bars=20、sample_bars=128；presentation 必須提供中文 title、summary，
+presentation 必須提供中文 title、summary，
 及 parameter_descriptions；以每個建構子參數的 JSON pointer 為 key
 （例如 /fast_period、/slow_period 或 /lookback），各自提供 label、description、unit。
 說明每個參數的白話意義與單位，不要把程式識別字當作唯一說明。
@@ -99,7 +108,7 @@ minimum_history_bars=20、sample_bars=128；presentation 必須提供中文 titl
 以及 list_artifacts。一般回覆只有摘要；接著呼叫 get_metric_catalog(mode=signal)，
 再以 get_run_metrics 查同一 run_id 的 daily_pnl_mean、total_volume、n_days，
 確認這些未列於摘要的指標仍可查詢。{history}
-確認結果後就結束，只回答「完成」與 run_id。不得只啟動工作就結束。
+{completion}不得只啟動工作就結束。
 只能透過 MCP 工具撰寫與執行，不使用 shell 或直接編輯檔案。
 直接呼叫工具，不重貼程式碼或完整確認內容；程式、YAML 與 request_summary 保持精簡，
 但不得省略需求或驗證步驟。

@@ -469,3 +469,24 @@ class TestFeatureIdentity:
         restored = LeaderboardEntry.from_record(payload)
         assert restored.context.feature_set == ""
         assert restored.context.code_fingerprint == ""
+
+
+def test_comparability_error_explicitly_abbreviates_long_examples() -> None:
+    entries = [
+        LeaderboardEntry(
+            str(index),
+            "candidate",
+            EvaluationContext(
+                "S" * 10_000 + str(index), "1h", "2024-01-01", "2024-07-01", 1
+            ),
+            {"icir": 0.2},
+            200,
+        )
+        for index in range(4)
+    ]
+    error = comparability_error(entries)
+    assert error is not None
+    assert "4 distinct contexts; showing 3 examples, 1 omitted" in error
+    assert error.count("[abbreviated]") == 3
+    assert "dataset_id" in error and "does not make them comparable" in error
+    assert len(error) < 1200
