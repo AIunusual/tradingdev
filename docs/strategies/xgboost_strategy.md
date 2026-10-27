@@ -91,10 +91,14 @@ cover both training and test periods. From the repository root:
 uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/xgboost_strategy/config.yaml --walk-forward
 ```
 
-For MCP, use `get_strategy` and `inspect_dataset(config_path)` to inspect the
-configuration and data, then call `prepare_walk_forward`. A rejected simple
-backtest or optimization directs the client to this tool; valid configuration
-and sufficient data are still required before preparation can succeed. See
+For MCP, use `get_strategy` to inspect the configuration, then call
+`prepare_walk_forward`. A rejected simple backtest or optimization directs the
+client to this tool. Preparation checks configuration and execution mode offline;
+it does not require cached history, load market data, fit a model or construct folds.
+Sufficient history and usable training windows are checked during the formal
+execution after approval. For a separate request to inspect existing data,
+`inspect_dataset(config_path)` can inspect the local cache without downloading it;
+this is not a preparation prerequisite or proof that training will succeed. See
 [Training Before Scoring](../strategy_contract.md#training-before-scoring) for
 the execution contract.
 
