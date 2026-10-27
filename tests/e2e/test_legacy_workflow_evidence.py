@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,19 @@ def legacy_calls() -> list[ToolCall]:
         "kind": "legacy",
         "status": "revision_required",
         "code": "strategy_revision_required",
+    }
+    config: dict[str, dict[str, Any]] = {
+        "research": {"strategy_outline": "Saved legacy moving-average rules."},
+        "backtest": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01T00:00:00Z",
+            "end_date": "2024-01-08T00:00:00Z",
+            "init_cash": 10000.0,
+            "fees": 0.0,
+            "slippage": 0.0,
+            "periods_per_year": 365.0,
+        },
     }
     return [
         ToolCall("get_strategy_contract", {}, {"example_strategy_code": "source"}),
@@ -51,18 +65,34 @@ def legacy_calls() -> list[ToolCall]:
         ),
         ToolCall(
             "save_strategy",
-            {"strategy_id": strategy_id, "research": SCENARIOS["legacy"].research},
+            {
+                "strategy_id": strategy_id,
+                "research": {
+                    **SCENARIOS["legacy"].research,
+                    "strategy_outline": config["research"]["strategy_outline"],
+                },
+            },
             {**identity, "success": True, "status": "draft"},
         ),
         ToolCall(
             "validate_strategy",
             identity,
-            {**identity, "success": True, "status": "validated"},
+            {
+                **identity,
+                "success": True,
+                "status": "validated",
+                "effective_config": deepcopy(config),
+            },
         ),
         ToolCall(
             "dry_run_strategy",
             identity,
-            {**identity, "success": True, "status": "runnable"},
+            {
+                **identity,
+                "success": True,
+                "status": "runnable",
+                "effective_config": deepcopy(config),
+            },
         ),
         ToolCall(
             "prepare_backtest",

@@ -17,6 +17,7 @@ from tests.e2e.report_delivery import verify_report_delivery
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
+from tests.e2e.workflow_research import assert_research_reused
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.domain.preflight import PreflightReceipt
@@ -222,8 +223,12 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             and call.result.get("revision_id") == revision_id
         ),
     )
-    for name in ("validate_strategy", "dry_run_strategy"):
-        require_index(
+    checked: dict[str, ToolCall] = {}
+    for name, status in (
+        ("validate_strategy", "validated"),
+        ("dry_run_strategy", "runnable"),
+    ):
+        checked_index = require_index(
             f"{name} explicitly checking revision_id={revision_id!r}",
             (
                 index
@@ -234,9 +239,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("strategy_id") == scenario.strategy_id
                 and call.arguments.get("revision_id") == revision_id
                 and call.result.get("success")
+                and call.result.get("status") == status
                 and call.result.get("revision_id") == revision_id
             ),
         )
+        checked[name] = calls[checked_index]
     prepare_index = require_index(
         f"prepare_backtest for {target} returning a ready plan_id "
         "after successful dry_run_strategy",
@@ -255,7 +262,6 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     expected_arguments: dict[str, Any] = {
         "strategy_id": scenario.strategy_id,
         "revision_id": revision_id,
-        "research": {"kind": "inherit_selected_revision"},
     }
     if scenario.experiment:
         expected_arguments["parameters"] = scenario.overrides
@@ -263,6 +269,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             call.name == "save_strategy" for call in calls[previous + 1 :]
         ), "Parameter experiments must reuse the runnable revision"
     actual_arguments = dict(prepared.arguments)
+    assert_research_reused(
+        actual_arguments.pop("research", None),
+        validated=checked["validate_strategy"],
+        dry_run=checked["dry_run_strategy"],
+    )
     presentation = actual_arguments.pop("presentation", None)
     assert isinstance(presentation, dict), "Prepared plan requires presentation"
     assert presentation.get("title") and presentation.get("summary")
