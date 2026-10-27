@@ -495,7 +495,18 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
   --run-id YOUR_RUN_ID
 ```
 
-要比較多次結果，可重複加入 `--run-id`，最多 8 次；命令會輸出報告的本機路徑。
+要比較多次已保存的結果，可重複加入 `--run-id`，最多 8 次。
+
+若要查看一整批固定參數比較，請使用該批次的父工作 ID：
+
+```bash
+uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-workspace \
+  --comparison-job-id YOUR_COMPARISON_JOB_ID
+```
+
+父工作須已完成、失敗或取消，且每組候選的狀態都已定案。這份報告保留全部候選，
+包括失敗、取消與未執行的原因；即使沒有任何成功結果，仍可產生報告，並說明缺少可用績效。
+`--comparison-job-id` 與 `--run-id` 不能同時使用。兩種命令都會輸出報告的本機路徑；
 自選章節與評語參數可用 `uv run --locked tradingdev-report --help` 查看。
 
 ## 常見問題

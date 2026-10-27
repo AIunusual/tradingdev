@@ -44,6 +44,13 @@ workspace/
   ml_leaderboard/
     .leaderboard.lock
     leaderboard.jsonl
+  comparisons/
+    <job_id>/
+      manifest.json
+      config.yaml
+      ledger.json
+      snapshot.parquet
+      receipt.json
   runs/
     <run_id>/
       manifest.json
@@ -66,6 +73,10 @@ workspace/
       manifest.json
 ```
 
+Comparison snapshots and receipts are published only after approval and data
+loading. A failed or cancelled comparison may have neither `snapshot.parquet`
+nor `receipt.json` if it stopped before data publication.
+
 ## SQLite Tables
 
 - `jobs`: generic background job status, job type, pid,
@@ -76,7 +87,7 @@ workspace/
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child. New submissions also record
   `manifest_hash`, the expected digest of their fixed execution specification.
-- `runs`: completed run metadata, metrics JSON, config hash, source hash,
+- `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
@@ -85,9 +96,11 @@ workspace/
   active confirmation token, submitted job ID, error, and the saved text/HTML
   digests. The plan payload includes its manifest, preflight evidence and document.
 
-`job_id` and `run_id` are currently the same for completed backtest and
-optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
-done. Generated strategy jobs and runs carry their selected `revision_id`;
+`job_id` and `run_id` are currently the same for completed standalone backtest,
+walk-forward and optimization jobs. `get_job_status(job_id)` returns the `run_id`
+once such a run is done. A fixed comparison has a parent job and separate candidate
+run IDs recorded in its ledger; the parent has no performance run of its own.
+Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
 `null`. A successful explicit revision save changes only that strategy's current
 pointer and does not change the
@@ -100,8 +113,12 @@ owner. The publisher verifies comparison membership against the saved parent
 bundle and ledger; the binding alone does not prove that a child was approved.
 The publisher verifies the existing
 job, strategy/revision, executed manifest, configuration, source and performance
-identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs;
-artifact metadata retains the owning job ID. Child runs require complete
+identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs.
+Artifacts registered directly by `RunPublisher` retain the owning job ID in their
+metadata. `PerformanceStore` instead registers `performance_json` and
+`observations_json` with only `schema_version` and `manifest_hash` in metadata;
+their owning job is obtained through the artifact's `run_id` and the run record's
+`job_id`. Child runs require complete
 performance artifacts. Publication locking, rollback and retry checks cover
 the run files and lineage. `JobStore.save_result` retains the single-run
 interface and always constructs a binding with `run_id == job_id`.
@@ -428,6 +445,8 @@ shares one supervised time limit. No market data, engine or training runs before
 approval. Training-required and walk-forward comparisons are not supported.
 
 `ComparisonStore` uses `comparisons/<job_id>/manifest.json` and `ledger.json`.
+Alongside them, `config.yaml` projects the shared configuration without selecting
+one candidate's parameters; each child's manifest contains its complete settings.
 The ledger reserves `<job_id>_candidate_N` run IDs and retains every candidate's
 child manifest hash, status and failure reason. It progresses from `pending` to
 `running`, then `succeeded`, `failed` or `cancelled`; untouched candidates can
@@ -874,16 +893,18 @@ long signal-contract fixtures check effective generated settings before executio
 The execution manifest additionally fixes runtime overrides and search settings
 without rewriting the base revision.
 
-Each completed background job writes files under `workspace/runs/<run_id>/` and records
-matching SQLite metadata:
+Each successfully published background run, including a comparison child, writes
+files under `workspace/runs/<run_id>/` and records matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
 - `performance.json`: all metric values by scope, definitions and calculation
   metadata, stored as `performance_json`.
 - `observations.json`: aligned timestamps, equity, per-bar returns and trade
   records by scope, stored as `observations_json`.
-- `manifest.json`: the specification published at submission, registered after
-  successful result persistence as `execution_manifest`. Its artifact metadata
+- `manifest.json`: the approved execution specification, registered after
+  successful result persistence as `execution_manifest`. For a single job, the
+  file is published at submission; a comparison child's file is published from
+  its approved parent bundle when saving that child's result. Its artifact metadata
   includes `manifest_hash` and `schema_version`. Use `list_artifacts` and
   `get_artifact(include_content=true)` to inspect the JSON after completion.
 - `config.yaml`: effective config snapshot used for the run, stored as
@@ -903,9 +924,10 @@ matching SQLite metadata:
 - `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
   fingerprint hash, stored as `dataset_fingerprint`.
 - `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
-  as `pipeline_result` for completed backtest and walk-forward jobs.
+  as `pipeline_result` for completed backtest and walk-forward runs, including
+  successful ordinary-backtest comparison children.
 
-For background jobs, SQLite `runs.artifact_dir` must match the corresponding
+For background runs, SQLite `runs.artifact_dir` must match the corresponding
 `workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
 serialized effective config snapshot, not the hash of the immutable revision's
 base config. `runs.random_seed` records only the canonical
@@ -1088,7 +1110,16 @@ are not a cross-system transaction. A per-run `.result-publication` marker preve
 concurrent publishers. Handled exceptions restore the prior files and remove new
 run/artifact records. An externally terminated process can leave the marker;
 queries report the publication as busy instead of treating incomplete output as
-legacy data. The reader does not delete the marker or repair stored data.
+legacy data. Ordinary readers do not delete the marker or repair stored data.
+Comparison recovery is an explicit exception: after the caller confirms that the
+owning worker has stopped, `ComparisonService.reconcile` may use
+`RunPublisher.verify_published` to recover an already complete child publication.
+It verifies the approved parent/child identity, all registered artifact paths and
+digests, and the complete performance/observations pair before removing a leftover
+marker and recording success. Partial or corrupt output remains unavailable;
+recovery does not rerun strategy code or load a pipeline pickle. The worker's own
+synchronous failure handler can also reconcile through this verification path;
+external recovery must first confirm worker cleanup.
 
 Historical runs without performance artifacts remain readable through ordinary
 run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
@@ -1343,8 +1374,10 @@ identity without modifying earlier reports or backtest results.
 The content digest includes source snapshots, template version, section order and
 commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as
 `research_report_html` and `research_report_manifest` with IDs
-`report:<report_id>:html` and `report:<report_id>:manifest`. A single-run report
-is registered to that run; a multi-run report has no single `run_id` binding.
+`report:<report_id>:html` and `report:<report_id>:manifest`. A report containing one
+successful run is registered to that run; reports with zero or multiple successful
+runs have no single `run_id` binding. Comparison report metadata also retains the
+parent job identity.
 The response gives path, artifact IDs
 and HTML SHA-256 without placing an unbounded document into the MCP response.
 `get_artifact` can retrieve the files; local paths are not public URLs.
