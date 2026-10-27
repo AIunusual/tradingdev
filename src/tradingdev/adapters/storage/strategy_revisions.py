@@ -41,6 +41,14 @@ class StrategyRevisionIntegrityError(StrategyRevisionError):
     """Stored content no longer matches its revision's identity or hashes."""
 
 
+class StrategyNamespaceOccupiedError(StrategyRevisionError):
+    """A new strategy cannot reuse an existing or partially stored namespace."""
+
+
+class StrategyRevisionConflictError(StrategyRevisionError):
+    """A revision request no longer refers to the current revision."""
+
+
 class UnsupportedStrategyRevisionError(StrategyRevisionError):
     """A legacy flat strategy must be explicitly saved as a new revision."""
 
@@ -63,10 +71,45 @@ class StrategyRevisionStore:
         code: str,
         config: dict[str, Any],
         request_summary: str = "",
+        *,
+        expected_revision_id: str | None = None,
     ) -> StrategyMetadata:
-        """Publish a new draft without replacing any previous revision."""
+        """Create a new namespace or revise one explicitly selected current revision."""
         with self.lifecycle_lock(strategy_id):
+            self.check_save_target(strategy_id, expected_revision_id)
             return self._create(strategy_id, code, config, request_summary)
+
+    def check_save_target(
+        self, strategy_id: str, expected_revision_id: str | None
+    ) -> StrategyMetadata | None:
+        """Check a save target while the caller holds its lifecycle lock.
+
+        New saves reserve the whole namespace, including legacy and incomplete
+        publications. Revisions require an intact, explicitly selected current
+        revision; neither path silently chooses a base for the caller.
+        """
+        self._validate_strategy_id(strategy_id)
+        if expected_revision_id is None:
+            paths = (
+                self._path(strategy_id),
+                self._path(f"{strategy_id}.json"),
+                self._path(f"{strategy_id}.py"),
+                self._workspace_path("configs", f"{strategy_id}.yaml"),
+            )
+            if any(path.exists() for path in paths):
+                raise StrategyNamespaceOccupiedError(
+                    "Strategy namespace already exists; choose a new ID or supply "
+                    "the current expected_revision_id to revise it"
+                )
+            return None
+        self._revision_path(strategy_id, expected_revision_id)
+        current = self.load(strategy_id)
+        if current is None or current.revision_id != expected_revision_id:
+            raise StrategyRevisionConflictError(
+                "The expected revision is not current; reload and explicitly "
+                "select the revision to update"
+            )
+        return current
 
     def _create(
         self,
@@ -143,7 +186,8 @@ class StrategyRevisionStore:
                 if self._path(f"{strategy_id}.json").exists():
                     raise UnsupportedStrategyRevisionError(
                         f"Legacy strategy {strategy_id!r} has no immutable revision; "
-                        "save its source and config as a new draft explicitly"
+                        "save its source and config explicitly as a new strategy "
+                        "without reusing its ID"
                     )
                 return None
             raw_pointer = self._read_json(pointer)

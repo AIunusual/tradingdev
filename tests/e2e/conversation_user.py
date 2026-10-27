@@ -51,6 +51,71 @@ def _assert_short_review(text: str, html_path: Path, plan: ExecutionPlan) -> Non
     )
 
 
+def _database(workspace: MCPWorkspace) -> sqlite3.Connection:
+    database = workspace.workspace / "tradingdev.sqlite"
+    return sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+
+
+def assert_no_execution(workspace: MCPWorkspace) -> None:
+    """Verify no formal job or result exists before the simulated user agrees."""
+    with closing(_database(workspace)) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    assert not list(workspace.workspace.glob("runs/*/manifest.json"))
+
+
+def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPlan:
+    """Verify the plan the user can read, without making a consent decision."""
+    preparations = [
+        call
+        for call in turn.calls
+        if call.name.startswith("prepare_")
+        and isinstance(call.result, dict)
+        and call.result.get("success") is True
+    ]
+    assert len(preparations) == 1, "Present exactly one newly prepared plan"
+    prepared = preparations[0].result
+    assert prepared["status"] == "ready" and not prepared.get("job_id")
+    assert "confirmation_text" not in prepared
+    summary = prepared["confirmation_summary"]
+    assert isinstance(summary, str) and summary.strip()
+
+    _assert_summary(summary, turn.text)
+    html_path = Path(prepared["html_path"])
+    assert links_to_file(turn.text, html_path), (
+        "The user must receive a clickable Markdown link to this plan HTML.\n"
+        f"Expected plan HTML path: {html_path}"
+    )
+    with closing(_database(workspace)) as conn:
+        rows = conn.execute(
+            "SELECT payload, html_hash FROM execution_plans WHERE state='ready'"
+        ).fetchall()
+    assert len(rows) == 1, "Exactly one saved plan must await this user"
+    plan = ExecutionPlan.model_validate_json(rows[0][0])
+    assert prepared["plan_id"] == plan.plan_id
+    assert prepared["manifest_hash"] == plan.manifest.manifest_hash
+    assert prepared["preflight"] == plan.preflight.model_dump(mode="json"), (
+        "The shown offline checks must match this saved plan"
+    )
+    assert set(plan.preflight.not_checked) == {
+        "historical_data",
+        "backtest_engine",
+        "training",
+        "performance",
+    }
+    expected_path = (
+        workspace.workspace / "execution_plans" / plan.plan_id / "confirmation.html"
+    )
+    assert html_path == expected_path, f"Expected saved plan HTML path: {expected_path}"
+    html = html_path.read_bytes()
+    assert hashlib.sha256(html).hexdigest() == rows[0][1]
+    assert (
+        plan.plan_id in html.decode() and plan.manifest.manifest_hash in html.decode()
+    )
+    _assert_short_review(turn.text, html_path, plan)
+    return plan
+
+
 @dataclass
 class ObservedPlanUser:
     """Review a new execution in a workspace without previous jobs or runs.
@@ -67,14 +132,10 @@ class ObservedPlanUser:
     replies: list[str] = field(default_factory=list)
 
     def _database(self) -> sqlite3.Connection:
-        database = self.workspace.workspace / "tradingdev.sqlite"
-        return sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        return _database(self.workspace)
 
     def _no_execution(self) -> None:
-        with closing(self._database()) as conn:
-            assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
-            assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
-        assert not list(self.workspace.workspace.glob("runs/*/manifest.json"))
+        assert_no_execution(self.workspace)
 
     def _cancelled(self, plan_id: str) -> None:
         with closing(self._database()) as conn:
@@ -84,56 +145,7 @@ class ObservedPlanUser:
         assert state == ("cancelled",), "The previous plan must be cancelled"
 
     def _read_plan(self, turn: ModelTurn) -> ExecutionPlan:
-        preparations = [
-            call
-            for call in turn.calls
-            if call.name.startswith("prepare_")
-            and isinstance(call.result, dict)
-            and call.result.get("success") is True
-        ]
-        assert len(preparations) == 1, "Present exactly one newly prepared plan"
-        prepared = preparations[0].result
-        assert prepared["status"] == "ready" and not prepared.get("job_id")
-        assert "confirmation_text" not in prepared
-        summary = prepared["confirmation_summary"]
-        assert isinstance(summary, str) and summary.strip()
-
-        _assert_summary(summary, turn.text)
-        html_path = Path(prepared["html_path"])
-        assert links_to_file(turn.text, html_path), (
-            "The user must receive a clickable Markdown link to this plan HTML"
-        )
-        with closing(self._database()) as conn:
-            rows = conn.execute(
-                "SELECT payload, html_hash FROM execution_plans WHERE state='ready'"
-            ).fetchall()
-        assert len(rows) == 1, "Exactly one saved plan must await this user"
-        plan = ExecutionPlan.model_validate_json(rows[0][0])
-        assert prepared["plan_id"] == plan.plan_id
-        assert prepared["manifest_hash"] == plan.manifest.manifest_hash
-        assert prepared["preflight"] == plan.preflight.model_dump(mode="json"), (
-            "The shown offline checks must match this saved plan"
-        )
-        assert set(plan.preflight.not_checked) == {
-            "historical_data",
-            "backtest_engine",
-            "training",
-            "performance",
-        }
-        expected_path = (
-            self.workspace.workspace
-            / "execution_plans"
-            / plan.plan_id
-            / "confirmation.html"
-        )
-        assert html_path == expected_path
-        html = html_path.read_bytes()
-        assert hashlib.sha256(html).hexdigest() == rows[0][1]
-        assert (
-            plan.plan_id in html.decode()
-            and plan.manifest.manifest_hash in html.decode()
-        )
-        _assert_short_review(turn.text, html_path, plan)
+        plan = read_presented_plan(self.workspace, turn)
         self.plans.append(plan)
         return plan
 
@@ -224,6 +236,4 @@ class ObservedPlanUser:
 
 def review_text(prepared: dict[str, Any]) -> str:
     """Supply a deterministic presentation only for offline fixture verification."""
-    return (
-        f"{prepared['confirmation_summary']}\n[閱讀確認單](<{prepared['html_path']}>)"
-    )
+    return f"{prepared['confirmation_summary']}\n{prepared['confirmation_link']}"

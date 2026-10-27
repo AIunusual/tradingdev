@@ -393,6 +393,8 @@ backtest:
   mode: "volume"
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

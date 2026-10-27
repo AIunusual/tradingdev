@@ -1,6 +1,6 @@
 """Typed read contracts for runs, artifacts, and feature requests."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, JsonValue
 
@@ -12,6 +12,25 @@ class MetricDefinitionRecord(MetricDefinitionSnapshot):
     """JSON boundary for snapshots, accepting JSON arrays for the tuple of modes."""
 
     model_config = ConfigDict(strict=False)
+
+
+class DisplayedFoldStats(ContractModel):
+    """Rounded fold statistics with an unscaled count of available observations."""
+
+    mean: str | None
+    std: str | None
+    min: str | None
+    max: str | None
+    valid_count: int = Field(ge=0, strict=True)
+
+
+type MetricDisplayValues = Annotated[
+    dict[str, str | DisplayedFoldStats | None],
+    Field(
+        description="Ready-to-present rounded values; percent signs are included. "
+        "Null is unavailable; empty without saved units. Raw metrics are unchanged."
+    ),
+]
 
 
 class MetricDiscovery(ContractModel):
@@ -50,6 +69,7 @@ class RunRecord(MetricDiscovery):
     random_seed: int | None
     dataset_id: str | None
     metrics: dict[str, JsonValue]
+    display_metrics: MetricDisplayValues
     artifact_dir: str
     created_at: str
 
@@ -92,6 +112,7 @@ class RunMetricsResponse(MetricDiscovery):
     trial_index: int | None
     parameters: dict[str, JsonValue]
     metrics: dict[str, JsonValue]
+    display_metrics: MetricDisplayValues
     metadata: dict[str, JsonValue]
     definitions: dict[str, MetricDefinitionRecord]
 
@@ -113,6 +134,7 @@ class RunComparison(MetricDiscovery):
     mode: Literal["signal", "volume"] | None
     split: Literal["full", "train", "test"] | None
     metrics: dict[str, JsonValue]
+    display_metrics: MetricDisplayValues
     metadata: dict[str, JsonValue]
     definitions: dict[str, MetricDefinitionRecord]
 

@@ -17,6 +17,8 @@ from filelock import FileLock
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_text
 from tradingdev.adapters.storage.strategy_revisions import (
+    StrategyNamespaceOccupiedError,
+    StrategyRevisionConflictError,
     StrategyRevisionError,
     StrategyRevisionIntegrityError,
     StrategyRevisionStore,
@@ -60,7 +62,9 @@ def test_each_save_creates_an_independent_draft_without_mutating_input(
         for path in Path(first.source_path).parent.iterdir()
     }
 
-    second = store.create("fixture", "replacement source", config)
+    second = store.create(
+        "fixture", "replacement source", config, expected_revision_id=first.revision_id
+    )
 
     assert config == original
     assert UUID(second.revision_id).version == 4
@@ -87,7 +91,9 @@ def test_each_save_creates_an_independent_draft_without_mutating_input(
 def test_identical_saves_still_create_distinct_revisions(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = store.create("fixture", "same source", _config())
-    second = store.create("fixture", "same source", _config())
+    second = store.create(
+        "fixture", "same source", _config(), expected_revision_id=first.revision_id
+    )
     assert first.revision_id != second.revision_id
     assert first.source_hash == second.source_hash
     assert store.load("fixture", first.revision_id) == first
@@ -107,7 +113,9 @@ def test_source_bytes_and_hash_are_preserved_across_newline_styles(
 def test_updating_old_revision_does_not_move_current(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = store.create("fixture", "one", _config())
-    second = store.create("fixture", "two", _config())
+    second = store.create(
+        "fixture", "two", _config(), expected_revision_id=first.revision_id
+    )
     first.status = StrategyStatus.REJECTED
     store.update(first, expected_status=StrategyStatus.DRAFT)
     assert store.load("fixture") == second
@@ -202,7 +210,9 @@ def test_update_rejects_reassigned_content_hashes_and_cross_revision_evidence(
 ) -> None:
     store = _store(tmp_path)
     first = store.create("fixture", "one", _config())
-    second = store.create("fixture", "two", _config())
+    second = store.create(
+        "fixture", "two", _config(), expected_revision_id=first.revision_id
+    )
     altered = first.model_copy(update={"source_hash": sha256_text("altered")})
     with pytest.raises(StrategyRevisionIntegrityError, match="immutable"):
         store.update(altered)
@@ -228,10 +238,10 @@ def test_legacy_metadata_is_reported_without_migration(tmp_path: Path) -> None:
     assert store.list_legacy_ids() == ["fixture"]
     assert legacy.read_text() == content
     assert not (workspace.generated_strategies / "fixture").exists()
-    replacement = store.create("fixture", "new source", _config())
-    assert store.load("fixture") == replacement
-    assert store.list_current() == [replacement]
-    assert store.list_legacy_ids() == []
+    with pytest.raises(StrategyNamespaceOccupiedError, match="already exists"):
+        store.create("fixture", "new source", _config())
+    assert store.list_current() == []
+    assert store.list_legacy_ids() == ["fixture"]
     assert legacy.read_text() == content
 
 
@@ -278,7 +288,9 @@ def test_revision_is_complete_before_current_pointer_changes(
         replace(source, destination)
 
     monkeypatch.setattr(os, "replace", observe_replace)
-    second = store.create("fixture", "two", _config())
+    second = store.create(
+        "fixture", "two", _config(), expected_revision_id=first.revision_id
+    )
     assert observed == [second]
     assert store.load("fixture") == second
 
@@ -294,7 +306,9 @@ def test_failed_revision_write_cleans_temporary_directory(
 
     monkeypatch.setattr(store, "_serialize", fail_serialization)
     with pytest.raises(OSError, match="disk full"):
-        store.create("fixture", "two", _config())
+        store.create(
+            "fixture", "two", _config(), expected_revision_id=first.revision_id
+        )
     assert store.load("fixture") == first
     revisions = Path(first.source_path).parent.parent
     assert [path.name for path in revisions.iterdir()] == [first.revision_id]
@@ -312,7 +326,9 @@ def test_failed_pointer_replace_preserves_current_and_cleans_temporary_file(
 
     monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises(OSError, match="replace failed"):
-        store.create("fixture", "two", _config())
+        store.create(
+            "fixture", "two", _config(), expected_revision_id=first.revision_id
+        )
     assert store.load("fixture") == first
     revisions = list(Path(first.source_path).parent.parent.iterdir())
     assert len(revisions) == 2
@@ -465,3 +481,92 @@ else:
             process.communicate(timeout=5)
     loaded = store.load("fixture", metadata.revision_id)
     assert loaded is not None and loaded.status == StrategyStatus.VALIDATED
+
+
+@pytest.mark.parametrize(
+    "occupied_path",
+    [
+        "generated_strategies/fixture.json",
+        "generated_strategies/fixture.py",
+        "configs/fixture.yaml",
+        "generated_strategies/fixture/revisions/unfinished/strategy.py",
+    ],
+)
+def test_new_namespace_rejects_legacy_and_incomplete_publications(
+    tmp_path: Path, occupied_path: str
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    occupied = workspace.root / occupied_path
+    occupied.parent.mkdir(parents=True)
+    occupied.write_text("retained evidence")
+    store = StrategyRevisionStore(workspace)
+
+    with pytest.raises(StrategyNamespaceOccupiedError, match="already exists"):
+        store.create("fixture", "new source", _config())
+
+    assert occupied.read_text() == "retained evidence"
+    assert not (workspace.generated_strategies / "fixture" / "current.json").exists()
+
+
+def test_existing_strategy_requires_an_explicit_current_revision(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    original = store.create("fixture", "original", _config())
+    pointer = Path(original.source_path).parents[2] / "current.json"
+    pointer_bytes = pointer.read_bytes()
+
+    with pytest.raises(StrategyNamespaceOccupiedError):
+        store.create("fixture", "unrequested replacement", _config())
+    with pytest.raises(StrategyRevisionConflictError):
+        store.create(
+            "fixture", "stale replacement", _config(), expected_revision_id=uuid4().hex
+        )
+
+    assert pointer.read_bytes() == pointer_bytes
+    assert store.load("fixture") == original
+    assert store.revision_ids("fixture") == [original.revision_id]
+
+
+def test_revision_of_missing_strategy_does_not_create_it(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(StrategyRevisionConflictError):
+        store.create("fixture", "source", _config(), expected_revision_id=uuid4().hex)
+    assert store.load("fixture") is None
+    assert store.revision_ids("fixture") == []
+
+
+def test_concurrent_revisions_cannot_both_replace_the_same_expected_revision(
+    tmp_path: Path,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    original = StrategyRevisionStore(workspace).create("fixture", "old", _config())
+
+    def revise(code: str) -> str:
+        try:
+            return (
+                StrategyRevisionStore(workspace)
+                .create(
+                    "fixture",
+                    code,
+                    _config(),
+                    expected_revision_id=original.revision_id,
+                )
+                .revision_id
+            )
+        except StrategyRevisionConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(revise, ["first writer", "second writer"]))
+
+    assert outcomes.count("conflict") == 1
+    winner = next(result for result in outcomes if result != "conflict")
+    current = StrategyRevisionStore(workspace).load("fixture")
+    assert current is not None and current.revision_id == winner
+    assert set(StrategyRevisionStore(workspace).revision_ids("fixture")) == {
+        original.revision_id,
+        winner,
+    }

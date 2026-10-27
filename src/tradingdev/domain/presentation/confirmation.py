@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.research import ResearchMetadata
 from tradingdev.domain.strategies.execution import merge_strategy_parameters
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
@@ -355,7 +357,13 @@ def _market_fields(
         _field("回測 K 線週期", _timeframe(backtest["timeframe"])),
         _field("回測開始", backtest["start_date"]),
         _field("回測結束", backtest["end_date"]),
-        _field("時間基準", "UTC（世界協調時間）", "未附時區的時間依 UTC 解讀。"),
+        _field("時間邊界", "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）"),
+        _field(
+            "時間基準",
+            "UTC（世界協調時間）",
+            "未附時區的時間依 UTC 解讀；純日期代表當日 00:00:00，"
+            "結束日期不自動延伸至當日最後一刻。",
+        ),
         _field("本次行情來源", _source(market["source"])),
         _field("行情商品", market["symbol"], detail=True),
         _field("行情 K 線週期", _timeframe(market["timeframe"]), detail=True),
@@ -812,6 +820,91 @@ def _preflight_sections(
     )
 
 
+def _research_presentation(
+    value: object,
+    market_fields: list[ConfirmationField],
+    execution_fields: list[ConfirmationField],
+    backtest: dict[str, object],
+) -> tuple[list[ConfirmationField], list[ConfirmationField]]:
+    """Annotate origins without claiming to verify human input."""
+    if value is None:
+        return [], [_field("研究設定來源", "未保存研究需求來源")]
+    metadata = ResearchMetadata.model_validate(value)
+    labels = {
+        "request": "本次輸入",
+        "project_default": f"專案模擬預設（{metadata.policy_version}）",
+        "selected_revision": "沿用所選策略版本",
+    }
+    paths = {
+        "回測商品": "/backtest/symbol",
+        "回測 K 線週期": "/backtest/timeframe",
+        "回測開始": "/backtest/start_date",
+        "回測結束": "/backtest/end_date",
+        "初始資金": "/backtest/init_cash",
+        "手續費率": "/backtest/fees",
+        "滑價率": "/backtest/slippage",
+        "年化計算的每年日數": "/backtest/periods_per_year",
+    }
+    for fields in (market_fields, execution_fields):
+        for index, field in enumerate(fields):
+            if field.label in paths:
+                source = labels[metadata.field_sources[paths[field.label]]]
+                description = f"{field.description} 設定來源：{source}。".strip()
+                fields[index] = field.model_copy(update={"description": description})
+    cost_names = {"init_cash": "本金", "fees": "手續費", "slippage": "滑價"}
+    if backtest["mode"] == "volume":
+        cost_names.pop("init_cash")
+    execution_fields.append(
+        _field(
+            "本金與成本來源",
+            "；".join(
+                f"{label}：{labels[metadata.field_sources[f'/backtest/{name}']]}"
+                for name, label in cost_names.items()
+            ),
+            "這些是模擬設定，不代表交易所即時費率。",
+        )
+    )
+    sampling_reason = daily_observation_unavailable_reason(str(backtest["timeframe"]))
+    execution_fields.append(
+        _field(
+            "年化統計取樣",
+            "此計算方式不提供本金報酬年化"
+            if backtest["mode"] == "volume"
+            else "此 K 棒頻率不支援每日統計"
+            if sampling_reason is not None
+            else "有觀測值的 UTC 每日帳戶報酬；缺日不補零",
+            "每年日數與 K 棒頻率分開；設定日數不代表已驗證歷史資料覆蓋。",
+        )
+    )
+    strategy_fields = [
+        _field(
+            "研究構想",
+            metadata.strategy_outline,
+            "保存本次輸入或所選版本的構想，不代表後端已證明程式符合全部敘述。",
+        )
+    ]
+    technical = [
+        _field("研究政策版本", metadata.policy_version),
+        _field("研究來源格式版本", metadata.schema_version),
+        _field("年化政策判定", metadata.annualization_reason),
+        _field(
+            "研究構想來源",
+            labels[metadata.field_sources["/research/strategy_outline"]],
+            "來源標籤記錄解析路徑，不證明輸入來自真人或已獲批准。",
+        ),
+    ]
+    if metadata.selected_revision is not None:
+        identity = metadata.selected_revision
+        technical.extend(
+            (
+                _field("沿用設定的策略識別碼", identity.strategy_id),
+                _field("沿用設定的修訂版本", identity.revision_id),
+                _field("沿用設定的 YAML 摘要", identity.config_hash, missing="未保存"),
+            )
+        )
+    return strategy_fields, technical
+
+
 def build_confirmation_document(
     manifest: ExecutionManifest,
     presentation: ConfirmationPresentation,
@@ -823,9 +916,18 @@ def build_confirmation_document(
     preflight = PreflightReceipt.model_validate(preflight.model_dump(mode="python"))
     validate_presentation(manifest, presentation)
     config = _object(manifest.config_for_execution(), "execution")
+    config.setdefault("research", None)
     _known_fields(
         config,
-        {"strategy", "backtest", "data", "validation", "parallel", "random_seed"},
+        {
+            "strategy",
+            "backtest",
+            "data",
+            "validation",
+            "parallel",
+            "random_seed",
+            "research",
+        },
         "execution",
     )
     strategy = _object(config["strategy"], "strategy")
@@ -837,6 +939,7 @@ def build_confirmation_document(
             "version",
             "class_name",
             "description",
+            "display_name",
             "source_path",
             "source_hash",
             "parameters",
@@ -851,7 +954,12 @@ def build_confirmation_document(
     execution_fields = _execution_fields(
         backtest, _object(config["parallel"], "parallel"), config["random_seed"]
     )
+    research_fields, research_identity = _research_presentation(
+        config["research"], market_fields, execution_fields, backtest
+    )
+    technical.extend(research_identity)
     for key, label in (
+        ("display_name", "策略名稱"),
         ("id", "策略識別碼"),
         ("revision_id", "策略修訂版本"),
         ("version", "策略標示版本"),
@@ -888,7 +996,8 @@ def build_confirmation_document(
                             "walk_forward": "分段訓練與驗證",
                             "optimization": "參數搜尋與保留區間測試",
                         }[manifest.kind],
-                    )
+                    ),
+                    *research_fields,
                 ],
             ),
             _section("market", market_fields),

@@ -17,6 +17,7 @@ from tests.e2e.report_delivery import verify_report_delivery
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
+from tests.e2e.workflow_research import assert_research_reused
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.domain.preflight import PreflightReceipt
@@ -43,11 +44,21 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
         assert 'result["signal"] = 7' in code
         config = yaml.safe_load(contract["example_yaml_config"])
         config["strategy"]["parameters"] = scenario.parameters
+        config["backtest"].update(
+            start_date="2024-01-01",
+            end_date="2024-01-08",
+            init_cash=10000,
+            fees=0,
+            slippage=0,
+            periods_per_year=365,
+        )
+        config["random_seed"] = 42
         saved = await client.call(
             "save_strategy",
             strategy_id=scenario.strategy_id,
             code=code,
             yaml_config=yaml.safe_dump(config),
+            research=scenario.research,
         )
         assert saved["success"] and saved["status"] == "draft", saved
 
@@ -64,16 +75,16 @@ async def seed_legacy_strategy(
     configs = workspace.workspace / "configs"
     generated.mkdir(parents=True, exist_ok=True)
     configs.mkdir(parents=True, exist_ok=True)
-    source = generated / f"{scenario.strategy_id}.py"
-    config_path = configs / f"{scenario.strategy_id}.yaml"
+    source = generated / f"{scenario.legacy_strategy_id}.py"
+    config_path = configs / f"{scenario.legacy_strategy_id}.yaml"
     config = yaml.safe_load(contract["example_yaml_config"])
     config["strategy"].update(
-        id=scenario.strategy_id,
+        id=scenario.legacy_strategy_id,
         parameters=scenario.parameters,
         source_path=str(source),
     )
     metadata = {
-        "strategy_id": scenario.strategy_id,
+        "strategy_id": scenario.legacy_strategy_id,
         "class_name": config["strategy"]["class_name"],
         "status": "runnable",
         "source_path": str(source),
@@ -84,7 +95,7 @@ async def seed_legacy_strategy(
     originals = {
         source: contract["example_strategy_code"].encode("utf-8"),
         config_path: yaml.safe_dump(config).encode("utf-8"),
-        generated / f"{scenario.strategy_id}.json": json.dumps(metadata).encode(
+        generated / f"{scenario.legacy_strategy_id}.json": json.dumps(metadata).encode(
             "utf-8"
         ),
     }
@@ -129,7 +140,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     )
     if scenario.legacy:
         legacy_identity = {
-            "strategy_id": scenario.strategy_id,
+            "strategy_id": scenario.legacy_strategy_id,
             "revision_id": None,
             "kind": "legacy",
             "status": "revision_required",
@@ -156,7 +167,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 index
                 for index, call in enumerate(calls)
                 if call.name == "get_strategy"
-                and call.arguments.get("strategy_id") == scenario.strategy_id
+                and call.arguments.get("strategy_id") == scenario.legacy_strategy_id
                 and call.result
                 and call.result.get("success") is True
                 and all(
@@ -212,8 +223,12 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             and call.result.get("revision_id") == revision_id
         ),
     )
-    for name in ("validate_strategy", "dry_run_strategy"):
-        require_index(
+    checked: dict[str, ToolCall] = {}
+    for name, status in (
+        ("validate_strategy", "validated"),
+        ("dry_run_strategy", "runnable"),
+    ):
+        checked_index = require_index(
             f"{name} explicitly checking revision_id={revision_id!r}",
             (
                 index
@@ -224,9 +239,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("strategy_id") == scenario.strategy_id
                 and call.arguments.get("revision_id") == revision_id
                 and call.result.get("success")
+                and call.result.get("status") == status
                 and call.result.get("revision_id") == revision_id
             ),
         )
+        checked[name] = calls[checked_index]
     prepare_index = require_index(
         f"prepare_backtest for {target} returning a ready plan_id "
         "after successful dry_run_strategy",
@@ -245,10 +262,6 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
     expected_arguments: dict[str, Any] = {
         "strategy_id": scenario.strategy_id,
         "revision_id": revision_id,
-        "symbol": "BTC/USDT",
-        "timeframe": "1h",
-        "start_date": "2024-01-01",
-        "end_date": "2024-01-08",
     }
     if scenario.experiment:
         expected_arguments["parameters"] = scenario.overrides
@@ -256,6 +269,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             call.name == "save_strategy" for call in calls[previous + 1 :]
         ), "Parameter experiments must reuse the runnable revision"
     actual_arguments = dict(prepared.arguments)
+    assert_research_reused(
+        actual_arguments.pop("research", None),
+        validated=checked["validate_strategy"],
+        dry_run=checked["dry_run_strategy"],
+    )
     presentation = actual_arguments.pop("presentation", None)
     assert isinstance(presentation, dict), "Prepared plan requires presentation"
     assert presentation.get("title") and presentation.get("summary")
@@ -475,6 +493,13 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
             f"precede successful save_strategy (events {read_index}, "
             f"{failure_index}, {save_index})"
         )
+        selected_revision = calls[read_index].result.get("revision_id")
+        assert isinstance(selected_revision, str) and selected_revision, (
+            "Repair retrieval must identify an immutable revision"
+        )
+        assert (
+            calls[save_index].arguments.get("expected_revision_id") == selected_revision
+        ), "Repair save_strategy must bind expected_revision_id to the retrieved draft"
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS.values(), ids=SCENARIOS.keys())

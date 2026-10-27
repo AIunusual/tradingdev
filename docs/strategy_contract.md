@@ -34,9 +34,11 @@ strategy-created threads or processes must explicitly initialize their own strea
 `get_strategy_contract(section="core")` returns the required Python/signal rules,
 base interface and revision lifecycle. Each reply identifies its selected section
 and lists `available_sections` with their purposes. The `content` object contains
-only that complete section: request `section="example"` for the Python/YAML pair,
+only that complete section: request `section="research"` for the research-input
+schema and shared simulation policy, `section="example"` for the Python/YAML pair,
 or `section="configuration"` for the executable YAML schema and financial-setting
-notes. Unknown sections fail; a missing core reference does not produce an empty
+notes. Research schema and policy are projected from their domain definitions.
+Unknown sections fail; a missing core reference does not produce an empty
 or partial contract. The default no longer embeds examples and the entire schema.
 
 `get_strategy_contract(section="configuration").content.config_schema` describes
@@ -72,6 +74,19 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+In signal mode, each row specifies a position state: `1` long, `-1` short,
+`0` flat. Repeat the state while it should persist. An entry pulse followed by
+zero closes the position on the next signal change. `signal_as_position` has no
+effect in this mode. In either mode, `-1` selects a short position; it is not a
+sell-only instruction to close a long. Both modes shift signals by one bar and
+execute signal-driven entries and exits at the following bar's open, falling back
+to close when open is absent. Stop-loss and take-profit rules are separate.
+
+The published SMA example is explicitly long-only: emit `1` on every row where
+both averages are finite and the fast average exceeds the slow average, otherwise
+emit `0`, including equality and warm-up. Adapt this example to the user's actual
+direction, entry, holding and exit rules rather than inheriting its trading intent.
+
 Backtest execution requires finite, strictly positive prices. Signal mode checks
 `close` and any supplied `open` across all bars, using `close` for execution when
 the `open` column is absent. On bars with logged order attempts (filled, ignored
@@ -88,7 +103,9 @@ nonmissing, unique, increasing timestamps; they are normalized to UTC.
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
 zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
-`signal_as_position: true` if zero should also close an existing position.
+`signal_as_position: true` if zero should also close an existing position. With
+the default `false`, zero retains an existing position. An opposite nonzero
+signal closes the current position and opens one in the opposite direction.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
@@ -252,7 +269,98 @@ labels; callers that need positional mapping supply a positional index.
 See the [Quantile guide](strategies/quantile_strategy.md#running) for commands,
 data prerequisites and execution-mode restrictions.
 
+## Research Inputs and Simulation Policy
+
+MCP `save_strategy`, `prepare_backtest`, `prepare_walk_forward`, and
+`prepare_optimization` require `research: ResearchSpec`. The assistant must obtain
+four user choices: strategy outline, instrument, period, and bar timeframe. A vague
+outline is acceptable; missing choices must be requested rather than copied from
+examples or inferred from available data. The period occupies two input fields.
+The backend enforces completeness and revision binding, not whether a human
+actually supplied those choices.
+
+For new research, send `kind: "new"` and all five fields:
+
+```json
+{
+  "kind": "new",
+  "strategy_outline": "Buy after a fast moving average crosses above a slow one; exit on the reverse crossing.",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "start_date": "2024-01-01T00:00:00Z",
+  "end_date": "2024-07-01T00:00:00Z"
+}
+```
+
+Text must be nonempty. Dates accept ISO dates or timestamps, normalize to UTC,
+and interpret a missing timezone as UTC. A date without a time means midnight;
+ordinary backtest bounds do not automatically expand to cover the final day.
+Rows are selected by candle timestamp with `start_date <= timestamp <= end_date`,
+including either endpoint when matching data exists; this does not define the
+final candle's close or execution time.
+`end_date` must follow `start_date`. Unknown fields and explicit `null` choices
+are rejected. Optional fields must be omitted to request their defaults.
+
+The shared `research-v1` simulation policy supplies omitted `init_cash: 10000.0`,
+`fees: 0.0006`, and `slippage: 0.0005`. Capital is in quote currency; fees and
+slippage are decimal rates. These are simulation assumptions, not live exchange
+fees. Explicit finite values take priority; capital must be positive and costs
+nonnegative, including zero. Numeric strings and booleans are rejected. Volume
+mode has no capital-return basis: omitted capital stays `null`, and an explicit
+capital value does not change that engine's semantics. The resolver does not
+synchronize similarly named strategy parameters with backtest execution costs.
+
+`annualization` accepts `"market"` (the new-research default), `"unavailable"`,
+or a positive finite factor for observed UTC daily returns. Market policy chooses
+365 only when the selected provider's registered asset classes are exclusively
+crypto. Mixed providers, including Yahoo Finance even for a crypto symbol, require
+an explicit factor or `"unavailable"`; symbol spelling does not identify a trading
+calendar. The latter saves `backtest.periods_per_year: null`. A factor does not
+enable daily statistics for weekly, monthly or unrecognized bar frequencies.
+
+Data configuration must explicitly select `data.source` or
+`data.requirements.market.source`. Providers with market-type choices also require
+an explicit supported `data.market_type`; research preparation does not silently
+select Binance or its futures market. Source capabilities come from
+`list_data_sources`, without downloading data. Bundled YAML includes its source
+and market type as template settings, not as evidence of user-selected research
+dates or costs.
+
+`kind: "inherit_selected_revision"` enables inheritance only from an explicitly
+selected immutable generated revision. Preparation requires its
+`revision_id`; saving a revision requires its `strategy_id` and
+`expected_revision_id`. Bundled strategies and implicit current selection cannot
+supply inheritance. An older revision without a saved outline requires an explicit
+`strategy_outline`. An omitted annualization choice can retain the selected
+factor or unavailable setting when symbol, provider and market type match; after a market change, the
+resolver requires an applicable market policy or an explicit new choice.
+
+Saving uses the shared builder to produce a complete YAML from authoring settings
+and research choices. Research owns its outline, symbol, timeframe, dates, capital,
+costs and annualization factor; duplicate owned fields in authoring YAML must
+agree. Strategy parameters, feature requirements, validation and other engine
+controls remain authoring settings. Execution preparation uses the same resolver
+to replace template research values without modifying the base revision.
+`backtest_overrides` is for other engine controls; research-owned keys are rejected
+there, even when their values agree. Put those choices in `research` instead.
+An existing YAML cost is not an implicit request
+to inherit it. Resolved values and their origins are frozen in the config;
+[artifact provenance](run_artifacts.md#research-settings-and-provenance) records the
+policy and selected revision without duplicating the effective values.
+
+The old top-level `symbol`, `timeframe`, `start_date`, and `end_date` arguments are
+not accepted by MCP preparation tools. Optimization still requires its separate
+training/test calendar dates, and the resolved research period must equal
+`train_start` at 00:00:00 UTC through `test_end` at 23:59:59.999999 UTC. A mismatch
+is rejected, not silently expanded. CLI and direct Python execution with a complete
+YAML remain separate explicit execution interfaces; they do not require an MCP
+intake session or automatically reconstruct research provenance.
+
 ## YAML Contract
+
+The following is a complete execution example. MCP authoring may omit the
+research-owned fields that the builder supplies; if included, they must agree
+with the required `research` input.
 
 ```yaml
 strategy:
@@ -275,16 +383,17 @@ backtest:
   mode: "signal"
 
 data:
-  # market_type defaults to "futures/um" (binance_vision only); "spot" for spot
+  source: "binance_vision"
+  market_type: "futures/um"  # explicitly choose "spot" for spot data
   requirements:
     market:
       # source selects the market data crawler registered in
       # domain/data/crawlers/registry.py:
-      #   "binance_vision" (default) - crypto, data.binance.vision
+      #   "binance_vision"          - crypto, data.binance.vision
       #   "binance_api"              - crypto, ccxt
       #   "yahoo_finance"            - stocks/ETFs/futures/indices/FX,
       #                                Yahoo symbols ("AAPL", "ES=F", "^GSPC")
-      # omitted -> inherits legacy top-level data.source
+      # omitted -> uses the explicitly selected top-level data.source
       source: "binance_vision"
       symbol: "BTC/USDT"
       timeframe: "1h"
@@ -295,12 +404,19 @@ data:
 `strategy.source_path` to the saved revision. These identity fields are managed
 by the service; callers need not supply them. `strategy.version` remains optional
 descriptive configuration, not the execution revision identifier.
+`strategy.display_name` is an optional human-readable name, separate from the
+internal ID; generated saves supply it from an explicit name or the outline.
+The saved config also contains resolved `research` provenance. Neither field is a
+constructor parameter, and changing a generated strategy's display name requires
+a new revision.
 
 Performance analysis uses QuantStats for return/risk metrics and VectorBT for
 closed-trade statistics. `periods_per_year` is the explicit annualization factor
 for observed UTC **daily returns**, independent of the strategy's bar timeframe:
 365 for this continuously traded crypto example, or an appropriate trading-day
-count for another market. Omitting it leaves annualized metrics unavailable.
+count for another market. In a direct execution config, omitting it leaves annualized
+metrics unavailable. The guided research resolver supplies or explicitly disables
+it according to the preceding policy before execution.
 `risk_free_rate` and `required_return` are annual decimal rates, converted to
 daily rates using that factor. Calendar aggregation uses observed dates; missing
 market data is not silently filled with zero returns. Maximum drawdown retains
@@ -355,6 +471,15 @@ The top-level YAML `validation` mapping configures strategy backtests through
 `train_model(validation=...)` tool described below: it does not select an ML
 scheme by name or infer a label horizon from an ML dataset.
 
+Only MCP `prepare_walk_forward` accepts optional
+`validation_config: WalkForwardConfig`. When supplied, it replaces the complete
+validation mapping for that execution, using schema defaults for omitted settings;
+it does not merge with the selected configuration. Omission or `null` preserves
+the selected validation settings, including a bundled walk-forward template where
+applicable. `prepare_backtest` and `prepare_optimization` reject this argument.
+The effective mapping is captured in the manifest without modifying the source
+revision, its validation evidence or current pointer.
+
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `label_horizon` | `0` | A positive value declares how many source rows a training label looks ahead and enables the pre-fold label-overlap audit. Values below 1 leave that audit disabled with the plain splitter. |
@@ -372,7 +497,14 @@ of day is discarded. Their UTC days must satisfy
 window ending on the day the test window starts would train on bars the test
 set also scores, so it is rejected. Supplying only some of the four fields is
 rejected as well, instead of silently falling back to automatic windows. The
-splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
+active training and test windows, including the full final UTC day, must fit
+inside the resolved research start/end timestamps. Execution preparation rejects
+out-of-range windows rather than clipping them or extending the research period.
+For the requested period, supply suitable explicit windows or replace the
+validation mapping with an automatic split. Bundled examples with
+explicit windows use `23:59:59.999999` on their final backtest day; a date-only
+research end still means midnight, not the end of that day.
+The splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
 timestamps are not ascending, a window selects no rows, or the selected train
 and test rows share a bar.
 A positive `label_horizon` checks the selected windows before any fold's
@@ -401,6 +533,7 @@ using all preceding blocks as anchored training history after removing the
 full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
 folds, even if present in the YAML. The schema still parses supplied dates as
 datetimes, but does not require all four or validate their order in purged mode.
+These inactive dates also do not trigger the research-period containment check.
 Omit those inactive settings to keep the
 request clear. The backtest's data bounds still determine the history supplied
 to the splitter.
@@ -665,9 +798,14 @@ workspace.
 
 ## Lifecycle
 
-1. `save_strategy`: writes a new draft source/config revision and metadata,
-   returns its `revision_id`, and updates the current pointer. Even an identical
-   save creates a new revision; it does not inherit validation evidence.
+1. `save_strategy(code, yaml_config, research, strategy_id=None,
+   expected_revision_id=None, display_name=None)`: saves a new draft after resolving
+   research and checking config consistency. Omit `strategy_id` to allocate
+   `strategy_<uuid>` automatically. A supplied ID without an expected revision also
+   means creation and must have an unused namespace. Revising requires both IDs and
+   a matching current revision under the lifecycle lock. Successful saves return
+   `strategy_id` and `revision_id` and update that strategy's current pointer.
+   Even identical content creates a new revision without validation evidence.
 2. `validate_strategy`: runs syntax, static policy, restricted import checks,
    ruff, mypy, inheritance, constructor, and the shared signal-contract gate on
    a short fixture for the selected revision. It returns that `revision_id` and
@@ -678,8 +816,9 @@ workspace.
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: capture
-   an execution manifest, check code and configuration offline, and prepare a
+5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: resolve
+   the required research input, capture an execution manifest, check code and
+   configuration offline, and prepare a
    plain-language confirmation and HTML artifact. Only runnable or promoted
    generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
@@ -705,9 +844,32 @@ The lifecycle gate is enforced again at execution time inside `BacktestService`,
 so the CLI and subprocess workers cannot bypass it, and the config's `source_path`
 must match the selected revision's source.
 
+Strategy naming is optional. Supply a name through `display_name` or the YAML's
+`strategy.display_name`; if both are supplied, they must agree. When neither is
+supplied, saving uses the first line of the resolved outline, truncated to 80
+characters. The name is stored once in `strategy.display_name`, covered by the
+config hash and
+available in HTML technical details. Presentation titles remain model-authored
+page titles. `request_summary` is no longer a save input; metadata projects it
+from the resolved outline.
+
+Existing namespaces include immutable revisions, incomplete directories and legacy
+source, metadata or config files. Explicit creation collisions return
+`strategy_id_exists`; bundled IDs return `reserved_strategy_id`. Anonymous
+creation retries up to eight candidate IDs while checking each under its lifecycle
+lock, then returns `strategy_id_generation_failed`. None of these collisions
+revises the existing strategy. A stale expected revision returns
+`strategy_revision_conflict`; invalid revision contents or IDs return
+`strategy_revision_invalid`. Supplying an expected revision without a strategy ID
+returns `invalid_revision_request`. Research/config resolution errors return
+`invalid_research_spec`; syntax and YAML errors keep their specific save codes.
+Successful saving is not code validation: subsequent checks still return repairable
+diagnostics and determine executable status.
+
 Pass the `revision_id` returned by saving to get, validate, dry-run, promote,
-and execution tools. Omitting it selects current once at the start of that
-operation. Validation and dry-run persist evidence to that selected revision,
+and execution tools. Except for explicit research inheritance and revision saves,
+omitting it selects current once at the start of that operation. Validation and
+dry-run persist evidence to that selected revision,
 even if another save changes current while checks are running. A new draft B
 does not revoke revision A's evidence, and B cannot inherit it.
 
@@ -766,6 +928,10 @@ and checking a new revision, even if identity and parameters are unchanged.
 The comparison excludes the execution-managed `source_hash` and separately
 verifies that `source_path` resolves to the selected revision's source. Copy the
 saved config and apply market/date/cost changes outside the `strategy` section.
+Direct Python `apply_run_overrides` and supplied `apply_backtest_overrides` remove
+research provenance from the effective config because they do not resolve the
+new settings through research intake. The saved revision and its metadata remain
+unchanged; missing origins must not be presented as inherited user choices.
 MCP `prepare_backtest`, `prepare_walk_forward`, and `prepare_optimization` accept
 a `parameters` mapping;
 overrides apply to the captured effective base parameters, including constructor
@@ -809,7 +975,14 @@ JSON pointers relative to `strategy_execution.constructor_kwargs`: for example,
 `/fast_period` for a generated strategy or `/config/k_period` for a bundled strategy.
 The confirmation builder rejects missing or extra descriptions. The assistant
 supplies this technical mapping; the user reviews readable names, values and units.
-Optional `backtest_overrides` capture execution costs and settings in the same plan.
+Optional `backtest_overrides` capture other engine settings in the same plan;
+research supplies capital, costs and annualization choices.
+The short conversation summary uses `summary`, not `title` or the saved name,
+and includes resolved capital/cost sources and the annualization basis. HTML
+retains the title, saved name, complete settings, policy and inheritance details.
+This presentation schema does not contain a complete formal trading-rule or
+formula representation; model summaries and parameter descriptions do not prove
+equivalence to the strategy's Python implementation.
 
 The preflight receipt records offline code/configuration checks and the fixed
 synthetic signal fixtures used for generated strategies. It does not contain market
@@ -833,11 +1006,15 @@ legacy metadata or blocking bundled/current strategies. These entries have
 paths or trust lifecycle evidence from legacy metadata. Missing, unreadable,
 non-UTF-8, or symlinked source/config files return `strategy_revision_invalid`;
 their legacy entry remains discoverable. Restore the files or provide replacement
-content to `save_strategy`, then validate/dry-run the newly returned revision.
+content to `save_strategy` with the required research input and a new identity
+(omit `strategy_id`, or choose another unused ID), then validate/dry-run the newly
+returned revision. The legacy namespace cannot be reused by a new save.
 Validate, dry-run, and promote reject legacy entries with
 `strategy_revision_required`; execution still rejects them as non-executable.
-A saved current revision supersedes its legacy discovery entry, leaving the old
-files untouched. Explicit revision lookups never fall back to legacy files.
+Recovery preserves the legacy files and discovery entry. If a workspace already
+has a current revision under a legacy ID, discovery uses that current revision;
+this does not authorize a new save to bypass namespace checks. Explicit revision
+lookups never fall back to legacy files.
 If a legacy entry shares a bundled ID, discovery lists both kinds and default
 source lookup/execution selects bundled. Read the legacy source explicitly with
 `get_strategy(strategy_id, legacy=true)` and save it under a different,

@@ -13,6 +13,7 @@ from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_summary,
     render_confirmation_text,
 )
+from tradingdev.app.research import SelectedResearchRevision, resolve_research_config
 from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
@@ -27,6 +28,7 @@ from tradingdev.domain.presentation.confirmation import (
     parameter_paths,
     validate_presentation,
 )
+from tradingdev.domain.research import InheritResearchSpec, NewResearchSpec
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.loader import StrategyLoader
@@ -167,8 +169,10 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
     document = _document(_manifest(kind))
     summary = render_confirmation_summary(document, mode="signal")
     html = unescape(render_confirmation_html(document))
-    assert len(summary.splitlines()) <= 7
+    assert len(summary.splitlines()) <= 8
     assert len(summary) < 900
+    assert document.title not in summary
+    assert document.summary in summary
     for expected in (
         "BTC/USDT",
         "每根 K 線 1 小時",
@@ -177,12 +181,16 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
         "10000",
         "0.06%",
         "0.05%",
+        "時間邊界：依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）",
         "完整 HTML",
         "於對話回覆",
     ):
         assert expected in summary
     assert "確認前僅檢查程式" in summary
     assert "閱讀本頁不會啟動回測" in html
+    assert "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）" in html
+    assert "純日期代表當日 00:00:00" in html
+    assert "結束日期不自動延伸至當日最後一刻" in html
     for detail in (
         "合成訊號檢查筆數",
         "實際可用日期、筆數與資料缺口尚未驗證",
@@ -193,6 +201,65 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
         assert "參數組合總數：3" in summary
         assert "搜尋組 1／候選 3" not in summary
         assert "搜尋組 1／候選 3" in html
+
+
+@pytest.mark.parametrize("inherit", [False, True])
+def test_research_origins_and_name_are_bound_to_html_without_chat_naming(
+    inherit: bool,
+) -> None:
+    original = _manifest()
+    config = resolve_research_config(
+        original.config_copy(),
+        NewResearchSpec.model_validate(
+            {
+                "strategy_outline": "低點買入，回到平均價時賣出。",
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-07-01",
+            }
+        ),
+    )
+    if inherit:
+        config = resolve_research_config(
+            config,
+            InheritResearchSpec(fees=0),
+            selected_revision=SelectedResearchRevision(
+                "fixture", "revision-secret", config, "c" * 64
+            ),
+        )
+    name = "<script>私人策略名稱</script>"
+    config["strategy"]["display_name"] = name
+    manifest = ExecutionManifest.create(
+        kind="backtest", config=config, strategy_execution=original.strategy_execution
+    )
+    document = _document(manifest)
+    html = render_confirmation_html(document)
+    summary = render_confirmation_summary(document, mode="signal")
+    fields = {
+        field.label: field for section in document.sections for field in section.fields
+    }
+    assert fields["初始資金"].value_text == "10000.0"
+    assert fields["滑價率"].value_text == "0.05%"
+    assert "來源" in fields["滑價率"].description
+    assert fields["研究構想"].value_text == "低點買入，回到平均價時賣出。"
+    assert "不代表後端已證明" in fields["研究構想"].description
+    assert "365" in summary and "UTC 每日" in summary
+    assert "本金與成本來源" in summary
+    assert name not in summary and "私人策略名稱" not in summary
+    assert name not in html and "&lt;script&gt;私人策略名稱&lt;/script&gt;" in html
+    assert "頁面標題與下方說明由模型提供" in html
+    assert "策略名稱與下方說明由模型提供" not in html
+    assert "不證明輸入來自真人" in html
+    if inherit:
+        assert fields["手續費率"].value_text == "0%"
+        assert "本次輸入" in fields["手續費率"].description
+        assert "沿用所選策略版本" in fields["滑價率"].description
+        assert "c" * 64 in html
+    else:
+        assert fields["手續費率"].value_text == "0.06%"
+        assert "專案模擬預設" in fields["手續費率"].description
+        assert "專案模擬預設" in fields["滑價率"].description
 
 
 @pytest.mark.parametrize("position_size", [None, 0, 200, 450])

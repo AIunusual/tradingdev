@@ -18,10 +18,13 @@ from tests.e2e.codex_app_server import CodexAppServer
 from tests.integration.mcp_harness import MCPWorkspace
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import psutil
 
     from tests.e2e.codex_app_server import ElicitationCallback
     from tests.e2e.conversation import UserReply
+    from tests.e2e.llm_client import ToolCall
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -137,6 +140,7 @@ async def run_codex(
     user_reply: UserReply | None = None,
     max_turns: int = 8,
     tool_names: list[str] | None = None,
+    on_tool_call: Callable[[ToolCall], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Run an MCP-only conversation with one thread and reap its process tree."""
     from tests.e2e.conversation import ModelTurn
@@ -144,6 +148,11 @@ async def run_codex(
 
     enabled_tools = LIFECYCLE_TOOLS if tool_names is None else tool_names
     turn_number = 0
+
+    def observe_tool(event: dict[str, Any]) -> None:
+        assert on_tool_call is not None
+        for call in codex_calls([event]):
+            on_tool_call(call)
 
     async def respond_to_turn(events: list[dict[str, Any]]) -> str | None:
         nonlocal turn_number
@@ -179,6 +188,7 @@ async def run_codex(
             max_tool_calls=max_tool_calls,
             elicitation_callback=elicitation_callback,
             observe_processes=observe_processes,
+            on_completed_tool=observe_tool if on_tool_call is not None else None,
         )
         try:
             async with asyncio.timeout(timeout_seconds):

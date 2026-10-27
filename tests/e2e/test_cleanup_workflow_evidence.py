@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+import yaml
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.test_llm_cleanup import (
@@ -232,6 +234,60 @@ def test_cleanup_seed_and_evidence_use_real_mcp_and_preserve_history() -> None:
             seeded = await seed_cleanup_workspace(workspace)
             observed: list[ToolCall] = []
             async with workspace.connect() as client:
+                configs = []
+                for revision_id in (
+                    seeded.eligible_id,
+                    seeded.runnable_id,
+                    seeded.current_id,
+                ):
+                    saved = await client.call(
+                        "get_strategy",
+                        strategy_id=STRATEGY_ID,
+                        revision_id=revision_id,
+                    )
+                    assert saved["success"] and saved["revision_id"] == revision_id
+                    configs.append(yaml.safe_load(saved["yaml_config"]))
+                manifest = json.loads(
+                    (
+                        workspace.workspace / "runs" / seeded.run_id / "manifest.json"
+                    ).read_text()
+                )
+                configs.append(manifest["config"])
+                for config in configs:
+                    assert config["strategy"]["parameters"] == {
+                        "fast_period": 3,
+                        "slow_period": 8,
+                    }
+                    assert config["random_seed"] == 42
+                    backtest = config["backtest"]
+                    assert {
+                        name: backtest[name]
+                        for name in (
+                            "symbol",
+                            "timeframe",
+                            "init_cash",
+                            "fees",
+                            "slippage",
+                            "periods_per_year",
+                        )
+                    } == {
+                        "symbol": "BTC/USDT",
+                        "timeframe": "1h",
+                        "init_cash": 10000,
+                        "fees": 0,
+                        "slippage": 0,
+                        "periods_per_year": 365,
+                    }
+                    assert datetime.fromisoformat(backtest["start_date"]) == datetime(
+                        2024, 1, 1, tzinfo=UTC
+                    )
+                    assert datetime.fromisoformat(backtest["end_date"]) == datetime(
+                        2024, 1, 8, tzinfo=UTC
+                    )
+                assert (
+                    manifest["config"]["research"]["selected_revision"]["revision_id"]
+                    == seeded.runnable_id
+                )
                 for name, arguments in (
                     ("cleanup_strategy_drafts", {"strategy_id": MISSING_STRATEGY_ID}),
                     ("cleanup_strategy_drafts", {"strategy_id": STRATEGY_ID}),

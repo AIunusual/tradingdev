@@ -232,7 +232,7 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     selected["signal"] = expected_signals(selected, scenario, run_parameters)
     reference = BacktestService().create_engine(bt).run(selected).metrics
     assert reference["total_trades"] > 0
-    for metric in ("total_return", "total_trades", "max_drawdown"):
+    for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
         assert math.isclose(
             run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
         ), (metric, run["metrics"][metric], reference[metric])
@@ -277,10 +277,57 @@ def verify_workflow(root: Path, scenario_name: str) -> None:
     )
 
 
+def verify_novice_intake(root: Path) -> None:
+    """Check the requested long-only 10/30 rule without depending on chosen names."""
+    workspace = WorkspacePaths(root / "workspace")
+    runs = SQLiteStore(workspace).list_runs()
+    assert len(runs) == 1
+    run = runs[0]
+    spec = StrategyService(workspace).resolve_executable(
+        run["strategy_id"], revision_id=run["revision_id"]
+    )
+    config = load_config(Path(spec.config_path))
+    frame = market_frame()
+    original = frame.copy(deep=True)
+    expected = (
+        (frame["close"].rolling(10).mean() > frame["close"].rolling(30).mean())
+        .astype(int)
+        .rename("signal")
+    )
+    with execution_randomness(config.get("random_seed")):
+        strategy = StrategyLoader(workspace_root=workspace.root).create_from_config(
+            config, engine=None
+        )
+        for length in (len(frame), 4, 29, 55, 92):
+            prefix = frame.iloc[:length].copy(deep=True)
+            actual = strategy.generate_signals(prefix)
+            pd.testing.assert_series_equal(
+                actual["signal"], expected.iloc[:length], check_dtype=False
+            )
+            pd.testing.assert_frame_equal(prefix, original.iloc[:length])
+    selected = frame.loc[
+        frame["timestamp"] <= pd.Timestamp("2024-01-08", tz="UTC")
+    ].copy()
+    selected["signal"] = expected.loc[selected.index]
+    reference = (
+        BacktestService()
+        .create_engine(BacktestConfig.model_validate(config["backtest"]))
+        .run(selected)
+        .metrics
+    )
+    assert reference["total_trades"] > 0
+    for metric in ("total_return", "annual_return", "total_trades", "max_drawdown"):
+        assert math.isclose(
+            run["metrics"][metric], reference[metric], rel_tol=1e-9, abs_tol=1e-9
+        ), (metric, run["metrics"][metric], reference[metric])
+
+
 if __name__ == "__main__":
     root = Path(sys.argv[1])
     (root / "verifier.ready").write_text("ready", encoding="utf-8")
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 2 and sys.argv[2] == "novice_intake":
+        verify_novice_intake(root)
+    elif len(sys.argv) > 2:
         verify_workflow(root, sys.argv[2])
     else:
         verify(root)

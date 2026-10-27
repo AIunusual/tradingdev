@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ import pytest
 from tooling.process_guard import terminate_tree
 
 from tests.e2e import codex_harness
+from tests.e2e.llm_client import ToolCall, codex_calls
 from tests.integration.mcp_harness import SimulatedUserApproval
 
 if TYPE_CHECKING:
@@ -88,9 +90,10 @@ for line in sys.stdin:
             for item in json.loads(sys.argv[2]) if len(sys.argv) > 2 else []:
                 print(json.dumps({'method': 'item/completed', 'params': {
                     'threadId': 'thread', 'turnId': 'turn', 'item': item}}), flush=True)
-            print(json.dumps({'method': 'turn/completed', 'params': {
-                'threadId': 'thread', 'turn': {'id': 'turn', 'status': mode}}}),
-                  flush=True)
+            if mode != 'tool-timeout':
+                print(json.dumps({'method': 'turn/completed', 'params': {
+                    'threadId': 'thread', 'turn': {'id': 'turn', 'status': mode}}}),
+                      flush=True)
         time.sleep(60)
 """
 
@@ -275,6 +278,74 @@ def test_codex_user_callback_reads_only_the_terminal_answer(
     assert turns[0].calls[0].name == "get_run_metrics"
     assert turns[0].calls[0].result == {"success": True, "run_id": "run"}
     assert any(event.get("params", {}).get("item") == progress for event in events)
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed", "tool-timeout"])
+def test_codex_completed_tool_evidence_survives_later_turn_failure(
+    monkeypatch: MonkeyPatch, outcome: str
+) -> None:
+    arguments = {"run_id": "approved-run", "direction": "short", "limit": 1}
+    result = {"success": False, "error": "saved history unavailable"}
+    item = {
+        "id": "trade-page",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "get_run_trades",
+        "arguments": json.dumps(arguments),
+        "status": "completed",
+        "result": {"structuredContent": result, "isError": True},
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            outcome,
+            json.dumps([item]),
+        ],
+    )
+    observed: list[ToolCall] = []
+    turns: list[ModelTurn] = []
+
+    def observe(call: ToolCall) -> None:
+        observed.append(deepcopy(call))
+        call.arguments["run_id"] = "wrong-run"
+        call.result["error"] = "changed by observer"
+
+    async def user_reply(turn: ModelTurn) -> None:
+        turns.append(turn)
+
+    with TemporaryDirectory(prefix="tradingdev-codex-tool-evidence-") as temporary:
+        root = Path(temporary)
+
+        async def run() -> list[dict[str, Any]]:
+            return await codex_harness.run_codex(
+                root,
+                "Read trades",
+                timeout_seconds=1,
+                on_tool_call=observe,
+                user_reply=user_reply,
+            )
+
+        if outcome == "completed":
+            events = asyncio.run(run())
+            assert codex_calls(events) == observed
+            assert len(turns) == 1 and turns[0].calls == observed
+        else:
+            expected = "Codex turn failed" if outcome == "failed" else "Codex exceeded"
+            with pytest.raises(AssertionError, match=expected):
+                asyncio.run(run())
+            assert turns == []
+        assert observed == [ToolCall("get_run_trades", arguments, result)]
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            try:
+                process = psutil.Process(pid)
+            except psutil.NoSuchProcess:
+                continue
+            assert not process.is_running() or process.status() == psutil.STATUS_ZOMBIE
+    assert not root.exists()
 
 
 def _fail_after_cleanup(

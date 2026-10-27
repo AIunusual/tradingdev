@@ -119,6 +119,8 @@ strategy:
     fee_rate: 0.0002
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

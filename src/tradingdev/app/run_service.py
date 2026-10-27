@@ -14,6 +14,7 @@ from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.research import RunSummary
 from tradingdev.app.pagination import paginate
 from tradingdev.domain.performance.catalog import metric_catalog
+from tradingdev.domain.presentation.metrics import display_metrics
 
 if TYPE_CHECKING:
     from tradingdev.domain.performance.artifacts import (
@@ -138,6 +139,9 @@ class RunService:
             manifest_hash=bundle.manifest_hash,
             scope=scope_id,
             metrics={name: scope_payload["values"][name] for name in names},
+            display_metrics=display_metrics(
+                {name: selected.values[name] for name in names}, bundle.definitions
+            ),
             definitions={name: bundle.definitions[name].model_dump() for name in names},
             **_discovery(bundle, selected),
         )
@@ -197,6 +201,7 @@ class RunService:
                         "mode": None,
                         "split": None,
                         "metrics": metrics,
+                        "display_metrics": {},
                         "metadata": {},
                         "definitions": {},
                         **{key: summary[key] for key in _DISCOVERY_FIELDS},
@@ -222,6 +227,7 @@ class RunService:
                                 "mode",
                                 "split",
                                 "metrics",
+                                "display_metrics",
                                 "metadata",
                                 "definitions",
                                 *_DISCOVERY_FIELDS,
@@ -236,6 +242,11 @@ class RunService:
         )
         for row in rows:
             row["metrics"] = {name: row["metrics"].get(name) for name in names}
+            row["display_metrics"] = {
+                name: row["display_metrics"][name]
+                for name in names
+                if name in row["display_metrics"]
+            }
             row["definitions"] = {
                 name: row["definitions"][name]
                 for name in names
@@ -258,6 +269,7 @@ class RunService:
             legacy = exc.code == "performance_artifact_unavailable"
             return run | {
                 "metrics": run["metrics"] if legacy else {},
+                "display_metrics": {},
                 "details_available": False,
                 "provenance": "legacy_metrics" if legacy else "invalid_artifact",
                 "available_metric_ids": sorted(run["metrics"]) if legacy else [],
@@ -268,13 +280,17 @@ class RunService:
             }
         selected = bundle.scopes[bundle.default_scope]
         values = selected.model_dump(mode="json")["values"]
+        names = [
+            key
+            for key in values
+            if bundle.definitions[key].summary
+            and selected.mode in bundle.definitions[key].modes
+        ]
         return run | {
-            "metrics": {
-                key: value
-                for key, value in values.items()
-                if bundle.definitions[key].summary
-                and selected.mode in bundle.definitions[key].modes
-            },
+            "metrics": {key: values[key] for key in names},
+            "display_metrics": display_metrics(
+                {key: selected.values[key] for key in names}, bundle.definitions
+            ),
             **_discovery(bundle, selected),
         }
 

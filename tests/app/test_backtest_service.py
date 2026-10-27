@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import pytest
+import yaml
 from pydantic import create_model
+from tests.research_fixtures import research_for_config, with_fixture_market_source
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
@@ -282,10 +284,12 @@ def test_run_raw_config_rejects_unknown_strategy(tmp_path: Path) -> None:
 
 def test_run_raw_config_rejects_draft_generated_strategy(tmp_path: Path) -> None:
     strategy_service = _gate_service(tmp_path)
+    config = _raw_config(strategy={"id": "fixture", "class_name": "Fixture"})
     saved = strategy_service.save_draft(
-        "fixture",
         "class Fixture:\n    pass\n",
-        "strategy:\n  class_name: Fixture\n",
+        with_fixture_market_source(yaml.safe_dump(config)),
+        research_for_config(config),
+        strategy_id="fixture",
     )
     assert saved.success is True
     service = _stub_backtest_service(tmp_path, strategy_service)

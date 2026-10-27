@@ -83,7 +83,10 @@ performance. Only the test-window metrics are held out. See the
 [training contract](../strategy_contract.md#training-before-scoring) for the
 scoring requirements.
 
-For MCP, ask the assistant to use walk-forward validation. Strategy discovery
+For MCP, provide the required
+[research choices](../strategy_contract.md#research-inputs-and-simulation-policy)
+and ask the assistant to use walk-forward validation. Bundled example dates do not
+replace the user's period selection. Strategy discovery
 reports that training is required and walk-forward is the supported mode.
 If the assistant tries a simple backtest or optimization, preparation returns
 the reason and points it to `prepare_walk_forward`, with validation settings as a
@@ -103,6 +106,8 @@ The config declares OHLCV plus two feature sources:
 
 ```yaml
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

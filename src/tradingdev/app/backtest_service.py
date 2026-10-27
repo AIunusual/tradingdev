@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from tradingdev.app.data_service import DataService
@@ -26,6 +27,7 @@ from tradingdev.domain.execution import (
     OptimizationSpec,
 )
 from tradingdev.domain.randomness import execution_randomness
+from tradingdev.domain.research import research_datetime
 from tradingdev.domain.strategies.capabilities import ensure_execution_mode
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
@@ -33,6 +35,7 @@ from tradingdev.domain.strategies.contract import (
     SignalContractChecker,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 from tradingdev.shared.utils.config import load_config
@@ -148,7 +151,7 @@ class BacktestService:
             raise ValueError(msg)
         if kind == "walk_forward":
             assert run_config.validation is not None
-            self._check_validation_settings(run_config.validation)
+            self._check_validation_settings(run_config.validation, run_config.backtest)
         config["data"] = self._data_service.execution_config(
             config, run_config.backtest
         )
@@ -179,7 +182,9 @@ class BacktestService:
         return CheckedExecution(manifest, fixture_rows)
 
     @staticmethod
-    def _check_validation_settings(config: WalkForwardConfig) -> None:
+    def _check_validation_settings(
+        config: WalkForwardConfig, backtest: BacktestConfig
+    ) -> None:
         """Check active split settings without claiming data-dependent fold coverage."""
         if config.purged_split:
             if config.label_horizon < 1:
@@ -187,6 +192,23 @@ class BacktestService:
             if config.embargo_bars < 0:
                 raise ValueError("Purged validation embargo must not be negative")
         explicit = not config.purged_split and config.train_start is not None
+        if explicit:
+            assert config.train_start is not None and config.train_end is not None
+            assert config.test_start is not None and config.test_end is not None
+            train_lower, _ = inclusive_day_window(config.train_start, config.train_end)
+            _, test_upper = inclusive_day_window(config.test_start, config.test_end)
+            if train_lower < research_datetime(
+                backtest.start_date
+            ) or test_upper - timedelta(microseconds=1) > research_datetime(
+                backtest.end_date
+            ):
+                raise ValueError(
+                    "Active walk-forward validation windows must fit inside the "
+                    "research period, including each complete UTC calendar day. "
+                    "Use prepare_walk_forward validation_config to replace the "
+                    "entire validation configuration with automatic folds or valid "
+                    "explicit windows; keep the requested research period."
+                )
         if not explicit and config.n_splits < 1:
             raise ValueError("Automatic validation requires positive n_splits")
         if not explicit and not config.purged_split and not 0 < config.train_ratio < 1:

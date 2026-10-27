@@ -89,7 +89,8 @@ workspace/
 optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
 done. Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
-`null`. A later save changes only the current pointer and does not change the
+`null`. A successful explicit revision save changes only that strategy's current
+pointer and does not change the
 revision used by an existing job or completed run.
 
 Draft cleanup scans raw job identities and payloads, run references and all stored
@@ -338,6 +339,62 @@ the lock file is retained. Re-recording an entry returns `replaced=True` rather
 than increasing the candidate count. Unreadable records fail the read instead
 of being skipped and silently reducing that count.
 
+## Research Settings and Provenance
+
+Research intake is not a separate persistent session. The shared resolver writes
+one effective config before a generated revision or execution manifest is saved.
+The required request modes, cost defaults and annualization rules are described
+in the [research-input contract](strategy_contract.md#research-inputs-and-simulation-policy).
+
+The canonical values are stored at their execution locations:
+
+- `research.strategy_outline`: the resolved research outline;
+- `backtest.symbol`, `timeframe`, `start_date`, `end_date`, `init_cash`, `fees`,
+  `slippage`, and `periods_per_year`: the effective choices and simulation settings;
+- `strategy.display_name`: the human-readable name supplied during authoring or
+  generated from the outline, separate from `strategy.id` and `revision_id`.
+
+`research` uses metadata schema version 1. Besides its outline, it contains
+`policy_version`, `field_sources`, optional `selected_revision`, and
+`annualization_reason`. `field_sources` covers exactly the JSON pointer for the
+outline and each of the eight backtest fields above. Values are `request`,
+`project_default`, or `selected_revision`; these describe resolution paths, not
+proof of human input or approval. No second copy of the market, period, cost or
+annualization values is stored in this metadata. An inherited field requires a
+selected-revision identity containing `strategy_id`, `revision_id`, and its
+`config_hash` when recorded. Generated revision metadata's `request_summary` is
+a derived outline projection, not an independent save input or configuration
+authority.
+
+The config hash and manifest hash cover these saved values and origins. Equal
+numeric costs with different origins or policy versions can therefore have
+different hashes. Reusing a saved manifest does not reapply current policy defaults;
+a new research request resolves its policy before producing a new manifest.
+Direct execution configs and older artifacts can have no research provenance;
+confirmation displays that absence rather than fabricating request origins.
+Direct Python override helpers remove research metadata from the effective config
+when applying request-level market/date or backtest settings, since they cannot
+preserve the original field origins for that new execution. They do not rewrite
+the saved revision or its metadata.
+Direct YAML loading through CLI or `BacktestService.run_config` does not use these
+override helpers: it preserves supplied research metadata without rebuilding its
+origins. When manually editing research-owned settings in an execution YAML copy,
+remove the entire top-level `research` mapping to avoid recording stale origins.
+Keep the generated strategy identity and revision-bound declarations unchanged;
+the saved source revision remains intact. Only changing strategy parameters does
+not require removing research metadata.
+
+Strategy creation and revision publication share the per-strategy lifecycle lock.
+Omitted strategy IDs allocate a new `strategy_<uuid>` namespace; explicit IDs
+without `expected_revision_id` also mean creation. Existing revision directories,
+legacy files and incomplete publications reserve their namespace. Revising requires
+the explicit expected current revision and verifies its stored content before
+publication. A stale revision or creation collision does not move current.
+Recovery from legacy flat files creates a new identity and leaves the original
+files in place. As before, revision-directory publication and current-pointer
+replacement are separate filesystem operations: a failed pointer update can leave
+a complete unreferenced revision while the previous current pointer remains.
+
 ## Execution Manifest
 
 Before spawning a background worker, the service publishes
@@ -350,7 +407,9 @@ Schema version 5 contains:
 - `config`: the effective strategy identity and source hash, backtest settings,
   optional walk-forward settings, parallel policy, seed settings, and data
   requirements with resolved absolute directories and feature paths. Typed
-  execution defaults are materialized and dates are JSON strings.
+  execution defaults are materialized and dates are JSON strings. Guided research
+  also includes the resolved `research` metadata and the saved strategy display
+  name; these are not executable constructor arguments.
 - `strategy_execution`: the strategy kind (`bundled` or `generated`) and
   `constructor_kwargs`. Bundled `config` and optional `fit_config` objects include
   nested model defaults; generated keyword arguments include declared constructor
@@ -371,7 +430,8 @@ Schema version 5 contains:
   job IDs and creation timestamps are not part of the specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
-whether implicit or explicit. Strategy identity and non-parameter declarations
+whether implicit or explicit when the rest of the specification, including any
+research provenance, is identical. Strategy identity and non-parameter declarations
 remain bound to the revision. Without an MCP `parameters` override, or with
 `parameters: null`, `config.strategy.parameters` retains the input configuration's
 parameter mapping while constructor defaults are expanded separately into
@@ -412,13 +472,28 @@ Non-finite numbers in execution configuration or search values are rejected inst
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
 `invalid_optimization_request` for optimization, without creating a job.
-These codes also cover strategy identity mismatches, revision-file read failures
-during binding, and failures of the repeated executable-state check during
-preparation. Failure to select an executable strategy at the start of the request
-instead returns `strategy_not_executable`.
+MCP preflight maps `StrategyNotExecutableError` raised during research preparation
+to `strategy_not_executable`, including initial strategy selection, identity
+mismatches, revision-file read failures during binding, and repeated
+executable-state checks during capture. Caught configuration, type, YAML and I/O
+errors use the invalid-request codes above; execution-mode refusals retain their
+capability-specific codes and guidance.
+
+Direct Python `JobService` and `OptimizationService` preparation methods instead
+return `strategy_not_executable` for failed initial selection and their respective
+invalid-request code for binding or subsequent capture failures. The lower-level
+`BacktestService` direct YAML/config methods raise exceptions rather than returning
+these structured service codes.
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.
+MCP `prepare_walk_forward` alone accepts `validation_config` to replace the entire
+effective validation mapping before research resolution and manifest capture.
+There is no merge with base validation settings; omitted or `null` input preserves
+them. Active explicit train/test windows use inclusive UTC calendar days and must
+fit within the research period. Purged-mode dates are inactive and do not constrain
+that period. Failed containment does not change the requested dates or publish a
+plan; the caller must supply suitable windows or automatic-fold settings.
 
 Manifest decoding preserves stored JSON without reapplying today's config defaults.
 Before execution, current runtime models must accept the saved config and effective
@@ -498,8 +573,14 @@ does not change when approval state changes.
 60-second default budget covering imports, configuration resolution, execution-mode
 and parameter binding checks, generated signal-contract checks, and manifest
 serialization. Process cleanup has its own deadline. The request contains only
-`kind` and `arguments`; MCP preparation no longer accepts `minimum_history_bars`
-or `sample_bars`. It does not load cached or remote market data, run a backtest
+`kind` and `arguments`. MCP and the worker share research-bound request DTOs;
+`arguments.research` preserves explicit choices and always includes its `kind`.
+Omitted optional choices are not serialized as `null`. The worker resolves the
+research against the selected strategy before capturing the manifest; it cannot
+inherit bundled example dates or silently change an optimization's requested
+period. MCP preparation no longer accepts the former flat market/date arguments,
+`minimum_history_bars` or `sample_bars`. It does not load cached or remote market
+data, run a backtest
 engine, train a model or serialize performance results.
 
 Generated strategies use the existing fixed 80- and 240-row synthetic fixtures
@@ -569,6 +650,16 @@ the user interface. Both text and HTML render the same document; technical
 identity and file paths are outside the main explanation, in HTML details and
 machine metadata. The HTML is offline, escapes text and disables scripts.
 
+When research provenance is present, market, period, capital, costs and annualization
+fields identify their origins. The document separately displays the saved outline,
+the observed-UTC-daily-return basis and unavailable sampling reasons. Technical
+details include the saved strategy name, policy version, annualization decision,
+and any selected revision/config hash. The model's presentation title remains a
+separate HTML page title. Research provenance does not prove that the Python
+implements the outline. There is currently no complete formal trading-formula
+field or backend proof of equivalence between model prose and arbitrary strategy
+code; program checks retain their stated coverage.
+
 `execution_plans/<plan_id>/confirmation.txt` and `confirmation.html` preserve the
 reviewable documents. The HTML is registered as `execution_confirmation` under
 `<plan_id>:confirmation_html`, without a run ID. Reads verify plan identity and
@@ -592,10 +683,17 @@ its manifest matches and it has a complete worker-control identity; it records
 queued records lacking that identity remain inspectable through the returned job
 ID but are not reported as successfully started work.
 
-Preparation and lookup return `confirmation_summary` and the complete HTML's
-`html_path`/`artifact_id`. Full confirmation text remains in the saved plan; it is
-not copied into ordinary tool responses. The assistant presents the short summary
-and HTML link, ends the turn and waits for the user to review it. Reading the
+Preparation and lookup return `confirmation_summary`, `confirmation_link` and the
+complete HTML's `html_path`/`artifact_id`. The service derives the ready-to-copy
+Markdown `confirmation_link` from the same actual `html_path`, URL-encoding special
+path characters without adding a URI scheme. Clients should copy it verbatim and
+verify its destination instead of assembling plan IDs or paths. The raw `html_path`
+remains available to machine clients. Full confirmation text remains in the saved
+plan; it is not copied into ordinary tool responses. The short summary starts with the model's
+strategy explanation, omits the title and saved name, and includes capital/cost
+origins plus annualization settings, sampling basis and the inclusive bar-timestamp
+boundaries of the research interval. The assistant presents the
+short summary and HTML link, ends the turn and waits for the user to review it. Reading the
 artifact does not submit a job. A local path must be made available through the
 client's file/artifact interface when the user is not on the server's machine.
 
@@ -688,7 +786,8 @@ artifacts. A server-local path is not a public download URL.
 
 ### Completed Run Files
 
-The generated revision's `config.yaml` holds its base settings;
+The generated revision's `config.yaml` holds its base settings and, for guided
+authoring, research provenance and its human-readable name;
 `runs/<run_id>/config.yaml` holds effective execution settings and includes
 `strategy.revision_id`. Runtime market/date and parameter experiments
 do not rewrite the base revision. Backtest and walk-forward requests may supply
@@ -716,7 +815,8 @@ matching SQLite metadata:
   `config_snapshot` with `config_hash`. It projects the executed manifest config;
   persistence checks the worker's snapshot against that manifest and the job's
   digest rather than reloading a possibly changed YAML file. It includes the
-  start tool's symbol, timeframe, and date range together with resolved defaults.
+  resolved research symbol, timeframe, and date range together with fixed defaults
+  and their recorded origins when available.
   Optimization includes the entire final calendar day; ordinary backtest bounds
   remain timestamps.
 - `strategy.py`: generated or bundled strategy source snapshot when
@@ -889,6 +989,16 @@ accounting identities, and saved account/bar/timestamp/equity arrays must align.
 `get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
 read that scope in full. Unknown scopes and metric IDs produce structured errors
 with discovery information. Summary omission never affects calculation or storage.
+`get_run`, `get_run_metrics`, and each `compare_runs` row also return
+`display_metrics` alongside unchanged raw `metrics`. Display values use each
+run's saved definition: fractions are percentages with two decimal places and a
+`%` suffix (`493.045775` becomes `49304.58%`); other units remain numeric strings
+in their saved units. Integers remain exact; other numbers use two decimal places.
+Use these rounded values for presentation and raw metrics for calculations.
+Fold statistics retain their shape and numeric, unscaled `valid_count`; nulls
+remain null with unavailable reasons in metadata. Metric selection also selects
+display values. Without trustworthy saved definitions, including legacy runs,
+the display mapping is empty; current catalog units are never substituted.
 Comparisons retain the requested values and report comparability and reasons;
 differences in mode, definitions, provider versions, sampling, annualization,
 capital or execution context cannot silently become equivalent rankings.

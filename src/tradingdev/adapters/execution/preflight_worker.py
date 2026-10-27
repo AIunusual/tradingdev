@@ -8,14 +8,19 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.contracts.execution_requests import (
+    BacktestInput,
+    OptimizationInput,
+    WalkForwardInput,
+)
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_submission import PreparedExecution
-from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
-from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.preflight_service import PreflightError
-from tradingdev.app.strategy_service import StrategyService
+from tradingdev.app.research_preparation import ResearchPreparationService
+from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import (
     PreflightCheck,
@@ -25,7 +30,6 @@ from tradingdev.domain.preflight import (
     SignalCheck,
 )
 from tradingdev.domain.strategies.capabilities import (
-    StrategyExecutionGuidance,
     StrategyExecutionModeError,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
@@ -46,38 +50,30 @@ def execute_preflight(
     # Preparation resolves data paths and source declarations only. It never loads
     # cached bars, calls a crawler, or checks whether historical prices exist.
     data = DataService(source_workspace)
-    kwargs: dict[str, Any] = dict(request.arguments)
-    if request.kind == "optimization":
-        prepared = OptimizationService(
-            strategy_service=strategies,
-            strategy_loader=loader,
-            data_service=data,
-            job_store=store,
-        ).prepare_optimization(**kwargs)
-    else:
-        jobs = JobService(
-            strategy_service=strategies,
-            strategy_loader=loader,
-            data_service=data,
-            job_store=store,
-        )
-        prepare = (
-            jobs.prepare_walk_forward
+    try:
+        arguments = (
+            OptimizationInput.model_validate(request.arguments)
+            if request.kind == "optimization"
+            else WalkForwardInput.model_validate(request.arguments)
             if request.kind == "walk_forward"
-            else jobs.prepare_backtest
+            else BacktestInput.model_validate(request.arguments)
         )
-        prepared = prepare(**kwargs)
-    if not isinstance(prepared, PreparedExecution):
-        guidance = prepared.get("execution_guidance")
-        raise PreflightError(
-            str(prepared.get("code", "invalid_execution_request")),
-            str(prepared.get("message", "Preparation was rejected")),
-            execution_guidance=(
-                None
-                if guidance is None
-                else StrategyExecutionGuidance.model_validate(guidance)
-            ),
+        prepared = ResearchPreparationService(
+            strategy_service=strategies,
+            strategy_loader=loader,
+            data_service=data,
+        ).prepare(request.kind, arguments)
+    except StrategyExecutionModeError:
+        raise
+    except StrategyNotExecutableError as exc:
+        raise PreflightError("strategy_not_executable", str(exc)) from exc
+    except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+        code = (
+            "invalid_optimization_request"
+            if request.kind == "optimization"
+            else "invalid_execution_request"
         )
+        raise PreflightError(code, str(exc)) from exc
     original = prepared.manifest
     config = original.config_for_execution()
     selected = strategies.resolve_executable(

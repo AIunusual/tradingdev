@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import validate
@@ -28,6 +29,7 @@ class CodexAppServer:
         max_tool_calls: int,
         elicitation_callback: ElicitationCallback | None,
         observe_processes: Callable[[], None],
+        on_completed_tool: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
@@ -35,6 +37,7 @@ class CodexAppServer:
         self.max_tool_calls = max_tool_calls
         self.elicitation_callback = elicitation_callback
         self.observe_processes = observe_processes
+        self.on_completed_tool = on_completed_tool
         self.events: list[dict[str, Any]] = []
         self.seen_calls: set[str] = set()
         self.request_ids: set[str | int] = set()
@@ -124,6 +127,8 @@ class CodexAppServer:
                     assert item.get("status") == "completed", (
                         f"Codex MCP call failed: {item}"
                     )
+                    if self.on_completed_tool is not None:
+                        self.on_completed_tool(deepcopy(message))
                     print(f"[codex] {item['tool']} completed", flush=True)
         elif method == "turn/completed":
             turn = params["turn"]

@@ -8,6 +8,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from mcp import Client
 from mcp.server import MCPServer
+from tests.integration.execution_fixtures import research_input
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.strategy_service import StrategyService
@@ -56,6 +57,7 @@ def test_reserved_strategy_id_returns_a_structured_rejection(tmp_path: Path) -> 
                     "strategy_id": strategy_id,
                     "code": source["source_code"],
                     "yaml_config": source["yaml_config"],
+                    "research": research_input(),
                 },
             )
 
@@ -77,6 +79,59 @@ def test_reserved_strategy_id_returns_a_structured_rejection(tmp_path: Path) -> 
             still_listed = await client.call_tool("list_strategies", {})
             assert not still_listed.is_error
             assert still_listed.structured_content == listed.structured_content
-            assert not any(workspace.generated_strategies.iterdir())
+            assert not (workspace.generated_strategies / strategy_id).exists()
 
     asyncio.run(check_rejected_save())
+
+
+def test_save_mcp_creates_anonymous_identity_and_requires_explicit_revision(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = StrategyService(workspace)
+    server = MCPServer("strategy-save-revision-test")
+    register(server, service, _PACKAGE_ROOT)
+
+    async def exercise() -> None:
+        async with Client(server, mode="legacy") as client:
+            arguments = {
+                "code": "class DraftStrategy: pass\n",
+                "yaml_config": (
+                    "strategy:\n  class_name: DraftStrategy\n"
+                    "data:\n  source: binance_api\n"
+                ),
+                "research": research_input(),
+                "display_name": "測試策略名稱",
+            }
+            created = await client.call_tool("save_strategy", arguments)
+            assert not created.is_error
+            assert created.structured_content is not None
+            first = created.structured_content["result"]
+            assert first["success"], first
+            assert first["strategy_id"].startswith("strategy_")
+            named = {**arguments, "strategy_id": first["strategy_id"]}
+            repeated = await client.call_tool("save_strategy", named)
+            assert not repeated.is_error
+            assert repeated.structured_content is not None
+            assert repeated.structured_content["result"]["code"] == "strategy_id_exists"
+            revised = await client.call_tool(
+                "save_strategy", {**named, "expected_revision_id": first["revision_id"]}
+            )
+            assert not revised.is_error
+            assert revised.structured_content is not None
+            second = revised.structured_content["result"]
+            assert second["success"], second
+            assert second["revision_id"] != first["revision_id"]
+            conflict = await client.call_tool(
+                "save_strategy", {**named, "expected_revision_id": first["revision_id"]}
+            )
+            assert not conflict.is_error
+            assert conflict.structured_content is not None
+            assert (
+                conflict.structured_content["result"]["code"]
+                == "strategy_revision_conflict"
+            )
+            current = service.load(first["strategy_id"])
+            assert current is not None and current.revision_id == second["revision_id"]
+
+    asyncio.run(exercise())

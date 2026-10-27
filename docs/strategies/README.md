@@ -18,12 +18,24 @@ KD、GLFT 與 GLFT ML 的訓練則為可選，各模式仍須符合設定與資�
 能力說明不代表模型已訓練或績效已驗證；完整限制與宣告契約見
 [訓練前置條件](../strategy_contract.md#training-before-scoring)。
 
+透過 MCP 研究內建策略時，仍須提供策略構想、標的、期間與 K 棒時間頻率；
+本目錄範例的日期與參數不是使用者的選擇。內建 YAML 明列原有資料來源及市場類型，
+本金、成本與年化由共用研究政策解析，明示的有效值優先。
+完整輸入、模擬預設與繼承限制見
+[研究輸入與模擬政策](../strategy_contract.md#research-inputs-and-simulation-policy)。
+含明確驗證日期的範例將回測終點寫到最後一天的 `23:59:59.999999`，以涵蓋完整 UTC
+訓練／測試日。改用自己的研究期間時，須選擇期間內的驗證窗口或自動分段；
+`prepare_walk_forward` 的 `validation_config` 可完整替換當次設定，不會擴大研究期間
+或改動保存的策略版本。
+
 Generated strategies 不放在此目錄；它們由 MCP
-lifecycle 管理，每次保存都在
+lifecycle 管理，每次成功保存都在
 `workspace/generated_strategies/<strategy_id>/revisions/<revision_id>/` 建立
 `strategy.py`、`config.yaml` 與 `metadata.json`。每個 revision 分別保存驗證證據與
 `draft → validated → runnable → promoted` 狀態，新版本不繼承舊版本的執行資格。
-`workspace/configs/<id>.yaml` 僅為舊格式策略的恢復讀取位置；舊檔須明確另存並重新驗證。
+新建可省略名稱與識別碼；修訂須指定預期版本，不能把同名新建默認為修訂。
+`workspace/configs/<id>.yaml` 僅為舊格式策略的恢復讀取位置；舊檔須另建新身分並
+重新驗證，原有識別碼與檔案保留。
 
 ## 內建策略的參數搜尋
 

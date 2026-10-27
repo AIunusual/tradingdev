@@ -14,6 +14,8 @@ from mcp_types import ElicitResult
 from tests.e2e.codex_app_server import CodexAppServer
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mcp_types import ElicitRequestParams
 
     from tests.e2e.codex_app_server import ElicitationCallback
@@ -152,6 +154,7 @@ class _Peer:
         callback: ElicitationCallback | None = None,
         *,
         max_tool_calls: int = 2,
+        on_completed_tool: Callable[[dict[str, Any]], None] | None = None,
     ) -> CodexAppServer:
         return CodexAppServer(
             self.reader,
@@ -160,6 +163,7 @@ class _Peer:
             max_tool_calls=max_tool_calls,
             elicitation_callback=callback,
             observe_processes=self.observe,
+            on_completed_tool=on_completed_tool,
         )
 
 
@@ -559,12 +563,50 @@ def test_tool_failures_and_bypass_are_rejected(
     overrides: dict[str, Any], error: str
 ) -> None:
     async def run() -> None:
+        observed: list[dict[str, Any]] = []
         with pytest.raises(AssertionError, match=error):
             await (
                 _Peer([_tool(**overrides)])
-                .client()
+                .client(on_completed_tool=observed.append)
                 .run("prompt", {}, mcp_config=_MCP_CONFIG)
             )
+        assert observed == []
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("early_events", [False, True])
+def test_completed_tool_observer_gets_one_isolated_event_before_turn_finishes(
+    early_events: bool,
+) -> None:
+    async def run() -> None:
+        completed = _tool()
+        peer = _Peer(
+            [_tool("item/started"), completed, _completed()], early_events=early_events
+        )
+        observed: list[dict[str, Any]] = []
+
+        def observe(event: dict[str, Any]) -> None:
+            observed.append(deepcopy(event))
+            event["params"]["item"]["result"]["structuredContent"]["success"] = False
+
+        client = peer.client(on_completed_tool=observe)
+        events = await client.run("prompt", {}, mcp_config=_MCP_CONFIG)
+        assert observed == [completed]
+        assert events == [_tool("item/started"), completed, _completed()]
+
+    asyncio.run(run())
+
+
+def test_started_tool_without_completion_does_not_notify_observer() -> None:
+    async def run() -> None:
+        observed: list[dict[str, Any]] = []
+        peer = _Peer([_tool("item/started")])
+        with pytest.raises(AssertionError, match="closed before completing"):
+            await peer.client(on_completed_tool=observed.append).run(
+                "prompt", {}, mcp_config=_MCP_CONFIG
+            )
+        assert observed == []
 
     asyncio.run(run())
 

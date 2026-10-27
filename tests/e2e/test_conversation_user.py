@@ -14,11 +14,15 @@ from tests.e2e.conversation_user import ObservedPlanUser, _assert_summary, revie
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
 from tests.mcp.execution_fixtures import PlanContext, plan_context
+from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanResponse
+from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import PreparedExecution
-from tradingdev.app.job_service import JobService
+from tradingdev.app.research_preparation import ResearchPreparationService
+from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
+from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
     from tradingdev.app.contracts.plans import ExecutionDecision
@@ -184,6 +188,22 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
 
 
 @pytest.mark.parametrize(
+    "directory",
+    ["with spaces", "繁體中文", "literal%20space", "nested (a(b))", "query?#part"],
+)
+def test_backend_confirmation_link_is_directly_presentable_for_special_paths(
+    tmp_path: Path, directory: str
+) -> None:
+    root = tmp_path / directory
+    context = plan_context(root)
+    user = ObservedPlanUser(MCPWorkspace(root))
+    prepared = _prepare(context)
+    assert prepared.result["confirmation_link"] in review_text(prepared.result)
+    assert "同意" in str(asyncio.run(user(_present(prepared))))
+    assert not context.runner.calls
+
+
+@pytest.mark.parametrize(
     "style",
     [
         "bare",
@@ -195,6 +215,7 @@ def test_user_accepts_rendered_links_to_the_saved_artifact(
         "image",
         "empty_label",
         "wrong_destination",
+        "truncated_plan_id",
         "unescaped_space",
     ],
 )
@@ -219,12 +240,16 @@ def test_user_requires_a_clickable_markdown_link_to_this_html(
         "image": f"!{link}",
         "empty_label": f"[](<{path}>)",
         "wrong_destination": f"{path}\n[閱讀確認單](</other/confirmation.html>)",
+        "truncated_plan_id": link.replace(
+            prepared.result["plan_id"], prepared.result["plan_id"][:-1]
+        ),
         "unescaped_space": f"[閱讀確認單]({path})",
     }[style]
     text = prepared.result["confirmation_summary"] + "\n\n" + invalid
     with pytest.raises(AssertionError, match="clickable Markdown link") as error:
         asyncio.run(user(ModelTurn(1, text, [prepared])))
     assert text in "\n".join(error.value.__notes__)
+    assert f"Expected plan HTML path: {path}" in str(error.value)
     assert not user.replies and not context.runner.calls
 
 
@@ -331,11 +356,16 @@ def test_revision_requires_new_saved_plan_with_requested_settings(
     first = _prepare(context)
     assert "不要執行" in str(asyncio.run(user(_present(first))))
     rejected = _decision(context, first.result["plan_id"], "revise")
-    context.arguments["backtest_overrides"] = {"fees": user.revised_fees}
+    context.arguments["research"]["fees"] = user.revised_fees
     args: dict[str, Any] = {
         key: value for key, value in context.arguments.items() if key != "presentation"
     }
-    changed = JobService(job_store=context.service.jobs).prepare_backtest(**args)
+    workspace = context.service.workspace
+    changed = ResearchPreparationService(
+        strategy_service=StrategyService(workspace),
+        strategy_loader=StrategyLoader(workspace_root=workspace.root),
+        data_service=DataService(workspace),
+    ).prepare("backtest", BacktestInput.model_validate(args))
     assert isinstance(changed, PreparedExecution)
     context.preflight.prepared = changed
     second = _prepare(context)

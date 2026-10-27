@@ -10,11 +10,13 @@ import pytest
 from jsonschema import Draft202012Validator
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult
+from tests.integration.execution_fixtures import research_input
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.research import NewResearchSpec
 from tradingdev.mcp.server import create_server
 
 if TYPE_CHECKING:
@@ -59,10 +61,10 @@ def _seed(
         created_at = f"2024-01-0{2 if index % 2 == 0 else 1}T00:00:00+00:00"
         if tool == "list_strategies":
             assert strategies.save_draft(
-                identity,
                 "class PageStrategy: pass\n",
-                "strategy:\n  class_name: PageStrategy\n",
-                request_summary=_LARGE,
+                "strategy:\n  class_name: PageStrategy\ndata:\n  source: binance_api\n",
+                NewResearchSpec.model_validate(research_input(strategy_outline=_LARGE)),
+                strategy_id=identity,
             ).success
         elif tool == "list_runs":
             store.create_run(
@@ -176,7 +178,7 @@ def test_discovery_pages_preserve_all_matches_and_hide_large_details(
             )
             assert (
                 detail.structured_content["result"]["metadata"]["request_summary"]
-                == _LARGE
+                == _LARGE.strip()
             )
             narrowed = await _page(server, tool, strategy_id="item_000")
             assert narrowed["total"] == 1

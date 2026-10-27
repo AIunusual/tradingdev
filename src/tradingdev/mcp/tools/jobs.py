@@ -42,7 +42,9 @@ def register(mcp: MCPServer, service: JobService) -> None:
     def get_job_status(job_id: str) -> JobStatus | JobNotFound:
         """Check progress, reconciling a vanished worker to persisted failed status.
 
-        When done, use run_id with get_run. Human confirmation is collected
+        When done, use run_id with get_run for display_metrics; job metrics are raw.
+        get_run_metrics supplies saved definitions and display values.
+        Human confirmation is collected
         before creating a job. failed is a job state, not a
         lookup error; not_found means the job ID does not exist.
         """

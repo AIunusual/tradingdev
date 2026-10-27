@@ -15,7 +15,7 @@ from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import execution_options, research_from_config
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
@@ -90,19 +90,24 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
         config["data"]["requirements"]["features"] = []
         config_text = yaml.safe_dump(config)
 
-        async def save() -> dict[str, Any]:
+        async def save(expected_revision_id: str | None = None) -> dict[str, Any]:
             result: dict[str, Any] = await client.call(
                 "save_strategy",
                 strategy_id=STRATEGY_ID,
                 code=code,
                 yaml_config=config_text,
-                request_summary="cleanup fixture",
+                research=research_from_config(config, outline="cleanup fixture"),
+                **(
+                    {"expected_revision_id": expected_revision_id}
+                    if expected_revision_id is not None
+                    else {}
+                ),
             )
             assert result["success"] and result["status"] == "draft", result
             return result
 
         eligible = await save()
-        runnable = await save()
+        runnable = await save(eligible["revision_id"])
         runnable_id = runnable["revision_id"]
         for tool in ("validate_strategy", "dry_run_strategy"):
             checked = await client.call(
@@ -115,10 +120,7 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
             "prepare_backtest",
             strategy_id=STRATEGY_ID,
             revision_id=runnable_id,
-            symbol="BTC/USDT",
-            timeframe="1h",
-            start_date="2024-01-01",
-            end_date="2024-01-08",
+            research={"kind": "inherit_selected_revision"},
             **execution_options(config["strategy"]["parameters"]),
         )
         assert prepared["success"], prepared
@@ -128,7 +130,7 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
         assert started["job_id"], started
         done = await client.wait_for_job(started["job_id"])
         assert done["status"] == "done", done
-        current = await save()
+        current = await save(runnable_id)
         preview = await client.call("cleanup_strategy_drafts", strategy_id=STRATEGY_ID)
         assert preview["success"] and preview["applied"] is False, preview
         outcomes = {

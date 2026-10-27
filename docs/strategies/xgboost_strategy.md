@@ -27,6 +27,8 @@ strategy:
     signal_threshold_candidates: [0.0, 0.35, 0.40, 0.45, 0.50]
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"
@@ -66,6 +68,8 @@ The strategy declares market OHLCV only:
 
 ```yaml
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"
@@ -92,7 +96,10 @@ uv run python -m tradingdev --config src/tradingdev/domain/strategies/bundled/xg
 ```
 
 For MCP, use `get_strategy` to inspect the configuration, then call
-`prepare_walk_forward`. A rejected simple backtest or optimization directs the
+`prepare_walk_forward` with the required
+[research choices](../strategy_contract.md#research-inputs-and-simulation-policy).
+Bundled example dates do not replace the user's period selection.
+A rejected simple backtest or optimization directs the
 client to this tool. Preparation checks configuration and execution mode offline;
 it does not require cached history, load market data, fit a model or construct folds.
 Sufficient history and usable training windows are checked during the formal

@@ -4,10 +4,59 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from tests.research_fixtures import research_for_config
 from tradingdev.domain.preflight import PreflightReceipt
 
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient
+
+
+def research_input(
+    *,
+    strategy_outline: str = "以指標變化決定買賣的離線測試策略",
+    symbol: str = "BTC/USDT",
+    timeframe: str = "1h",
+    start_date: str = "2024-01-01",
+    end_date: str = "2024-01-08",
+    **settings: Any,
+) -> dict[str, Any]:
+    """Explicit research choices for scripted tests, never natural-user fixtures."""
+    return {
+        "kind": "new",
+        "strategy_outline": strategy_outline,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "start_date": start_date,
+        "end_date": end_date,
+        "annualization": 365,
+        **settings,
+    }
+
+
+def research_from_config(
+    config: dict[str, Any], *, outline: str = "離線測試策略"
+) -> dict[str, Any]:
+    """Declare scripted authoring choices consistent with a fixture's full YAML."""
+    return research_for_config(config, strategy_outline=outline).model_dump(
+        mode="json", exclude_unset=True
+    )
+
+
+def research_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Convert controlled legacy fixture values to the new explicit request shape."""
+    result = dict(arguments)
+    fields: dict[str, Any] = {
+        key: result.pop(key)
+        for key in ("symbol", "timeframe", "start_date", "end_date")
+        if key in result
+    }
+    if "train_start" in result:
+        fields.update(
+            start_date=result["train_start"],
+            end_date=f"{result['test_end']}T23:59:59.999999",
+        )
+    result["research"] = research_input(**fields)
+    return result
 
 
 def confirmation_presentation(parameters: dict[str, Any]) -> dict[str, Any]:

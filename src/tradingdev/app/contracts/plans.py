@@ -21,6 +21,7 @@ class PlanResponse(ContractModel):
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     expires_at: str
     confirmation_summary: str
+    confirmation_link: str
     html_path: str
     artifact_id: str
     preflight: PreflightReceipt

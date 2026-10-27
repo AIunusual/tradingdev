@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from tests.e2e.llm_client import tool_payload
+from tests.integration.execution_fixtures import research_input
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
@@ -42,17 +43,13 @@ def guidance_arguments(tool: str) -> dict[str, Any]:
         return {"strategy_id": STRATEGY_ID}
     arguments: dict[str, Any] = {
         "strategy_id": STRATEGY_ID,
-        "symbol": "BTC/USDT",
-        "timeframe": "1h",
+        "research": research_input(strategy_outline="診斷既有分位數策略的執行能力"),
         "presentation": _PRESENTATION,
     }
     if tool == "prepare_backtest":
-        return {
-            **arguments,
-            "start_date": "2024-01-01",
-            "end_date": "2024-01-08",
-        }
+        return arguments
     if tool == "prepare_optimization":
+        arguments["research"]["end_date"] = "2024-01-08T23:59:59.999999"
         return {
             **arguments,
             "param_ranges": {"horizon": [15, 30]},

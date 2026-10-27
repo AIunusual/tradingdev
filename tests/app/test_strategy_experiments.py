@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 import yaml
 from tests.app.test_generated_strategy_job import FakeRunner
+from tests.research_fixtures import research_for_config, with_fixture_market_source
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -98,7 +99,12 @@ def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
         "validation": {"n_splits": 2, "train_ratio": 0.5},
         "random_seed": 42,
     }
-    saved = strategies.save_draft("experiment", _CODE, yaml.safe_dump(config))
+    saved = strategies.save_draft(
+        _CODE,
+        with_fixture_market_source(yaml.safe_dump(config)),
+        research_for_config(config),
+        strategy_id="experiment",
+    )
     assert saved.success and saved.revision_id and saved.config_path
     checked = strategies.validate("experiment", saved.revision_id)
     assert checked["success"], checked["diagnostics"]

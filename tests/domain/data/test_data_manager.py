@@ -16,6 +16,7 @@ from tradingdev.domain.data.data_manager import (
     _year_range,
 )
 from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
+from tradingdev.domain.research import NewResearchSpec
 
 # ------------------------------------------------------------------ #
 # Utility function tests                                              #
@@ -66,6 +67,63 @@ class TestIsYearComplete:
     def test_boundary_after_year_end(self) -> None:
         now_fn = lambda: datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)  # noqa: E731
         assert _is_year_complete(2024, now_fn) is True
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "first", "last", "rows"),
+    [
+        ("2024-01-01", "2024-01-08", "2024-01-01", "2024-01-08", 169),
+        (
+            "2024-01-01T08:00:00+08:00",
+            "2024-01-08T08:00:00+08:00",
+            "2024-01-01",
+            "2024-01-08",
+            169,
+        ),
+        (
+            "2024-01-01T00:30:00Z",
+            "2024-01-08T00:30:00Z",
+            "2024-01-01T01:00:00",
+            "2024-01-08",
+            168,
+        ),
+    ],
+    ids=["date-only-midnight", "equivalent-offset", "no-exact-boundary-candle"],
+)
+def test_research_period_filters_candle_timestamps_inclusively(
+    tmp_path: Path, start: str, end: str, first: str, last: str, rows: int
+) -> None:
+    research = NewResearchSpec.model_validate(
+        {
+            "strategy_outline": "Buy a rising trend.",
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": start,
+            "end_date": end,
+        }
+    )
+    manager = DataManager(
+        data_config=DataConfig(
+            source="binance_vision",
+            raw_dir=str(tmp_path / "raw"),
+            processed_dir=str(tmp_path / "processed"),
+        ),
+        request=MarketDataRequest(
+            symbol=research.symbol,
+            timeframe=research.timeframe,
+            start_date=research.start_date,
+            end_date=research.end_date,
+        ),
+    )
+    frame = pd.DataFrame(
+        {"timestamp": pd.date_range("2023-12-31", "2024-01-09", freq="h", tz=UTC)}
+    )
+    with patch.object(manager._crawler, "fetch") as fetch:
+        selected = manager._trim_to_range(frame)
+    fetch.assert_not_called()
+    assert len(selected) == rows
+    assert selected["timestamp"].iloc[0] == pd.Timestamp(first, tz=UTC)
+    assert selected["timestamp"].iloc[-1] == pd.Timestamp(last, tz=UTC)
 
 
 # ------------------------------------------------------------------ #

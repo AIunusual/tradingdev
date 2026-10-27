@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -97,10 +98,10 @@ def test_generated_strategy_can_start_backtest_job(
     strategy_service = StrategyService(workspace)
     strategy_service._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
     saved = strategy_service.save_draft(
-        "integration_strategy",
         _STRATEGY_CODE,
         _YAML,
-        request_summary="service scheduling test",
+        research_for_config(_YAML, strategy_outline="service scheduling test"),
+        strategy_id="integration_strategy",
     )
     assert saved.success is True
     assert (
@@ -178,7 +179,12 @@ def test_queued_revision_runs_after_new_draft_is_saved(
     )
     strategies = StrategyService(workspace)
     strategies._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
-    saved = strategies.save_draft("integration_strategy", _STRATEGY_CODE, _YAML)
+    saved = strategies.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="integration_strategy",
+    )
     assert saved.success and saved.revision_id is not None
     assert strategies.validate("integration_strategy", saved.revision_id)["success"]
     assert strategies.dry_run("integration_strategy", saved.revision_id)["success"]
@@ -199,7 +205,11 @@ def test_queued_revision_runs_after_new_draft_is_saved(
     job = store.get_job(started["job_id"])
     assert job is not None
     replacement = strategies.save_draft(
-        "integration_strategy", _STRATEGY_CODE.replace("= 1", "= -1"), _YAML
+        _STRATEGY_CODE.replace("= 1", "= -1"),
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="integration_strategy",
+        expected_revision_id=saved.revision_id,
     )
     assert replacement.success and replacement.revision_id != saved.revision_id
     prices = [100.0 + index for index in range(24)]
@@ -251,7 +261,12 @@ def test_execution_rejects_revision_identity_overrides(
     workspace = WorkspacePaths(tmp_path / "workspace")
     strategies = StrategyService(workspace)
     strategies._quality_gate_diagnostics = lambda _path: []  # type: ignore[assignment,method-assign]
-    saved = strategies.save_draft("integration_strategy", _STRATEGY_CODE, _YAML)
+    saved = strategies.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="integration_strategy",
+    )
     assert saved.success and saved.revision_id is not None
     assert strategies.validate("integration_strategy", saved.revision_id)["success"]
     assert strategies.dry_run("integration_strategy", saved.revision_id)["success"]
@@ -267,7 +282,12 @@ def test_execution_rejects_revision_identity_overrides(
 def test_result_persistence_rejects_changed_revision_source(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     strategies = StrategyService(workspace)
-    saved = strategies.save_draft("integration_strategy", _STRATEGY_CODE, _YAML)
+    saved = strategies.save_draft(
+        _STRATEGY_CODE,
+        _YAML,
+        research_for_config(_YAML),
+        strategy_id="integration_strategy",
+    )
     assert saved.success and saved.revision_id is not None
     assert saved.source_path is not None
     store = JobStore(workspace=workspace)

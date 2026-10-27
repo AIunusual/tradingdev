@@ -45,7 +45,8 @@ def _prepare(
         symbol="BTC/USDT",
         timeframe="1h",
         start_date="2024-01-01",
-        end_date="2025-12-31",
+        # Bundled explicit validation includes the whole final UTC calendar day.
+        end_date=("2025-12-31T23:59:59.999999" if walk_forward else "2025-12-31"),
     )
     assert isinstance(prepared, PreparedExecution)
     return prepared, store, runner

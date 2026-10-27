@@ -14,7 +14,9 @@ import yaml
 
 from tests.e2e.codex_harness import runtime_environment, verify_generated_strategy
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.research import NewResearchSpec
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -51,20 +53,44 @@ class FixtureStrategy(BaseStrategy):
 '''
 
 
-def _fixture_strategy(root: Path, code: str = _CODE) -> Path:
+def _fixture_strategy(
+    root: Path,
+    code: str = _CODE,
+    *,
+    periods: tuple[int, int] = (5, 20),
+    expected_revision_id: str | None = None,
+) -> Path:
     workspace = WorkspacePaths(root / "workspace")
     saved = StrategyService(workspace).save_draft(
-        "codex_sma_integration",
         code,
         yaml.safe_dump(
             {
                 "strategy": {
                     "id": "codex_sma_integration",
                     "class_name": "FixtureStrategy",
-                    "parameters": {"fast_period": 5, "slow_period": 20},
+                    "parameters": {
+                        "fast_period": periods[0],
+                        "slow_period": periods[1],
+                    },
                 },
+                "data": {"source": "binance_vision", "market_type": "futures/um"},
             }
         ),
+        NewResearchSpec.model_validate(
+            {
+                "strategy_outline": "Fixture SMA strategy",
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-08",
+                "init_cash": 10000,
+                "fees": 0,
+                "slippage": 0,
+                "annualization": 365,
+            }
+        ),
+        strategy_id="codex_sma_integration",
+        expected_revision_id=expected_revision_id,
     )
     assert saved.success
     metadata_path = Path(saved.source_path).parent / "metadata.json"
@@ -93,6 +119,67 @@ def test_verifier_checks_generated_strategy_in_a_separate_process(
             monkeypatch.setenv(key, value)
         _fixture_strategy(root)
         verify_generated_strategy(root)
+    assert not root.exists()
+
+
+def test_novice_verifier_rejects_executed_short_revision_after_current_is_repaired(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A later correct draft cannot replace the revision bound to an existing run.
+
+    Run identity and runnable evidence are trusted fixtures; no historical worker
+    runs here. The old strategy is genuinely executed by the bounded verifier,
+    and the independent long-only signal comparison must reject its shorts.
+    """
+    with TemporaryDirectory(prefix="tradingdev-novice-verifier-") as temporary:
+        root = Path(temporary)
+        for key, value in runtime_environment(root).items():
+            monkeypatch.setenv(key, value)
+        marker = root / "executed-revision.pid"
+        wrong_code = (
+            _CODE
+            + "\nimport os\nfrom pathlib import Path\n"
+            + f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        )
+        executed_source = _fixture_strategy(root, wrong_code, periods=(10, 30))
+        executed_revision = executed_source.parent.name
+        workspace = WorkspacePaths(root / "workspace")
+        store = SQLiteStore(workspace)
+        store.create_run(
+            run_id="approved-run",
+            job_id="approved-run",
+            strategy_id="codex_sma_integration",
+            revision_id=executed_revision,
+            artifact_dir=workspace.runs / "approved-run",
+            metrics={},
+        )
+        correct_code = _CODE.replace(
+            '        result.loc[fast < slow, "signal"] = -1\n', ""
+        )
+        current_source = _fixture_strategy(
+            root,
+            correct_code,
+            periods=(10, 30),
+            expected_revision_id=executed_revision,
+        )
+        current = StrategyService(workspace).resolve_executable("codex_sma_integration")
+        assert current.revision_id == current_source.parent.name != executed_revision
+        assert current_source.read_text(encoding="utf-8") == correct_code
+        assert 'result.loc[fast < slow, "signal"] = -1' not in correct_code
+        assert store.list_runs()[0]["revision_id"] == executed_revision
+
+        with pytest.raises(
+            AssertionError, match="Generated strategy verification failed"
+        ) as error:
+            verify_generated_strategy(root, scenario="novice_intake")
+        assert "Series are different" in str(error.value), (
+            "Failure must come from the long-only oracle, not missing fixture metrics"
+        )
+        assert marker.exists(), "The verifier did not load the executed source revision"
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(marker.read_text(encoding="utf-8")), 0)
+        assert store.list_runs()[0]["revision_id"] == executed_revision
+        assert executed_source.read_text(encoding="utf-8") == wrong_code
     assert not root.exists()
 
 

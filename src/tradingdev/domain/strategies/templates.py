@@ -4,18 +4,26 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic import TypeAdapter
+
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.research import ResearchSpec
+from tradingdev.domain.research_policy import research_policy_payload
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-type StrategyContractTopic = Literal["core", "example", "configuration"]
+type StrategyContractTopic = Literal["core", "research", "example", "configuration"]
 
 _CONTRACT_SECTIONS = (
     {
         "id": "core",
         "description": "Required Python/signal rules and revision lifecycle.",
+    },
+    {
+        "id": "research",
+        "description": "Required research choices, defaults and explicit inheritance.",
     },
     {"id": "example", "description": "Complete Python and YAML example to adapt."},
     {
@@ -37,14 +45,17 @@ def strategy_contract_payload(
             ).read_text(encoding="utf-8"),
             "requirements": [
                 "Inherit BaseStrategy. generate_signals(df) returns a new DataFrame "
-                "without mutating its input, with signal in {-1, 0, 1}: short, flat, "
-                "long. Preserve aligned rows. Never use future rows or backfill "
-                "indicators; keep signals flat until required values are finite.",
+                "without mutating its input, with signal in {-1, 0, 1}. Follow "
+                "BaseStrategy's mode-dependent position/zero semantics and "
+                "next-bar timing; -1 means short, never sell-only. Preserve aligned "
+                "rows. Never use future rows or backfill indicators; emit zero "
+                "until required values are finite.",
                 "Expose configurable values as constructor keyword parameters and "
                 "get_parameters(). YAML strategy.parameters supplies them. Defaults "
                 "must be finite JSON values. backtest_engine and parallel_config "
                 "are reserved application injections, not YAML overrides.",
-                "Read section=configuration for the executable YAML schema and "
+                "Read section=research for the required research input and maintained "
+                "simulation policy, section=configuration for the YAML schema and "
                 "section=example when a complete starting example is needed. "
                 "Use list_data_sources for source-specific market settings.",
                 "Generated Python must pass the repository Ruff and strict Mypy "
@@ -67,6 +78,9 @@ def strategy_contract_payload(
             ],
             "lifecycle": [
                 "save_strategy creates an immutable source/base-config revision. "
+                "Omit strategy_id for automatic naming; an explicit ID without "
+                "expected_revision_id means new creation and must not replace an "
+                "existing strategy. Repairs require the exact expected_revision_id. "
                 "Use its revision_id for checks and execution; omitted revision_id "
                 "selects current once per operation. Saving repairs creates a new "
                 "draft; older validation evidence does not transfer.",
@@ -86,6 +100,43 @@ def strategy_contract_payload(
                 "seed arbitrary global or third-party RNGs.",
             ],
         }
+    elif section == "research":
+        content = {
+            "research_schema": TypeAdapter(ResearchSpec).json_schema(),
+            "policy": research_policy_payload(),
+            "notes": [
+                "Before authoring or preparing, obtain the user's strategy idea, "
+                "instrument, date interval and candle timeframe. A vague trading "
+                "idea is sufficient; missing choices require clarification, not "
+                "values copied from examples or a bundled configuration.",
+                "research owns market/date/capital/cost/annualization choices. "
+                "The YAML supplies strategy class/parameters, explicit data source, "
+                "features, execution controls and validation. When saving, duplicate "
+                "research fields in YAML must agree; the backend materializes the "
+                "complete immutable base configuration before program checks.",
+                "Omit unspecified capital and costs to use the maintained simulation "
+                "policy. Preserve the user's explicit valid values, including zero. "
+                "Do not supply guessed values and describe them as user instructions.",
+                "inherit_selected_revision is an explicit choice to reuse one "
+                "identified generated revision; it is not a missing-value fallback. "
+                "Supply that exact revision_id when preparing, or expected_revision_id "
+                "when repairing. Bundled sample dates cannot supply missing choices.",
+                "Research periods select candle timestamps with "
+                "start_date <= timestamp <= end_date, including both endpoints "
+                "when matching candles exist. Dates without timezone are interpreted "
+                "as UTC; explicit offsets convert to UTC. Date-only values mean "
+                "00:00:00 UTC, not the whole final day. Review these exact resolved "
+                "bounds with the user. No history is read before approval, so actual "
+                "available bars and gaps are still unverified.",
+                "Use annualization='market' only when a supported market policy "
+                "applies. Otherwise propose and disclose a justified positive daily "
+                "factor, or obtain an explicit choice to proceed with annualization "
+                "unavailable. Do not apply a universal stock-market day count.",
+                "Source labels describe what the backend resolved from this request, "
+                "the project policy or a selected revision. They do not establish "
+                "that a human supplied or approved those choices.",
+            ],
+        }
     elif section == "example":
         content = {
             "example_strategy_code": _EXAMPLE_CODE,
@@ -95,6 +146,10 @@ def strategy_contract_payload(
         content = {
             "config_schema": BacktestRunConfig.model_json_schema(),
             "notes": [
+                "This is the complete saved execution schema. For save_strategy, "
+                "research supplies market/date/capital/cost/annualization fields; "
+                "they may be omitted from the authored YAML. The backend adds "
+                "research provenance and strategy identity. Do not manufacture them.",
                 "Fixed configuration fields reject unknown names; "
                 "strategy.parameters and bundled strategy.fit are strategy-specific. "
                 "Use validation training/test windows for training-required "
@@ -120,7 +175,7 @@ def strategy_contract_payload(
 
 
 _EXAMPLE_CODE = '''\
-"""Example: Simple moving-average crossover strategy."""
+"""Example: Long-only moving-average position strategy."""
 
 from __future__ import annotations
 
@@ -138,7 +193,7 @@ if TYPE_CHECKING:
 
 
 class SmaCrossoverStrategy(BaseStrategy):
-    """Buy when fast SMA crosses above slow SMA, sell on reverse."""
+    """Hold long while finite fast SMA is above slow SMA; otherwise stay flat."""
 
     def __init__(
         self,
@@ -154,18 +209,10 @@ class SmaCrossoverStrategy(BaseStrategy):
         result = df.copy()
         fast = indicators.sma(result["close"], self._fast_period)
         slow = indicators.sma(result["close"], self._slow_period)
-        fast_prev = fast.shift(1)
-        slow_prev = slow.shift(1)
-        ready = (
-            np.isfinite(fast)
-            & np.isfinite(slow)
-            & np.isfinite(fast_prev)
-            & np.isfinite(slow_prev)
-        )
+        ready = np.isfinite(fast) & np.isfinite(slow)
 
         result["signal"] = 0
-        result.loc[ready & (fast > slow) & (fast_prev <= slow_prev), "signal"] = 1
-        result.loc[ready & (fast < slow) & (fast_prev >= slow_prev), "signal"] = -1
+        result.loc[ready & (fast > slow), "signal"] = 1
         return result
 
     def get_parameters(self) -> dict[str, Any]:
@@ -182,7 +229,7 @@ strategy:
   id: "sma_crossover"
   version: "0.1.0"
   class_name: "SmaCrossoverStrategy"
-  description: "Simple moving-average crossover"
+  description: "Long-only: hold while fast SMA exceeds slow SMA, otherwise flat"
   parameters:
     fast_period: 10
     slow_period: 30
@@ -201,10 +248,11 @@ backtest:
   mode: "signal"
 
 data:
-  # market_type: "futures/um"  # binance_vision only; use "spot" for spot
+  source: "binance_vision"
+  market_type: "futures/um"  # Example market; use "spot" for an explicit spot request.
   requirements:
     market:
-      # source selects the data crawler: "binance_vision" (default),
+      # source selects the data crawler: "binance_vision",
       # "binance_api" (ccxt), or "yahoo_finance" (stocks/futures/indices/FX,
       # Yahoo symbols such as "AAPL", "ES=F", "^GSPC")
       source: "binance_vision"

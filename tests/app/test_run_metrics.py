@@ -20,8 +20,10 @@ from tradingdev.app.contracts.research import (
     CompareRunsResponse,
     MetricCatalogResponse,
     MetricQueryError,
+    RunComparison,
     RunMetricsResponse,
     RunRecord,
+    RunResponse,
 )
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
@@ -223,6 +225,7 @@ def test_scope_and_metric_selection_errors_include_available_choices(
     one = service.get_run_metrics("run", metric_ids=["total_volume"])
     assert one["metrics"] == {"total_volume": 210.0}
     assert set(one["definitions"]) == {"total_volume"}
+    assert one["display_metrics"] == {"total_volume": "210.00"}
     unknown_metric = MetricQueryError.model_validate(
         service.get_run_metrics("run", metric_ids=["made_up"])
     )
@@ -234,6 +237,158 @@ def test_scope_and_metric_selection_errors_include_available_choices(
     assert unknown_scope.code == "unknown_metric_scope"
     assert unknown_scope.available_scopes == ["full"]
     assert service.get_run_metrics("absent")["code"] == "run_not_found"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (493.04577519114036, "49304.58%"),
+        (-0.125, "-12.50%"),
+        (0.0, "0.00%"),
+        (-0.0, "0.00%"),
+        (None, None),
+        (1e308, "1" + "0" * 310 + ".00%"),
+    ],
+)
+def test_saved_fraction_display_preserves_original_values_and_artifacts(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+    value: float | None,
+    expected: str | None,
+) -> None:
+    workspace, store, service = storage
+    _publish(storage, "run", scopes={"full": _scope(values={"annual_return": value})})
+    original = {
+        path: path.read_bytes()
+        for path in (workspace.runs / "run").rglob("*")
+        if path.is_file()
+    }
+    run = RunRecord.model_validate(service.get_run("run")["run"])
+    detail = RunMetricsResponse.model_validate(service.get_run_metrics("run"))
+    assert run.metrics == detail.metrics == {"annual_return": value}
+    assert run.display_metrics == detail.display_metrics == {"annual_return": expected}
+    saved = store.get_run("run")
+    assert saved is not None and saved["metrics"] == {"annual_return": value}
+    assert all(path.read_bytes() == content for path, content in original.items())
+
+
+def test_display_uses_historical_units_and_retains_exact_integer_counts(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+) -> None:
+    service = storage[2]
+    values = {"annual_return": 493.04577519114036, "total_trades": 9007199254740993}
+    _publish(storage, "current", scopes={"full": _scope(values=values)})
+    _publish(
+        storage,
+        "historical",
+        scopes={"full": _scope(values=values)},
+        snapshot_changes={"annual_return": {"unit": "historical_custom_unit"}},
+    )
+    historical = RunMetricsResponse.model_validate(
+        service.get_run_metrics("historical")
+    )
+    assert historical.display_metrics == {
+        "annual_return": "493.05",
+        "total_trades": "9007199254740993",
+    }
+    assert historical.definitions["annual_return"].unit == "historical_custom_unit"
+    compared = CompareRunsResponse.model_validate(
+        service.compare_runs(["current", "historical"], metric_ids=["annual_return"])
+    )
+    assert not compared.comparable
+    assert [row.display_metrics for row in compared.runs] == [
+        {"annual_return": "49304.58%"},
+        {"annual_return": "493.05"},
+    ]
+    assert all(
+        row.metrics == {"annual_return": values["annual_return"]}
+        for row in compared.runs
+    )
+
+
+def test_fold_display_preserves_missing_statistics_and_unscaled_valid_count(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+) -> None:
+    summary = _scope(
+        kind="fold_summary",
+        split="test",
+        values={
+            "annual_return": FoldStats(
+                mean=493.04577519114036, std=None, min=-0.125, max=1000.0, valid_count=2
+            ),
+            "total_pnl": FoldStats(mean=0.0, std=0.0, min=0.0, max=0.0, valid_count=2),
+        },
+    )
+    for run_id in ("first", "second"):
+        _publish(
+            storage,
+            run_id,
+            scopes={"test_summary": summary},
+            default_scope="test_summary",
+        )
+    service = storage[2]
+    expected = {
+        "mean": "49304.58%",
+        "std": None,
+        "min": "-12.50%",
+        "max": "100000.00%",
+        "valid_count": 2,
+    }
+    detail = RunMetricsResponse.model_validate(service.get_run_metrics("first"))
+    assert detail.model_dump()["display_metrics"]["annual_return"] == expected
+    assert detail.model_dump()["display_metrics"]["total_pnl"]["mean"] == "0.00"
+    compared = CompareRunsResponse.model_validate(
+        service.compare_runs(["first", "second"], metric_ids=["annual_return"])
+    )
+    assert all(
+        row.model_dump()["display_metrics"] == {"annual_return": expected}
+        for row in compared.runs
+    )
+    assert detail.metrics == summary.model_dump(mode="json")["values"]
+
+
+def test_metric_display_crosses_typed_mcp_boundaries(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+) -> None:
+    for run_id in ("first", "second"):
+        _publish(
+            storage,
+            run_id,
+            scopes={"full": _scope(values={"annual_return": 493.04577519114036})},
+        )
+    server = MCPServer("display-metric-test")
+    runs.register(server, storage[2])
+
+    async def check() -> None:
+        summary = await server.call_tool("get_run", {"run_id": "first"})
+        detail = await server.call_tool(
+            "get_run_metrics", {"run_id": "first", "metric_ids": ["annual_return"]}
+        )
+        comparison = await server.call_tool(
+            "compare_runs", {"run_ids": ["first", "second"]}
+        )
+        assert (
+            isinstance(summary, CallToolResult)
+            and summary.structured_content is not None
+        )
+        assert (
+            isinstance(detail, CallToolResult) and detail.structured_content is not None
+        )
+        assert (
+            isinstance(comparison, CallToolResult)
+            and comparison.structured_content is not None
+        )
+        records: list[RunRecord | RunMetricsResponse | RunComparison] = [
+            RunResponse.model_validate(summary.structured_content["result"]).run,
+            RunMetricsResponse.model_validate(detail.structured_content["result"]),
+            *CompareRunsResponse.model_validate(
+                comparison.structured_content["result"]
+            ).runs,
+        ]
+        for record in records:
+            assert record.display_metrics == {"annual_return": "49304.58%"}
+            assert record.metrics == {"annual_return": 493.04577519114036}
+
+    asyncio.run(check())
 
 
 def test_fold_scope_summary_preserves_nulls_valid_counts_and_raw_fold(
@@ -300,6 +455,7 @@ def test_legacy_metrics_remain_readable_but_do_not_invent_details(
         )
     run = service.get_run("old_a")["run"]
     assert run["metrics"] == {"daily_pnl_mean": 42}
+    assert run["display_metrics"] == {}
     assert run["provenance"] == "legacy_metrics"
     assert not run["details_available"]
     assert run["available_scopes"] == []
@@ -308,6 +464,7 @@ def test_legacy_metrics_remain_readable_but_do_not_invent_details(
     )
     comparison = service.compare_runs(["old_a", "old_b"])
     assert not comparison["comparable"]
+    assert all(row["display_metrics"] == {} for row in comparison["runs"])
     assert (
         "unknown_provenance:old_a"
         in comparison["metric_compatibility"]["daily_pnl_mean"]["reasons"]
@@ -355,6 +512,7 @@ def test_corrupt_artifact_cannot_fall_back_to_legacy_values(
     assert service.get_run_metrics("run")["code"] == "performance_artifact_invalid"
     run = service.get_run("run")["run"]
     assert run["metrics"] == {}
+    assert run["display_metrics"] == {}
     assert run["provenance"] == "invalid_artifact"
     assert run["detail_error"]["code"] == "performance_artifact_invalid"
 

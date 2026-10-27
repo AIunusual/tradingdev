@@ -31,6 +31,8 @@ backtest:
   slippage: 0.0005 # 0.05% slippage estimate
 
 data:
+  source: "binance_vision"
+  market_type: "futures/um"
   requirements:
     market:
       symbol: "BTC/USDT"

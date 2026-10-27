@@ -923,6 +923,7 @@ def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> Non
     )
     requests = 0
     original_error: httpx.ReadTimeout | None = None
+    observed: list[ToolCall] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal requests, original_error
@@ -941,6 +942,7 @@ def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> Non
                 base_url="http://localhost/v1",
                 timeout_seconds=1,
                 transport=httpx.MockTransport(respond),
+                on_tool_call=observed.append,
             )
         )
     assert failure.value.__cause__ is original_error
@@ -948,6 +950,93 @@ def test_model_timeout_includes_recent_tool_failure_and_preserves_cause() -> Non
     assert "model round 2" in diagnostic
     assert "list_strategies" in diagnostic and "success=False" in diagnostic
     assert "Storage unavailable" in diagnostic
+    invoke.assert_awaited_once_with("list_strategies", {})
+    assert observed == [
+        ToolCall(
+            "list_strategies", {}, {"success": False, "error": "Storage unavailable"}
+        )
+    ]
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+def test_completed_tool_observer_is_isolated_from_calls_and_model_history(
+    is_error: bool,
+) -> None:
+    client, invoke = _mock_client(
+        extra_tools=[Tool(name="get_run_trades", input_schema={"type": "object"})]
+    )
+    arguments = {"run_id": "approved-run", "direction": "short", "limit": 1}
+    result = {"success": not is_error, "trades": [{"direction": "short"}]}
+    invoke.return_value = CallToolResult(
+        content=[], structured_content=deepcopy(result), is_error=is_error
+    )
+    observed: list[ToolCall] = []
+    requests: list[dict[str, Any]] = []
+
+    def observe(call: ToolCall) -> None:
+        observed.append(deepcopy(call))
+        call.arguments["run_id"] = "wrong-run"
+        call.result["trades"][0]["direction"] = "long"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return _reply([_call("get_run_trades", json.dumps(arguments))])
+        assert observed == [ToolCall("get_run_trades", arguments, result)]
+        return _reply()
+
+    calls = asyncio.run(
+        run_local_model(
+            client,
+            "Read the approved trades",
+            model="fixture",
+            base_url="http://localhost/v1",
+            timeout_seconds=1,
+            transport=httpx.MockTransport(respond),
+            on_tool_call=observe,
+        )
+    )
+    assert calls == observed
+    assert (
+        json.loads(requests[1]["messages"][-1]["content"])["structuredContent"]
+        == result
+    )
+    assert (
+        json.loads(
+            requests[1]["messages"][-2]["tool_calls"][0]["function"]["arguments"]
+        )
+        == arguments
+    )
+    invoke.assert_awaited_once_with("get_run_trades", arguments)
+
+
+def test_unfinished_mcp_call_is_not_completed_tool_evidence() -> None:
+    client, invoke = _mock_client()
+    observed: list[ToolCall] = []
+    cancelled = False
+
+    async def stalled_tool(*args: Any, **kwargs: Any) -> CallToolResult:
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled = True
+        raise AssertionError("Unreachable")
+
+    invoke.side_effect = stalled_tool
+    with pytest.raises(AssertionError, match="after 0 MCP calls"):
+        asyncio.run(
+            run_local_model(
+                client,
+                "Wait for tool result",
+                model="fixture",
+                base_url="http://localhost/v1",
+                timeout_seconds=0.05,
+                transport=httpx.MockTransport(lambda _request: _reply([_call()])),
+                on_tool_call=observed.append,
+            )
+        )
+    assert cancelled and observed == []
     invoke.assert_awaited_once_with("list_strategies", {})
 
 
@@ -965,6 +1054,7 @@ def test_invalid_batch_is_rejected_before_any_mcp_tool_runs(
     invalid_call: dict[str, Any],
 ) -> None:
     client, invoke = _mock_client()
+    observed: list[ToolCall] = []
     with pytest.raises((AssertionError, ValueError)):
         asyncio.run(
             run_local_model(
@@ -976,9 +1066,11 @@ def test_invalid_batch_is_rejected_before_any_mcp_tool_runs(
                 transport=httpx.MockTransport(
                     lambda _request: _reply([_call(call_id="valid"), invalid_call])
                 ),
+                on_tool_call=observed.append,
             )
         )
     invoke.assert_not_awaited()
+    assert observed == []
 
 
 def test_tool_budget_counts_prior_rounds_and_rejects_next_batch_atomically() -> None:

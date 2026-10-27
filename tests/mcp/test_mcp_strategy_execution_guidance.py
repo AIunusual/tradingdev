@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from mcp_types import CallToolResult
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import execution_options, research_arguments
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.mcp.execution_fixtures import plan_context
 
@@ -48,7 +48,7 @@ def test_real_mcp_preflight_returns_training_guidance_without_market_or_jobs(
                         )
                     else:
                         arguments.update(start_date="2024-01-01", end_date="2024-01-07")
-                    response = await client.call(tool, **arguments)
+                    response = await client.call(tool, **research_arguments(arguments))
                     assert response["success"] is False
                     assert response["code"] == "strategy_requires_training"
                     assert response["next_tool"] == "prepare_walk_forward"

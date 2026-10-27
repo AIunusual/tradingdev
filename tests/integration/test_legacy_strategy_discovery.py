@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import execution_options, research_input
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,7 +75,11 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
             "save_strategy",
             strategy_id="current_strategy",
             code="class CurrentStrategy: pass\n",
-            yaml_config="strategy:\n  class_name: CurrentStrategy\n",
+            yaml_config=(
+                "strategy:\n  class_name: CurrentStrategy\n"
+                "data:\n  source: binance_vision\n  market_type: futures/um\n"
+            ),
+            research=research_input(),
         )
         assert current["success"]
         # The harness validates every structured response against outputSchema
@@ -110,10 +114,7 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
         rejected_run = await client.call(
             "prepare_backtest",
             strategy_id=_LEGACY_ID,
-            symbol="BTC/USDT",
-            timeframe="1h",
-            start_date="2024-01-01",
-            end_date="2024-01-02",
+            research=research_input(end_date="2024-01-02"),
             **execution_options({}),
         )
         assert rejected_run["success"] is False
@@ -127,29 +128,41 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
         assert missing_revision["success"] is False
         assert missing_revision["code"] == "strategy_not_found"
 
-        saved = await client.call(
+        collision = await client.call(
             "save_strategy",
             strategy_id=_LEGACY_ID,
             code=retrieved["source_code"],
-            yaml_config=retrieved["yaml_config"],
+            yaml_config=retrieved["yaml_config"]
+            + "data:\n  source: binance_vision\n  market_type: futures/um\n",
+            research=research_input(),
+        )
+        assert collision["success"] is False
+        assert collision["code"] == "strategy_id_exists"
+        saved = await client.call(
+            "save_strategy",
+            code=retrieved["source_code"],
+            yaml_config=retrieved["yaml_config"]
+            + "data:\n  source: binance_vision\n  market_type: futures/um\n",
+            research=research_input(),
         )
         assert saved["success"] and saved["revision_id"]
         assert saved["status"] == "draft"
-        generated = await client.call("get_strategy", strategy_id=_LEGACY_ID)
+        assert saved["strategy_id"] != _LEGACY_ID
+        generated = await client.call("get_strategy", strategy_id=saved["strategy_id"])
         assert generated["kind"] == "generated"
         assert generated["revision_id"] == saved["revision_id"]
         assert generated["source_code"] == _LEGACY_SOURCE
         assert generated["metadata"]["status"] == "draft"
         assert generated["metadata"]["validation"] is None
         assert generated["metadata"]["dry_run"] is None
-        replacement = [
+        legacy_records = [
             item
             for item in await client.read_all_pages("list_strategies")
             if item["strategy_id"] == _LEGACY_ID
         ]
-        assert len(replacement) == 1
-        assert replacement[0]["kind"] == "generated"
-        assert replacement[0]["revision_id"] == saved["revision_id"]
+        assert len(legacy_records) == 1
+        assert legacy_records[0]["kind"] == "legacy"
+        assert legacy_records[0]["revision_id"] is None
 
     assert {path: path.read_bytes() for path in legacy_paths} == original_bytes
 
@@ -205,7 +218,9 @@ async def test_legacy_bundled_id_collision_can_be_recovered_under_another_id(
             "save_strategy",
             strategy_id=strategy_id,
             code=recovered["source_code"],
-            yaml_config=recovered["yaml_config"],
+            yaml_config=recovered["yaml_config"]
+            + "data:\n  source: binance_vision\n  market_type: futures/um\n",
+            research=research_input(),
         )
         assert rejected["success"] is False
         assert rejected["code"] == "reserved_strategy_id"
@@ -214,7 +229,9 @@ async def test_legacy_bundled_id_collision_can_be_recovered_under_another_id(
             "save_strategy",
             strategy_id=replacement_id,
             code=recovered["source_code"],
-            yaml_config=recovered["yaml_config"],
+            yaml_config=recovered["yaml_config"]
+            + "data:\n  source: binance_vision\n  market_type: futures/um\n",
+            research=research_input(),
         )
         assert saved["success"] and saved["revision_id"]
         assert saved["status"] == "draft"
