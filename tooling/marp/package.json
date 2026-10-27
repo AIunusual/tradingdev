@@ -1,0 +1,9 @@
+{
+  "name": "tradingdev-presentations",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Locked HTML presentation compiler",
+  "dependencies": {
+    "@marp-team/marp-cli": "4.5.1"
+  }
+}

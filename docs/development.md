@@ -15,14 +15,15 @@ uv sync --locked --all-extras --python 3.14
 
 安裝器會調整本機 Git 設定，摘要見文末的[注意事項](#注意事項)。
 文件檢查也使用本 repository 的 `.venv` 與 `dev` 群組工具，不依賴全域安裝。
-純文件分流不要求 Dashboard extras 或 Codex 登入；其他品質與完整檢查仍需
-上述 `--all-extras` 環境。
+一般文件與簡報專項不要求 Dashboard extras 或 Codex 登入；簡報另需下述 Node.js
+工具鏈。其他品質與完整檢查仍需上述 `--all-extras` 環境。
 
 | 命令 | 用途 |
 | --- | --- |
 | `./scripts/rebuild-env.sh` | 重建 `.venv`，依 `uv.lock` 安裝鎖定版本。 |
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
 | `./scripts/check-docs.sh` | 唯讀檢查 Markdown 與本機檔案／標題連結；不呼叫模型或執行 Python 品質檢查、pytest。 |
+| `./scripts/check-presentations.sh` | 檢查文件、簡報重建一致性、頁碼與離線資源；不呼叫模型或完整 pytest。 |
 | `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與上述文件品質。 |
 | `./scripts/check-full.sh` | 一律執行快速品質檢查與完整離線 pytest，不依變更類型縮減；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
@@ -33,9 +34,9 @@ uv sync --locked --all-extras --python 3.14
 `tests/`、`tooling/`、`research/`；Markdown 檢查涵蓋根目錄與 `docs/`。
 
 Git 檢查與分支清理位於 `tooling/git/`，Codex 文件審查位於 `tooling/review_docs.py`。
-Commit 與候選檢查依不可變 Git tree 的差異分流；純文件執行文件 snapshot
-檢查，其他候選先由目前 checkout 的 reviewer 讀取候選 Git 內容，再執行
-候選 snapshot 內的品質檢查與離線測試。分流條件見[更新文件](#更新文件)。
+Commit 與候選檢查依不可變 Git tree 分為一般文件、簡報專項與程式變更。
+前兩種只執行對應 snapshot；程式候選由目前 checkout 的 reviewer 讀取候選
+Git 內容，再執行候選內的品質與離線測試。分流條件見[更新文件](#更新文件)。
 
 `tests/` 保留測試案例、fixtures 與 MCP／模型測試情境；`research/` 保留獨立
 研究原型，用法見 [MAE 研究原型](#mae-研究原型)。`tooling/` 與 `research/`
@@ -69,22 +70,39 @@ FLAML 2.7 的安裝 metadata 接受 Python `>=3.10`，但
 資料限制。`check-docs.sh` 檢查 Markdown 與本機檔案、Markdown 標題連結，
 不執行文件中的命令，也不連線檢測外部 URL；通過不代表操作內容已實測。
 
-純文件分流的政策以 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查) 為準：
-只接受 `README.md`、`ARCHITECTURE.md`、`docs/**/*.md` 的非空變更，且變更前後
-仍存在的檔案須為 Git mode `100644` 的一般檔案。分類比較固定的 Git tree，
-改名須核對原路徑與新路徑；`AGENTS.md`、可執行檔、符號連結、其他檔案、
-混合變更、空差異與無法確認的差異都維持原流程。
+分流政策以 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查) 為準。一般文件接受
+`README.md`、`ARCHITECTURE.md`、`docs/**/*.md`；已登錄簡報的入口與來源 Markdown
+優先進入簡報專項，連同對應 HTML／CSS、空的 `docs/.nojekyll` 及通過內容驗證的
+VS Code 簡報工作，確認來源與產物一致。不能只憑 `.html`、`.css`、task label 或
+`.vscode` 路徑將任意內容視為文件。
 
-符合條件的 commit 只跑文件品質與提交格式檢查；PR 及本機候選只跑文件
-snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型策略測試。
-文件語意仍由差異審閱確認。政策、程式、依賴與測試基礎設施變更須依
+分類比較固定 Git tree 的非空差異，改名核對兩側路徑；兩側仍存在的檔案均須為
+mode `100644` 的一般檔案，才可進入上述路徑。政策、建置工具與 lock、未知設定、
+產品程式、可執行檔、符號連結、含這些項目的混合變更及無法確認的差異都走程式分流。
+
+一般文件與簡報專項的 commit、PR 及本機候選只跑對應 snapshot，不執行 Ruff、Mypy、
+自動 Codex 審查或完整 Python pytest。文件語意仍由差異審閱確認，簡報操作與版面
+仍須在瀏覽器檢查。政策、程式、依賴與測試基礎設施變更須依
 [執行時機](../AGENTS.md#執行時機) 完成相關測試、完整檢查與獨立階段審查。
 
 ### 簡報的編輯與輸出
 
 [專案介紹簡報](talks/tradingdev-introduction/README.md)以 Marp Markdown 編輯，
 `theme.css` 保存版型，`index.html` 是提交至 Git 的瀏覽器產物。
-簡報建置工具不加入 Python 執行環境；編輯時另需 Node.js 與 npm。
+編輯時另需 Node.js 與 npm。Marp 及其傳遞依賴由 `tooling/marp/package-lock.json`
+鎖定，初始化工具鏈後，手動建置、VS Code 與 snapshot 使用相同建置入口：
+
+```bash
+uv run --no-sync python -m tooling.presentations setup
+```
+
+Shell 入口 `./scripts/presentations.sh setup|build|watch|check` 呼叫相同模組，
+同樣使用 repository 的 `.venv`。
+
+初始化會下載 npm 套件；更新工具鏈時須明確更新 lock 並重新初始化。一般 build／check
+不安裝或升級依賴，缺少工具或安裝與 lock 不符會失敗，不會退回全域 Marp。
+Snapshot 使用開發 checkout 的已安裝工具鏈，並核對其 lock 與候選一致；需要指定
+另一套已初始化工具鏈時，可設定 `TRADINGDEV_PRESENTATION_TOOLCHAIN` 指向其目錄。
 
 #### 在 VS Code 儲存時自動編譯
 
@@ -92,7 +110,7 @@ snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型�
 以專案根目錄為工作目錄，只編譯這份 `slides.md`，並監看它使用的 `theme.css`。
 啟動時先輸出一次，之後每次儲存這兩個檔案都會更新同目錄的 `index.html`。
 
-1. 用 VS Code 開啟整個 repository 資料夾，並確認 Node.js／`npx` 在 VS Code 的 PATH 中。
+1. 完成工具鏈初始化，用 VS Code 開啟整個 repository 資料夾，確認 `uv` 與 Node.js 在 PATH 中。
 2. 在可信任的工作區，首次出現自動工作提示時選擇 **Allow Automatic Tasks**。
    若先前已拒絕，可執行 **Tasks: Manage Automatic Tasks** 改為允許。
 3. 重新開啟資料夾後會自動啟動。若要在目前視窗立即啟動，執行
@@ -100,29 +118,27 @@ snapshot，不執行 Ruff、Mypy、Codex 或 pytest，也不要求真實模型�
 
 這使用 VS Code 內建 Tasks，不需額外的 run-on-save 外掛。未儲存的編輯不會觸發編譯，
 其他 Markdown 檔也不會產生 HTML。編譯訊息在 `slides: watch` 的專用終端機；
-找不到 `npx` 時，請先修正 VS Code 的 PATH，再重新執行工作。
+找不到 `uv` 或 Node.js 時，請先修正 VS Code 的 PATH，再重新執行工作。
 自動工作規則見 [VS Code 官方說明](https://code.visualstudio.com/docs/debugtest/tasks#_control-automatic-task-execution)。
 
-Marp watch 會在 HTML 加入本機即時重新載入程式，供編輯時使用。
-準備提交或發布時，先用 **Tasks: Terminate Task → slides: watch** 停止監看，
-再執行 **Tasks: Run Task → slides: build**，輸出不含即時重新載入程式的靜態版本。
-兩個工作使用相同的 Marp 版本、主題與輸出設定；`slides: build` 也可從
-**Tasks: Run Build Task** 選取，不會覆寫專案的預設建置工作。
+監看工作在來源變動時重新執行靜態建置，不把本機重新載入程式寫入 HTML。
+儲存後可重新整理瀏覽器查看結果，輸出可直接保存或發布。
+需要停止時執行 **Tasks: Terminate Task → slides: watch**；單次輸出可執行
+**Tasks: Run Task → slides: build**，也可從 **Tasks: Run Build Task** 選取，
+不會覆寫專案的預設建置工作。
 
 #### 手動輸出與預覽
 
-在 repository 根目錄使用固定版本的 Marp CLI 輸出：
+在 repository 根目錄輸出或檢查簡報：
 
 ```bash
-npx --yes @marp-team/marp-cli@4.5.1 \
-  docs/talks/tradingdev-introduction/slides.md \
-  --theme docs/talks/tradingdev-introduction/theme.css \
-  --title 'TradingDev｜讓 AI 助手協助研究交易策略' \
-  --description '產品介紹、使用場景、分類比較與後續開發方向' \
-  -o docs/talks/tradingdev-introduction/index.html
+uv run --no-sync python -m tooling.presentations build
+./scripts/check-presentations.sh
 ```
 
-首次執行會下載 npm 套件。HTML 已內含樣式與播放程式，閱讀者不需要安裝 Node.js。
+專項檢查在獨立臨時目錄重建 HTML，逐 byte 核對已提交產物，並檢查頁碼、入口閱讀
+範圍與非預期外部資源。檢查不覆寫來源或產物，也不執行 `.vscode` 中的工作。
+HTML 已內含樣式與播放程式，閱讀者不需要安裝 Node.js。
 Markdown 開頭的註解保存 Marp directives；每頁末尾的註解是講者稿，
 `_footer` 則提供可點擊的來源。修改正文、來源或版型後，都應重新輸出 HTML，
 並同步檢查閱讀路線的頁碼與入口文件。
@@ -136,7 +152,7 @@ uv run python -m http.server 8765 --bind 127.0.0.1 \
 
 開啟 `http://127.0.0.1:8765/`，檢查全部投影片的換行、表格、頁尾、
 章節跳轉及講者模式。來源與 TODO 狀態須依對應程式及官方文件確認。
-目前的純文件分流不包含 HTML、CSS 與 `.nojekyll`，提交時會走快速檢查。
+已登錄簡報走專項檢查；改動建置工具、依賴或其他程式時仍走程式分流。
 GitHub Pages 的讀者操作與發布條件見簡報入口，不在此自動部署。
 
 ## MAE 研究原型
@@ -368,8 +384,8 @@ Code review 尋找程式缺陷；`check-full.sh` 驗證品質與離線行為；`
 git push -u origin feature/my-task
 ```
 
-Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件品質或快速檢查，並檢查
-提交格式；兩者都在獨立 snapshot 執行並核對暫存內容未變。未暫存的修正不能
+Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件、簡報專項或快速檢查，並檢查
+提交格式；各路徑都在獨立 snapshot 執行並核對暫存內容未變。未暫存的修正不能
 掩蓋待提交內容的錯誤。一般 push 不執行完整測試或呼叫模型。
 
 本機 hook 的主線推送保護僅適用於 GitHub（網址主機為 `github.com` 或
@@ -389,20 +405,21 @@ Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件品質或快速�
 審閱者可留在目前開發分支。腳本 fetch 主線與 PR head 至獨立臨時 Git repository，
 計算合併候選，再依候選相對主線的 tree 差異選擇檢查：
 
-- 純文件：執行 `check-docs.sh` 的文件 snapshot 檢查，跳過 Codex 與完整 pytest。
-- 其他變更：先執行 Codex 文件一致性與讀者定位審查，再執行快速品質檢查及完整離線 pytest。
+- 一般文件：執行 `check-docs.sh` 的文件 snapshot，跳過 Codex 與完整 pytest。
+- 簡報專項：執行 `check-presentations.sh` 的 snapshot，跳過 Codex 與完整 pytest。
+- 程式變更：執行 Codex 文件一致性與讀者定位審查，再執行快速品質及完整離線 pytest；涉及簡報時另須通過簡報專項。
 
-兩種流程都核對候選不可變性，結束時重新確認 PR 與實際遠端 base／head，
+所有流程都核對候選不可變性，結束時重新確認 PR 與實際遠端 base／head，
 輸出 PR URL、base／head SHA 與候選 tree，並清理臨時產物及啟動的程序。
-文件語意與操作命令仍須審閱差異；純文件不要求真實模型策略測試，其他變更
+文件語意與操作命令仍須審閱差異；文件與簡報不要求真實模型策略測試，其他變更
 由審閱者依受影響情境另行執行。每次明確檢查都重新執行，不重用先前結果。
 
 長時間檢查保留完整 stdout／stderr 日誌，記錄指令、期限及 session，透過原 session
 等待完成。結束後確認退出碼與摘要，按需讀取診斷日誌；確認程序停止後再清理。
 代理執行細節見 [AGENTS.md](../AGENTS.md#執行時機)。
 
-以下參數適用於 PR 與本機候選檢查。每次 snapshot 預設限時 900 秒；完整分流
-涵蓋快速檢查與離線測試，純文件分流涵蓋文件檢查。可依實測耗時指定當次期限，
+以下參數適用於 PR 與本機候選檢查。每次 snapshot 預設限時 900 秒；程式分流
+涵蓋快速檢查與離線測試，文件與簡報分流涵蓋各自專項。可依實測耗時指定當次期限，
 單位為正整數秒：
 
 ```bash
@@ -411,8 +428,11 @@ Commit 依暫存 tree 相對 HEAD 的差異，自動選擇文件品質或快速�
 
 檢查輸出會列出期限；逾時視為失敗，先停止程序再清理暫存。
 
-以下 Codex 證據與文件審查期限設定適用於非純文件分流，純文件不呼叫 Codex。
+以下 Codex 證據與文件審查期限設定適用於程式分流，文件與簡報專項不呼叫 Codex。
 Codex 文件審查預設接受最多 600,000 bytes 的完整證據，超過時於呼叫模型前失敗。
+已變更 HTML／CSS 會連同 diff 與候選全文納入；涉及已登錄簡報時，也帶入其完整
+入口、來源、主題與 HTML，包含未改動的關聯檔。內容供模型閱讀，不執行資產；
+缺少必要文字證據或超出容量時失敗，不能以省略 HTML 來假裝完成審查。
 確認模型容量足夠後，可指定當次上限，單位為正整數 bytes：
 
 ```bash
@@ -480,10 +500,10 @@ Squash／rebase 合併可能需要人工確認；遠端分支、worktree 與 bra
 uv run --no-sync python -m tooling.git.gate full --base main
 ```
 
-此命令檢查指定本機主線與目前提交的合併候選，採用與 PR 相同的純文件／完整
+此命令檢查指定本機主線與目前提交的合併候選，採用與 PR 相同的文件／簡報／程式
 分流，並核對本機 refs 與工作樹未變；可使用上述證據上限與期限參數。
 結果僅涵蓋本機指定版本；遠端 PR 須另行檢查。此處的 `gate full` 是候選驗證
-入口；手動 `scripts/check-full.sh` 則一律執行完整離線檢查，不採純文件分流。
+入口；手動 `scripts/check-full.sh` 則一律執行完整離線檢查，不依差異分流。
 
 ## 注意事項
 
@@ -496,8 +516,8 @@ uv run --no-sync python -m tooling.git.gate full --base main
   保留其他自訂 merge options 與 `pull.rebase`。
 - **環境**：腳本使用 Bash，目前未保證原生 Windows 相容；Git 需支援
   `merge-tree --write-tree`。更新依賴時執行 `uv lock`，並提交 lockfile 與設定變更。
-- **模型與費用**：日常 pytest 與純文件分流不需模型服務。Codex 策略測試、
-  非純文件候選的 Codex 文件審查需要已登入的 Codex CLI、網路與額度；
+- **模型與費用**：日常 pytest、文件與簡報專項不需模型服務。Codex 策略測試、
+  程式候選的 Codex 文件審查需要已登入的 Codex CLI、網路與額度；
   可用 `TRADINGDEV_CODEX_BIN` 指定 CLI。
   上方 Codex 範例明確指定 Luna，須有該模型的存取權限；可用 `--llm-model`
   指定其他模型。模型不可用時測試會失敗，不會自動改用其他模型。
