@@ -63,8 +63,6 @@ class XGBoostStrategy(BaseStrategy):
         # Threshold search (volume-maximisation mode)
         if (
             self._config.signal_threshold_candidates
-            and best_model is not None
-            and best_fe is not None
             and self._backtest_engine is not None
         ):
             optimizer = ThresholdOptimizer(
@@ -97,12 +95,12 @@ class XGBoostStrategy(BaseStrategy):
         val_df: pd.DataFrame,
     ) -> tuple[
         int,
-        XGBoostDirectionModel | None,
-        FeatureEngineer | None,
+        XGBoostDirectionModel,
+        FeatureEngineer,
     ]:
         """Find the best lookback by validation accuracy."""
         best_score = -1.0
-        best_lb = self._config.lookback_candidates[0]
+        best_lb: int | None = None
         best_model: XGBoostDirectionModel | None = None
         best_fe: FeatureEngineer | None = None
 
@@ -134,6 +132,13 @@ class XGBoostStrategy(BaseStrategy):
                 best_model = model
                 best_fe = fe
 
+        if best_lb is None or best_model is None or best_fe is None:
+            raise ValueError(
+                "No lookback candidate has sufficient mature training and validation "
+                "samples: at least 10 training rows and 5 validation rows are required "
+                f"after feature and label filtering (target_horizon="
+                f"{self._config.target_horizon})"
+            )
         return best_lb, best_model, best_fe
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:

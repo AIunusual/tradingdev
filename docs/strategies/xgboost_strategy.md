@@ -43,6 +43,10 @@ designed for research on market-making volume targets, not live execution.
 ## Signal Logic
 
 - `fit()` searches candidate lookback windows by validation accuracy.
+  It rejects the call if no candidate has sufficient mature training and
+  validation samples, preserving any previously fitted state. Use more history
+  or a shorter prediction horizon; see the
+  [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
 - Optional threshold search evaluates `signal_threshold_candidates` in ascending
   order using the backtest engine. It selects the lowest threshold with finite,
   non-negative `total_pnl` after fees and slippage. Unavailable or non-finite

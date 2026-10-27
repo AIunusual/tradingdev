@@ -55,3 +55,51 @@ class TestXGBoostDirectionModel:
         model.train(train_feat, eval_df=val_feat)
         preds = model.predict(val_feat)
         assert len(preds) == len(val_feat)
+
+    @pytest.mark.parametrize("empty_input", ["training", "validation"])
+    @pytest.mark.parametrize("already_trained", [False, True])
+    def test_empty_training_inputs_preserve_model_state(
+        self,
+        large_ohlcv_df: pd.DataFrame,
+        empty_input: str,
+        already_trained: bool,
+    ) -> None:
+        feat = self._make_feature_df(large_ohlcv_df.iloc[:200])
+        model = XGBoostDirectionModel(XGBoostModelConfig(n_estimators=2, n_jobs=1))
+        before_predictions: pd.DataFrame | None = None
+        if already_trained:
+            model.train(feat)
+            before_predictions = model.predict_proba(feat)
+        before_model = model._model
+        before_features = model._feature_names.copy()
+        changed = feat.rename(columns={"log_return": "replacement_feature"})
+        train = changed.iloc[:0] if empty_input == "training" else changed
+        validation = changed.iloc[:0] if empty_input == "validation" else None
+
+        with pytest.raises(
+            ValueError, match=f"{empty_input.title()} data.*labelled row"
+        ):
+            model.train(train, eval_df=validation)
+
+        assert model._model is before_model
+        assert model._feature_names == before_features
+        if before_predictions is not None:
+            pd.testing.assert_frame_equal(model.predict_proba(feat), before_predictions)
+        else:
+            with pytest.raises(RuntimeError, match="not been trained"):
+                model.predict_proba(feat)
+
+    def test_no_mature_labels_cannot_create_a_trained_model(
+        self, large_ohlcv_df: pd.DataFrame
+    ) -> None:
+        frame = large_ohlcv_df.iloc[:300]
+        features = FeatureEngineer(lookback=5, target_horizon=300).transform(frame)
+        assert features.empty
+        model = XGBoostDirectionModel(XGBoostModelConfig(n_estimators=2, n_jobs=1))
+
+        with pytest.raises(ValueError, match="Training data.*labelled row"):
+            model.train(features)
+
+        inference = FeatureEngineer(lookback=5).transform(frame, include_target=False)
+        with pytest.raises(RuntimeError, match="not been trained"):
+            model.predict_proba(inference)

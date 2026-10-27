@@ -71,6 +71,71 @@ class TestXGBoostStrategy:
         assert "retrain_interval" in params
         assert params["best_lookback"] is None
 
+    @pytest.mark.parametrize("horizon", [40, 300])
+    def test_fit_rejects_no_eligible_mature_training_windows(
+        self, large_ohlcv_df: pd.DataFrame, horizon: int
+    ) -> None:
+        strategy = XGBoostStrategy(
+            XGBoostStrategyConfig(
+                model=XGBoostModelConfig(n_estimators=2, n_jobs=1),
+                lookback_candidates=[5, 12],
+                target_horizon=horizon,
+                validation_ratio=0.2,
+            )
+        )
+
+        with pytest.raises(ValueError, match="No lookback candidate.*mature"):
+            strategy.fit(large_ohlcv_df.iloc[:300])
+
+        assert strategy.get_parameters()["best_lookback"] is None
+        assert strategy._model is None
+        assert strategy._feature_engineer is None
+        assert strategy._train_data is None
+        with pytest.raises(RuntimeError, match="not fitted"):
+            strategy.generate_signals(large_ohlcv_df.iloc[300:350])
+
+    def test_rejected_fit_preserves_previous_training(
+        self, large_ohlcv_df: pd.DataFrame
+    ) -> None:
+        strategy = XGBoostStrategy(
+            XGBoostStrategyConfig(
+                model=XGBoostModelConfig(n_estimators=2, n_jobs=1),
+                lookback_candidates=[5, 12],
+                target_horizon=40,
+                validation_ratio=0.2,
+            )
+        )
+        strategy.fit(large_ohlcv_df)
+        before_model = strategy._model
+        before_features = strategy._feature_engineer
+        before_train = strategy._train_data
+        before_parameters = strategy.get_parameters()
+
+        with pytest.raises(ValueError, match="No lookback candidate.*mature"):
+            strategy.fit(large_ohlcv_df.iloc[:300])
+
+        assert strategy._model is before_model
+        assert strategy._feature_engineer is before_features
+        assert strategy._train_data is before_train
+        assert strategy.get_parameters() == before_parameters
+
+    def test_fit_uses_an_eligible_candidate_after_an_insufficient_one(
+        self, large_ohlcv_df: pd.DataFrame
+    ) -> None:
+        strategy = XGBoostStrategy(
+            XGBoostStrategyConfig(
+                model=XGBoostModelConfig(n_estimators=2, n_jobs=1),
+                lookback_candidates=[500, 6],
+                target_horizon=5,
+                validation_ratio=0.2,
+            )
+        )
+
+        strategy.fit(large_ohlcv_df.iloc[:300])
+
+        assert strategy.get_parameters()["best_lookback"] == 6
+        assert strategy._model is not None
+
     def test_no_look_ahead_bias(
         self,
         large_ohlcv_df: pd.DataFrame,
