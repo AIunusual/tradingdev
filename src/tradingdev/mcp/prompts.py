@@ -43,9 +43,13 @@ Strategy development workflow
      Missing reference material must be resolved, not replaced with guessed APIs.
 
 4. Validate the selected revision.
-   - Run validate_strategy, then dry_run_strategy. Inspect diagnostics and
-     effective_config against the request; repair by saving and checking a new
-     revision. Execution requires runnable or promoted status; promotion is optional.
+   - Run validate_strategy, then dry_run_strategy. Before confirmation, compare
+     diagnostics, signal_analysis, effective_config and the source's signal rules
+     with the user's entry, holding, exit and direction requirements. Read the
+     core contract's mode semantics; -1 means short, never a sell-only exit.
+     Synthetic checks do not prove every requirement. Repair discrepancies by
+     saving and checking a new revision, without fetching history or running a
+     backtest. Execution requires runnable or promoted status; promotion is optional.
    - Generated Python is executed during checks; this is not a security sandbox.
 
 5. Prepare the requested execution.

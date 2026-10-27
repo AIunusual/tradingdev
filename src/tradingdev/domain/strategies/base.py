@@ -12,11 +12,24 @@ if TYPE_CHECKING:
 class BaseStrategy(ABC):
     """Base interface for trading strategies.
 
-    Strategies receive a DataFrame (optionally with indicator columns)
-    and produce a ``signal`` column with values:
-    - ``1``:  Long entry
-    - ``-1``: Short entry
-    - ``0``:  No signal / flat
+    Strategies receive a DataFrame (optionally with indicator columns) and
+    produce a ``signal`` column containing only ``1``, ``-1``, or ``0``.
+    ``1`` selects long and ``-1`` selects short; ``-1`` is never a sell-only
+    instruction to close a long position.
+
+    In ``mode="signal"``, each row specifies a position state: ``1`` long,
+    ``-1`` short, ``0`` flat. Repeat the state while it should persist;
+    a one-row entry pulse followed by zero exits on the next signal change.
+    ``signal_as_position`` has no effect in this mode.
+
+    In ``mode="volume"``, nonzero signals select the position direction.
+    Zero closes an existing position when ``signal_as_position=True``;
+    with the default ``False``, zero prevents new entries but retains an
+    existing position. An opposite nonzero signal closes and reverses it.
+
+    Both modes shift signals by one bar. Signal-driven entries and exits use
+    the following bar's open, falling back to close when open is absent.
+    Stop-loss and take-profit rules are separate from these signal changes.
     """
 
     @abstractmethod

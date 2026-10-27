@@ -38,7 +38,15 @@ class BacktestConfig(BaseModel):
     position_size: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
-    signal_as_position: bool = False
+    signal_as_position: bool = Field(
+        default=False,
+        description=(
+            "Volume mode only: true makes signal=0 close an existing position; "
+            "false retains it while preventing new entries. Signal mode always "
+            "uses position states (1 long, -1 short, 0 flat) and ignores this flag. "
+            "In both modes -1 selects short, not a sell-only exit."
+        ),
+    )
     re_entry_after_sl: bool = True
     mode: Literal["signal", "volume"] = "signal"
     monthly_max_loss: float = 1500.0

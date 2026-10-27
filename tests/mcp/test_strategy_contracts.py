@@ -84,6 +84,15 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     assert "get_numpy_rng()" in " ".join(content["requirements"])
     assert "effective_config" in " ".join(content["lifecycle"])
     assert "security sandbox" in " ".join(content["requirements"])
+    assert "-1 means short, never sell-only" in " ".join(content["requirements"])
+    base_source = content["base_strategy_source"]
+    assert 'In ``mode="signal"``, each row specifies a position state' in base_source
+    assert "``signal_as_position`` has no effect in this mode" in base_source
+    assert "Zero closes an existing position when ``signal_as_position=True``" in (
+        base_source
+    )
+    assert "zero prevents new entries but retains an" in base_source
+    assert "Both modes shift signals by one bar" in base_source
 
     sections = {}
     for item in contract["available_sections"]:
@@ -102,6 +111,12 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     assert "random_seed" in schema["properties"]
     assert "random_seed" not in schema["$defs"]["BacktestConfig"]["properties"]
     assert schema["$defs"]["BacktestConfig"]["additionalProperties"] is False
+    position_flag = schema["$defs"]["BacktestConfig"]["properties"][
+        "signal_as_position"
+    ]
+    assert position_flag["default"] is False
+    assert "Volume mode only" in position_flag["description"]
+    assert "Signal mode always uses position states" in position_flag["description"]
     assert set(sections["configuration"]) == {"config_schema", "notes"}
     example = sections["example"]
     assert set(example) == {"example_strategy_code", "example_yaml_config"}

@@ -45,9 +45,11 @@ def strategy_contract_payload(
             ).read_text(encoding="utf-8"),
             "requirements": [
                 "Inherit BaseStrategy. generate_signals(df) returns a new DataFrame "
-                "without mutating its input, with signal in {-1, 0, 1}: short, flat, "
-                "long. Preserve aligned rows. Never use future rows or backfill "
-                "indicators; keep signals flat until required values are finite.",
+                "without mutating its input, with signal in {-1, 0, 1}. Follow "
+                "BaseStrategy's mode-dependent position/zero semantics and "
+                "next-bar timing; -1 means short, never sell-only. Preserve aligned "
+                "rows. Never use future rows or backfill indicators; emit zero "
+                "until required values are finite.",
                 "Expose configurable values as constructor keyword parameters and "
                 "get_parameters(). YAML strategy.parameters supplies them. Defaults "
                 "must be finite JSON values. backtest_engine and parallel_config "
@@ -173,7 +175,7 @@ def strategy_contract_payload(
 
 
 _EXAMPLE_CODE = '''\
-"""Example: Simple moving-average crossover strategy."""
+"""Example: Long-only moving-average position strategy."""
 
 from __future__ import annotations
 
@@ -191,7 +193,7 @@ if TYPE_CHECKING:
 
 
 class SmaCrossoverStrategy(BaseStrategy):
-    """Buy when fast SMA crosses above slow SMA, sell on reverse."""
+    """Hold long while finite fast SMA is above slow SMA; otherwise stay flat."""
 
     def __init__(
         self,
@@ -207,18 +209,10 @@ class SmaCrossoverStrategy(BaseStrategy):
         result = df.copy()
         fast = indicators.sma(result["close"], self._fast_period)
         slow = indicators.sma(result["close"], self._slow_period)
-        fast_prev = fast.shift(1)
-        slow_prev = slow.shift(1)
-        ready = (
-            np.isfinite(fast)
-            & np.isfinite(slow)
-            & np.isfinite(fast_prev)
-            & np.isfinite(slow_prev)
-        )
+        ready = np.isfinite(fast) & np.isfinite(slow)
 
         result["signal"] = 0
-        result.loc[ready & (fast > slow) & (fast_prev <= slow_prev), "signal"] = 1
-        result.loc[ready & (fast < slow) & (fast_prev >= slow_prev), "signal"] = -1
+        result.loc[ready & (fast > slow), "signal"] = 1
         return result
 
     def get_parameters(self) -> dict[str, Any]:
@@ -235,7 +229,7 @@ strategy:
   id: "sma_crossover"
   version: "0.1.0"
   class_name: "SmaCrossoverStrategy"
-  description: "Simple moving-average crossover"
+  description: "Long-only: hold while fast SMA exceeds slow SMA, otherwise flat"
   parameters:
     fast_period: 10
     slow_period: 30

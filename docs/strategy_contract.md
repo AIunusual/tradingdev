@@ -74,6 +74,19 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+In signal mode, each row specifies a position state: `1` long, `-1` short,
+`0` flat. Repeat the state while it should persist. An entry pulse followed by
+zero closes the position on the next signal change. `signal_as_position` has no
+effect in this mode. In either mode, `-1` selects a short position; it is not a
+sell-only instruction to close a long. Both modes shift signals by one bar and
+execute signal-driven entries and exits at the following bar's open, falling back
+to close when open is absent. Stop-loss and take-profit rules are separate.
+
+The published SMA example is explicitly long-only: emit `1` on every row where
+both averages are finite and the fast average exceeds the slow average, otherwise
+emit `0`, including equality and warm-up. Adapt this example to the user's actual
+direction, entry, holding and exit rules rather than inheriting its trading intent.
+
 Backtest execution requires finite, strictly positive prices. Signal mode checks
 `close` and any supplied `open` across all bars, using `close` for execution when
 the `open` column is absent. On bars with logged order attempts (filled, ignored
@@ -90,7 +103,9 @@ nonmissing, unique, increasing timestamps; they are normalized to UTC.
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
 zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
-`signal_as_position: true` if zero should also close an existing position.
+`signal_as_position: true` if zero should also close an existing position. With
+the default `false`, zero retains an existing position. An opposite nonzero
+signal closes the current position and opens one in the opposite direction.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
