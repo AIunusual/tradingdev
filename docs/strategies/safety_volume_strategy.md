@@ -18,14 +18,10 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
-- **時間身分（資料要求）**: 評分用的 frame 每次都要帶時間身分——`timestamp` 欄位或
-  `DatetimeIndex`，值需非缺失、唯一、嚴格遞增（統一 UTC，naive 視為 UTC）。這不是只在
-  重疊時才要求：即使評分區間與訓練區間不重疊也一樣檢查，缺身分、重複或非遞增會直接
-  `ValueError`；空白的評分 frame 會在檢查前先回傳。完整規則見
+- **時間身分**: 評分資料必須帶可排序的時間戳（`timestamp` 欄位或 `DatetimeIndex`，
+  唯一且遞增）；缺漏、重複或非遞增會直接停止評分，不會產生訊號。時間戳同時決定哪些
+  較早的訓練列可以重用，所以重播訓練段時不會把同一段當成自己的歷史。詳細 API 規則見
   [訓練契約](../strategy_contract.md#training-before-scoring)。
-- **重播訓練段**: `fit(train)` 之後再對同一段 `train` 評分（walk-forward 的訓練期指標）
-  時，只把**嚴格早於**評分起點的訓練列當作歷史，重疊的部分會被裁掉，不會把同一根 bar
-  複製兩份接進預測 context。
 
 ### Layer 2: Direction (SMA Crossover)
 

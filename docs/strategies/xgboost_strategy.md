@@ -60,15 +60,11 @@ designed for research on market-making volume targets, not live execution.
   preceding bar's prediction. Cooldown counts all source bars, including gaps,
   and threshold selection uses the same timing. See the
   [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
-- `generate_signals()` requires a time identity on its input, and not only when
-  the scored frame overlaps the training data: every non-empty scored frame and
-  the retained training history need a `timestamp` column or a `DatetimeIndex`
-  with non-missing, unique and strictly increasing values. Missing, duplicated
-  or decreasing timestamps raise `ValueError`, even for a disjoint test period;
-  an empty scored frame returns before validation. The same identity decides
-  which training rows are history, so rows that do not strictly precede the
-  scored frame are dropped and replaying the training frame does not put an
-  earlier copy of it into the prediction context. See the
+- Scoring data must be timestamped: `generate_signals()` needs a unique,
+  increasing `timestamp` column or `DatetimeIndex`, and refuses a frame without
+  one instead of returning signals. Timestamps also bound how much earlier
+  training data may be reused, so replaying the training frame does not reuse it
+  as its own history. See the
   [training contract](../strategy_contract.md#training-before-scoring).
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
