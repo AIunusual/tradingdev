@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tradingdev.domain.ml.features.quantile_features import QuantileFeatureEngineer
 from tradingdev.domain.strategies.bundled.quantile_strategy import strategy as quantile
@@ -22,7 +23,6 @@ from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
 )
 
 if TYPE_CHECKING:
-    import pytest
     import xgboost as xgb
 
 _LONG_ONLY = (1.0, 0.0, 0.0, 0.0)
@@ -64,15 +64,12 @@ class _GapFeatureEngineer(QuantileFeatureEngineer):
         *,
         include_target: bool = True,
         target_type: str = "path",
-        preserve_index: bool = False,
     ) -> pd.DataFrame:
         out = pd.DataFrame(
             {"close": frame["close"].astype(float), "f1": 1.0},
             index=frame.index,
         )
         out = out.drop(index=self.drop_position, errors="ignore")
-        if not preserve_index:
-            out = out.reset_index(drop=True)
         return out
 
 
@@ -89,14 +86,12 @@ class _WindowRecordingFeatureEngineer(QuantileFeatureEngineer):
         *,
         include_target: bool = True,
         target_type: str = "path",
-        preserve_index: bool = False,
     ) -> pd.DataFrame:
         self.windows.append(len(frame))
         return super().transform(
             frame,
             include_target=include_target,
             target_type=target_type,
-            preserve_index=preserve_index,
         )
 
 
@@ -264,35 +259,107 @@ def test_a_dropped_row_does_not_shift_the_bars_after_it(
     assert (signals["signal"].iloc[31:60] == 1.0).all()
 
 
-def test_a_frame_without_timestamps_keeps_the_whole_training_frame(
+@pytest.mark.parametrize("missing_from", ["history", "scoring", "both"])
+def test_scoring_requires_time_identities_on_both_frames(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_from: str,
+) -> None:
+    frame = large_ohlcv_df.iloc[:120]
+    history = frame.drop(columns="timestamp") if missing_from != "scoring" else frame
+    scoring = frame.drop(columns="timestamp") if missing_from != "history" else frame
+    calls: list[int] = []
+    strategy = _fitted_strategy(history, calls, monkeypatch, retrain_interval=60)
+
+    with pytest.raises(ValueError, match="requires timestamps"):
+        strategy.generate_signals(scoring)
+    assert calls == []
+
+
+@pytest.mark.parametrize("invalid", ["missing", "duplicate", "reversed"])
+@pytest.mark.parametrize("in_history", [False, True])
+def test_scoring_rejects_invalid_time_order(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+    in_history: bool,
+) -> None:
+    frame = large_ohlcv_df.iloc[:120].copy()
+    broken = frame.copy()
+    if invalid == "missing":
+        broken.loc[10, "timestamp"] = pd.NaT
+    elif invalid == "duplicate":
+        broken.loc[10, "timestamp"] = broken.loc[9, "timestamp"]
+    else:
+        broken = broken.iloc[::-1]
+    calls: list[int] = []
+    strategy = _fitted_strategy(
+        broken if in_history else frame, calls, monkeypatch, retrain_interval=60
+    )
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        strategy.generate_signals(frame if in_history else broken)
+    assert calls == []
+
+
+@pytest.mark.parametrize("index_history", [False, True])
+def test_partial_overlap_uses_only_earlier_history(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    index_history: bool,
+) -> None:
+    frame = large_ohlcv_df.iloc[:180]
+    history = frame.iloc[:120]
+    scoring = frame.iloc[60:]
+    if index_history:
+        history = history.set_index("timestamp")
+    else:
+        scoring = scoring.set_index("timestamp")
+        scoring.index = pd.DatetimeIndex(scoring.index).tz_convert("Asia/Taipei")
+    calls: list[int] = []
+    strategy = _fitted_strategy(history, calls, monkeypatch, retrain_interval=60)
+    windows: list[int] = []
+    strategy._feature_eng = _WindowRecordingFeatureEngineer(windows)
+    original = scoring.copy(deep=True)
+
+    signals = strategy.generate_signals(scoring)
+
+    assert windows == [120, 120]
+    assert calls == [60, 60]
+    pd.testing.assert_frame_equal(scoring, original)
+    pd.testing.assert_frame_equal(signals[scoring.columns], scoring)
+
+
+def test_empty_scoring_frame_preserves_schema(
     large_ohlcv_df: pd.DataFrame,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The documented fallback when nothing can be matched or ordered.
+    calls: list[int] = []
+    strategy = _fitted_strategy(large_ohlcv_df, calls, monkeypatch, retrain_interval=60)
+    empty = large_ohlcv_df.iloc[:0]
+    result = strategy.generate_signals(empty)
+    pd.testing.assert_frame_equal(result, empty.assign(signal=0.0, size_weight=1.0))
+    assert calls == []
 
-    `docs/strategy_contract.md` says a frame with neither a `timestamp` column
-    nor a `DatetimeIndex` cannot be matched against the training history, so the
-    whole training frame becomes context. The first prediction window therefore
-    holds one chunk of history plus one chunk of scored bars. With timestamps on
-    the same overlapping frame the history trims to nothing and that window
-    holds a single chunk, which the other tests in this module cover.
-    """
-    retrain_interval = 60
-    frame = large_ohlcv_df.iloc[:120].drop(columns=["timestamp"])
+
+def test_retraining_waits_for_mature_observations(
+    large_ohlcv_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[int] = []
     strategy = _fitted_strategy(
-        frame,
-        calls,
-        monkeypatch,
-        retrain_interval=retrain_interval,
-        train_window=1,
+        large_ohlcv_df, calls, monkeypatch, retrain_interval=200, horizon=200
     )
-    windows: list[int] = []
-    strategy._feature_eng = _WindowRecordingFeatureEngineer(windows)  # noqa: SLF001
+    trained: list[pd.DataFrame] = []
 
-    strategy.generate_signals(frame)
+    def record(frame: pd.DataFrame, *args: object, **kwargs: object) -> object:
+        assert not frame.empty, "immature rolling windows must not reach training"
+        trained.append(frame.copy())
+        return _RecordingModel(calls)
 
-    assert windows[0] == 2 * retrain_interval, (
-        "without timestamps the training frame is not trimmed, so the first "
-        "prediction window carries a full chunk of history before the chunk"
-    )
+    monkeypatch.setattr(quantile, "_train_regime_classifier", record)
+    signals = strategy.generate_signals(large_ohlcv_df)
+
+    assert len(signals) == len(large_ohlcv_df)
+    assert sum(calls) == 970
+    assert [len(frame) for frame in trained] == [170, 370, 570]

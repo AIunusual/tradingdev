@@ -53,23 +53,19 @@ _BOTH = 2
 _NEITHER = 3
 
 
-def _timestamps(frame: pd.DataFrame) -> pd.Series | None:
-    """Return timestamps from the ``timestamp`` column or a DatetimeIndex."""
+def _timestamps(frame: pd.DataFrame) -> pd.DatetimeIndex:
+    """Require ordered, unique time identities before combining scoring history."""
     if "timestamp" in frame.columns:
-        return pd.Series(pd.to_datetime(frame["timestamp"]).to_numpy())
-    if isinstance(frame.index, pd.DatetimeIndex):
-        return pd.Series(frame.index.to_numpy())
-    return None
-
-
-def _first_timestamp(frame: pd.DataFrame) -> pd.Timestamp | None:
-    """First timestamp of ``frame``, or ``None`` when it carries none."""
-    if not len(frame):
-        return None
-    stamps = _timestamps(frame)
-    if stamps is None:
-        return None
-    return pd.Timestamp(stamps.iloc[0])
+        stamps = pd.DatetimeIndex(pd.to_datetime(frame["timestamp"], utc=True))
+    elif isinstance(frame.index, pd.DatetimeIndex):
+        stamps = pd.DatetimeIndex(pd.to_datetime(frame.index, utc=True))
+    else:
+        raise ValueError("Quantile scoring requires timestamps on both frames")
+    if stamps.hasnans or not stamps.is_monotonic_increasing or not stamps.is_unique:
+        raise ValueError(
+            "Quantile timestamps must be non-missing and strictly increasing"
+        )
+    return stamps
 
 
 def _train_regime_classifier(
@@ -291,6 +287,7 @@ class QuantileStrategy(BaseStrategy):
             return
 
         cfg = self._config
+        df = df.assign(timestamp=_timestamps(df))
         self._train_df = df.copy()
 
         horizons = cfg.horizon_candidates or [cfg.horizon]
@@ -474,14 +471,15 @@ class QuantileStrategy(BaseStrategy):
         # the chunk filter, and the state machine would read late bars while
         # writing from bar 0.
         history = self._train_df
-        scored_start = _first_timestamp(df)
-        if scored_start is not None:
-            history_stamps = _timestamps(history)
-            if history_stamps is not None:
-                history = history[(history_stamps < scored_start).to_numpy()]
+        scored_stamps = _timestamps(df)
+        history_stamps = _timestamps(history)
+        if not len(df):
+            return df.assign(signal=0.0, size_weight=1.0)
+        history = history.assign(timestamp=history_stamps)
+        history = history[history_stamps < scored_stamps[0]]
 
         combined = pd.concat(
-            [history, df],
+            [history, df.assign(timestamp=scored_stamps)],
             ignore_index=True,
         )
         test_offset = len(history)
@@ -508,41 +506,38 @@ class QuantileStrategy(BaseStrategy):
             train_begin = max(0, abs_start - train_window)
             train_slice = combined.iloc[train_begin:abs_start].copy()
 
-            if len(train_slice) < 200:
-                regime_model = self._regime_model
-                fnames = self._feature_names
-                fe = self._feature_eng
-            else:
+            regime_model = self._regime_model
+            fnames = self._feature_names
+            fe = self._feature_eng
+            if len(train_slice) >= 200:
                 logger.info(
                     "Chunk %d/%d: retrain on %d bars",
                     ci + 1,
                     len(chunk_starts),
                     len(train_slice),
                 )
-                fe = QuantileFeatureEngineer(
+                retrain_fe = QuantileFeatureEngineer(
                     horizon=horizon,
                     profit_target=cfg.profit_target,
                 )
-                train_feat = fe.transform(
+                train_feat = retrain_fe.transform(
                     train_slice,
                     include_target=True,
                     target_type="regime",
                 )
-                fnames = self._feature_names or [
-                    f
-                    for f in fe.get_feature_names()
-                    if f
-                    not in ("target_regime", "target_long", "target_short", "target")
-                ]
-                regime_model = _train_regime_classifier(
-                    train_feat,
-                    fnames,
-                    n_estimators=cfg.n_estimators,
-                    max_depth=cfg.max_depth,
-                    learning_rate=cfg.learning_rate,
-                    subsample=cfg.subsample,
-                    random_seed=cfg.random_seed,
-                )
+                # Warm-up and unknown horizon labels can remove every raw row.
+                # Until observations mature, retain the model produced by fit().
+                if not train_feat.empty:
+                    regime_model = _train_regime_classifier(
+                        train_feat,
+                        fnames,
+                        n_estimators=cfg.n_estimators,
+                        max_depth=cfg.max_depth,
+                        learning_rate=cfg.learning_rate,
+                        subsample=cfg.subsample,
+                        random_seed=cfg.random_seed,
+                    )
+                    fe = retrain_fe
 
             # Predict on chunk with context
             context_start = max(0, abs_start - 60)
@@ -550,7 +545,6 @@ class QuantileStrategy(BaseStrategy):
             predict_feat = fe.transform(
                 predict_ctx,
                 include_target=False,
-                preserve_index=True,
             )
             offset = abs_start - context_start
             positions = predict_feat.index.to_numpy(dtype=np.intp) - offset
