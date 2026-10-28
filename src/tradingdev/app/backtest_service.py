@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from tradingdev.app.data_service import DataService
+from tradingdev.app.data_service import DataService, LoadedDataset
+from tradingdev.app.execution_dataset import ExecutionDataset
 from tradingdev.app.job_config import bind_strategy_revision
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
@@ -243,28 +244,69 @@ class BacktestService:
             checked_rows.append(fixture_rows)
         return tuple(checked_rows)
 
-    def run_manifest(self, manifest: ExecutionManifest) -> BacktestRun:
-        """Execute a verified specification without rebuilding its defaults."""
+    @staticmethod
+    def _execution_config(manifest: ExecutionManifest) -> dict[str, Any]:
+        """Verify a supported execution before checking or loading its inputs."""
         manifest.verify()
         if manifest.kind not in {"backtest", "walk_forward"}:
             msg = "BacktestService cannot execute an optimization manifest"
             raise ValueError(msg)
-        raw_config = manifest.config_for_execution()
-        with execution_randomness(raw_config["random_seed"]):
-            return self._execute(manifest, raw_config)
+        return manifest.config_for_execution()
 
-    def _execute(
+    def load_execution_dataset(self, manifest: ExecutionManifest) -> ExecutionDataset:
+        """Check the execution, then capture its complete merged inputs once.
+
+        Callers control the approval boundary. This method accesses real data;
+        preparation and synthetic contract checks do not call it implicitly.
+        """
+        raw_config = self._execution_config(manifest)
+        with execution_randomness(raw_config["random_seed"]):
+            self._check_manifest_strategy(manifest, raw_config)
+            dataset = self._data_service.load(
+                raw_config, BacktestConfig(**raw_config["backtest"])
+            )
+            return ExecutionDataset.capture(manifest, dataset)
+
+    def _check_manifest_strategy(
         self, manifest: ExecutionManifest, raw_config: dict[str, Any]
-    ) -> BacktestRun:
-        """Construct and execute the strategy within its run's random context."""
+    ) -> None:
+        """Recheck identity and the effective strategy contract before real data."""
         spec = self.prepare_strategy(raw_config)
         ensure_execution_mode(
             spec.strategy_id, spec.execution_capabilities, manifest.kind
         )
         self.check_execution(raw_config, manifest.strategy_execution)
+
+    def run_manifest(
+        self,
+        manifest: ExecutionManifest,
+        *,
+        loaded_dataset: ExecutionDataset | None = None,
+    ) -> BacktestRun:
+        """Execute with fresh state and optionally reuse immutable captured inputs."""
+        raw_config = self._execution_config(manifest)
+        with execution_randomness(raw_config["random_seed"]):
+            return self._execute(manifest, raw_config, loaded_dataset)
+
+    def _execute(
+        self,
+        manifest: ExecutionManifest,
+        raw_config: dict[str, Any],
+        loaded_dataset: ExecutionDataset | None,
+    ) -> BacktestRun:
+        """Construct and execute the strategy within its run's random context."""
+        self._check_manifest_strategy(manifest, raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])
         parallel_cfg = ParallelConfig(**raw_config.get("parallel", {}))
-        dataset = self._data_service.load(raw_config, bt_cfg)
+        dataset = (
+            self._data_service.load(raw_config, bt_cfg)
+            if loaded_dataset is None
+            else LoadedDataset(
+                frame=loaded_dataset.frame_for(manifest),
+                processed_path=loaded_dataset.processed_path,
+                dataset_id=loaded_dataset.dataset_id,
+            )
+        )
         engine = self.create_engine(bt_cfg)
         strategy = self._strategy_loader.create_from_execution(
             raw_config["strategy"], manifest.strategy_execution, engine, parallel_cfg

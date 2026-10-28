@@ -261,6 +261,7 @@ def verify_candidate(
     max_evidence_bytes: int | None = None,
     review_scopes: tuple[str, ...] | None = None,
     review_context: tuple[str, ...] = (),
+    review_context_for: tuple[tuple[str, str], ...] = (),
     max_prompt_bytes: int | None = None,
     max_total_prompt_bytes: int | None = None,
     snapshot_timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
@@ -271,6 +272,7 @@ def verify_candidate(
     validate_review_options(
         review_scopes=review_scopes,
         review_context=review_context,
+        review_context_for=review_context_for,
         max_prompt_bytes=max_prompt_bytes,
         max_total_prompt_bytes=max_total_prompt_bytes,
     )
@@ -323,6 +325,7 @@ def verify_candidate(
         review_arguments(
             review_scopes=review_scopes,
             review_context=review_context,
+            review_context_for=review_context_for,
             max_prompt_bytes=max_prompt_bytes,
             max_total_prompt_bytes=max_total_prompt_bytes,
         )

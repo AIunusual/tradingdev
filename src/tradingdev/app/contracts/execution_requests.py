@@ -2,21 +2,25 @@
 
 from typing import Self
 
-from pydantic import JsonValue, field_serializer, model_validator
+from pydantic import Field, JsonValue, field_serializer, model_validator
 
 from tradingdev.app.contracts.common import ContractModel
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
+from tradingdev.domain.comparison import (
+    MAX_COMPARISON_CANDIDATES,
+    CandidateLabel,
+    CandidateRationale,
+)
 from tradingdev.domain.execution import OptimizationSpec
 from tradingdev.domain.research import ResearchSpec, research_payload
 
 
-class BacktestInput(ContractModel):
-    """Select a runnable strategy and an explicit research context."""
+class ResearchExecutionInput(ContractModel):
+    """The one shared strategy identity, research context and execution policy."""
 
     strategy_id: str
     research: ResearchSpec
     revision_id: str | None = None
-    parameters: dict[str, JsonValue] | None = None
     backtest_overrides: dict[str, JsonValue] | None = None
 
     @field_serializer("research")
@@ -31,6 +35,28 @@ class BacktestInput(ContractModel):
                 "read get_strategy and select the immutable revision to reuse"
             )
         return self
+
+
+class BacktestInput(ResearchExecutionInput):
+    """Select one runnable strategy with optional fixed parameter overrides."""
+
+    parameters: dict[str, JsonValue] | None = None
+
+
+class ParameterCandidateInput(ContractModel):
+    """A labeled parameter proposal captured before performance is available."""
+
+    label: CandidateLabel
+    rationale: CandidateRationale
+    parameters: dict[str, JsonValue]
+
+
+class ComparisonInput(ResearchExecutionInput):
+    """An explicit ordered list of fixed candidates over one shared research."""
+
+    candidates: list[ParameterCandidateInput] = Field(
+        min_length=1, max_length=MAX_COMPARISON_CANDIDATES
+    )
 
 
 class WalkForwardInput(BacktestInput):

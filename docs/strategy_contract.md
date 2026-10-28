@@ -271,7 +271,7 @@ data prerequisites and execution-mode restrictions.
 
 ## Research Inputs and Simulation Policy
 
-MCP `save_strategy`, `prepare_backtest`, `prepare_walk_forward`, and
+MCP `save_strategy`, `prepare_backtest`, `prepare_comparison`, `prepare_walk_forward`, and
 `prepare_optimization` require `research: ResearchSpec`. The assistant must obtain
 four user choices: strategy outline, instrument, period, and bar timeframe. A vague
 outline is acceptable; missing choices must be requested rather than copied from
@@ -816,7 +816,7 @@ workspace.
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `prepare_backtest` / `prepare_walk_forward` / `prepare_optimization`: resolve
+5. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
    the required research input, capture an execution manifest, check code and
    configuration offline, and prepare a
    plain-language confirmation and HTML artifact. Only runnable or promoted
@@ -946,6 +946,19 @@ their complete experiment parameters, which must satisfy constructor binding
 and the execution checks.
 The base source, YAML, lifecycle evidence and current pointer remain unchanged.
 Each run stores its own fixed parameters and constructor settings in its manifest.
+`prepare_comparison` instead accepts `candidates`: one to eight distinct ordered
+sets, each with `label`, `rationale` and a `parameters` override mapping. Labels
+are stripped of leading and trailing whitespace and must remain nonempty and
+unique across the comparison; outer whitespace cannot distinguish two labels.
+It has no global `parameters` argument. Research, selected revision, data, costs and seed
+are shared; each candidate freezes its complete effective constructor. All
+candidates pass the two synthetic contract fixtures before the whole bundle is
+presented for one approval. After approval, they use fresh strategies/engines and
+independent capital against one saved dataset snapshot. Fixed comparison performs
+no adaptive search or automatic winner selection. It supports ordinary backtest
+strategies only; training-required or walk-forward research uses its existing
+workflow. The report selector `comparison_job_id` retains all candidates and their
+outcomes, including failures or candidates that were never run.
 Short and long signal-contract fixtures check the effective generated execution
 settings at submission and execution, including when MCP `parameters` is omitted
 or `null`; a failure rejects the experiment without changing the revision's
@@ -987,7 +1000,7 @@ equivalence to the strategy's Python implementation.
 The preflight receipt records offline code/configuration checks and the fixed
 synthetic signal fixtures used for generated strategies. It does not contain market
 windows, trades or performance. Preparation neither loads real market data nor
-runs the backtest engine or model training. Bundled strategies receive configuration,
+runs the backtest engine or model training. Outside fixed comparisons, bundled strategies receive configuration,
 execution-mode and parameter checks without calling `fit` or `generate_signals`;
 training-dependent signal checks are explicitly deferred. The confirmation lists
 market availability, data-dependent fold geometry, training and trade/performance

@@ -10,10 +10,10 @@ import yaml
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.loader import StrategyLoader

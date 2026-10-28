@@ -13,7 +13,6 @@ from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_config import (
     apply_backtest_overrides,
@@ -22,6 +21,7 @@ from tradingdev.app.job_config import (
     validate_optimization_grid,
 )
 from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import (
     StrategyNotExecutableError,
     StrategyService,

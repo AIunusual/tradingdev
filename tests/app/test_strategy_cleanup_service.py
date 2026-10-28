@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 
+from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -21,6 +23,7 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.strategy_cleanup import StrategyCleanupResult
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.comparison import ComparisonCandidate, ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.schemas import StrategyMetadata, StrategyStatus
@@ -63,6 +66,34 @@ def _manifest(revision_id: str) -> ExecutionManifest:
             },
         },
     )
+
+
+def _comparison(
+    revision_id: str | None, *, strategy_id: str = "fixture"
+) -> ComparisonManifest:
+    candidates = []
+    for index in (1, 2):
+        config = _manifest(
+            revision_id or "00000000000040008000000000000000"
+        ).config_copy()
+        config["strategy"]["id"] = strategy_id
+        config["strategy"]["revision_id"] = revision_id
+        config["strategy"]["parameters"] = {"period": index}
+        candidates.append(
+            ComparisonCandidate(
+                candidate_id=f"candidate_{index}",
+                label=f"Period {index}",
+                rationale="Fixed before execution",
+                manifest=ExecutionManifest.create(
+                    kind="backtest",
+                    config=config,
+                    strategy_execution=StrategyExecution(
+                        kind="generated", constructor_kwargs={"period": index}
+                    ),
+                ),
+            )
+        )
+    return ComparisonManifest.create(candidates)
 
 
 def test_preview_preserves_every_revision_and_apply_removes_only_selected_drafts(
@@ -254,6 +285,264 @@ def test_historical_and_orphaned_references_are_protected(
     assert result.revisions[0].outcome == "protected"
     assert result.revisions[0].reasons[0].startswith(f"{reference}:")
     assert revisions.load("fixture", first.revision_id) == first
+
+
+@pytest.mark.parametrize("outcome", ["pending", "failed", "cancelled", "manifest_only"])
+def test_orphaned_comparison_candidates_protect_drafts_regardless_of_outcome(
+    tmp_path: Path, outcome: str
+) -> None:
+    workspace, store, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    comparisons = ComparisonStore(workspace)
+    manifest = _comparison(first.revision_id)
+    comparisons.initialize("orphan_comparison", manifest)
+    if outcome in {"failed", "cancelled"}:
+        comparisons.transition(
+            "orphan_comparison",
+            expected_hash=manifest.manifest_hash,
+            candidate_id="candidate_1",
+            status="running",
+        )
+        comparisons.finish_unfinished(
+            "orphan_comparison",
+            expected_hash=manifest.manifest_hash,
+            active_status="failed" if outcome == "failed" else "cancelled",
+            reason="Worker stopped",
+        )
+    elif outcome == "manifest_only":
+        comparisons.path("orphan_comparison", "ledger.json").unlink()
+    assert store.list_jobs() == []
+    before = {
+        path: path.read_bytes()
+        for path in comparisons.path("orphan_comparison").parent.iterdir()
+    }
+    assert first.status == StrategyStatus.DRAFT
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, StrategyCleanupResult)
+    assert not result.success and result.revisions[0].outcome == "protected"
+    assert result.revisions[0].reasons == [
+        "comparison:orphan_comparison:candidate_1",
+        "comparison:orphan_comparison:candidate_2",
+    ]
+    assert revisions.load("fixture", first.revision_id) == first
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_comparison_job_with_unknown_strategy_blocks_cleanup(
+    tmp_path: Path, status: str
+) -> None:
+    _, store, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    store.upsert_job(
+        {
+            "job_id": "comparison_unknown_strategy",
+            "job_type": "comparison",
+            "status": status,
+            "strategy_name": None,
+            "created_at": first.created_at,
+        }
+    )
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, ErrorResponse)
+    assert result.code == "strategy_cleanup_blocked"
+    assert "Unknown strategy reference" in result.error
+    assert revisions.load("fixture", first.revision_id) == first
+
+
+@pytest.mark.parametrize("strategy_id", ["other_generated", "kd_strategy"])
+def test_unrelated_comparison_without_revision_allows_cleanup(
+    tmp_path: Path, strategy_id: str
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    comparisons = ComparisonStore(workspace)
+    comparisons.initialize("unrelated", _comparison(None, strategy_id=strategy_id))
+    before = comparisons.path("unrelated").read_bytes()
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, StrategyCleanupResult)
+    assert result.success and result.revisions[0].outcome == "deleted"
+    assert comparisons.path("unrelated").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "invalid_json",
+        "duplicate_root_key",
+        "duplicate_child_revision",
+        "bad_hash",
+        "missing_strategy",
+        "null_strategy",
+        "unknown_strategy",
+        "missing_revision",
+        "invalid_revision",
+    ],
+)
+@pytest.mark.parametrize("apply", [False, True])
+def test_invalid_or_ambiguous_comparison_manifest_blocks_cleanup(
+    tmp_path: Path, corruption: str, apply: bool
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    comparisons = ComparisonStore(workspace)
+    comparisons.initialize("orphan_comparison", _comparison(first.revision_id))
+    path = comparisons.path("orphan_comparison")
+    original = path.read_text()
+    if corruption == "invalid_json":
+        content = "{broken"
+    elif corruption == "duplicate_root_key":
+        content = '{"schema_version":1,' + original[1:]
+    elif corruption == "duplicate_child_revision":
+        content = original.replace(
+            f'"revision_id":"{first.revision_id}"',
+            f'"revision_id":"ambiguous","revision_id":"{first.revision_id}"',
+            1,
+        )
+    else:
+        payload = json.loads(original)
+        for candidate in payload["candidates"]:
+            child = candidate["manifest"]
+            config = child["config"]
+            if corruption == "missing_strategy":
+                config.pop("strategy")
+            elif corruption == "null_strategy":
+                config["strategy"] = None
+            elif corruption == "unknown_strategy":
+                config["strategy"]["id"] = None
+            elif corruption == "missing_revision":
+                config["strategy"].pop("revision_id")
+            elif corruption == "invalid_revision":
+                config["strategy"]["revision_id"] = "unknown"
+            child.pop("manifest_hash")
+            child["manifest_hash"] = ExecutionManifest._digest(child)
+        payload.pop("manifest_hash")
+        payload["manifest_hash"] = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if corruption == "bad_hash":
+            payload["manifest_hash"] = "0" * 64
+        content = json.dumps(payload)
+    path.write_text(content)
+    result = service.cleanup("fixture", [first.revision_id], apply=apply)
+    assert isinstance(result, ErrorResponse)
+    assert result.code == "strategy_cleanup_blocked"
+    assert revisions.load("fixture", first.revision_id) == first
+    assert path.read_text() == content
+
+
+@pytest.mark.parametrize(
+    "artifact", ["ledger.json", "snapshot.parquet", "receipt.json", "unknown.json"]
+)
+def test_comparison_artifacts_without_manifest_block_cleanup(
+    tmp_path: Path, artifact: str
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    directory = workspace.root / "comparisons" / "incomplete"
+    directory.mkdir(parents=True)
+    path = directory / artifact
+    path.write_bytes(b"preserved evidence")
+    (directory / ".comparison.lock").touch()
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, ErrorResponse)
+    assert result.code == "strategy_cleanup_blocked"
+    assert "missing their manifest" in result.error
+    assert revisions.load("fixture", first.revision_id) == first
+    assert path.read_bytes() == b"preserved evidence"
+
+
+@pytest.mark.parametrize(
+    "invalid_path", ["root_file", "job_file", "manifest_directory"]
+)
+def test_invalid_comparison_storage_layout_blocks_cleanup(
+    tmp_path: Path, invalid_path: str
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    root = workspace.root / "comparisons"
+    if invalid_path == "root_file":
+        root.write_bytes(b"unexpected file")
+    elif invalid_path == "job_file":
+        root.mkdir()
+        (root / "invalid_job").write_bytes(b"unexpected file")
+    else:
+        (root / "invalid_job" / "manifest.json").mkdir(parents=True)
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, ErrorResponse)
+    assert result.code == "strategy_cleanup_blocked"
+    assert revisions.load("fixture", first.revision_id) == first
+
+
+@pytest.mark.parametrize("lock_only", [False, True])
+def test_empty_or_lock_only_comparison_directory_does_not_reference_draft(
+    tmp_path: Path, lock_only: bool
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    directory = workspace.root / "comparisons" / "uninitialized"
+    directory.mkdir(parents=True)
+    if lock_only:
+        (directory / ".comparison.lock").touch()
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, StrategyCleanupResult)
+    assert result.success and result.revisions[0].outcome == "deleted"
+    assert directory.is_dir()
+    assert (directory / ".comparison.lock").exists() == lock_only
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "comparisons",
+        "directory",
+        "manifest.json",
+        "ledger.json",
+        "snapshot.parquet",
+        "receipt.json",
+        ".comparison.lock",
+    ],
+)
+def test_symlinked_comparison_paths_block_cleanup_without_following_targets(
+    tmp_path: Path, target: str
+) -> None:
+    workspace, _, revisions, service = _setup(tmp_path)
+    first = _draft(revisions)
+    _draft(revisions)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"retained")
+    root = workspace.root / "comparisons"
+    if target == "comparisons":
+        root.symlink_to(outside, target_is_directory=True)
+    elif target == "directory":
+        root.mkdir()
+        (root / "orphan_comparison").symlink_to(outside, target_is_directory=True)
+    else:
+        comparisons = ComparisonStore(workspace)
+        comparisons.initialize("orphan_comparison", _comparison(first.revision_id))
+        path = root / "orphan_comparison" / target
+        path.unlink(missing_ok=True)
+        path.symlink_to(sentinel)
+    result = service.cleanup("fixture", [first.revision_id], apply=True)
+    assert isinstance(result, ErrorResponse)
+    assert result.code == "strategy_cleanup_blocked"
+    assert revisions.load("fixture", first.revision_id) == first
+    assert sentinel.read_bytes() == b"retained"
 
 
 @pytest.mark.parametrize(

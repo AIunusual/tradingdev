@@ -17,7 +17,7 @@ from tests.mcp.execution_fixtures import PlanContext, plan_context
 from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanResponse
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_submission import PreparedExecution
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.research_preparation import ResearchPreparationService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest

@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from tests.e2e.conversation import links_to_file, visible_text
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
+from tradingdev.domain.preflight import ComparisonPreflightReceipt
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
@@ -64,6 +66,15 @@ def assert_no_execution(workspace: MCPWorkspace) -> None:
     assert not list(workspace.workspace.glob("runs/*/manifest.json"))
 
 
+def reviewed_config(plan: ExecutionPlan) -> dict[str, Any]:
+    """Read shared research without mistaking the first candidate for the bundle."""
+    return (
+        plan.manifest.common_config()
+        if isinstance(plan.manifest, ComparisonManifest)
+        else plan.manifest.config_copy()
+    )
+
+
 def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPlan:
     """Verify the plan the user can read, without making a consent decision."""
     preparations = [
@@ -97,12 +108,18 @@ def read_presented_plan(workspace: MCPWorkspace, turn: ModelTurn) -> ExecutionPl
     assert prepared["preflight"] == plan.preflight.model_dump(mode="json"), (
         "The shown offline checks must match this saved plan"
     )
-    assert set(plan.preflight.not_checked) == {
-        "historical_data",
-        "backtest_engine",
-        "training",
-        "performance",
-    }
+    receipts = (
+        [candidate.receipt for candidate in plan.preflight.candidates]
+        if isinstance(plan.preflight, ComparisonPreflightReceipt)
+        else [plan.preflight]
+    )
+    for receipt in receipts:
+        assert set(receipt.not_checked) == {
+            "historical_data",
+            "backtest_engine",
+            "training",
+            "performance",
+        }
     expected_path = (
         workspace.workspace / "execution_plans" / plan.plan_id / "confirmation.html"
     )
@@ -192,9 +209,7 @@ class ObservedPlanUser:
             plan = self._read_plan(turn)
             if prior == "revise":
                 assert plan.plan_id != self.plans[-2].plan_id
-                assert (
-                    plan.manifest.config_copy()["backtest"]["fees"] == self.revised_fees
-                )
+                assert reviewed_config(plan)["backtest"]["fees"] == self.revised_fees
         else:
             assert not any(call.name.startswith("prepare_") for call in turn.calls), (
                 "An ambiguous reply must not silently replace the reviewed plan"

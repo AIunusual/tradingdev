@@ -135,6 +135,7 @@ def test_bundled_job_can_be_submitted_from_outside_the_repository(
     store, started, _runner = _queued(tmp_path, monkeypatch)
 
     manifest = store.load_manifest(started["job_id"])
+    assert isinstance(manifest, ExecutionManifest)
     source = Path(manifest.config_copy()["strategy"]["source_path"])
     assert source.is_absolute() and source.is_file()
     assert manifest.manifest_hash == started["manifest_hash"]

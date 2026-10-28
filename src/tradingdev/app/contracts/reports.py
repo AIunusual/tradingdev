@@ -16,6 +16,7 @@ class ReportResponse(ContractModel):
     sha256: str
     run_ids: list[str]
     scope_count: int
+    comparison_job_id: str | None = None
 
 
 class ReportSection(ContractModel):

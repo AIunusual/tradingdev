@@ -200,14 +200,19 @@ def register(
         )
     )
     def generate_report(
-        run_ids: list[str],
+        run_ids: list[str] | None = None,
         sections: list[str] | None = None,
         commentary: list[ReportCommentary] | None = None,
+        comparison_job_id: str | None = None,
     ) -> ReportResponse | ErrorResponse:
-        """Render an offline HTML report from 1..8 saved runs and client commentary.
+        """Render saved evidence: choose run_ids (1..8) OR comparison_job_id.
+
+        A comparison needs a terminal job and complete ledger; every candidate,
+        including failed/cancelled/not_run reasons, remains visible with any sections.
+        Use its parent job ID even when zero candidates succeeded.
 
         Discover section IDs with get_report_sections. Omit sections for the complete
-        standard report, select detail order, or use [] for identity/commentary only.
+        standard report, select detail order, or use [] to omit optional sections.
         overview is first when selected. Result switching requires a detail section.
         Every report embeds all loaded scopes/config/trades/equity even with []; section
         selection does not redact data. Commentary is escaped plain text, labelled
@@ -222,6 +227,7 @@ def register(
             commentary=[item.model_dump() for item in commentary]
             if commentary is not None
             else None,
+            comparison_job_id=comparison_job_id,
         )
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)

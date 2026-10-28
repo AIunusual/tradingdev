@@ -23,6 +23,7 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.run_service import RunService
+from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.presentation.reports import REPORT_RECIPES
 
 if TYPE_CHECKING:
@@ -108,6 +109,7 @@ def _verify_completed_intake(
 ) -> None:
     user.assert_complete()
     assert user.plan is not None
+    assert isinstance(user.plan.manifest, ExecutionManifest)
     paths = WorkspacePaths(workspace.workspace)
     runs = SQLiteStore(paths).list_runs()
     assert len(runs) == 1, "The accepted single proposal must produce one saved result"

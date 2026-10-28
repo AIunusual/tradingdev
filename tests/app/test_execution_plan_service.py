@@ -27,11 +27,12 @@ from tradingdev.app.execution_plan_service import (
     ExecutionPlanService,
     PlanOperationError,
 )
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.research_preparation import ResearchPreparationService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
@@ -327,6 +328,7 @@ def test_recovery_rejects_job_bound_to_a_different_manifest(tmp_path: Path) -> N
     context.service.plans.transition(
         prepared.plan_id, "awaiting_confirmation", "submitting"
     )
+    assert isinstance(challenge.plan.manifest, ExecutionManifest)
     other_config = challenge.plan.manifest.config_copy()
     other_config["backtest"]["fees"] = 0.5
     changed = type(challenge.plan.manifest).create(

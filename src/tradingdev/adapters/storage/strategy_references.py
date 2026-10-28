@@ -10,13 +10,18 @@ from uuid import UUID
 
 import yaml
 
+from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.strategy_revisions import (
     StrategyRevisionIntegrityError,
 )
+from tradingdev.domain.comparison import ComparisonManifest
+from tradingdev.domain.comparison_results import canonical_json_object
 from tradingdev.domain.execution import ExecutionManifest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
 
@@ -77,6 +82,7 @@ def referenced_revisions(
             "backtest",
             "walk_forward",
             "optimization",
+            "comparison",
         }:
             raise StrategyRevisionIntegrityError(
                 f"Unknown strategy reference for job: {row['job_id']}"
@@ -132,7 +138,70 @@ def referenced_revisions(
             )
         if strategy["id"] == strategy_id:
             retain(strategy.get("revision_id"), f"manifest:{directory.name}")
+    for job_id, comparison in _comparison_manifests(workspace):
+        for candidate in comparison.candidates:
+            strategy = candidate.manifest.config_copy().get("strategy")
+            reason = f"comparison:{job_id}:{candidate.candidate_id}"
+            if (
+                not isinstance(strategy, dict)
+                or not isinstance(strategy.get("id"), str)
+                or not strategy["id"]
+            ):
+                raise StrategyRevisionIntegrityError(
+                    f"Unknown strategy reference for {reason}"
+                )
+            if strategy["id"] == strategy_id:
+                retain(strategy.get("revision_id"), reason)
     return references
+
+
+def _comparison_manifests(
+    workspace: WorkspacePaths,
+) -> Iterator[tuple[str, ComparisonManifest]]:
+    """Read all orphaned and registered comparisons without relying on outcomes."""
+    root = workspace.root / "comparisons"
+    if root.is_symlink():
+        raise StrategyRevisionIntegrityError("Comparison storage is a symlink")
+    if not root.exists():
+        return
+    if not root.is_dir():
+        raise StrategyRevisionIntegrityError("Comparison storage is not a directory")
+    comparisons = ComparisonStore(workspace)
+    for directory in sorted(root.iterdir()):
+        if directory.is_symlink() or not directory.is_dir():
+            raise StrategyRevisionIntegrityError(
+                "Comparison storage contains an invalid directory"
+            )
+        path = comparisons.path(directory.name)
+        entries = tuple(directory.iterdir())
+        if any(entry.is_symlink() for entry in entries):
+            raise StrategyRevisionIntegrityError(
+                "Comparison storage contains a symlink"
+            )
+        if not path.exists():
+            if any(
+                entry.name != ".comparison.lock" or not entry.is_file()
+                for entry in entries
+            ):
+                raise StrategyRevisionIntegrityError(
+                    f"Comparison artifacts are missing their manifest: {directory.name}"
+                )
+            # Empty/lock-only directories contain no published research evidence.
+            continue
+        if not path.is_file():
+            raise StrategyRevisionIntegrityError(
+                f"Comparison manifest is not a regular file: {directory.name}"
+            )
+        try:
+            manifest = ComparisonManifest.model_validate_json(
+                canonical_json_object(path.read_text(encoding="utf-8"))
+            )
+            manifest.verify()
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise StrategyRevisionIntegrityError(
+                f"Invalid comparison manifest: {directory.name}"
+            ) from exc
+        yield directory.name, manifest
 
 
 def _is_legacy_reference(

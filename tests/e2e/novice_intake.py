@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from tests.e2e.conversation_user import assert_no_execution, read_presented_plan
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.domain.execution import ExecutionManifest
 
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
@@ -144,6 +145,7 @@ class ObservedIntakeUser:
             self.replies.append(reply)
             return reply
         self.plan = read_presented_plan(self.workspace, turn)
+        assert isinstance(self.plan.manifest, ExecutionManifest)
         backtest = self.plan.manifest.config_copy()["backtest"]
         assert backtest["symbol"] == "BTC/USDT"
         assert backtest["timeframe"] == "1h"

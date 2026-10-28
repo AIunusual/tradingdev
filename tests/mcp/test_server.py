@@ -134,6 +134,7 @@ def test_revision_selectors_are_advertised_in_tool_schemas(runtime_root: Path) -
         "dry_run_strategy",
         "promote_strategy",
         "prepare_backtest",
+        "prepare_comparison",
         "prepare_walk_forward",
         "prepare_optimization",
     ):
@@ -152,6 +153,7 @@ def test_execution_manifest_hash_is_required_for_prepared_and_accepted_plans(
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     for name, contract in (
         ("prepare_backtest", "PlanResponse"),
+        ("prepare_comparison", "PlanResponse"),
         ("prepare_walk_forward", "PlanResponse"),
         ("prepare_optimization", "PlanResponse"),
         ("submit_execution_decision", "PlanStarted"),
@@ -183,6 +185,7 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
     assert "get_artifact" in tools
     for name in (
         "prepare_backtest",
+        "prepare_comparison",
         "prepare_walk_forward",
         "prepare_optimization",
     ):
@@ -211,10 +214,24 @@ def test_preparation_schema_separates_code_checks_from_historical_execution(
     server = create_server(WorkspacePaths(runtime_root / "workspace"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     discovery = " ".join((tools["list_data_sources"].description or "").split())
+    status_description = tools["get_job_status"].description or ""
+    assert "generate_report(comparison_job_id=job_id)" in status_description
+    assert "comparison_job_id" in tools["generate_report"].input_schema["properties"]
+    comparison = tools["prepare_comparison"].input_schema
+    assert "candidates" in comparison["required"]
+    assert "parameters" not in comparison["properties"]
+    assert {"label", "rationale", "parameters"} == set(
+        comparison["$defs"]["ParameterCandidateInput"]["required"]
+    )
     assert "local capabilities offline" in discovery
     assert "data after approval" in discovery
     assert "sample is available" not in discovery
-    for name in ("prepare_backtest", "prepare_walk_forward", "prepare_optimization"):
+    for name in (
+        "prepare_backtest",
+        "prepare_comparison",
+        "prepare_walk_forward",
+        "prepare_optimization",
+    ):
         tool = tools[name]
         assert not {"sample_bars", "minimum_history_bars"}.intersection(
             tool.input_schema["properties"]

@@ -5,20 +5,28 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime, time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.contracts.execution_requests import (
     BacktestInput,
+    ComparisonInput,
     OptimizationInput,
+    ResearchExecutionInput,
     WalkForwardInput,
 )
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_config import bind_strategy_revision, validate_optimization_grid
+from tradingdev.app.prepared_execution import PreparedComparison, PreparedExecution
 from tradingdev.app.research import SelectedResearchRevision, resolve_research_config
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
-from tradingdev.domain.execution import ManifestError
+from tradingdev.domain.comparison import ComparisonCandidate, ComparisonManifest
+from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.strategies.capabilities import ensure_execution_mode
+from tradingdev.domain.strategies.contract import (
+    DRY_RUN_FIXTURE_ROWS,
+    VALIDATE_FIXTURE_ROWS,
+    SignalContractChecker,
+)
 from tradingdev.domain.strategies.schemas import StrategyMetadata
 from tradingdev.shared.utils.config import load_config
 
@@ -41,6 +49,7 @@ class ResearchPreparationService:
     ) -> None:
         self._strategies = strategy_service
         self._loader = strategy_loader
+        self._data = data_service
         self._backtests = BacktestService(
             strategy_gate=strategy_service,
             strategy_loader=strategy_loader,
@@ -50,6 +59,95 @@ class ResearchPreparationService:
     def prepare(
         self, kind: ExecutionKind, request: BacktestInput | OptimizationInput
     ) -> PreparedExecution:
+        effective, config_path = self._research_context(kind, request)
+        optimization = None
+        if kind == "optimization":
+            if not isinstance(request, OptimizationInput):
+                raise ValueError("Optimization requires its search specification")
+            optimization = request.optimization_spec()
+            if effective.get("validation") is not None:
+                raise ValueError(
+                    "Optimization config must not contain validation settings; "
+                    "use a config without walk-forward validation."
+                )
+            self._validate_optimization_period(effective, optimization)
+        checked = self._backtests.capture_execution(
+            effective,
+            kind=kind,
+            parameters=request.parameters,
+            optimization=optimization,
+        )
+        if optimization is not None:
+            validate_optimization_grid(self._loader, checked.manifest, optimization)
+        return PreparedExecution(
+            checked.manifest, config_path, checked.synthetic_fixture_rows
+        )
+
+    def prepare_comparison(self, request: ComparisonInput) -> PreparedComparison:
+        """Resolve research and constructor defaults once, then check every proposal."""
+        effective, config_path = self._research_context("backtest", request)
+        run_config = BacktestRunConfig.model_validate(effective)
+        if run_config.is_walk_forward:
+            raise ManifestError(
+                "Fixed comparisons require ordinary backtest settings without "
+                "walk-forward validation"
+            )
+        effective["data"] = self._data.execution_config(effective, run_config.backtest)
+        execution = self._loader.resolve_execution(effective["strategy"])
+        candidates: list[ComparisonCandidate] = []
+        evidence: dict[str, tuple[int, ...]] = {}
+        checker = SignalContractChecker(self._loader)
+        for index, proposal in enumerate(request.candidates, start=1):
+            config = deepcopy(effective)
+            self._backtests.prepare_strategy(config)
+            selected = self._loader.override_execution(
+                config["strategy"], execution, proposal.parameters
+            )
+            config["strategy"]["parameters"] = deepcopy(
+                selected.constructor_kwargs["config"]
+                if selected.kind == "bundled"
+                else selected.constructor_kwargs
+            )
+            manifest = ExecutionManifest.create(
+                kind="backtest", config=config, strategy_execution=selected
+            )
+            candidate_id = f"candidate_{index}"
+            checked_rows: list[int] = []
+            for fixture_rows in (VALIDATE_FIXTURE_ROWS, DRY_RUN_FIXTURE_ROWS):
+                result = checker.check_config(
+                    manifest.config_for_execution(),
+                    fixture_rows=fixture_rows,
+                    execution=manifest.strategy_execution,
+                )
+                errors = [
+                    item for item in result["diagnostics"] if item.level == "error"
+                ]
+                if errors:
+                    detail = "; ".join(
+                        f"{item.code}: {item.message}" for item in errors
+                    )
+                    raise ManifestError(
+                        f"{candidate_id} strategy execution contract failed "
+                        f"({fixture_rows} rows): {detail}"
+                    )
+                checked_rows.append(fixture_rows)
+            evidence[candidate_id] = tuple(checked_rows)
+            candidates.append(
+                ComparisonCandidate(
+                    candidate_id=candidate_id,
+                    label=proposal.label,
+                    rationale=proposal.rationale,
+                    manifest=manifest,
+                )
+            )
+        return PreparedComparison(
+            ComparisonManifest.create(candidates), config_path, evidence
+        )
+
+    def _research_context(
+        self, kind: ExecutionKind, request: ResearchExecutionInput
+    ) -> tuple[dict[str, Any], Path]:
+        """Resolve one pinned base revision and research choice without execution."""
         spec = self._strategies.resolve_executable(
             request.strategy_id, request.revision_id
         )
@@ -100,28 +198,7 @@ class ResearchPreparationService:
             selected_revision=selected,
             backtest_overrides=request.backtest_overrides,
         )
-        optimization = None
-        if kind == "optimization":
-            if not isinstance(request, OptimizationInput):
-                raise ValueError("Optimization requires its search specification")
-            optimization = request.optimization_spec()
-            if effective.get("validation") is not None:
-                raise ValueError(
-                    "Optimization config must not contain validation settings; "
-                    "use a config without walk-forward validation."
-                )
-            self._validate_optimization_period(effective, optimization)
-        checked = self._backtests.capture_execution(
-            effective,
-            kind=kind,
-            parameters=request.parameters,
-            optimization=optimization,
-        )
-        if optimization is not None:
-            validate_optimization_grid(self._loader, checked.manifest, optimization)
-        return PreparedExecution(
-            checked.manifest, config_path, checked.synthetic_fixture_rows
-        )
+        return effective, config_path
 
     @staticmethod
     def _validate_optimization_period(

@@ -109,7 +109,8 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 BacktestService，在同一 revision 上固定不同參數的 manifest，避免重複保存策略程式。
 Generated 策略以固定的建構子設定執行短、長訊號契約檢查，驗證與 dry-run
 的基礎證據仍保留在原 revision；實驗不會更新這些證據或 current pointer。
-背景回測與最佳化完成時，目前以 job ID 作為 run ID。CLI 同步執行也會保存獨立 run，
+單次背景回測與最佳化完成時，目前以 job ID 作為 run ID。固定比較則由一個父 job
+管理各候選的獨立 run ID，不建立父工作的績效 run。CLI 同步執行也會保存獨立 run，
 但不建立背景 job。相同設定的兩次執行可以留下不同結果，不會因設定相同而覆寫前次 run。
 
 Manifest 保留 revision 綁定的身分與非參數宣告，以及該次執行的參數。
@@ -205,7 +206,7 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 ### 準備、確認與執行回測
 
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
-MCP 先以 `prepare_backtest`、`prepare_walk_forward` 或 `prepare_optimization`
+MCP 先以 `prepare_backtest`、`prepare_comparison`、`prepare_walk_forward` 或 `prepare_optimization`
 準備執行計畫：傳入具型別的研究需求，解析有效市場、期間、成本與來源標籤，
 再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成離線程式與設定檢查，確認程序已停止並清理臨時內容後，
@@ -217,6 +218,21 @@ JobService、OptimizationService 與 CLI 共用的 BacktestService 在資料載�
 及 ExecutionPlanService 保留，MCP adapter 再映射為 `next_tool`。這個回覆不會建立
 可執行計畫，也不免除後續程式檢查與使用者確認。
 
+`BacktestService.load_execution_dataset()` 可在正式執行階段載入一次完整行情與特徵，
+封存為不可變的 Parquet bytes；`run_manifest(..., loaded_dataset=...)` 每次重新解碼，
+使用獨立策略、引擎與該次隨機上下文。快照綁定來源設定、標的、頻率與期間，
+內容雜湊識別實際資料；原 `source_dataset_id` 仍只描述資料請求。不支援的型別轉換
+直接失敗，不靜默改變資料。這個 API 不屬於確認前的程式檢查；未提供快照的單次
+回測仍循原資料載入流程。程序隔離與任意策略全域狀態安全不由此 API 保證。
+
+固定比較由 ResearchPreparationService 解析一次研究設定，保存一到八組候選的完整
+執行 manifest；ComparisonManifest 只允許建構子參數不同。每組合成檢查通過後，
+PreparedComparison 與各組收據交給同一計畫／確認流程。使用者批准整組後，
+ComparisonService 共用一份資料快照，逐組獨立執行；ComparisonStore 保存完整候選帳本，
+RunPublisher 核對父子身分與資料收據後發佈各組結果。個別失敗不隱藏候選，
+也不產生虛構的父 run 或合併資金績效。取消與崩潰恢復須先確認 worker 已停止。
+此流程支援普通回測，不包含需要訓練或 walk-forward 的多組比較。
+
 JobService 與 OptimizationService 將準備和提交分開：prepare 方法只回傳
 PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmissionService
 共用建立 job、啟動 worker 與啟動失敗紀錄。提交已準備的內容時不重新解析 YAML，
@@ -227,7 +243,8 @@ PreparedExecution，包含固定 manifest 與原始設定來源；ExecutionSubmi
 PreflightService 將設定準備、策略匯入、建構子與執行模式檢查，以及生成策略的固定合成資料
 訊號契約檢查放入受監督的子程序；預設總預算為 60 秒，程序清理另計。
 確認前不載入快取或下載真實行情、不執行回測引擎，也不呼叫策略訓練。
-內建策略只檢查配置、模式與參數綁定，不執行訊號；需要先訓練的策略明列訊號檢查待訓練後進行。
+一般準備中的內建策略只檢查配置、模式與參數綁定，不執行訊號；固定比較則逐組執行兩種合成
+訊號檢查，所有候選共用一次準備時限。需要先訓練的策略明列訊號檢查待訓練後進行。
 最佳化在此固定候選與有效參數，不以行情評估候選或先挑選參數。
 檢查證據明列已檢查與尚未驗證的項目；資料可用性、實際分折、訓練、成交、成本與績效
 須等待使用者同意後的正式執行。合成訊號通過不證明交易規則完全正確、沒有前視或可獲利。
@@ -334,8 +351,9 @@ OptimizationService 在準備時固定搜尋參數、訓練／測試期間、指
 並檢查候選參數結構。搜尋之外的有效設定保持固定。最佳化使用自己的訓練／測試切分，
 不能同時套用 walk-forward 設定；候選檢查也不代表所有策略建構與執行一定成功。
 MCP 的研究期間須與訓練起日零時到測試迄日終時的 UTC 整日範圍一致，不能靜默改寫期間。
-預先指定的多組普通回測各有獨立計畫與結果，可由既有多 run 報告比較；目前沒有普通多候選
-批次確認工具，不會因要求比較數組參數就自動改成最佳化。
+預先指定的一到八組普通回測透過 `prepare_comparison` 共用一份計畫與確認，
+每組仍保存獨立結果，完整比較報告保留所有候選及其執行狀態。此流程只執行已確認的固定參數，
+不自動擴大搜尋；需要訓練或 walk-forward 的策略仍使用各自的執行流程，不能加入普通固定比較。
 
 MCP 的最佳化與其他回測共用前述計畫與確認流程，正式 worker 不再等待第二次確認。
 使用者接受後，worker 才取得真實行情並執行搜尋；確認前的程式檢查不評估 trial 績效。
@@ -349,8 +367,10 @@ worker 依 manifest 記錄的最大化或最小化方向選出參數，再進行
 
 ### 保存與查詢結果
 
-背景 worker 透過 JobStore 保存結果，CLI 透過 ArtifactService 保存；
-兩條路徑共用 manifest 與績效儲存 adapters。SQLite 保存工作、run、artifact 索引與
+一般背景工作透過 JobStore.save_result 委派 RunPublisher 發佈結果，再更新工作狀態；
+固定比較由 ComparisonService 直接以 RunPublisher 發佈各候選 run，另行更新候選帳本
+與父工作生命週期，結果發佈和工作狀態更新分開處理。CLI 透過 ArtifactService 保存；
+這些路徑共用 manifest 與績效儲存 adapters。SQLite 保存工作、run、artifact 索引與
 數值指標；filesystem 保存 revision、資料快取及執行產物。
 
 Backtest／walk-forward 另存 PipelineResult，供 dashboard 載入呈現；
@@ -525,6 +545,10 @@ QuantStats 繪圖以程序內鎖及局部樣式隔離，固定 SVG 身分並移�
 選取核對章節時，完整事件資料供本機表格篩選、排序、欄位選擇及 CSV／JSON 匯出；
 畫面篩選與兩位小數顯示不裁減或捨入下載資料。
 完整性核對不代表封存全部外部執行環境。
+
+固定比較報告以 `comparison_job_id` 選取，ReportService 經 report_comparison 讀取完整帳本、
+核對快照與成功子結果，再交給共用 renderer。所有候選的參數、理由、狀態與失敗原因是必留內容，
+不受可選章節影響；只有成功子結果提供交易明細入口。沒有任何成功結果時仍可交付報告。
 
 ### 設定與儲存一致性
 

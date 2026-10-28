@@ -14,11 +14,11 @@ from tradingdev.adapters.execution.process_runner import ProcessRunner
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.strategies.capabilities import StrategyExecutionModeError

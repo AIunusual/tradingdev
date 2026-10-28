@@ -35,6 +35,7 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.research_fixtures import research_for_config
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import NewResearchSpec, research_payload
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
@@ -238,7 +239,9 @@ def _assert_selected_research(
     assert_research_matches_config(
         calls[prepare_index].arguments.get("research"), selected_config
     )
-    config = approval.plans[-1].manifest.config_copy()
+    selected_manifest = approval.plans[-1].manifest
+    assert isinstance(selected_manifest, ExecutionManifest)
+    config = selected_manifest.config_copy()
     assert research_values(config, context="Prepared manifest") == expected, (
         "Prepared research settings differ from the selected source and user decision"
     )
@@ -260,6 +263,8 @@ def _assert_evidence(
     approval.assert_complete()
     plan = approval.plans[-1]
     manifest = plan.manifest
+    assert isinstance(manifest, ExecutionManifest)
+    assert isinstance(plan.preflight, PreflightReceipt)
     prepared = _successful(calls, f"prepare_{kind}")
     assert len(prepared) == len(approval.plans), prepared
     prepare_index, prepare_call = prepared[-1]
@@ -713,8 +718,9 @@ def test_llm_revises_plan_then_waits_for_explicit_user_approval(
             calls, "optimization", approval, selected_revision_id=revision_id
         )
         assert len(approval.turns) == 3
-        assert approval.plans[0].manifest.config_copy()["backtest"]["fees"] == 0
-        assert approval.plans[1].manifest.config_copy()["backtest"]["fees"] == 0.001
+        for plan, expected_fees in zip(approval.plans, (0, 0.001), strict=True):
+            assert isinstance(plan.manifest, ExecutionManifest)
+            assert plan.manifest.config_copy()["backtest"]["fees"] == expected_fees
 
 
 @pytest.mark.live_llm

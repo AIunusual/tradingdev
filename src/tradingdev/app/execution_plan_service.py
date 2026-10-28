@@ -25,13 +25,18 @@ from tradingdev.app.contracts.plans import (
 )
 from tradingdev.app.execution_submission import (
     ExecutionSubmissionService,
-    PreparedExecution,
 )
 from tradingdev.app.job_config import bind_strategy_revision
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError, PreflightService
+from tradingdev.app.prepared_execution import PreparedComparison, PreparedExecution
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
+from tradingdev.domain.preflight import ComparisonPreflightReceipt, PreflightReceipt
+from tradingdev.domain.presentation.comparison_confirmation import (
+    build_comparison_confirmation,
+)
 from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,
     ConfirmationPresentationError,
@@ -85,9 +90,20 @@ class ExecutionPlanService:
             checked = self.preflight.prepare(request)
             plan_id = uuid4().hex
             manifest = checked.prepared.manifest
-            document = build_confirmation_document(
-                manifest, presentation, checked.receipt, plan_id=plan_id
-            )
+            if isinstance(manifest, ComparisonManifest):
+                if not isinstance(checked.receipt, ComparisonPreflightReceipt):
+                    raise ValueError(
+                        "Comparison requires every candidate's program receipt"
+                    )
+                document = build_comparison_confirmation(
+                    manifest, presentation, checked.receipt, plan_id=plan_id
+                )
+            else:
+                if not isinstance(checked.receipt, PreflightReceipt):
+                    raise ValueError("Single execution requires its program receipt")
+                document = build_confirmation_document(
+                    manifest, presentation, checked.receipt, plan_id=plan_id
+                )
             created = datetime.now(UTC)
             payload = {
                 "schema_version": 2,
@@ -230,12 +246,27 @@ class ExecutionPlanService:
                     raise
                 self.plans.transition(plan_id, "awaiting_confirmation", "submitting")
                 try:
-                    self.submission.submit(
-                        PreparedExecution(
-                            plan.manifest, Path(plan.original_config_path)
-                        ),
-                        job_id=plan_id,
-                    )
+                    if isinstance(plan.manifest, ComparisonManifest):
+                        if not isinstance(plan.preflight, ComparisonPreflightReceipt):
+                            raise ValueError("Comparison requires candidate receipts")
+                        prepared = PreparedComparison(
+                            plan.manifest,
+                            Path(plan.original_config_path),
+                            {
+                                checked.candidate_id: tuple(
+                                    checked.receipt.synthetic_fixture_rows
+                                )
+                                for checked in plan.preflight.candidates
+                            },
+                        )
+                        self.submission.submit(prepared, job_id=plan_id)
+                    else:
+                        self.submission.submit(
+                            PreparedExecution(
+                                plan.manifest, Path(plan.original_config_path)
+                            ),
+                            job_id=plan_id,
+                        )
                 except BaseException as exc:
                     self.plans.transition(
                         plan_id, "submitting", "failed", error=str(exc)
@@ -277,12 +308,18 @@ class ExecutionPlanService:
             raise PlanOperationError(
                 "plan_expired", "計畫已過期，請重新準備與檢查程式。"
             )
-        config = plan.manifest.config_for_execution()
-        strategy = config["strategy"]
-        selected = self.strategies.resolve_executable(
-            strategy["id"], strategy.get("revision_id")
+        manifests = (
+            [candidate.manifest for candidate in plan.manifest.candidates]
+            if isinstance(plan.manifest, ComparisonManifest)
+            else [plan.manifest]
         )
-        bind_strategy_revision(config, selected)
+        for manifest in manifests:
+            config = manifest.config_for_execution()
+            strategy = config["strategy"]
+            selected = self.strategies.resolve_executable(
+                strategy["id"], strategy.get("revision_id")
+            )
+            bind_strategy_revision(config, selected)
 
     def _response(self, plan: ExecutionPlan, record: dict[str, Any]) -> PlanResponse:
         job_id = record.get("job_id")
@@ -291,13 +328,18 @@ class ExecutionPlanService:
             if job is not None:
                 job_id = plan.plan_id
         html_path = str(self.plans.directory(plan.plan_id) / "confirmation.html")
+        config = (
+            plan.manifest.common_config()
+            if isinstance(plan.manifest, ComparisonManifest)
+            else plan.manifest.config_copy()
+        )
         return PlanResponse(
             plan_id=plan.plan_id,
             status=record["state"],
             manifest_hash=plan.manifest.manifest_hash,
             expires_at=plan.expires_at.isoformat(),
             confirmation_summary=render_confirmation_summary(
-                plan.document, mode=plan.manifest.config_copy()["backtest"]["mode"]
+                plan.document, mode=config["backtest"]["mode"]
             ),
             confirmation_link=render_confirmation_link(html_path),
             html_path=html_path,

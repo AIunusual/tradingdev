@@ -12,12 +12,13 @@ from tradingdev.adapters.execution.preflight_worker import execute_preflight
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
-from tradingdev.app.execution_submission import PreparedExecution
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.optimization_service import OptimizationService
 from tradingdev.app.preflight_service import PreflightError
-from tradingdev.domain.preflight import PreflightRequest
+from tradingdev.app.prepared_execution import PreparedExecution
+from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.domain.preflight import PreflightReceipt, PreflightRequest
 from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ def test_selected_revision_research_and_origin_reach_captured_manifest(
     prepared = execute_preflight(
         request, source_workspace=workspace, directory=tmp_path / "preflight"
     )
+    assert isinstance(prepared.manifest, ExecutionManifest)
     config = prepared.manifest.config_copy()
     assert config["backtest"]["fees"] == 0
     assert config["backtest"]["end_date"].startswith("2024-02-01T00:00:00")
@@ -165,6 +167,8 @@ def test_old_bundled_validation_requires_an_explicit_research_window_choice(
         prepared = execute_preflight(
             request, source_workspace=workspace, directory=tmp_path / "preflight"
         )
+        assert isinstance(prepared.manifest, ExecutionManifest)
+        assert isinstance(prepared.receipt, PreflightReceipt)
         config = prepared.manifest.config_copy()
         assert config["backtest"]["start_date"].startswith("2026-01-01")
         if selection == "automatic":

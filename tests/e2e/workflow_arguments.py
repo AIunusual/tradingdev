@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from tradingdev.app.contracts.execution_requests import ParameterCandidateInput
 from tradingdev.app.contracts.reports import ReportCommentary
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
@@ -48,6 +49,10 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "record": TypeAdapter(bool),
     },
     "prepare_backtest": _PREPARE,
+    "prepare_comparison": {
+        **{name: adapter for name, adapter in _PREPARE.items() if name != "parameters"},
+        "candidates": TypeAdapter(list[ParameterCandidateInput]),
+    },
     "prepare_walk_forward": {
         **_PREPARE,
         "validation_config": TypeAdapter(WalkForwardConfig | None),
@@ -58,7 +63,7 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
     },
     "find_runs": {"parameters": TypeAdapter(dict[str, Any] | None)},
     "generate_report": {
-        "run_ids": TypeAdapter(list[str]),
+        "run_ids": TypeAdapter(list[str] | None),
         "sections": TypeAdapter(list[str] | None),
         "commentary": TypeAdapter(list[ReportCommentary] | None),
     },

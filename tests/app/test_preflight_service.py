@@ -20,7 +20,7 @@ from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.preflight_service import PreflightError, PreflightService
 from tradingdev.domain.execution import ExecutionManifest
-from tradingdev.domain.preflight import PreflightRequest
+from tradingdev.domain.preflight import PreflightReceipt, PreflightRequest
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
@@ -87,6 +87,8 @@ def test_preflight_checks_effective_program_without_market_training_or_engine(
     output = tmp_path / "preflight"
     output.mkdir()
     result = execute_preflight(request, source_workspace=workspace, directory=output)
+    assert isinstance(result.manifest, ExecutionManifest)
+    assert isinstance(result.receipt, PreflightReceipt)
     assert observed == [(80, 0.001), (240, 0.001)]
     assert result.receipt.synthetic_fixture_rows == [rows for rows, _ in observed]
     assert result.receipt.signal_check == "synthetic_contract_passed"
@@ -149,6 +151,7 @@ def test_bundled_preparation_does_not_construct_fit_or_score_untrained_models(
     result = execute_preflight(
         request, source_workspace=workspace, directory=tmp_path / "preflight"
     )
+    assert isinstance(result.receipt, PreflightReceipt)
     assert result.receipt.signal_check == expected_signal
     assert result.receipt.synthetic_fixture_rows == []
     assert "signal_contract" not in result.receipt.checked_paths
@@ -277,9 +280,9 @@ def test_parent_cleans_temporary_files_after_verified_worker_cleanup(
 
     monkeypatch.setattr(ProcessRunner, "run_module", run)
     if outcome == "success":
-        assert PreflightService(workspace).prepare(
-            request
-        ).receipt.synthetic_fixture_rows == [80, 240]
+        receipt = PreflightService(workspace).prepare(request).receipt
+        assert isinstance(receipt, PreflightReceipt)
+        assert receipt.synthetic_fixture_rows == [80, 240]
     else:
         with pytest.raises(PreflightError):
             PreflightService(workspace).prepare(request)

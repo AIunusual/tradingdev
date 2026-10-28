@@ -190,7 +190,7 @@ def test_legacy_result_remains_readable_without_becoming_resumable(
     store.create_job(job_id="legacy", strategy_name="fixture")
     store.update_job("legacy", status="done")
     run_dir = store.workspace.runs / "legacy"
-    run_dir.mkdir()
+    run_dir.mkdir(exist_ok=True)
     result_path = run_dir / "result.json"
     original = '{"profit_factor": Infinity, "nested": {"value": NaN}}'
     result_path.write_text(original, encoding="utf-8")

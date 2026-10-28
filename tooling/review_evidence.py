@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from tooling.presentations import PRESENTATION_PATHS, is_presentation_path
+from tooling.review_options import validate_review_options
 
 MAX_EVIDENCE_BYTES = 600_000
 
@@ -116,6 +117,16 @@ def _exclusion_reason(path: str) -> str:
     )
 
 
+def automatic_document_paths(paths: set[str]) -> set[str]:
+    """Return the document set selected independently of explicit context."""
+    return {
+        path
+        for path in paths
+        if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
+        or (path.startswith("docs/") and path.endswith(".md"))
+    }
+
+
 def build_evidence(
     repo: Path,
     base: str,
@@ -123,6 +134,7 @@ def build_evidence(
     *,
     max_bytes: int = MAX_EVIDENCE_BYTES,
     review_context: tuple[str, ...] = (),
+    review_context_for: tuple[tuple[str, str], ...] = (),
 ) -> str:
     """Read candidate blobs, never index or working-tree file contents."""
     base_tree = _git(repo, "rev-parse", "--verify", f"{base}^{{tree}}").strip()
@@ -134,14 +146,16 @@ def build_evidence(
     relevant = sorted(path for path in changed if _relevant(path))
     entries = _tree_entries(repo, candidate_tree)
     files = set(entries)
-    docs = {
-        path
-        for path in files
-        if path in {"README.md", "ARCHITECTURE.md", "AGENTS.md", "CLAUDE.md"}
-        or (path.startswith("docs/") and path.endswith(".md"))
-    }
+    docs = automatic_document_paths(files)
     context = _presentation_context(set(changed), entries)
-    for path in review_context:
+    try:
+        validate_review_options(
+            review_context=review_context, review_context_for=review_context_for
+        )
+    except RuntimeError as exc:
+        raise ReviewError(str(exc)) from exc
+    all_context = set(review_context) | {path for _, path in review_context_for}
+    for path in all_context:
         relative = Path(path)
         if (
             not path
@@ -158,12 +172,10 @@ def build_evidence(
             )
     # Explicit context can supply text outside automatic selection. If changed,
     # it also needs an owner and its exact diff; do not still label it excluded.
-    relevant = sorted(set(relevant) | (set(review_context) & set(changed)))
+    relevant = sorted(set(relevant) | (all_context & set(changed)))
     candidate_files = {
         path: _text_blob(repo, candidate_tree, path, entries[path])
-        for path in sorted(
-            docs | context | set(review_context) | (set(relevant) & files)
-        )
+        for path in sorted(docs | context | all_context | (set(relevant) & files))
     }
     # Force textual diffs only after validating both sides. Git attributes must
     # not hide selected source changes behind a "Binary files differ" marker.
@@ -224,6 +236,13 @@ def build_evidence(
         },
         "presentation_context_paths": sorted(context),
         "additional_context_paths": sorted(set(review_context)),
+        "automatic_document_paths": sorted(docs),
+        "scoped_context_paths": {
+            scope: sorted(
+                {path for target, path in review_context_for if target == scope}
+            )
+            for scope in sorted({scope for scope, _ in review_context_for})
+        },
         "candidate_files": candidate_files,
     }
     content = json.dumps(evidence, ensure_ascii=False)

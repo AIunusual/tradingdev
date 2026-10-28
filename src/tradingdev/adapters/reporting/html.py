@@ -597,15 +597,21 @@ def _overview(payload: dict[str, Any]) -> str:
     result = (
         "<p>每列是一個保存結果。先核對訓練／測試用途、日期與成本，再比較績效。</p>"
         + (
-            "<p class='notice'>本報告未選取單組詳情章節。</p>"
+            "<p class='notice'>沒有成功候選可提供單組詳情。</p>"
+            if "fixed_comparison" in payload and not payload["runs"]
+            else "<p class='notice'>本報告未選取單組詳情章節。</p>"
             if not payload["comparison_table"]["navigate_field"]
             else ""
         )
         + "<p class='muted'>下列績效採當次保存值，保留其定義；"
         "不同日期或定義的數值不應直接排名。"
         "各折摘要不是合併資金曲線，詳情保留其描述統計。</p>"
-        + render_table(
-            payload["comparison_table"], identifier="comparison", key="comparison"
+        + (
+            render_table(
+                payload["comparison_table"], identifier="comparison", key="comparison"
+            )
+            if "fixed_comparison" not in payload
+            else ""
         )
         + "".join(
             f"<p class='notice'>{escape(note)}</p>"
@@ -660,7 +666,11 @@ def _identity_html(identity: dict[str, Any]) -> str:
 
 
 def _provenance(payload: dict[str, Any]) -> str:
-    result = ""
+    result = (
+        details_html("固定比較與共用行情來源證據", payload["fixed_comparison"])
+        if "fixed_comparison" in payload
+        else ""
+    )
     for run in payload["runs"]:
         identity = run["identity"]
         result += (
@@ -681,6 +691,11 @@ def _provenance(payload: dict[str, Any]) -> str:
 
 
 def _scoped_section(payload: dict[str, Any], section: str) -> str:
+    if not payload["runs"]:
+        return (
+            "<p>沒有成功候選的保存結果；此章節沒有可用績效、交易或資金曲線。"
+            "共用設定與每組原因見固定比較紀錄。</p>"
+        )
     result = ""
     first = next(key for key in payload["sections"] if key in SCOPED_REPORT_SECTIONS)
     for ri, run in enumerate(payload["runs"]):
@@ -711,16 +726,91 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
     return result
 
 
+def _fixed_comparison(payload: dict[str, Any]) -> str:
+    """Always show the accepted candidates, including zero-success outcomes."""
+    fixed = payload["fixed_comparison"]
+    config = fixed["shared_config"]
+    backtest = config["backtest"]
+    receipt = fixed["receipt"]
+    candidates = []
+    for index, candidate in enumerate(fixed["candidates"], 1):
+        candidates.append(
+            f"<article><h3>{index}. {escape(candidate['label'])}</h3>"
+            "<p style='white-space:pre-wrap'>比較理由："
+            f"{escape(candidate['rationale'])}</p>"
+            + _parameters_html(candidate["parameters"])
+            + (
+                "<p class='notice' style='white-space:pre-wrap'>無結果："
+                + escape(candidate["reason"])
+                + "</p>"
+                if candidate["status"] != "succeeded"
+                else ""
+            )
+            + "</article>"
+        )
+    return (
+        "<section data-section='comparison_candidates'>"
+        "<h2>固定參數比較：完整候選紀錄</h2>"
+        "<p>依執行前固定的順序列出全部候選，不選出最佳組合。失敗、取消與未執行"
+        "不代表零報酬；只有成功列有保存績效及可選取的明細，不合併各組資金曲線。</p>"
+        f"<p>比較工作：<code>{escape(fixed['comparison_job_id'])}</code>；"
+        f"成功 {fixed['counts']['succeeded']} 組，失敗 {fixed['counts']['failed']} 組，"
+        f"取消 {fixed['counts']['cancelled']} 組，"
+        f"未執行 {fixed['counts']['not_run']} 組。</p>"
+        + render_table(
+            payload["comparison_table"], identifier="comparison", key="comparison"
+        )
+        + "".join(candidates)
+        + "<h3>共用設定與行情來源</h3>"
+        + _pairs_html(
+            {
+                "比較工作識別碼": fixed["comparison_job_id"],
+                "工作狀態": {
+                    "done": "全部候選已處理（不代表全部成功）",
+                    "failed": "工作失敗",
+                    "cancelled": "已取消",
+                }[fixed["status"]],
+                "成功候選數": fixed["counts"]["succeeded"],
+                "失敗候選數": fixed["counts"]["failed"],
+                "取消候選數": fixed["counts"]["cancelled"],
+                "未執行候選數": fixed["counts"]["not_run"],
+                "比較設定雜湊": fixed["manifest"]["manifest_hash"],
+                "標的": backtest["symbol"],
+                "K 線週期": backtest["timeframe"],
+                "請求開始日期": backtest["start_date"],
+                "請求結束日期": backtest["end_date"],
+                "初始本金": backtest.get("init_cash"),
+                "單邊手續費率": _percentage(backtest.get("fees")),
+                "滑價率": _percentage(backtest.get("slippage")),
+                "共用行情快照": "已核對實際內容與 SHA-256"
+                if receipt is not None
+                else fixed["data_unavailable_reason"],
+                "共用快照 SHA-256": fixed["snapshot_sha256"],
+            }
+        )
+        + details_html("固定共用設定與資料來源（完整保存值）", config)
+        + details_html("比較清單、狀態與行情證據（完整保存值）", fixed)
+        + "</section>"
+    )
+
+
 def render_report(payload: dict[str, Any], report_id: str) -> str:
     """Two navigable reading levels in one portable, fully inspectable artifact."""
-    has_details = bool(SCOPED_REPORT_SECTIONS.intersection(payload["sections"]))
+    has_details = bool(
+        payload["runs"] and SCOPED_REPORT_SECTIONS.intersection(payload["sections"])
+    )
     options = []
     links = []
+    candidate_labels = {
+        candidate["run_id"]: candidate["label"]
+        for candidate in payload.get("fixed_comparison", {}).get("candidates", [])
+    }
     for ri, run in enumerate(payload["runs"]):
         for si, scope in enumerate(run["scopes"]):
-            label = (
-                f"{run['identity']['strategy_id']} · {_scope_name(scope['scope_id'])}"
+            name = candidate_labels.get(
+                run["identity"]["run_id"], run["identity"]["strategy_id"]
             )
+            label = f"{name} · {_scope_name(scope['scope_id'])}"
             target = f"result-{ri}-{si}"
             options.append(f"<option value='{target}'>{escape(label)}</option>")
             links.append(f"<li><a href='#{target}'>{escape(label)}</a></li>")
@@ -743,6 +833,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             overview.insert(0, rendered)
         else:
             (sections if has_details else overview).append(rendered)
+    if "fixed_comparison" in payload:
+        overview.insert(0, _fixed_comparison(payload))
     commentary = ""
     if payload["commentary"]:
         commentary = (
@@ -774,6 +866,9 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "從參數比較總覽或結果清單選擇單組結果，檢視已選取的詳情章節。"
         "所有內容保存在同一份離線 HTML；返回首頁與瀏覽器上一頁皆可切換。"
         if has_details
+        else "此比較沒有成功候選的績效結果。以下保留全部候選、無結果原因、"
+        "共用設定與行情證據；沒有推算報酬或資金曲線。"
+        if "fixed_comparison" in payload and not payload["runs"]
         else "本報告僅呈現已選取的總覽或共用說明，未選取單組詳情章節。"
         "所有內容保存在同一份離線 HTML。"
     )
@@ -826,7 +921,9 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "<footer><p class='muted'>JSON manifest 保存 HTML SHA-256、章節與評語；"
         "原回測產物不改寫。原始資料與表格資料保留於內嵌 JSON。</p></footer>"
     )
-    has_tables = bool(set(payload["sections"]) & {"overview", "ledger", "trades"})
+    has_tables = "fixed_comparison" in payload or bool(
+        set(payload["sections"]) & {"overview", "ledger", "trades"}
+    )
     resources = bokeh_resources_html() if has_tables else ""
     return render_html_document(
         title="TradingDev · 回測比較與交易核帳",

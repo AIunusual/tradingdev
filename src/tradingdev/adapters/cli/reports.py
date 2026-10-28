@@ -1,4 +1,4 @@
-"""Generate the built-in offline report from saved runs without a new backtest."""
+"""Generate an offline report from saved runs or a finalized fixed comparison."""
 
 from __future__ import annotations
 
@@ -14,13 +14,16 @@ def main(argv: list[str] | None = None) -> None:
     """Print a report artifact identity or fail with the same service error as MCP."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path)
-    parser.add_argument("--run-id", action="append", required=True, dest="run_ids")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--run-id", action="append", dest="run_ids")
+    selection.add_argument("--comparison-job-id")
     parser.add_argument(
         "--sections",
         nargs="*",
         help=(
             "Section IDs in display order; omit for standard, empty for identity "
-            "and prose. All loaded data remains embedded in HTML."
+            "and prose. Comparison candidate evidence always remains visible. "
+            "All loaded data remains embedded in HTML."
         ),
     )
     parser.add_argument("--commentary-json", type=Path)
@@ -46,6 +49,11 @@ def main(argv: list[str] | None = None) -> None:
         args.run_ids,
         sections=args.sections,
         commentary=commentary,
+        **(
+            {"comparison_job_id": args.comparison_job_id}
+            if args.comparison_job_id is not None
+            else {}
+        ),
     )
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     if not result["success"]:

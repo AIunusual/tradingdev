@@ -94,6 +94,18 @@ def strategy_contract_payload(
                 "parameter experiments reuse the runnable revision rather than "
                 "rewriting its source or base validation evidence. Save a revision "
                 "only when source or base configuration changes.",
+                "prepare_comparison captures 1–8 explicitly proposed parameter "
+                "sets for an ordinary backtest strategy. Include a label and "
+                "selection rationale for each set. All candidates share strategy "
+                "revision, research, costs and data; only constructor parameters "
+                "vary. Every candidate receives synthetic checks before one whole-"
+                "set confirmation. After approval, runs use one captured dataset "
+                "with independent engines, strategy instances and random streams. "
+                "Training-required and walk-forward comparisons are unsupported; "
+                "use the existing training workflow. Fixed comparison does not "
+                "authorize adaptive optimization or selection of only successes. "
+                "Generate the complete report with comparison_job_id so failed, "
+                "cancelled and unexecuted candidates remain visible.",
                 "Each validation, dry run and optimization trial/test starts a "
                 "fresh run-local random stream. A backtest or walk-forward run "
                 "shares one stream across constructor and folds. Contexts do not "

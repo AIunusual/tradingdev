@@ -4,10 +4,19 @@ from __future__ import annotations
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 # Pydantic resolves these annotations when validating the wire schema.
+from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionKind, ExecutionManifest  # noqa: TC001
+from tradingdev.domain.execution_target import ExecutionTarget  # noqa: TC001
 from tradingdev.domain.strategies.capabilities import TrainingRequirement  # noqa: TC001
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
@@ -39,7 +48,7 @@ class PreflightModel(BaseModel):
 class PreflightRequest(PreflightModel):
     """Capture a concrete execution request without authorizing historical work."""
 
-    kind: ExecutionKind
+    kind: ExecutionKind | Literal["comparison"]
     arguments: dict[str, JsonValue]
 
 
@@ -55,6 +64,13 @@ class PreflightReceipt(PreflightModel):
     training_requirement: TrainingRequirement
     parameter_combinations_checked: int | None = Field(default=None, ge=1)
     not_checked: list[UnverifiedCheck]
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def integer_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("Preflight schema_version must be an integer")
+        return value
 
     @model_validator(mode="after")
     def consistent_coverage(self) -> Self:
@@ -104,14 +120,22 @@ class PreflightReceipt(PreflightModel):
             raise ValueError("Offline evidence must disclose every unverified path")
         return self
 
-    def verify_manifest(self, manifest: ExecutionManifest) -> None:
+    def verify_manifest(
+        self, manifest: ExecutionManifest, *, comparison_candidate: bool = False
+    ) -> None:
         """Validate actual coverage against the exact execution used by every view."""
         # Lists remain mutable after model construction. Revalidate their types and
         # coverage before a receipt is reused by storage, approval or presentation.
         type(self).model_validate(self.model_dump(mode="python"))
         manifest.verify(expected_hash=self.manifest_hash)
         generated = manifest.strategy_execution.kind == "generated"
-        if generated != (self.signal_check == "synthetic_contract_passed"):
+        if comparison_candidate and self.signal_check != "synthetic_contract_passed":
+            raise ValueError(
+                "Every comparison candidate requires both contract fixtures"
+            )
+        if not comparison_candidate and generated != (
+            self.signal_check == "synthetic_contract_passed"
+        ):
             raise ValueError("Signal evidence differs from the strategy execution kind")
         if generated and self.training_requirement != "unknown":
             raise ValueError(
@@ -127,14 +151,77 @@ class PreflightReceipt(PreflightModel):
             raise ValueError("Candidate binding evidence differs from the search")
 
 
+class ComparisonCandidateReceipt(PreflightModel):
+    """Program-check evidence for one exact candidate in an ordered comparison."""
+
+    candidate_id: str = Field(pattern=r"^candidate_[1-8]$")
+    receipt: PreflightReceipt
+
+
+class ComparisonPreflightReceipt(PreflightModel):
+    """Keep each candidate's checks separate from optimization grid estimates."""
+
+    schema_version: Literal[1] = 1
+    kind: Literal["comparison"] = "comparison"
+    manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    elapsed_seconds: float = Field(ge=0)
+    candidates: list[ComparisonCandidateReceipt] = Field(min_length=1, max_length=8)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def integer_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("Comparison preflight schema_version must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def ordered_candidates(self) -> Self:
+        if [item.candidate_id for item in self.candidates] != [
+            f"candidate_{index}" for index in range(1, len(self.candidates) + 1)
+        ]:
+            raise ValueError("Comparison evidence must retain exact candidate order")
+        return self
+
+    def verify_manifest(self, manifest: ComparisonManifest) -> None:
+        type(self).model_validate(self.model_dump(mode="python"))
+        manifest.verify(expected_hash=self.manifest_hash)
+        if len(self.candidates) != len(manifest.candidates):
+            raise ValueError("Comparison evidence must cover every candidate")
+        for checked, candidate in zip(
+            self.candidates, manifest.candidates, strict=True
+        ):
+            if checked.candidate_id != candidate.candidate_id:
+                raise ValueError(
+                    "Comparison evidence must retain exact candidate order"
+                )
+            checked.receipt.verify_manifest(
+                candidate.manifest, comparison_candidate=True
+            )
+
+
+type ProgramReceipt = PreflightReceipt | ComparisonPreflightReceipt
+
+
+def verify_program_receipt(manifest: ExecutionTarget, receipt: ProgramReceipt) -> None:
+    """Verify the matching receipt shape and every captured execution identity."""
+    if isinstance(manifest, ComparisonManifest):
+        if not isinstance(receipt, ComparisonPreflightReceipt):
+            raise ValueError("Comparison requires per-candidate program evidence")
+        receipt.verify_manifest(manifest)
+    else:
+        if not isinstance(receipt, PreflightReceipt):
+            raise ValueError("Single execution requires single program evidence")
+        receipt.verify_manifest(manifest)
+
+
 class PreflightPayload(PreflightModel):
     """Verified child-process output independent of job and plan storage."""
 
-    manifest: ExecutionManifest
+    manifest: ExecutionTarget
     original_config_path: str
-    receipt: PreflightReceipt
+    receipt: ProgramReceipt
 
     @model_validator(mode="after")
     def matching_manifest(self) -> Self:
-        self.receipt.verify_manifest(self.manifest)
+        verify_program_receipt(self.manifest, self.receipt)
         return self

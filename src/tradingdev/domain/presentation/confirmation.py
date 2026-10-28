@@ -772,9 +772,12 @@ _NOT_CHECKED_TEXT = {
 
 
 def _preflight_sections(
-    manifest: ExecutionManifest, preflight: PreflightReceipt
+    manifest: ExecutionManifest,
+    preflight: PreflightReceipt,
+    *,
+    comparison_candidate: bool = False,
 ) -> tuple[ConfirmationSection, ConfirmationSection]:
-    preflight.verify_manifest(manifest)
+    preflight.verify_manifest(manifest, comparison_candidate=comparison_candidate)
     fields = [
         _field("程式檢查狀態", "已完成必要檢查，可供使用者確認"),
         _field("程式檢查耗時", preflight.elapsed_seconds, unit="秒"),
@@ -911,6 +914,7 @@ def build_confirmation_document(
     preflight: PreflightReceipt,
     *,
     plan_id: str | None = None,
+    comparison_candidate: bool = False,
 ) -> ConfirmationDocument:
     """Project effective settings and program evidence into the fixed template."""
     preflight = PreflightReceipt.model_validate(preflight.model_dump(mode="python"))
@@ -981,7 +985,9 @@ def build_confirmation_document(
             manifest.strategy_execution.constructor_kwargs
         ).items()
     ]
-    preflight_section, limitations_section = _preflight_sections(manifest, preflight)
+    preflight_section, limitations_section = _preflight_sections(
+        manifest, preflight, comparison_candidate=comparison_candidate
+    )
     return ConfirmationDocument(
         title=presentation.title,
         summary=presentation.summary,

@@ -59,6 +59,7 @@ _MUTATING_HINTS = {
     "cleanup_strategy_drafts": (False, True, True, False),
     "ensure_data": (False, True, False, True),
     "prepare_backtest": (False, False, False, True),
+    "prepare_comparison": (False, False, False, True),
     "prepare_walk_forward": (False, False, False, True),
     "prepare_optimization": (False, False, False, True),
     "get_job_status": (False, True, True, False),

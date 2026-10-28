@@ -44,6 +44,13 @@ workspace/
   ml_leaderboard/
     .leaderboard.lock
     leaderboard.jsonl
+  comparisons/
+    <job_id>/
+      manifest.json
+      config.yaml
+      ledger.json
+      snapshot.parquet
+      receipt.json
   runs/
     <run_id>/
       manifest.json
@@ -66,6 +73,10 @@ workspace/
       manifest.json
 ```
 
+Comparison snapshots and receipts are published only after approval and data
+loading. A failed or cancelled comparison may have neither `snapshot.parquet`
+nor `receipt.json` if it stopped before data publication.
+
 ## SQLite Tables
 
 - `jobs`: generic background job status, job type, pid,
@@ -76,7 +87,7 @@ workspace/
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child. New submissions also record
   `manifest_hash`, the expected digest of their fixed execution specification.
-- `runs`: completed run metadata, metrics JSON, config hash, source hash,
+- `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
 - `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
@@ -85,13 +96,35 @@ workspace/
   active confirmation token, submitted job ID, error, and the saved text/HTML
   digests. The plan payload includes its manifest, preflight evidence and document.
 
-`job_id` and `run_id` are currently the same for completed backtest and
-optimization jobs. `get_job_status(job_id)` returns the `run_id` once a run is
-done. Generated strategy jobs and runs carry their selected `revision_id`;
+`job_id` and `run_id` are currently the same for completed standalone backtest,
+walk-forward and optimization jobs. `get_job_status(job_id)` returns the `run_id`
+once such a run is done. A fixed comparison has a parent job and separate candidate
+run IDs recorded in its ledger; the parent has no performance run of its own.
+Generated strategy jobs and runs carry their selected `revision_id`;
 bundled strategies and historical records without revision identity expose
 `null`. A successful explicit revision save changes only that strategy's current
 pointer and does not change the
 revision used by an existing job or completed run.
+
+Run publication is handled by `RunPublisher`, separately from job lifecycle
+updates. `RunPublicationBinding` supplies the owning `job_id`, the distinct
+`run_id`, and the expected execution manifest established by the submission
+owner. The publisher verifies comparison membership against the saved parent
+bundle and ledger; the binding alone does not prove that a child was approved.
+The publisher verifies the existing
+job, strategy/revision, executed manifest, configuration, source and performance
+identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs.
+Artifacts registered directly by `RunPublisher` retain the owning job ID in their
+metadata. `PerformanceStore` instead registers `performance_json` and
+`observations_json` with only `schema_version` and `manifest_hash` in metadata;
+their owning job is obtained through the artifact's `run_id` and the run record's
+`job_id`. Child runs require complete
+performance artifacts. Publication locking, rollback and retry checks cover
+the run files and lineage. `JobStore.save_result` retains the single-run
+interface and always constructs a binding with `run_id == job_id`.
+Job creation and child publication share the run-ID submission lock; a new job
+cannot reuse an existing run ID, and a child cannot occupy an existing job ID.
+The lock file remains for concurrent waiters and same-thread nested submission.
 
 Draft cleanup scans raw job identities and payloads, run references and all stored
 manifests, including manifests left without a database job. Failed and cancelled
@@ -102,12 +135,13 @@ or migrate old revisions. The per-strategy `.locks` files coordinate saves,
 validation, status updates and cleanup; they stay outside deletable revision
 directories and are never unlinked while another process might use their inode.
 
-Successful MCP `prepare_backtest`, `prepare_walk_forward`, and
+Successful MCP `prepare_backtest`, `prepare_comparison`, `prepare_walk_forward`, and
 `prepare_optimization` responses include the required `manifest_hash` and a
 `plan_id`; they do not create a job. `submit_execution_decision` with `approve`
 returns the job ID after the caller relays the user's explicit consent.
-Job status, job-list items, and `get_run` records
-carry the same digest; historical entries without an execution manifest
+Job status and job-list items carry the parent digest. Single-run `get_run`
+records carry that same digest; comparison children instead carry their individual
+execution digests and retain the parent job ID. Historical entries without an execution manifest
 return `null`. Historical results remain readable, but old jobs cannot resume
 through the new workers. Prepare a new plan to execute through MCP under a fixed
 specification. The old MCP `start_backtest`, `start_walk_forward`,
@@ -134,9 +168,16 @@ rest of the temporary workspace after verified cleanup.
 Cancellation of an active job without a complete control identity fails without
 signalling or claiming that the process stopped. A queued job that has not started
 a process can be cancelled directly. Status checks mark a started job failed when
-its supervisor identity is missing or no longer matches; the first response
-includes the same error persisted in the database. Spawn failures also persist
-`failed`, an explanatory error and `ended_at` before propagating the exception.
+its supervisor identity is missing or no longer matches, with a comparison-specific
+exception: comparison status checks must first confirm worker cleanup. If cleanup
+cannot be verified, they retain the active job and candidate states and return
+`detail_error.code = worker_cleanup_failed`, rather than marking the job failed.
+Explicit cancellation likewise preserves those states on cleanup failure and
+returns `code = worker_cleanup_failed`; missing control identity instead returns
+`worker_identity_unavailable`. When a status check does mark a job failed, its
+first response includes the same error persisted in the database. Spawn failures
+also persist `failed`, an explanatory error and `ended_at` before propagating the
+exception.
 
 ## ML Research Artifacts
 
@@ -395,9 +436,62 @@ files in place. As before, revision-directory publication and current-pointer
 replacement are separate filesystem operations: a failed pointer update can leave
 a complete unreferenced revision while the previous current pointer remains.
 
+## Fixed Comparison Evidence
+
+`ComparisonManifest` fixes one to eight ordered ordinary-backtest candidates,
+including their labels, proposal rationale and complete execution manifests.
+Only effective constructor parameters may differ; strategy identity, research,
+data settings, execution assumptions and seed must match. Repeated effective
+parameter sets are rejected. Its digest binds every candidate before execution.
+`prepare_comparison` resolves research once and captures complete constructor
+values from one selected revision. Candidate overrides never rewrite the base
+revision. The plan contains this bundle, a separate program receipt for each
+candidate and one confirmation covering the entire set. Each candidate, including
+bundled strategies, passes both fixed synthetic fixtures; the whole preparation
+shares one supervised time limit. No market data, engine or training runs before
+approval. Training-required and walk-forward comparisons are not supported.
+
+`ComparisonStore` uses `comparisons/<job_id>/manifest.json` and `ledger.json`.
+Alongside them, `config.yaml` projects the shared configuration without selecting
+one candidate's parameters; each child's manifest contains its complete settings.
+The ledger reserves `<job_id>_candidate_N` run IDs and retains every candidate's
+child manifest hash, status and failure reason. It progresses from `pending` to
+`running`, then `succeeded`, `failed` or `cancelled`; untouched candidates can
+become `not_run`. Identical retries preserve terminal outcomes. A reserved run ID
+does not prove a result exists; the execution coordinator must verify published
+child results before recording success. Metrics remain in each run's artifacts.
+
+After approval, `snapshot.parquet` and `receipt.json` retain the actual merged
+data bytes and their SHA-256, data binding, source request ID and comparison hash.
+The coordinator verifies the snapshot's data binding against the accepted
+execution; the storage adapter validates identity, JSON and file integrity.
+This receipt does not change the approved manifest. Initial ledger publication
+precedes the manifest completion marker; a missing ledger beside an existing
+manifest is corruption and cannot reset completed candidates. Failed snapshot
+publication rolls back only files created by that attempt. Draft cleanup scans
+comparison children, including orphaned manifests, and blocks ambiguous history.
+
+`ComparisonService` loads one merged dataset after approval and executes each
+candidate independently against fresh decodes of that snapshot. It creates no
+parent performance run or combined portfolio. Individual strategy failures retain
+their reason and allow remaining candidates to run; shared source/data failures
+stop the batch and mark untouched candidates `not_run`. Terminal candidates are
+not replayed. The publisher binds each successful child to its parent, approved
+child manifest and snapshot receipt. Recovery after publication but before ledger
+update verifies the complete registered artifacts before recording success.
+
+Cancellation and worker-death reconciliation happen only after worker cleanup is
+verified. Parent `done` means all candidates were attempted, not that every one
+succeeded: the compact `comparison` status includes `outcome`, counts, dataset
+identity and every candidate's ID, label, run ID, child hash, status and reason.
+`outcome=no_success` is explicit when none succeeded. Status reads receipt metadata
+without loading the Parquet frame; execution and report creation verify actual
+snapshot bytes. Constructor maps and proposal rationales stay in the confirmation
+and report rather than being repeated on every poll.
+
 ## Execution Manifest
 
-Before spawning a background worker, the service publishes
+For a single execution, before spawning a background worker, the service publishes
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
 replaces a different existing manifest. Atomic publication applies to the manifest
 file; file publication and the database job write do not form one transaction.
@@ -562,7 +656,8 @@ controls, not an operating-system memory limit or a Python sandbox.
 ## Execution Plans and Confirmation Documents
 
 `ExecutionPlan` schema version 2 binds a unique 32-character `plan_id`, the full
-execution manifest, `original_config_path`, `PreflightReceipt`,
+single execution or comparison manifest, `original_config_path`, the matching
+`PreflightReceipt` or `ComparisonPreflightReceipt`,
 `ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
 The hash covers canonical JSON of every field except itself. The document and
 preflight hashes must identify the same manifest; the document also identifies
@@ -608,7 +703,11 @@ The version 2 receipt records:
 - `not_checked`: `historical_data`, `backtest_engine`, `training` and `performance`.
 
 There are no market windows, fold coverage, trade counts or profitability claims
-in this evidence. The confirmation explicitly states that data availability,
+in this evidence. A fixed comparison instead uses `ComparisonPreflightReceipt`
+schema 1, binding the bundle hash and ordered candidate IDs to individual schema 2
+receipts. Every comparison candidate has both synthetic fixtures, including bundled
+strategies; the standalone bundled preparation behavior above is unchanged.
+The confirmation explicitly states that data availability,
 actual folds, model training, execution costs and performance remain unverified
 until the user approves formal execution. Data or execution failures may therefore
 occur after a successful preparation.
@@ -630,7 +729,9 @@ or deleted. Existing run results and reports do not need to be recomputed.
 constructor arguments; each value contains a label, explanation and optional
 unit, never an executable parameter value. Labels must distinguish values and
 cover every scalar, null or empty-container leaf, including nested bundled
-`config`/`fit_config` and the union of effective optimization candidate leaves.
+`config`/`fit_config` and the union of effective optimization or fixed-comparison
+candidate leaves. Fixed comparisons display every complete constructor, selection
+rationale and candidate check evidence separately; common settings appear once.
 Candidate presentation and strategy loading share the same pure parameter merge:
 partial objects preserve unnamed captured fields, empty objects preserve an
 existing object, and non-object values replace the complete entry. Each search
@@ -799,16 +900,18 @@ long signal-contract fixtures check effective generated settings before executio
 The execution manifest additionally fixes runtime overrides and search settings
 without rewriting the base revision.
 
-Each completed background job writes files under `workspace/runs/<run_id>/` and records
-matching SQLite metadata:
+Each successfully published background run, including a comparison child, writes
+files under `workspace/runs/<run_id>/` and records matching SQLite metadata:
 
 - `result.json`: serialized metrics, stored as `result_json`.
 - `performance.json`: all metric values by scope, definitions and calculation
   metadata, stored as `performance_json`.
 - `observations.json`: aligned timestamps, equity, per-bar returns and trade
   records by scope, stored as `observations_json`.
-- `manifest.json`: the specification published at submission, registered after
-  successful result persistence as `execution_manifest`. Its artifact metadata
+- `manifest.json`: the approved execution specification, registered after
+  successful result persistence as `execution_manifest`. For a single job, the
+  file is published at submission; a comparison child's file is published from
+  its approved parent bundle when saving that child's result. Its artifact metadata
   includes `manifest_hash` and `schema_version`. Use `list_artifacts` and
   `get_artifact(include_content=true)` to inspect the JSON after completion.
 - `config.yaml`: effective config snapshot used for the run, stored as
@@ -828,9 +931,10 @@ matching SQLite metadata:
 - `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
   fingerprint hash, stored as `dataset_fingerprint`.
 - `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
-  as `pipeline_result` for completed backtest and walk-forward jobs.
+  as `pipeline_result` for completed backtest and walk-forward runs, including
+  successful ordinary-backtest comparison children.
 
-For background jobs, SQLite `runs.artifact_dir` must match the corresponding
+For background runs, SQLite `runs.artifact_dir` must match the corresponding
 `workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
 serialized effective config snapshot, not the hash of the immutable revision's
 base config. `runs.random_seed` records only the canonical
@@ -1013,7 +1117,16 @@ are not a cross-system transaction. A per-run `.result-publication` marker preve
 concurrent publishers. Handled exceptions restore the prior files and remove new
 run/artifact records. An externally terminated process can leave the marker;
 queries report the publication as busy instead of treating incomplete output as
-legacy data. The reader does not delete the marker or repair stored data.
+legacy data. Ordinary readers do not delete the marker or repair stored data.
+Comparison recovery is an explicit exception: after the caller confirms that the
+owning worker has stopped, `ComparisonService.reconcile` may use
+`RunPublisher.verify_published` to recover an already complete child publication.
+It verifies the approved parent/child identity, all registered artifact paths and
+digests, and the complete performance/observations pair before removing a leftover
+marker and recording success. Partial or corrupt output remains unavailable;
+recovery does not rerun strategy code or load a pipeline pickle. The worker's own
+synchronous failure handler can also reconcile through this verification path;
+external recovery must first confirm worker cleanup.
 
 Historical runs without performance artifacts remain readable through ordinary
 run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
@@ -1062,7 +1175,25 @@ aligned to their original bar indices after filtering and paging.
 
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
-accepts one to eight distinct runs. Omitted/null sections select standard;
+accepts one to eight distinct runs.
+Alternatively, pass `comparison_job_id` with no `run_ids` (CLI:
+`--comparison-job-id`, exclusive with repeatable `--run-id`). The parent must be
+terminal with a complete ledger. This selector includes every approved candidate;
+successes link to existing run detail views, while failures, cancellations and
+unexecuted rows show reasons without fake metrics or detail links. Even `sections=[]`
+retains the complete candidate table and effective parameters/rationales. Zero
+successful runs still produce a report. The report identity includes the bundle,
+ledger, verified snapshot/receipt and successful child artifacts. A failed or
+cancelled job with only `not_run` candidates may have no snapshot if loading failed
+before publication; missing evidence for any attempted candidate is an error.
+Final conversational delivery may identify the complete comparison by its exact
+parent job ID and result scopes, with the report link and detail-view instructions.
+Interpret every candidate using readable parameter names; exact internal labels
+and child run IDs remain in the report and need not be repeated in conversation.
+The parent's binding and report completeness are mechanically checked; natural
+language completeness, parameter/metric correspondence and navigation wording
+also require semantic review. Single-run delivery still identifies its run ID.
+For either selector, omitted/null sections select standard;
 an explicit ordered list chooses visible sections and their order within the detail
 view. When selected, `overview` always belongs to the first navigation level.
 With `[]`, no optional sections
@@ -1072,7 +1203,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 18 uses two navigation levels within one offline HTML
+Report schema 2 / template 19 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.
@@ -1250,8 +1381,10 @@ identity without modifying earlier reports or backtest results.
 The content digest includes source snapshots, template version, section order and
 commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as
 `research_report_html` and `research_report_manifest` with IDs
-`report:<report_id>:html` and `report:<report_id>:manifest`. A single-run report
-is registered to that run; a multi-run report has no single `run_id` binding.
+`report:<report_id>:html` and `report:<report_id>:manifest`. A report containing one
+successful run is registered to that run; reports with zero or multiple successful
+runs have no single `run_id` binding. Comparison report metadata also retains the
+parent job identity.
 The response gives path, artifact IDs
 and HTML SHA-256 without placing an unbounded document into the MCP response.
 `get_artifact` can retrieve the files; local paths are not public URLs.
