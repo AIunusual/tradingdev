@@ -668,7 +668,7 @@ class TestParameterSurface:
         assert board["n_candidates"] == 3
         assert board["n_ranked"] == 2
         assert [row["window"] for row in board["skipped"]] == [20]
-        assert "measured but is not finite" in board["skipped"][0]["reason"]
+        assert "is unavailable or not finite" in board["skipped"][0]["reason"]
 
     def test_a_ranked_row_reports_its_own_failed_metric_as_null(
         self, service: MLService, workspace: WorkspacePaths
@@ -973,3 +973,32 @@ class TestReturnSampling:
         board = service.leaderboard("annual_return", dataset_id=dataset_id)
         assert board["ranked"] == []
         assert len(board["skipped"]) == 1
+
+
+def test_surface_rejects_distinct_manifests_even_with_identical_data(
+    service: MLService,
+    workspace: WorkspacePaths,
+) -> None:
+    for source in ("binance_vision", "yahoo_finance"):
+        built = service.build_dataset(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            feature_set="returns",
+            source=source,
+        )
+        dataset_id = built["dataset"]["dataset_id"]
+        realized = _returns(workspace, dataset_id)
+        service.evaluate_signal(
+            realized,
+            realized,
+            dataset_id=dataset_id,
+            window=20,
+            record=True,
+        )
+    entries = LeaderboardStore(workspace.ml_leaderboard).entries()
+    assert len({entry.dataset_id for entry in entries}) == 2
+    assert len({entry.context.data_fingerprint for entry in entries}) == 1
+    with pytest.raises(ValueError, match="different dataset versions"):
+        service.leaderboard("ic_mean", allow_parameter_axes=True)

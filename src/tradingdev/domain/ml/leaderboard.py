@@ -408,10 +408,10 @@ def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
             "sides on one feature code. allow_mixed=True permits ranking "
             "incompatible contexts but does not make them comparable."
         )
-    versions: dict[int, set[str]] = {}
+    versions: dict[int, set[tuple[str, str]]] = {}
     for entry in entries:
         versions.setdefault(entry.context.horizon, set()).add(
-            entry.context.data_fingerprint
+            (entry.dataset_id, entry.context.data_fingerprint)
         )
     mixed = {horizon: values for horizon, values in versions.items() if len(values) > 1}
     if mixed:
@@ -534,7 +534,7 @@ def rank_entries(
             reason = (
                 f"no '{metric}' recorded"
                 if metric not in entry.metrics
-                else f"'{metric}' was measured but is not finite"
+                else f"'{metric}' is unavailable or not finite"
             )
             skipped.append(SkippedEntry(entry=entry, reason=reason))
             continue

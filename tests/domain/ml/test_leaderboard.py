@@ -714,7 +714,7 @@ class TestFailedCandidates:
     def test_a_failed_score_is_reported_as_measured_not_missing(self) -> None:
         result = rank_entries([_entry("a", icir=0.4), _entry("b", icir=None)], "icir")
         assert _ranked_ids(result) == ["a"]
-        assert "measured but is not finite" in result.skipped[0].reason
+        assert "is unavailable or not finite" in result.skipped[0].reason
 
     def test_an_unrecorded_metric_stays_distinguishable_from_a_failure(self) -> None:
         result = rank_entries([_entry("a"), _entry("b", icir=None)], "icir")

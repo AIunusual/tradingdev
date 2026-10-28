@@ -439,7 +439,7 @@ return is also `null` if compounded capital becomes nonpositive; subsequent
 losses cannot revive a bankrupt book into a profitable candidate.
 
 A metric that comes out NaN or Inf is stored as an explicit `null`, never removed
-from the record. Three states therefore stay distinguishable: a key that is
+from newly written records. Three states therefore stay distinguishable: a key that is
 absent was never recorded, a key holding `null` is unavailable or non-finite, and a
 finite value is an ordinary measurement. This matters for parameter surfaces. If
 the run at `window=20` fails, deleting its score would leave `window=10` and
@@ -447,6 +447,9 @@ the run at `window=20` fails, deleting its score would leave `window=10` and
 shortened axis would be wrong. A candidate with no score is skipped when ranking,
 but its `skipped` row still reports its horizon, window and quantile count, and
 the response's `parameter_axes` still lists the value it was measured at.
+Older evaluations dropped unavailable values: a missing key there cannot establish
+whether a metric was unmeasured or unavailable. Re-evaluate and record when that
+distinction is needed; reading an old record does not recover missing evidence.
 
 Consumers must read `null` as a gap at a known coordinate. A consumer whose own
 type cannot represent null must keep the coordinate and record validity beside
@@ -465,7 +468,7 @@ bypasses dataset verification.
 `allow_parameter_axes=True` is the narrower opt-in a sensitivity study needs: it
 permits horizon, IC window and quantile count to differ and nothing else.
 Instrument or panel symbols, period, feature set and code fingerprint must still
-match, and one horizon may hold only one dataset version, because a new horizon
+match, and one horizon may hold only one dataset ID and content hash, because a new horizon
 rebuilds its labels on its own dataset. A ranking across those axes describes a
 parameter surface, not one comparable measurement, so the response reports the
 observed values of each axis and appends a caveat saying so. Every row states its
