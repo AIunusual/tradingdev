@@ -32,6 +32,7 @@ from tradingdev.adapters.reporting.tables import render_table
 from tradingdev.domain.presentation.reports import (
     REPORT_SECTIONS,
     SCOPED_REPORT_SECTIONS,
+    report_navigation_instructions,
 )
 
 _STYLE = """
@@ -890,15 +891,10 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "".join(options)
         + "</select></nav>"
     )
-    introduction = (
-        "從參數比較總覽或結果清單選擇單組結果，檢視已選取的詳情章節。"
-        "所有內容保存在同一份離線 HTML；返回首頁與瀏覽器上一頁皆可切換。"
-        if has_details
-        else "此比較沒有成功候選的績效結果。以下保留全部候選、無結果原因、"
-        "共用設定與行情證據；沒有推算報酬或資金曲線。"
-        if "fixed_comparison" in payload and not payload["runs"]
-        else "本報告僅呈現已選取的總覽或共用說明，未選取單組詳情章節。"
-        "所有內容保存在同一份離線 HTML。"
+    introduction = report_navigation_instructions(
+        payload["sections"],
+        has_results=bool(payload["runs"]),
+        comparison="fixed_comparison" in payload,
     )
     body = (
         "<header><span class='badge'>TRADINGDEV · 回測研究</span>"

@@ -42,6 +42,7 @@ from tradingdev.domain.presentation.reports import (
     REPORT_SECTIONS,
     REPORT_TEMPLATE_VERSION,
     SCOPED_REPORT_SECTIONS,
+    report_navigation_instructions,
 )
 
 
@@ -178,6 +179,11 @@ class ReportService:
                 assert run_ids is not None
                 payload = self._load(run_ids)
             payload["sections"] = list(selected)
+            payload["navigation_instructions"] = report_navigation_instructions(
+                selected,
+                has_results=bool(payload["runs"]),
+                comparison=comparison_job_id is not None,
+            )
             payload["commentary"] = [dict(note) for note in notes]
             payload["comparison_table"] = comparison_table(
                 payload,
@@ -234,6 +240,7 @@ class ReportService:
                     for run in payload["runs"]
                     if "metrics" in selected
                 },
+                "navigation_instructions": payload["navigation_instructions"],
                 "scope_count": scope_count,
                 "renderers": payload.get("renderers", {}),
                 "sections": list(selected),
@@ -274,7 +281,7 @@ class ReportService:
             if comparison_job_id is not None:
                 manifest["comparison_job_id"] = comparison_job_id
                 manifest["fixed_comparison"] = payload["fixed_comparison"]
-            return publish_report(
+            published = publish_report(
                 self._workspace,
                 self._store,
                 report_id,
@@ -284,6 +291,10 @@ class ReportService:
                 scope_count=scope_count,
                 comparison_job_id=comparison_job_id,
             )
+            return {
+                **published,
+                "navigation_instructions": payload["navigation_instructions"],
+            }
         except (
             HistoryReadError,
             ReportPublicationError,

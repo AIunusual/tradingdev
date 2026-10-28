@@ -15,6 +15,7 @@ class ReportResponse(ContractModel):
     path: str
     sha256: str
     run_ids: list[str]
+    navigation_instructions: str
     scope_count: int
     comparison_job_id: str | None = None
 

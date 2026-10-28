@@ -87,11 +87,13 @@ def test_all_failed_comparison_preserves_research_even_when_section_is_omitted(
 ) -> None:
     fixture = _fixture(tmp_path, ("not_run", "not_run"), snapshot=False)
     evidence = _record(fixture)
-    html, payload = _payload(
-        fixture.service.generate_report(
-            comparison_job_id="comparison", sections=[] if omit else ["research"]
-        )
+    result = fixture.service.generate_report(
+        comparison_job_id="comparison", sections=[] if omit else ["research"]
     )
+    html, payload = _payload(result)
+    assert "沒有單組交易明細入口" in result["navigation_instructions"]
+    assert result["navigation_instructions"] in html
+    assert payload["navigation_instructions"] == result["navigation_instructions"]
     assert payload["runs"] == []
     assert evidence.content_hash in payload["research_documents"]
     assert payload["fixed_comparison"]["research_evidence_status"] == "recorded"

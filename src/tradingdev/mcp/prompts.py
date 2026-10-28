@@ -123,7 +123,8 @@ Strategy development workflow
      For fixed comparisons use comparison_job_id, not a handpicked run_ids list;
      this preserves all candidates, including when none produced a successful run.
    - The FINAL answer must identify results and scopes, link the readable report,
-     and explain how to select a parameter/result row and its requested details.
+     and include the returned navigation_instructions for selecting parameter/result
+     rows and viewing details. Copy this short guide without omitting it.
      Identify individual runs by run ID. A fixed comparison may instead use its
      comparison_job_id, which identifies the whole frozen set. Copy the complete
      identifier; never abbreviate it with ellipses or only a suffix. Interpret every

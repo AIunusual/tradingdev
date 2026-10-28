@@ -218,7 +218,8 @@ def register(
         selection does not redact data. Commentary is escaped plain text, labelled
         separately from calculations (at most 20 entries, 20,000 total characters).
         Returns an artifact and local path; no strategy or market download runs. Deliver
-        the link with run IDs/scopes and detail directions in the final answer, not only
+        the link with run IDs/scopes and the returned navigation_instructions in the
+        final answer, not only
         an intermediate message. Preserve report/source runs after server shutdown.
         """
         result = reports.generate_report(

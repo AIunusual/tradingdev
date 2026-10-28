@@ -188,6 +188,9 @@ def verify_comparison_delivery(
     assert report_call.arguments.get("run_ids") is None
     report = report_call.result
     assert report["comparison_job_id"] == job_id and report["run_ids"] == run_ids
+    assert report["navigation_instructions"] in visible_text(final.text), (
+        "Final delivery must retain the report's detail navigation guide"
+    )
     assert_comparison_references(
         final.text,
         job_id=job_id,
@@ -329,7 +332,8 @@ async def direct_comparison(
         "已完成兩組比較："
         + "、".join(run_ids)
         + f"。兩組範圍皆為 full。\n[閱讀完整比較報告](<{report['path']}>)"
-        "\n點選參數列可查看該組交易明細。"
+        + "\n"
+        + report["navigation_instructions"]
     )
     assert await user(ModelTurn(2, final, calls[boundary:])) is None
     return calls

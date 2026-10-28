@@ -1298,7 +1298,11 @@ MCP instructions request a standard report when completing an execution with
 performance/risk interpretation, unless the user asks for summary/metrics only
 or opts out. This is a client workflow requirement, not an automatic worker step.
 The final user-facing response must deliver the returned report link, identify
-the runs/scopes and explain the selected detail views. Tool success and an
+the runs/scopes and explain the selected detail views. `generate_report` returns
+`navigation_instructions` from the same section-aware definition used by the HTML
+introduction; this text is also saved in the payload and manifest. The client must
+include it with the final link. It does not advertise unselected detail sections or
+trade links for a comparison with no successful results. Tool success and an
 intermediate link do not establish delivery. Reports and their source runs remain
 workspace artifacts after server shutdown; shutdown does not authorize cleanup.
 If report generation or delivery fails, the client should preserve those sources
