@@ -45,7 +45,12 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
         ),
         (
             "prepare_walk_forward",
-            prepare | {"validation_config": '{"n_splits": 2, "train_ratio": 0.6}'},
+            prepare
+            | {
+                "validation_config": (
+                    '{"mode": "automatic", "n_splits": 2, "train_ratio": 0.6}'
+                )
+            },
         ),
         (
             "prepare_backtest",

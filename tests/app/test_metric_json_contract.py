@@ -159,7 +159,7 @@ def test_nested_walk_forward_metrics_are_standard_json_across_writers(
                     "end_date": "2024-02-01",
                     "init_cash": 10000,
                 },
-                "validation": {},
+                "validation": {"mode": "automatic"},
             },
         )
         ArtifactService(workspace=workspace, store=store).cache_pipeline_result(

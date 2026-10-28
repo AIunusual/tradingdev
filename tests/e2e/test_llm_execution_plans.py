@@ -37,11 +37,11 @@ from tests.integration.execution_fixtures import (
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.research_fixtures import research_for_config
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import NewResearchSpec, research_payload
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
+from tradingdev.domain.validation.config import parse_walk_forward_config
 
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient, MCPWorkspace
@@ -55,13 +55,7 @@ _WF_VALIDATION = {
     "n_splits": 2,
     "label_horizon": 5,
     "embargo_bars": 2,
-    "purged_split": True,
-    "train_start": "2024-01-06",
-    "train_end": "2024-01-05",
-    "test_start": "2024-01-05",
-    "test_end": "2024-01-03",
-    "train_ratio": 0.6,
-    "expanding": False,
+    "mode": "purged",
 }
 
 
@@ -146,8 +140,8 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
         "樣本外測試 2024-01-04 至 2024-01-08。"
         if kind == "optimization"
         else "已完成驗證與 dry-run 的生成 SMA 策略，執行 walk-forward。"
-        "保持現有 validation：purged_split=true、n_splits=2、label_horizon=5、"
-        "embargo_bars=2，以及不生效的指定日期、train_ratio、expanding 設定；"
+        "保持現有 validation：mode=purged、n_splits=2、label_horizon=5、"
+        "embargo_bars=2；"
         "策略參數與 random_seed=42 也保持原值，"
         "整體期間 2024-01-01 至 2024-01-08。"
     )
@@ -402,14 +396,14 @@ def _assert_evidence(
         assert plan.preflight.synthetic_fixture_rows == [80, 240]
         assert "signal_contract" in plan.preflight.checked_paths
         assert manifest.config_copy()["random_seed"] == 42
-        assert manifest.config_copy()["validation"] == WalkForwardConfig.model_validate(
+        assert manifest.config_copy()["validation"] == parse_walk_forward_config(
             _WF_VALIDATION
         ).model_dump(mode="json")
         for _, read in _successful(calls, "get_strategy"):
             source_config = yaml.safe_load(read.result["yaml_config"])
-            assert WalkForwardConfig.model_validate(
+            assert parse_walk_forward_config(
                 source_config["validation"]
-            ) == WalkForwardConfig.model_validate(_WF_VALIDATION)
+            ) == parse_walk_forward_config(_WF_VALIDATION)
             assert source_config["random_seed"] == 42
         confirmation = (
             Path(prepare_call.result["html_path"])
@@ -418,11 +412,20 @@ def _assert_evidence(
         )
         assert "已試跑的驗證分段" not in confirmation
         assert "固定起點、逐次擴大訓練區間" in confirmation
-        assert "淨化分段不使用指定日期" in confirmation
-        assert "訓練開始：2024-01-06" in confirmation
-        assert "訓練結束：2024-01-05" in confirmation
-        assert "淨化分段不使用此比例" in confirmation
-        assert "此欄設定值（否）不使用" in confirmation
+        section = next(
+            item for item in plan.document.sections if item.id == "validation"
+        )
+        assert {field.label for field in section.fields} == {
+            "分段方式",
+            "預定分段組數",
+            "訓練區間逐次擴大",
+            "額外隔離根數",
+            "驗證紀錄重點指標",
+            "標籤前視根數",
+        }
+        assert "預定分段組數：2" in confirmation
+        assert "標籤前視根數：5 根 K 線" in confirmation
+        assert "額外隔離根數：2 根 K 線" in confirmation
         assert set(run["available_scopes"]) == {
             "fold/0/train",
             "fold/0/test",

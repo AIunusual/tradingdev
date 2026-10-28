@@ -240,6 +240,7 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
     service, _data_service, _strategy_loader, strategy = _service(tmp_path, rows=40)
     raw_config = _raw_config(
         validation={
+            "mode": "automatic",
             "n_splits": 2,
             "train_ratio": 0.5,
             "target_metric": "total_return",
@@ -328,7 +329,7 @@ def test_run_manifest_uses_captured_defaults_in_real_strategy(
     )
     config = _raw_config(strategy={"id": "kd_crossover", "parameters": {}})
     if walk_forward:
-        config["validation"] = {"n_splits": 2, "train_ratio": 0.5}
+        config["validation"] = {"mode": "automatic", "n_splits": 2, "train_ratio": 0.5}
     manifest = service.prepare_execution(
         config, kind="walk_forward" if walk_forward else "backtest"
     )
@@ -381,6 +382,7 @@ backtest:
   end_date: "2024-01-02"
   init_cash: 10000.0
 validation:
+  mode: automatic
   n_splits: 1
 """,
         encoding="utf-8",
@@ -437,7 +439,7 @@ def test_walk_forward_manifest_fixes_mode_and_validation_defaults(
     tmp_path: Path,
 ) -> None:
     service, _data, _loader, _strategy = _service(tmp_path, rows=40)
-    config = _raw_config(validation={"n_splits": 2})
+    config = _raw_config(validation={"mode": "automatic", "n_splits": 2})
     manifest = service.prepare_execution(config, kind="walk_forward")
     config.pop("validation")
 

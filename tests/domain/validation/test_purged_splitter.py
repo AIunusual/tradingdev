@@ -12,10 +12,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+    PurgedWalkForwardConfig,
+)
 from tradingdev.domain.validation.leakage_gate import (
     WalkForwardLeakageError,
     audit_fold_windows,
@@ -33,14 +36,16 @@ if TYPE_CHECKING:
 def _purged_windows(
     df: pd.DataFrame, *, horizon: int, embargo: int = 0, n_splits: int = 3
 ) -> list[FoldWindow]:
-    config = WalkForwardConfig(
-        n_splits=n_splits, label_horizon=horizon, embargo_bars=embargo
+    config = PurgedWalkForwardConfig(
+        mode="purged", n_splits=n_splits, label_horizon=horizon, embargo_bars=embargo
     )
     return PurgedDataSplitter(config).split_windows(df)
 
 
 def _plain_windows(df: pd.DataFrame, *, n_splits: int = 3) -> list[FoldWindow]:
-    config = WalkForwardConfig(n_splits=n_splits, train_ratio=0.7)
+    config = AutomaticWalkForwardConfig(
+        mode="automatic", n_splits=n_splits, train_ratio=0.7
+    )
     return DataSplitter(config).split_windows(df)
 
 
@@ -98,14 +103,18 @@ class TestPurgedFoldsPassTheGate:
 
 class TestPurgedSplitterContract:
     def test_requires_a_label_horizon(self) -> None:
-        with pytest.raises(ValueError, match="label horizon"):
-            PurgedDataSplitter(WalkForwardConfig(n_splits=2, label_horizon=0))
+        with pytest.raises(ValueError, match="label_horizon"):
+            PurgedDataSplitter(
+                PurgedWalkForwardConfig(mode="purged", n_splits=2, label_horizon=0)
+            )
 
     def test_windows_match_the_frames(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         """Anti-drift lock, mirroring the one for DataSplitter."""
-        config = WalkForwardConfig(n_splits=3, label_horizon=5, embargo_bars=2)
+        config = PurgedWalkForwardConfig(
+            mode="purged", n_splits=3, label_horizon=5, embargo_bars=2
+        )
         splitter = PurgedDataSplitter(config)
         folds = splitter.split(walk_forward_ohlcv_df)
         windows = splitter.split_windows(walk_forward_ohlcv_df)
@@ -130,7 +139,9 @@ class TestValidatorWithPurgedSplit:
     ) -> None:
         """End-to-end: same label horizon, plain blocked and purged accepted."""
         blocked = WalkForwardValidator(
-            config=WalkForwardConfig(n_splits=2, train_ratio=0.7, label_horizon=5),
+            config=AutomaticWalkForwardConfig(
+                mode="automatic", n_splits=2, train_ratio=0.7, label_horizon=5
+            ),
             engine=self.engine,
         )
         with pytest.raises(WalkForwardLeakageError):
@@ -139,8 +150,8 @@ class TestValidatorWithPurgedSplit:
             )
 
         purged = WalkForwardValidator(
-            config=WalkForwardConfig(
-                n_splits=2, label_horizon=5, embargo_bars=2, purged_split=True
+            config=PurgedWalkForwardConfig(
+                mode="purged", n_splits=2, label_horizon=5, embargo_bars=2
             ),
             engine=self.engine,
         )
@@ -152,8 +163,10 @@ class TestValidatorWithPurgedSplit:
     def test_purged_split_without_horizon_is_a_config_error(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        with pytest.raises(ValueError, match="label horizon"):
+        with pytest.raises(ValueError, match="label_horizon"):
             WalkForwardValidator(
-                config=WalkForwardConfig(n_splits=2, purged_split=True),
+                config=PurgedWalkForwardConfig.model_validate(
+                    {"mode": "purged", "n_splits": 2}
+                ),
                 engine=self.engine,
             )

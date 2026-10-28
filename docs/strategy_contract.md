@@ -557,83 +557,64 @@ applicable. `prepare_backtest` and `prepare_optimization` reject this argument.
 The effective mapping is captured in the manifest without modifying the source
 revision, its validation evidence or current pointer.
 
-| Setting | Default | Effect |
+The mapping requires an explicit `mode`. Each mode accepts only its own fields;
+unused settings (even `null` or default-valued settings) are rejected rather than
+silently ignored. Obtain the generated `configuration` contract for the full schema.
+
+| Mode | Fields and defaults | Behavior |
 | --- | --- | --- |
-| `label_horizon` | `0` | A positive value declares how many source rows a training label looks ahead and enables the pre-fold label-overlap audit. Values below 1 leave that audit disabled with the plain splitter. |
-| `purged_split` | `false` | Selects the opt-in anchored purged splitter when true; it requires `label_horizon >= 1`. |
-| `embargo_bars` | `0` | Extra rows removed before each test window in addition to the label-horizon purge; used only when `purged_split` is true. |
-| `n_splits` | `1` | Number of automatic test folds; use a positive integer and enough data for nonempty windows. |
+| `automatic` | `n_splits: 1`, `train_ratio: 0.8`, `expanding: false` | Rolling or expanding windows from the loaded row count. |
+| `explicit` | Required `train_start`, `train_end`, `test_start`, `test_end` | Exactly one training/test pair of inclusive UTC calendar days. |
+| `purged` | `n_splits: 1`, required positive `label_horizon`, `embargo_bars: 0` | Anchored expanding windows with a label-horizon purge and optional extra gap. |
 
-With `purged_split: false`, all four `train_start`, `train_end`, `test_start`
-and `test_end` values select one explicit date split. Otherwise the plain
-splitter uses automatic windows with `train_ratio: 0.8` and `expanding: false`
-by default. Each boundary is an inclusive UTC calendar day, so the four dates
-are converted to UTC first (naive values are treated as UTC), then their time
-of day is discarded. Their UTC days must satisfy
-`train_start <= train_end < test_start <= test_end`: a train
-window ending on the day the test window starts would train on bars the test
-set also scores, so it is rejected. Supplying only some of the four fields is
-rejected as well, instead of silently falling back to automatic windows. The
-active training and test windows, including the full final UTC day, must fit
-inside the resolved research start/end timestamps. Execution preparation rejects
-out-of-range windows rather than clipping them or extending the research period.
-For the requested period, supply suitable explicit windows or replace the
-validation mapping with an automatic split. Bundled examples with
-explicit windows use `23:59:59.999999` on their final backtest day; a date-only
-research end still means midnight, not the end of that day.
-The splitter re-checks the loaded frame, raising `WalkForwardSplitError` when the
-timestamps are not ascending, a window selects no rows, or the selected train
-and test rows share a bar.
-A positive `label_horizon` checks the selected windows before any fold's
-strategy fitting or backtest runs. If training labels reach the test window,
-the full validation raises `WalkForwardLeakageError`; this audit detects the
-problem without changing the windows. Thus setting only a positive horizon on
-adjacent plain train/test windows will block them rather than purge them.
-`embargo_bars` has no effect in this plain mode, including with explicit dates.
+All modes accept `target_metric: sharpe_ratio` for fold logging/summary, not as a
+strategy training objective. `automatic` and `explicit` also accept
+`label_horizon: 0`; zero disables the overlap audit, while a positive value declares
+how many source rows a training label looks ahead. Counts/horizons/embargo are
+integers (not booleans), counts are positive, horizons/embargo cannot be negative,
+and automatic `train_ratio` must be finite and strictly between zero and one.
+`purged_split` is removed: new YAML and MCP inputs must select `mode` explicitly.
+Previously saved result manifests remain readable without rewriting their settings
+or hashes; executing an old configuration requires preparing valid new settings.
 
-To remove overlapping training labels automatically, add this mapping at the
-root of a strategy YAML whose loaded history is long enough for all folds:
+Explicit dates are converted to UTC (naive dates mean UTC), then their time of day
+is discarded. Their UTC days must satisfy
+`train_start <= train_end < test_start <= test_end`. All four dates are required.
+The complete UTC days must fit inside the requested research period; preparation
+rejects rather than clips or extends them. Bundled examples therefore end their
+backtest period at `23:59:59.999999`; a date-only research end still means midnight.
+The loaded frame must have ascending timestamps, nonempty windows and no shared
+train/test bars. Invalid data-dependent windows raise `WalkForwardSplitError`.
+
+A positive horizon audits all selected windows before fitting or scoring any fold.
+Overlapping labels raise `WalkForwardLeakageError`; automatic and explicit modes
+check without changing their windows. Adjacent windows with forward labels will
+therefore fail. To remove overlapping training labels automatically:
 
 ```yaml
 validation:
+  mode: purged
   n_splits: 3
   label_horizon: 5
   embargo_bars: 2
-  purged_split: true
   target_metric: "sharpe_ratio"
 ```
 
-The purged splitter divides the loaded rows into `n_splits + 1` contiguous,
-near-equal blocks. The first is training-only; each later block is tested once,
-using all preceding blocks as anchored training history after removing the
-`label_horizon + embargo_bars` gap immediately before its test window. In this
-full-validation splitter, explicit train/test dates, `train_ratio` and `expanding` do not control
-folds, even if present in the YAML. The schema still parses supplied dates as
-datetimes, but does not require all four or validate their order in purged mode.
-These inactive dates also do not trigger the research-period containment check.
-Omit those inactive settings to keep the
-request clear. The backtest's data bounds still determine the history supplied
-to the splitter.
+Purged mode divides the loaded rows into `n_splits + 1` contiguous near-equal blocks.
+The first is training-only; later blocks are tested once, with all preceding blocks
+as training history after removing `label_horizon + embargo_bars` rows immediately
+before the test window. It rejects explicit dates, `train_ratio` and `expanding`.
+The backtest's data bounds still determine the supplied history. Insufficient data,
+too many blocks or a gap leaving no training rows fail during formal execution.
+Schema validation cannot establish data-dependent coverage.
 
-Preparation rejects a missing, zero or negative purged horizon, a negative purged
-embargo, a nonpositive automatic fold count, and an ordinary automatic split ratio
-outside `(0, 1)`. The splitter repeats its applicable checks during execution and
-also rejects data-dependent problems such as a horizon at least as long as the
-input, too many blocks, or a gap that leaves no training rows. The YAML schema
-rejects unknown field names but does not enforce every numerical range or fold
-geometry; successful YAML parsing alone does not establish a usable validation run.
-The plain splitter's `label_horizon: 0` default is an audit opt-out, not evidence
-that a strategy's labels are safe. Declare the actual forward horizon when the
-strategy uses such labels. This gate audits row-window geometry, not arbitrary
-feature code or a strategy's independently constructed labels.
+Confirmation preparation checks code and configuration without loading historical
+data, building data-dependent folds, training or backtesting. The confirmation
+shows only the selected mode's effective settings. After approval, formal execution
+performs the complete pre-fold audit. Zero horizon is an audit opt-out, not proof
+that labels are safe. The audit checks row-window geometry, not arbitrary feature
+code or independently constructed labels. Declare the actual forward horizon.
 
-MCP confirmation preparation validates configuration and execution mode without
-loading market data, constructing data-dependent folds, fitting a model or running
-any fold through the backtest engine. The confirmation shows the effective mode
-and identifies inactive settings; it does not claim that the requested history
-can form usable folds. The formal strategy walk-forward execution applies the
-complete pre-fold audit after approval and before running its folds.
-A nonpositive horizon means the audit is disabled, not that labels are safe.
 This differs from the ML tool's timestamp/label-interval validation described below.
 
 ## ML Research Contract

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.domain.strategies.signals import generate_checked_signals
+from tradingdev.domain.validation.config import PurgedWalkForwardConfig
 from tradingdev.domain.validation.leakage_gate import (
     WalkForwardLeakageError,
     audit_fold_windows,
@@ -24,8 +25,8 @@ if TYPE_CHECKING:
         BaseBacktestEngine,
     )
     from tradingdev.domain.backtest.result import BacktestResult
-    from tradingdev.domain.backtest.schemas import WalkForwardConfig
     from tradingdev.domain.strategies.base import BaseStrategy
+    from tradingdev.domain.validation.config import WalkForwardConfig
 
 logger = setup_logger(__name__)
 
@@ -57,7 +58,9 @@ class WalkForwardValidator:
         self._config = config
         self._engine = engine
         self._splitter: DataSplitter | PurgedDataSplitter = (
-            PurgedDataSplitter(config) if config.purged_split else DataSplitter(config)
+            PurgedDataSplitter(config)
+            if isinstance(config, PurgedWalkForwardConfig)
+            else DataSplitter(config)
         )
 
     def validate(
@@ -92,7 +95,7 @@ class WalkForwardValidator:
     def _check_leakage(self, df: pd.DataFrame) -> None:
         """Block the run when training bars can see their own test window.
 
-        Non-positive ``label_horizon`` disables this audit; it does not
+        Zero ``label_horizon`` disables this audit; it does not
         establish that the strategy has no forward-looking labels.
         """
         horizon = self._config.label_horizon

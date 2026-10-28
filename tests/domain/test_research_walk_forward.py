@@ -24,7 +24,7 @@ def _artifacts(
 ) -> tuple[ExecutionManifest, PerformanceArtifacts]:
     manifest = _manifest("walk_forward", validation=validation)
     config = manifest.config_copy()
-    explicit = "train_start" in validation and not validation.get("purged_split")
+    explicit = validation["mode"] == "explicit"
     count = 1 if explicit else validation["n_splits"]
     scopes = {}
     observations = {}
@@ -70,11 +70,11 @@ def _artifacts(
 
 
 _EXPLICIT = {
+    "mode": "explicit",
     "train_start": "2024-01-01",
     "train_end": "2024-06-30",
     "test_start": "2024-07-01",
     "test_end": "2024-12-31",
-    "n_splits": 3,
 }
 
 
@@ -82,8 +82,8 @@ _EXPLICIT = {
     "validation",
     [
         _EXPLICIT,
-        {"n_splits": 3},
-        {**_EXPLICIT, "n_splits": 3, "purged_split": True, "label_horizon": 1},
+        {"mode": "automatic", "n_splits": 3},
+        {"mode": "purged", "n_splits": 3, "label_horizon": 1},
     ],
 )
 def test_valid_fold_membership_and_active_windows(validation: dict[str, Any]) -> None:
@@ -107,7 +107,9 @@ def test_valid_fold_membership_and_active_windows(validation: dict[str, Any]) ->
     ],
 )
 def test_invalid_fold_identity_or_window_is_rejected(change: str) -> None:
-    validation = {"n_splits": 3} if "overlap" in change else _EXPLICIT
+    validation = (
+        {"mode": "automatic", "n_splits": 3} if "overlap" in change else _EXPLICIT
+    )
     manifest, artifacts = _artifacts(validation)
     performance, observations = artifacts.performance, artifacts.observations
     if change in {"training_as_test", "test_as_train"}:

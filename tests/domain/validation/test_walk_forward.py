@@ -2,12 +2,15 @@
 
 import pandas as pd
 
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import (
     SignalBacktestEngine,
 )
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+    ExplicitWalkForwardConfig,
+)
 from tradingdev.domain.validation.report import (
     format_walk_forward_report,
     summarize_results,
@@ -17,7 +20,7 @@ from tradingdev.domain.validation.walk_forward import (
 )
 
 
-def _explicit_config(df: pd.DataFrame) -> WalkForwardConfig:
+def _explicit_config(df: pd.DataFrame) -> ExplicitWalkForwardConfig:
     """Split ``df`` at its midpoint, leaving the boundary days disjoint.
 
     Boundaries are inclusive UTC days, so the test window starts the day
@@ -25,7 +28,8 @@ def _explicit_config(df: pd.DataFrame) -> WalkForwardConfig:
     """
     ts = df["timestamp"]
     boundary = ts.iloc[len(ts) // 2]
-    return WalkForwardConfig(
+    return ExplicitWalkForwardConfig(
+        mode="explicit",
         train_start=ts.iloc[0].to_pydatetime(),
         train_end=boundary.to_pydatetime(),
         test_start=(boundary + pd.Timedelta(days=1)).to_pydatetime(),
@@ -64,14 +68,18 @@ class TestWalkForwardValidator:
         assert "k_period" in results[0].strategy_params
 
     def test_auto_split_rolling(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7, expanding=False)
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7, expanding=False
+        )
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
         assert len(results) == 2
 
     def test_summary_aggregation(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7, expanding=False)
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7, expanding=False
+        )
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)

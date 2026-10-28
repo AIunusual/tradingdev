@@ -1,8 +1,8 @@
 """Opt-in anchored strategy folds using the ML purge/embargo arithmetic.
 
 The first block is training-only; later blocks test against previous data
-minus label horizon and embargo. Unlike DataSplitter, explicit dates,
-train_ratio and expanding do not control this split.
+minus label horizon and embargo. The purged mode accepts only fields
+that affect this split.
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tradingdev.domain.ml.validation import purged_walk_forward_splits
+from tradingdev.domain.validation.config import PurgedWalkForwardConfig
 
 if TYPE_CHECKING:
     import pandas as pd
 
-    from tradingdev.domain.backtest.schemas import WalkForwardConfig
     from tradingdev.domain.validation.leakage_gate import FoldWindow
 
 
@@ -23,18 +23,12 @@ class PurgedDataSplitter:
 
     def __init__(
         self,
-        config: WalkForwardConfig,
+        config: PurgedWalkForwardConfig,
         *,
         min_train_bars: int = 1,
     ) -> None:
-        if config.label_horizon < 1:
-            msg = (
-                "PurgedDataSplitter needs a label horizon: set "
-                "WalkForwardConfig.label_horizon to the number of bars a "
-                "target looks ahead (got "
-                f"{config.label_horizon})."
-            )
-            raise ValueError(msg)
+        if not isinstance(config, PurgedWalkForwardConfig):
+            raise TypeError("PurgedDataSplitter requires purged configuration")
         self._config = config
         self._min_train_bars = min_train_bars
 

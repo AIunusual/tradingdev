@@ -83,7 +83,7 @@ def _pipeline(
         },
     }
     if walk_forward:
-        config["validation"] = {}
+        config["validation"] = {"mode": "automatic"}
     manifest = ExecutionManifest.create(
         kind="walk_forward" if walk_forward else "backtest",
         config=config,

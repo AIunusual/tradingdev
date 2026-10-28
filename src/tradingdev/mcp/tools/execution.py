@@ -24,13 +24,13 @@ from tradingdev.app.contracts.plans import (
     PlanStarted,  # noqa: TC001
 )
 from tradingdev.app.contracts.research_evidence import ResearchEvidenceSaved  # noqa: TC001
-from tradingdev.domain.backtest.schemas import WalkForwardConfig  # noqa: TC001
 from tradingdev.domain.preflight import PreflightRequest
 from tradingdev.domain.research import ResearchSpec  # noqa: TC001
 from tradingdev.domain.research_evidence import (
     EvidenceId,  # noqa: TC001
     ResearchEvidenceDraft,  # noqa: TC001
 )
+from tradingdev.domain.validation.config import WalkForwardConfig  # noqa: TC001
 from tradingdev.mcp.tools.input_errors import invalid_arguments
 
 if TYPE_CHECKING:
@@ -188,7 +188,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
 
         Requires validation training/test windows and a runnable/promoted revision.
         validation_config replaces the complete validation section; use automatic
-        folds or explicit inclusive UTC day windows within the research period.
+        mode=automatic folds, mode=explicit inclusive UTC day windows, or
+        mode=purged folds with a positive label_horizon. Only fields for the
+        chosen mode are accepted; explicit windows must fit the research period.
         Omission keeps the selected configuration.
         Supply a saved evidence_id as for prepare_backtest. Program checks
         do not prove training or folds will succeed. Present confirmation_summary

@@ -8,11 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.strategies.bundled.quantile_strategy import strategy as quantile
 from tradingdev.domain.strategies.bundled.quantile_strategy.config import (
     QuantileStrategyConfig,
+)
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
 )
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
@@ -76,7 +78,12 @@ def test_real_model_walk_forward_keeps_train_and_test_rows(
     original_train = train.copy(deep=True)
     original_test = test.copy(deep=True)
 
-    validator = WalkForwardValidator(WalkForwardConfig(), engine)
+    validator = WalkForwardValidator(
+        AutomaticWalkForwardConfig(
+            mode="automatic",
+        ),
+        engine,
+    )
     result = validator.run_fold(0, strategy, train, test)
 
     assert len(strategy.scored_frames) == 2

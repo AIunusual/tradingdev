@@ -552,9 +552,10 @@ async def test_real_quality_gates_reject_invalid_llm_output(
 @pytest.mark.parametrize(
     ("validation", "fold_count"),
     [
-        ({"n_splits": 2, "train_ratio": 0.6}, 2),
+        ({"mode": "automatic", "n_splits": 2, "train_ratio": 0.6}, 2),
         (
             {
+                "mode": "explicit",
                 "train_start": "2024-01-02T03:00:00+08:00",
                 "train_end": "2024-01-03T03:00:00+08:00",
                 "test_start": "2024-01-04T03:00:00+08:00",
@@ -565,14 +566,13 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         (
             {
                 "n_splits": 2,
-                "purged_split": True,
+                "mode": "purged",
                 "label_horizon": 5,
-                "train_start": "2024-01-08",
             },
             2,
         ),
     ],
-    ids=["automatic", "explicit_offset_dates", "purged_partial_dates"],
+    ids=["automatic", "explicit_offset_dates", "purged"],
 )
 async def test_walk_forward_runs_through_real_worker(
     mcp_workspace: MCPWorkspace,

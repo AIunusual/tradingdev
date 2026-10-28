@@ -133,7 +133,7 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
         prepared = await client.call(
             "prepare_walk_forward",
             **arguments,
-            validation_config={"n_splits": 2, "train_ratio": 0.6},
+            validation_config={"mode": "automatic", "n_splits": 2, "train_ratio": 0.6},
         )
         # The selected walk-forward config has additional fit parameters. Repair
         # the saved record using the public exact-binding response.
@@ -163,7 +163,7 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
         prepared = await client.call(
             "prepare_walk_forward",
             **arguments,
-            validation_config={"n_splits": 2, "train_ratio": 0.6},
+            validation_config={"mode": "automatic", "n_splits": 2, "train_ratio": 0.6},
         )
         assert prepared["success"], prepared
         with closing(
@@ -178,8 +178,8 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
         assert effective["backtest"]["start_date"].startswith("2026-01-01")
         assert effective["backtest"]["end_date"].startswith("2026-02-01")
         assert effective["validation"]["n_splits"] == 2
-        assert effective["validation"]["train_start"] is None
-        assert effective["validation"]["test_end"] is None
+        assert "train_start" not in effective["validation"]
+        assert "test_end" not in effective["validation"]
         assert (await client.call("list_jobs"))["items"] == []
         assert (await client.call("list_runs"))["items"] == []
         assert not list(mcp_workspace.data_root.rglob("*.parquet"))

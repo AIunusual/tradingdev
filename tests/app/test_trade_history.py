@@ -92,7 +92,7 @@ def _publish(
         },
     }
     if summary:
-        config["validation"] = {}
+        config["validation"] = {"mode": "automatic"}
     search = (
         OptimizationSpec.model_validate(
             {

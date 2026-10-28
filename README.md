@@ -238,12 +238,12 @@ Safety Volume（`safety_first_volume`）必須先訓練，一般回測與參數�
 validation:
   n_splits: 3
   label_horizon: 5
-  purged_split: true
+  mode: purged
   embargo_bars: 2
 ```
 
 正值 `label_horizon` 會在正式分折訓練／回測前檢查標籤重疊；只加此值可能讓相鄰的普通分段被拒絕。
-`purged_split` 會扣除隔離區間，並忽略指定的訓練／測試切分日期、`train_ratio` 與 `expanding`。
+`mode: purged` 會扣除隔離區間；不同切分方式的設定不能混用，系統會拒絕無效的組合。
 普通分段的零值不啟用這項檢查，淨化分段則要求正值。確認前只檢查設定，
 不執行任何分折訓練或回測；實際資料能否形成有效分段在正式執行時檢查。
 完整限制見[策略 walk-forward 設定](docs/strategy_contract.md#strategy-walk-forward-settings)。

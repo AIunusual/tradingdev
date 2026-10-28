@@ -84,7 +84,7 @@ def _manifest(
         },
     }
     if kind == "walk_forward":
-        config["validation"] = validation or {"n_splits": 3}
+        config["validation"] = validation or {"mode": "automatic", "n_splits": 3}
     search = (
         OptimizationSpec.model_validate(
             {
@@ -627,16 +627,17 @@ def test_explicit_validation_does_not_claim_automatic_controls_are_active() -> N
     manifest = _manifest(
         "walk_forward",
         validation={
+            "mode": "explicit",
             "train_start": "2024-01-01",
             "train_end": "2024-06-30",
             "test_start": "2024-07-01",
             "test_end": "2024-12-31",
-            "n_splits": 5,
         },
     )
     text = render_confirmation_text(_document(manifest))
     assert "使用指定日期的一組" in text
-    assert "指定日期模式固定為一組，此設定不使用" in text
+    assert "訓練比例" not in text
+    assert "訓練區間逐次擴大" not in text
     assert "訓練開始：2024-01-01" in text
     assert "預定分段組數：1" in text
     assert "尚未訓練模型或執行驗證分段" in text
@@ -655,6 +656,7 @@ def test_explicit_validation_displays_effective_utc_bounds_in_text_and_html(
             strict=True,
         )
     }
+    validation["mode"] = "explicit"
     document = _document(_manifest("walk_forward", validation=validation))
     text = render_confirmation_text(document)
     html = unescape(render_confirmation_html(document))
@@ -686,7 +688,12 @@ def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
         _document(
             _manifest(
                 "walk_forward",
-                validation={"n_splits": 2, "train_ratio": 0.6, "expanding": expanding},
+                validation={
+                    "mode": "automatic",
+                    "n_splits": 2,
+                    "train_ratio": 0.6,
+                    "expanding": expanding,
+                },
             )
         )
     )
@@ -696,82 +703,37 @@ def test_plain_automatic_validation_keeps_active_ratio_and_expansion(
     assert "尚未訓練模型或執行驗證分段" in text
 
 
-@pytest.mark.parametrize("dates", [False, True])
-def test_purged_validation_shows_effective_mode_and_ignored_controls(
-    dates: bool,
-) -> None:
-    validation: dict[str, Any] = {
-        "n_splits": 2,
-        "label_horizon": 5,
-        "embargo_bars": 2,
-        "purged_split": True,
-        "train_ratio": 0.6,
-        "expanding": False,
-    }
-    if dates:
-        validation.update(
-            train_start="2024-01-01",
-            train_end="2024-06-30",
-            test_start="2024-07-01",
-            test_end="2024-12-31",
-        )
-    manifest = _manifest("walk_forward", validation=validation)
+def test_purged_validation_renders_only_effective_controls() -> None:
+    manifest = _manifest(
+        "walk_forward",
+        validation={
+            "mode": "purged",
+            "n_splits": 2,
+            "label_horizon": 5,
+            "embargo_bars": 2,
+        },
+    )
     text = render_confirmation_text(_document(manifest))
     assert "分段方式：淨化分段：固定起點、逐次擴大訓練區間" in text
-    assert "淨化分段不使用指定日期" in text
-    assert "淨化分段不使用此比例" in text
     assert "訓練區間逐次擴大：是" in text
-    assert "此欄設定值（否）不使用" in text
     assert "預定分段組數：2" in text
+    assert "標籤前視根數：5 根 K 線" in text
+    assert "額外隔離根數：2 根 K 線" in text
+    assert "訓練開始" not in text
+    assert "訓練比例" not in text
     assert "尚未訓練模型或執行驗證分段" in text
-    assert "已試跑的驗證分段" not in text
-    assert "使用指定日期的一組" not in text
-    if dates:
-        assert "訓練開始：2024-01-01" in text
     with pytest.raises(ValueError, match="Extra inputs"):
         build_confirmation_document(
             manifest, _presentation(manifest), _receipt(manifest, total_fold_count=1)
         )
 
 
-def test_leakage_controls_are_rendered_instead_of_being_swallowed() -> None:
-    """Purge settings change what a fold may see, so they need a human view."""
-    enabled = render_confirmation_text(
-        _document(
-            _manifest(
-                "walk_forward",
-                validation={
-                    "label_horizon": 5,
-                    "embargo_bars": 2,
-                    "purged_split": True,
-                },
-            )
-        )
-    )
-    assert "標籤前視根數：5 根 K 線" in enabled
-    assert "淨化分段：是" in enabled
-    assert "額外隔離根數：2 根 K 線" in enabled
-
-    defaults = render_confirmation_text(_document(_manifest("walk_forward")))
-    assert "標籤前視根數：未啟用檢查" in defaults
-    assert "淨化分段：否" in defaults
-
-
-@pytest.mark.parametrize("horizon", [0, -1])
-def test_disabled_label_audit_is_not_presented_as_safe_labels(horizon: int) -> None:
-    text = render_confirmation_text(
-        _document(_manifest("walk_forward", validation={"label_horizon": horizon}))
-    )
-    assert f"未啟用檢查（設定值：{horizon}）" in text
+def test_disabled_label_audit_is_not_presented_as_safe_labels() -> None:
+    text = render_confirmation_text(_document(_manifest("walk_forward")))
+    assert "未啟用檢查（設定值：0）" in text
     assert "未啟用不代表標籤安全" in text
     assert "標籤不取自未來資料" not in text
-    with pytest.raises(ValueError, match="positive label horizon"):
-        _document(
-            _manifest(
-                "walk_forward",
-                validation={"purged_split": True, "label_horizon": horizon},
-            )
-        )
+    assert "額外隔離根數" not in text
 
 
 @pytest.mark.parametrize(
@@ -845,7 +807,9 @@ def test_preflight_cannot_claim_unexecuted_or_missing_program_checks(
 
 
 def test_even_one_fold_is_not_presented_as_having_been_trained_or_backtested() -> None:
-    document = _document(_manifest("walk_forward", validation={"n_splits": 1}))
+    document = _document(
+        _manifest("walk_forward", validation={"mode": "automatic", "n_splits": 1})
+    )
     text = render_confirmation_text(document)
     assert "預定分段組數：1" in text
     assert "尚未訓練模型或執行驗證分段" in text

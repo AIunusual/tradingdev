@@ -5,7 +5,6 @@ from typing import Self
 from pydantic import Field, JsonValue, field_serializer, model_validator
 
 from tradingdev.app.contracts.common import ContractModel
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.comparison import (
     MAX_COMPARISON_CANDIDATES,
     CandidateLabel,
@@ -13,6 +12,7 @@ from tradingdev.domain.comparison import (
 )
 from tradingdev.domain.execution import OptimizationSpec
 from tradingdev.domain.research import ResearchSpec, research_payload
+from tradingdev.domain.validation.config import WalkForwardConfig
 
 
 class ResearchExecutionInput(ContractModel):

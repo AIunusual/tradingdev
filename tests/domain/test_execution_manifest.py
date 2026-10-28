@@ -527,7 +527,7 @@ def test_modes_require_matching_validation_and_optimization() -> None:
             config=config,
             optimization=_search(),
         )
-    config["validation"] = {"n_splits": 3}
+    config["validation"] = {"mode": "automatic", "n_splits": 3}
     walk_forward = ExecutionManifest.create(
         strategy_execution=_strategy_execution(), kind="walk_forward", config=config
     )

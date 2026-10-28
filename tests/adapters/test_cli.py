@@ -281,3 +281,35 @@ backtest:
     assert result is not None
     assert not math.isfinite(result.metrics[unavailable_metric])
     assert len(list((workspace.processed_data / "cache").glob("*.pkl"))) == 1
+
+
+@pytest.mark.parametrize(
+    "validation",
+    [
+        "n_splits: 2",
+        "mode: automatic\n  embargo_bars: 0",
+        "mode: purged\n  label_horizon: 0",
+    ],
+)
+def test_cli_rejects_invalid_fold_configuration_before_loading_data(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    validation: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "invalid.yaml"
+    config.write_text(
+        "strategy:\n  id: kd_crossover\nbacktest:\n  symbol: BTC/USDT\n"
+        '  timeframe: 1h\n  start_date: "2024-01-01"\n  end_date: "2024-02-01"\n'
+        f"validation:\n  {validation}\n"
+    )
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("Invalid settings cannot load historical data")
+
+    monkeypatch.setattr(DataService, "load", forbidden)
+    monkeypatch.setattr(
+        "sys.argv", ["tradingdev", "--config", str(config), "--walk-forward"]
+    )
+    with pytest.raises(ValueError, match="validation"):
+        cli_main.main()

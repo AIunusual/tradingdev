@@ -15,9 +15,9 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from tradingdev.app.contracts.execution_requests import ParameterCandidateInput
 from tradingdev.app.contracts.reports import ReportCommentary
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.research import ResearchSpec, research_payload
 from tradingdev.domain.research_evidence import EvidenceId, ResearchEvidenceDraft
+from tradingdev.domain.validation.config import WalkForwardConfig
 
 if TYPE_CHECKING:
     from tests.e2e.llm_client import ToolCall

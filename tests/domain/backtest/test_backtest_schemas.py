@@ -65,7 +65,7 @@ def test_unknown_fixed_config_fields_are_not_silently_ignored(
     config["data"] = {
         "requirements": {"market": {"symbol": "BTC/USDT", "timeframe": "1h"}}
     }
-    config.update(validation={}, parallel={})
+    config.update(validation={"mode": "automatic"}, parallel={})
     section = config
     for key in path:
         section = section[key]
