@@ -190,8 +190,18 @@ class TestRollingRetrainerSignalMapping:
             cooldown=0,
             lookback=1000,
         )
-        test_df = pd.DataFrame({"close": [100.0, 101.0, 102.0]})
-        train_df = pd.DataFrame({"close": [99.0, 99.5]})
+        test_df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2025-01-02", periods=3, freq="h", tz="UTC"),
+                "close": [100.0, 101.0, 102.0],
+            }
+        )
+        train_df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2025-01-01", periods=2, freq="h", tz="UTC"),
+                "close": [99.0, 99.5],
+            }
+        )
 
         signals = retrainer.run(
             test_df,

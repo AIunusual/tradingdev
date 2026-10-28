@@ -12,6 +12,7 @@ from sklearn.metrics import roc_auc_score
 from tradingdev.domain import indicators
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.shared.utils.logger import setup_logger
@@ -292,7 +293,12 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         df: pd.DataFrame,
     ) -> npt.NDArray[np.floating[Any]]:
-        """Predict P(safe) for each bar with periodic retraining."""
+        """Predict P(safe) for each bar with periodic retraining.
+
+        Raises:
+            ValueError: If the frames have no usable time identity, because the
+                overlap with the training history cannot be detected without it.
+        """
         assert self._risk_fe is not None
         assert self._risk_model is not None
         assert self._train_data is not None
@@ -301,14 +307,15 @@ class SafetyVolumeStrategy(BaseStrategy):
         retrain_interval = self._config.retrain_interval
         model_cfg = self._config.risk_model
 
+        history, scored = align_scoring_history(self._train_data, df)
         combined = pd.concat(
-            [self._train_data, df],
+            [history, scored],
             ignore_index=True,
         )
-        test_offset = len(self._train_data)
-        window_size = max(lookback * 10, len(self._train_data))
+        test_offset = len(history)
+        window_size = max(lookback * 10, len(history))
 
-        total_bars = len(df)
+        total_bars = len(scored)
         p_safe_arr = np.full(total_bars, 0.5)
         current_model = self._risk_model
 
@@ -360,9 +367,9 @@ class SafetyVolumeStrategy(BaseStrategy):
                 ctx,
                 include_target=False,
             )
-            if len(feat_pred) > 0:
+            if combined_idx in feat_pred.index:
                 proba = current_model.predict_proba(
-                    feat_pred.iloc[[-1]],
+                    feat_pred.loc[[combined_idx]],
                 )
                 if 1 in proba.columns:
                     p_safe_arr[i] = np.float64(

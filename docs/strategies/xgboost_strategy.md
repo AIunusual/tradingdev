@@ -60,6 +60,9 @@ designed for research on market-making volume targets, not live execution.
   preceding bar's prediction. Cooldown counts all source bars, including gaps,
   and threshold selection uses the same timing. See the
   [dataset and model input contract](../strategy_contract.md#dataset-and-model-inputs).
+- Scored data must carry chronological timestamps. The
+  [training contract](../strategy_contract.md#training-before-scoring) covers the
+  accepted input, the exception and the empty-frame rules.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
 ## Data Requirements
