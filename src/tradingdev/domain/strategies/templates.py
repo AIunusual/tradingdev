@@ -54,8 +54,10 @@ def strategy_contract_payload(
                 "Inherit BaseStrategy. generate_signals(df) returns a new DataFrame "
                 "without mutating its input, with signal in {-1, 0, 1}. Follow "
                 "BaseStrategy's mode-dependent position/zero semantics and "
-                "next-bar timing; -1 means short, never sell-only. Preserve aligned "
-                "rows. Never use future rows or backfill indicators; emit zero "
+                "next-bar timing; -1 means short, never sell-only. Preserve every "
+                "row, the exact index and timestamp/OHLCV values. Missing signals "
+                "are rejected on fixtures and actual execution data. Never use "
+                "future rows or backfill indicators; emit zero "
                 "until required values are finite.",
                 "Expose configurable values as constructor keyword parameters and "
                 "get_parameters(). YAML strategy.parameters supplies them. Defaults "

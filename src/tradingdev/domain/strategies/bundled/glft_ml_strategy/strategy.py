@@ -132,17 +132,9 @@ class GLFTMLStrategy(BaseStrategy):
         self._ml_model.train(feat_df)
         self._ml_trained = True
 
-        # --- Step 2: Get ML predictions on training data ---
-        proba = self._ml_model.predict_proba(feat_df)
-        # proba has columns [0, 1] for [down, up]
-        # Convert to direction: 1 (up), -1 (down), 0 (uncertain)
-        ml_directions = self._compute_ml_directions(
-            proba,
-            self._config.confidence_threshold,
-        )
-
-        # --- Step 3: Grid-search GLFT parameters ---
-        self._grid_search_glft(feat_df, ml_directions)
+        # Score predictions and search parameters on the same complete timeline
+        # used by generate_signals, not the rows retained for supervised training.
+        self._grid_search_glft(df)
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate position-state signals via GLFT + ML."""
@@ -150,22 +142,16 @@ class GLFTMLStrategy(BaseStrategy):
             logger.warning("ML model not trained; falling back to pure GLFT signals")
             return self._generate_pure_glft(df)
 
-        feat_df = self._feature_eng.transform(df, include_target=False)
+        ml_directions = self._predict_ml_directions(df, self._best_confidence_threshold)
 
-        proba = self._ml_model.predict_proba(feat_df)
-        ml_directions = self._compute_ml_directions(
-            proba,
-            self._best_confidence_threshold,
-        )
-
-        close = np.asarray(feat_df["close"].astype(float).values)
-        high = np.asarray(feat_df["high"].astype(float).values)
-        low = np.asarray(feat_df["low"].astype(float).values)
+        close = np.asarray(df["close"].astype(float).values)
+        high = np.asarray(df["high"].astype(float).values)
+        low = np.asarray(df["low"].astype(float).values)
 
         # Extract DVOL for implied volatility
         dvol: npt.NDArray[np.floating[Any]] | None = None
-        if self._config.vol_type == "implied" and "dvol" in feat_df.columns:
-            dvol = np.asarray(feat_df["dvol"].astype(float).values)
+        if self._config.vol_type == "implied" and "dvol" in df.columns:
+            dvol = np.asarray(df["dvol"].astype(float).values)
 
         ema = self._compute_ema(close, self._best_ema_window)
         sigma = self._compute_volatility(close, high, low, dvol=dvol)
@@ -184,7 +170,7 @@ class GLFTMLStrategy(BaseStrategy):
             strategy_sl=self._config.strategy_sl,
         )
 
-        result = feat_df.copy()
+        result = df.copy()
         result["signal"] = signals
         return result
 
@@ -238,11 +224,24 @@ class GLFTMLStrategy(BaseStrategy):
     # GLFT grid search
     # ------------------------------------------------------------------
 
-    def _grid_search_glft(
-        self,
-        feat_df: pd.DataFrame,
-        ml_directions: npt.NDArray[np.float64],
-    ) -> None:
+    def _predict_ml_directions(
+        self, df: pd.DataFrame, confidence_threshold: float
+    ) -> npt.NDArray[np.float64]:
+        """Align available predictions to the complete source timeline."""
+        feat_df = self._feature_eng.transform(
+            df.reset_index(drop=True), include_target=False
+        )
+        directions = np.zeros(len(df), dtype=np.float64)
+        if not feat_df.empty:
+            proba = self._ml_model.predict_proba(feat_df)
+            if len(proba) != len(feat_df) or not proba.index.equals(feat_df.index):
+                raise ValueError("ML probabilities must preserve feature row alignment")
+            directions[feat_df.index.to_numpy(dtype=np.intp)] = (
+                self._compute_ml_directions(proba, confidence_threshold)
+            )
+        return directions
+
+    def _grid_search_glft(self, df: pd.DataFrame) -> None:
         """Grid-search GLFT parameters with ML direction filter."""
         assert self._backtest_engine is not None
 
@@ -251,13 +250,13 @@ class GLFTMLStrategy(BaseStrategy):
         direction = metric_direction(target)
         min_mp = cfg.min_monthly_pnl
 
-        close = np.asarray(feat_df["close"].astype(float).values)
-        high = np.asarray(feat_df["high"].astype(float).values)
-        low = np.asarray(feat_df["low"].astype(float).values)
+        close = np.asarray(df["close"].astype(float).values)
+        high = np.asarray(df["high"].astype(float).values)
+        low = np.asarray(df["low"].astype(float).values)
 
         dvol: npt.NDArray[np.floating[Any]] | None = None
-        if cfg.vol_type == "implied" and "dvol" in feat_df.columns:
-            dvol = np.asarray(feat_df["dvol"].astype(float).values)
+        if cfg.vol_type == "implied" and "dvol" in df.columns:
+            dvol = np.asarray(df["dvol"].astype(float).values)
 
         grid: list[_GLFTParamTuple] = [
             cast("_GLFTParamTuple", combo)
@@ -294,8 +293,7 @@ class GLFTMLStrategy(BaseStrategy):
         n_filtered = 0
         for conf_thresh in conf_candidates:
             # Recompute ML directions for this threshold
-            proba = self._ml_model.predict_proba(feat_df)
-            ml_dir = self._compute_ml_directions(proba, conf_thresh)
+            ml_dir = self._predict_ml_directions(df, conf_thresh)
 
             for params in grid:
                 gamma, kappa, ema_w, max_hold, entry_edge, pt_ratio = params
@@ -322,7 +320,7 @@ class GLFTMLStrategy(BaseStrategy):
                     strategy_sl=cfg.strategy_sl,
                 )
 
-                sig_df = feat_df.copy()
+                sig_df = df.copy()
                 sig_df["signal"] = signals
                 result = self._backtest_engine.run(sig_df)
                 metrics = result.metrics

@@ -23,6 +23,7 @@ from tradingdev.domain.optimization.grid_search import (
     tuple_grid,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
@@ -82,7 +83,7 @@ def _evaluate_glft_combo(
     trial._best_signal_agg_minutes = sig_agg
     trial._best_edge_for_full_size = efs
 
-    signals = trial.generate_signals(df)
+    signals = generate_checked_signals(trial, df)
     result = engine.run(signals)
     return params, result.metrics
 

@@ -71,9 +71,20 @@ Generated code must:
   execution context;
 - implement `generate_signals(df)` and return a new pandas DataFrame;
 - preserve the input DataFrame without mutation;
-- include a `signal` column containing only `1`, `-1`, or `0`;
+- preserve every input row in order, the exact index (including its metadata),
+  and the original timestamp/OHLCV columns; use separate columns for features;
+- return uniquely named columns and a `signal` value on every row: finite real
+  `1`, `-1`, or `0`; warm-up rows use zero, not missing values or dropped rows;
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
+
+The shared frame checker enforces these structural rules on synthetic fixtures
+and the actual frames used by simple backtests, fixed comparisons, optimization
+trials and both sides of walk-forward folds. Invalid frames fail before their
+engine call. Execution supplies a copy so ordinary DataFrame mutation by a failed
+candidate cannot alter the captured market data for later candidates. Indicator
+columns may still contain warm-up NaNs. These checks do not prove the absence of
+future-data use, agreement with a prose strategy, or safe Python execution.
 
 In signal mode, each row specifies a position state: `1` long, `-1` short,
 `0` flat. Repeat the state while it should persist. An entry pulse followed by
@@ -667,7 +678,14 @@ prices. Inference without targets retains those rows when their features are
 complete. Quantile and SafetyVolume's risk model use their separate target
 builders; they also leave outcomes beyond the supplied frame unavailable.
 
-`FeatureEngineer.transform()` and `RiskFeatureEngineer.transform()` preserve
+Bundled GLFT ML aligns predictions back to every original market row after
+feature filtering, in both parameter search and formal signal generation.
+Missing predictions prevent new entries; existing positions still age and
+evaluate exits on the full price timeline. Filtering supervised training rows
+does not compress the bars used to evaluate trades.
+
+`FeatureEngineer.transform()`, `DirectionFeatureEngineer.transform()` and
+`RiskFeatureEngineer.transform()` preserve
 surviving source index labels; there is no index-reset option. Callers needing
 row positions supply a positional index.
 SafetyVolume maps optional ML directions to those source rows. XGBoost rolling

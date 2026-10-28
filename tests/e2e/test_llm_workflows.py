@@ -39,9 +39,10 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
             "content"
         ]
         code = contract["example_strategy_code"].replace(
-            'result["signal"] = 0', 'result["signal"] = 7'
+            "        return result",
+            '        result["signal"] = np.nan\n        return result',
         )
-        assert 'result["signal"] = 7' in code
+        assert 'result["signal"] = np.nan' in code
         config = yaml.safe_load(contract["example_yaml_config"])
         config["strategy"]["parameters"] = scenario.parameters
         config["backtest"].update(

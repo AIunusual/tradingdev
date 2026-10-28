@@ -341,6 +341,10 @@ running_backtest，因此狀態名稱不能作為資料下載已完成的證明�
 done 表示結果保存成功；程序清理由 supervisor 在 worker 退出後完成，兩者各有證據。
 
 `DataService` 依資料需求選擇 crawler、取得行情快取並合併特徵資料，供策略產生訊號。
+`domain.strategies.signals` 提供合成驗證與實際執行共用的訊號框架檢查。
+一般回測、固定比較、最佳化與 walk-forward 的訓練／測試輸出，均須保留完整列數、
+原始索引與 timestamp/OHLCV，且每列訊號為有限的 -1、0 或 1，才能交給引擎。
+執行時提供資料副本並拒絕輸入修改；這不證明沒有未來資料使用，也不是 Python sandbox。
 `create_backtest_engine()` 依模式建立引擎：signal 模式使用 VectorBT portfolio，
 volume 模式使用專案的逐筆模擬與帳本。Walk-forward 由 WalkForwardValidator
 依序執行各 fold 的訓練與評估。專案內的技術指標集中於 TA-Lib facade，模型與統計特徵位於

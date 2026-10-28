@@ -275,7 +275,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
 
     def capture_signals(self: KDStrategy, frame: pd.DataFrame) -> pd.DataFrame:
         captured.append(self.get_parameters())
-        return frame.copy()
+        return frame.assign(signal=0)
 
     observed_result = _evaluation(
         {}, "total_return", 1.0, pd.DataFrame({"close": [1.0, 2.0]})

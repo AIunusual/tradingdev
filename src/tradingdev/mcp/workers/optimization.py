@@ -47,6 +47,7 @@ from tradingdev.domain.optimization.grid_search import (
 from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
@@ -181,7 +182,7 @@ def _run_single_combo(
             parameter_overrides=param_dict,
         )
 
-        signals_df = strategy.generate_signals(df)
+        signals_df = generate_checked_signals(strategy, df)
         result = engine.run(signals_df)
 
         result.metric_metadata["execution_context"] = {
