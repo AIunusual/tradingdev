@@ -1073,6 +1073,18 @@ Research binding rejects missing or extra descriptions and incomplete provenance
 with `research_evidence_binding_invalid`. Save corrected evidence and prepare
 again using the new ID. The assistant supplies this technical mapping; the user
 reviews readable names, values and units.
+
+Evidence capacity is checked both when saving and after binding. The canonical
+JSON draft must fit within 512 KiB. Preparation allows at most 1,024 targets
+(optimization counts the base plus every search-axis option, not Cartesian
+trials) and 4,096 parameter bindings summed across targets. The complete expanded
+`BoundResearchEvidence`, including the saved record, resolved values and origins,
+must independently fit within 512 KiB. A draft can therefore save successfully
+but fail preparation. Reduce the proposed candidate/search options or the
+strategy's parameter structure, or shorten explanations to fit; retain complete
+descriptions and origins for every effective parameter. Never omit required
+bindings or silently split the user's requested comparison to evade these limits.
+
 Optional `backtest_overrides` capture other engine settings in the same plan;
 research supplies capital, costs and annualization choices.
 The short conversation summary uses `summary`, not `title` or the saved name,
