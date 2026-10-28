@@ -1060,23 +1060,27 @@ dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
-Every preparation requires `presentation`; callers do not supply historical
-sample budgets or minimum-history declarations. Presentation has a `title`, `summary`,
+All four MCP preparation tools require an `evidence_id` returned by
+`save_research_evidence`;
+callers do not supply historical sample budgets or minimum-history declarations.
+The saved draft contains `presentation` with a `title`, `summary`,
 and `parameter_descriptions`, which maps the union of captured constructor and
 effective candidate leaves to a distinct readable `label`, a `description`, and
 optional `unit`. Keys are
 JSON pointers relative to `strategy_execution.constructor_kwargs`: for example,
 `/fast_period` for a generated strategy or `/config/k_period` for a bundled strategy.
-The confirmation builder rejects missing or extra descriptions. The assistant
-supplies this technical mapping; the user reviews readable names, values and units.
+Research binding rejects missing or extra descriptions and incomplete provenance
+with `research_evidence_binding_invalid`. Save corrected evidence and prepare
+again using the new ID. The assistant supplies this technical mapping; the user
+reviews readable names, values and units.
 Optional `backtest_overrides` capture other engine settings in the same plan;
 research supplies capital, costs and annualization choices.
 The short conversation summary uses `summary`, not `title` or the saved name,
 and includes resolved capital/cost sources and the annualization basis. HTML
 retains the title, saved name, complete settings, policy and inheritance details.
-This presentation schema does not contain a complete formal trading-rule or
-formula representation; model summaries and parameter descriptions do not prove
-equivalence to the strategy's Python implementation.
+The surrounding research draft also contains trading conditions, formulas, variable
+units, source claims and limitations. These client-authored explanations do not
+prove equivalence to the strategy's Python or ML implementation.
 
 The preflight receipt records offline code/configuration checks and the fixed
 synthetic signal fixtures used for generated strategies. It does not contain market

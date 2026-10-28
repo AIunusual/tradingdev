@@ -810,10 +810,11 @@ Candidate presentation and strategy loading share the same pure parameter merge:
 partial objects preserve unnamed captured fields, empty objects preserve an
 existing object, and non-object values replace the complete entry. Each search
 group displays its merged candidate values; it does not present a partial
-override as a complete replacement. Missing or
-extra descriptions return `invalid_confirmation_presentation` with
-`required_parameter_paths`, allowing the model to repair wording without changing
-the source revision. Model units do not rescale captured values.
+override as a complete replacement. Missing or extra descriptions and duplicate
+labels are rejected during binding with `research_evidence_binding_invalid`,
+`required_parameter_bindings` and `required_parameter_paths`. Save corrected
+evidence and prepare again; wording repairs do not require a new strategy revision.
+Model units do not rescale captured values.
 
 The backend builds a version 2 typed document with fixed strategy, market, parameters,
 execution, validation, optimization, preflight and limitations sections.
@@ -1282,7 +1283,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 20 uses two navigation levels within one offline HTML
+Report schema 2 / template 21 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.
@@ -1318,8 +1319,10 @@ The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
 `trades`, `provenance`.
 The `research` section belongs to the main view. It displays saved trading formulas,
 plain-language rules, parameter origins and source claims, limitations and versioned
-execution assumptions. Each scope's settings show its own parameter origins and
-saved policy. Shared research snapshots are stored once under their content hash in
+execution assumptions. Scalar backtest scopes show their own parameter origins
+and saved policy. Aggregate walk-forward summaries do not repeat per-fold origins
+or execution assumptions; inspect their original train/test folds instead.
+Shared research snapshots are stored once under their content hash in
 the report's `research_documents`; runs reference that hash. A comparison with no
 successful runs still retains its parent's disclosure. Explicitly omitting the
 section changes visibility, not the saved payload or evidence validation. Missing
