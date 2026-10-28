@@ -24,13 +24,17 @@ from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import ModelTurn
 from tests.e2e.conversation_user import ObservedPlanUser, review_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.research_evidence import assert_saved_research
 from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_research import (
     assert_research_matches_config,
     research_values,
 )
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import (
+    confirmation_presentation,
+    execution_evidence_draft,
+)
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.research_fixtures import research_for_config
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
@@ -161,7 +165,8 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
 {json.dumps(_arguments(kind, revision_id)["research"], ensure_ascii=False)}
 成本只透過 research 設定，不放進 backtest_overrides；修改費用時也在 research 明示。
 確認前只做離線程式驗證；正式執行所需行情已在快取，不需下載。
-presentation 提供繁體中文 title、summary、parameter_descriptions。
+先依 evidence 契約保存研究說明，再以 evidence_id 準備計畫。
+研究說明中的 presentation 提供繁體中文 title、summary、parameter_descriptions。
 每個有效建構子參數含預設值都要白話 label、description、unit。
 參數鍵為 JSON pointer：內建 KD 用 /config/k_period 等 /config/*；
 生成 SMA 用 /fast_period、/slow_period。請依讀到的設定自行完整撰寫說明。
@@ -310,7 +315,13 @@ def _assert_evidence(
         "training",
         "performance",
     }
-    descriptions = prepare_call.arguments["presentation"]["parameter_descriptions"]
+    draft = assert_saved_research(calls, prepare_index)
+    assert draft == plan.research_evidence.research.record.draft
+    assert (
+        prepare_call.arguments["evidence_id"]
+        == plan.research_evidence.research.record.evidence_id
+    )
+    descriptions = draft.presentation.model_dump(mode="json")["parameter_descriptions"]
     expected_parameters: dict[str, Any] = (
         {"config": KDStrategyConfig().model_dump(), "fit_config": None}
         if kind == "optimization"
@@ -480,12 +491,28 @@ async def _direct_workflow(
         if kind == "optimization"
         else {"fast_period": 3, "slow_period": 8}
     )
+    paths = list(confirmation_presentation(parameters)["parameter_descriptions"])
+    target_paths = {"base": paths}
+    if kind == "optimization":
+        target_paths.update(
+            {
+                "search_1_1": ["/config/k_period"],
+                "search_1_2": ["/config/k_period"],
+            }
+        )
+    saved = await call(
+        "save_research_evidence",
+        draft=json.dumps(
+            execution_evidence_draft(parameters, target_paths=target_paths)
+        ),
+    )
+    assert saved["success"], saved
     prepared = await call(
         f"prepare_{kind}",
         **{
             name: json.dumps(value) if isinstance(value, dict | int) else value
             for name, value in (
-                _arguments(kind, revision_id) | execution_options(parameters)
+                _arguments(kind, revision_id) | {"evidence_id": saved["evidence_id"]}
             ).items()
         },
     )
@@ -543,8 +570,11 @@ def test_execution_plan_live_fixtures_without_model(kind: PlanKind) -> None:
         )
         for invalid in ("not JSON", "[]", "null", "{}"):
             broken = deepcopy(calls)
-            broken[prepare_index].arguments["presentation"] = invalid
-            with pytest.raises(AssertionError, match="presentation"):
+            saved_call = next(
+                call for call in broken if call.name == "save_research_evidence"
+            )
+            saved_call.arguments["draft"] = invalid
+            with pytest.raises(AssertionError, match="draft"):
                 _assert_evidence(
                     broken, kind, approval, selected_revision_id=revision_id
                 )

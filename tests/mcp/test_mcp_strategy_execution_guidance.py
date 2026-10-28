@@ -12,7 +12,10 @@ from typing import Any
 
 import pytest
 from mcp_types import CallToolResult
-from tests.integration.execution_fixtures import execution_options, research_arguments
+from tests.integration.execution_fixtures import (
+    research_arguments,
+    save_execution_evidence,
+)
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tests.mcp.execution_fixtures import plan_context
 
@@ -35,7 +38,7 @@ def test_real_mcp_preflight_returns_training_guidance_without_market_or_jobs(
                         "strategy_id": strategy_id,
                         "symbol": "BTC/USDT",
                         "timeframe": "1h",
-                        **execution_options({}),
+                        "evidence_id": await save_execution_evidence(client, {}),
                     }
                     if tool == "prepare_optimization":
                         arguments.update(

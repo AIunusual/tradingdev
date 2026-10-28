@@ -15,9 +15,9 @@ import yaml
 
 from tests.integration.execution_fixtures import (
     confirm_prepared,
-    execution_options,
     research_from_config,
     research_input,
+    save_execution_evidence,
 )
 from tests.integration.mcp_harness import (
     temporary_mcp_workspace,
@@ -80,7 +80,15 @@ async def test_active_worker_and_files_are_removed_on_context_exit(
                     train_end="2024-01-03",
                     test_start="2024-01-04",
                     test_end="2024-01-07",
-                    **execution_options({"fast_period": 10, "slow_period": 30}),
+                    evidence_id=await save_execution_evidence(
+                        client,
+                        {"fast_period": 10, "slow_period": 30},
+                        target_paths={
+                            "base": ["/fast_period", "/slow_period"],
+                            "search_1_1": ["/fast_period"],
+                            "search_2_1": ["/slow_period"],
+                        },
+                    ),
                 )
                 assert prepared["success"], prepared
                 # Keep the formal worker alive deterministically, independently

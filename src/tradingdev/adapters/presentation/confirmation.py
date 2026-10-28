@@ -49,7 +49,7 @@ def render_confirmation_summary(
 ) -> str:
     """Show major settings and the saved concise backend execution rules."""
     labels = {
-        "strategy": {"執行方式"},
+        "strategy": {"執行方式", "參數依據"},
         "market": {"回測商品", "回測 K 線週期", "回測開始", "回測結束", "時間邊界"},
         "execution": {
             "計算方式",

@@ -99,7 +99,9 @@ variable meanings, limitations, source declarations and parameter provenance.
 Sources identify client-reported web retrieval or user-supplied references;
 neither their presence nor a hash proves that browsing occurred or that a claim
 is true. Reference-backed parameter declarations must cite explicit source claim
-values matching the effective values. A source supporting only a formula cannot
+values matching the effective values, including JSON type. Every cited claim must
+match each bound value; differently valued settings need separate declarations.
+A source supporting only a formula cannot
 also establish a suggested parameter value.
 
 `bind_research_evidence` expands grouped provenance declarations against the
@@ -717,14 +719,23 @@ controls, not an operating-system memory limit or a Python sandbox.
 
 ## Execution Plans and Confirmation Documents
 
-`ExecutionPlan` schema version 2 binds a unique 32-character `plan_id`, the full
+`ExecutionPlan` schema version 3 binds a unique 32-character `plan_id`, the full
 single execution or comparison manifest, `original_config_path`, the matching
-`PreflightReceipt` or `ComparisonPreflightReceipt`,
+`PreflightReceipt` or `ComparisonPreflightReceipt`, `ApprovedResearch`,
 `ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
 The hash covers canonical JSON of every field except itself. The document and
 preflight hashes must identify the same manifest; the document also identifies
 the same plan. Plans currently expire one hour after preparation. The content
 does not change when approval state changes.
+
+`save_research_evidence(draft)` first stores the client-authored explanation and
+returns a compact ID/hash receipt. All four MCP preparation tools require this
+`evidence_id`, replacing their former inline `presentation` argument. Preparation
+loads the record, binds every effective parameter and captures the current execution
+policy; the plan retains its own full copy. Deleting or replacing the original draft
+does not change an existing plan. Binding rejection returns
+`research_evidence_binding_invalid` with `required_parameter_bindings` and
+`required_parameter_paths`; corrections require a newly saved record.
 
 `PreflightService` performs offline preparation in a supervised child with a
 60-second default budget covering imports, configuration resolution, execution-mode
@@ -782,11 +793,12 @@ If process cleanup cannot be verified, the directory is retained and the operati
 reports failure; file cleanup failure is also an error. Preparation publishes no
 regular job or run. These resource controls are not a generated-Python sandbox.
 
-Plan and confirmation-document schemas are both version 2. Older confirmation
+The plan schema is version 3; the confirmation-document schema remains version 2.
+Older confirmation
 plans must be prepared and approved again; they are not automatically migrated
 or deleted. Existing run results and reports do not need to be recomputed.
 
-`ConfirmationPresentation` accepts only model-authored title, summary and
+Within a research draft, `ConfirmationPresentation` accepts model-authored title, summary and
 `parameter_descriptions`. Description keys are JSON pointers relative to captured
 constructor arguments; each value contains a label, explanation and optional
 unit, never an executable parameter value. Labels must distinguish values and
@@ -819,9 +831,12 @@ the observed-UTC-daily-return basis and unavailable sampling reasons. Technical
 details include the saved strategy name, policy version, annualization decision,
 and any selected revision/config hash. The model's presentation title remains a
 separate HTML page title. Research provenance does not prove that the Python
-implements the outline. There is currently no complete formal trading-formula
-field or backend proof of equivalence between model prose and arbitrary strategy
-code; program checks retain their stated coverage.
+implements the outline. Saved research adds conditions, actions, formulas, variable
+units, parameter-value provenance and source claims to the same typed document.
+These are client explanations, not a backend proof of equivalence with arbitrary
+strategy code. The full document retains the versioned execution policy; its short
+chat summary uses the policy's selected plain-language assumptions. Program checks
+retain their stated coverage.
 
 `execution_plans/<plan_id>/confirmation.txt` and `confirmation.html` preserve the
 reviewable documents. The HTML is registered as `execution_confirmation` under
@@ -833,7 +848,9 @@ Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
 `cancelled`, or `failed`. A retained `.approval.lock` and state comparison
 serialize transitions; only one submission reservation can be active. The plan
 stays `ready` while the user reads it. On approval, the service checks expiry and
-current executable-source integrity before reserving and again before submitting.
+current executable-source integrity and the saved execution policy before reserving
+and again before submitting. A policy change requires a newly prepared plan;
+historical plan lookup keeps the saved wording.
 An internal server-owned challenge binds the submission to the same plan content;
 the client is responsible for truthfully relaying user consent. Repeating a
 successful submission returns its original job ID rather than launching twice.

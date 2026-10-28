@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from tests.integration.execution_fixtures import confirmation_presentation
 from tests.mcp.execution_fixtures import (
     FixedPreflight,
     PlanContext,
@@ -18,6 +17,7 @@ from tests.mcp.execution_fixtures import (
     plan_context,
 )
 from tests.preflight_fixtures import make_preflight_fixture
+from tests.research_evidence_fixtures import save_research_evidence
 
 from tradingdev.app.contracts.execution_requests import BacktestInput
 from tradingdev.app.contracts.plans import PlanRejected, PlanResponse, PlanStarted
@@ -35,7 +35,6 @@ from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import PreflightRequest
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
 from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
@@ -44,15 +43,13 @@ if TYPE_CHECKING:
 
 def _prepare(context: PlanContext) -> PlanResponse:
     arguments = dict(context.arguments)
-    presentation = ConfirmationPresentation.model_validate(
-        arguments.pop("presentation")
-    )
+    evidence_id = arguments.pop("evidence_id")
     result = context.service.prepare(
         PreflightRequest(
             kind="backtest",
             arguments=arguments,
         ),
-        presentation,
+        evidence_id,
     )
     assert isinstance(result, PlanResponse), result
     return result
@@ -362,12 +359,8 @@ def test_changed_generated_revision_after_question_cannot_start(
     service = ExecutionPlanService(
         workspace, job_store=store, preflight=preflight, process_runner=runner
     )
-    presentation = ConfirmationPresentation.model_validate(
-        confirmation_presentation(
-            captured.manifest.strategy_execution.constructor_kwargs
-        )
-    )
-    prepared = service.prepare(request, presentation)
+    evidence_id = save_research_evidence(service.evidence, captured.manifest)
+    prepared = service.prepare(request, evidence_id)
     assert isinstance(prepared, PlanResponse), prepared
     challenge = service.begin_confirmation(prepared.plan_id)
     assert isinstance(challenge, ConfirmationChallenge)
@@ -498,3 +491,122 @@ def test_conversation_rejection_cannot_cancel_an_already_submitted_job(
     assert isinstance(result, PlanRejected) and result.code == "plan_not_cancellable"
     assert context.service.decide(prepared.plan_id, decision="approve") == started
     assert len(context.runner.calls) == 1
+
+
+@pytest.mark.parametrize("change", ["missing", "schema", "hash", "formula", "wrong_id"])
+def test_missing_or_changed_research_snapshot_cannot_be_read_or_approved(
+    tmp_path: Path, change: str
+) -> None:
+    context = plan_context(tmp_path)
+    response = _prepare(context)
+    plan, _ = context.service.plans.get(response.plan_id)
+    payload = plan.model_dump(mode="json")
+    if change == "missing":
+        payload.pop("research_evidence")
+    elif change == "schema":
+        payload["schema_version"] = 2
+    elif change == "hash":
+        payload["research_evidence"]["content_hash"] = "0" * 64
+    elif change == "formula":
+        payload["research_evidence"]["research"]["record"]["draft"]["rules"][0][
+            "formula"
+        ] = "unreviewed formula"
+    else:
+        payload["research_evidence"]["research"]["record"]["evidence_id"] = "b" * 32
+    _rewrite_payload(context, response.plan_id, payload)
+    assert isinstance(context.service.get(response.plan_id), PlanRejected)
+    assert isinstance(
+        context.service.decide(response.plan_id, decision="approve"), PlanRejected
+    )
+    assert not context.runner.calls
+
+
+@pytest.mark.parametrize("operation", ["delete", "corrupt"])
+def test_approval_uses_saved_snapshot_without_reading_current_evidence_record(
+    tmp_path: Path, operation: str
+) -> None:
+    context = plan_context(tmp_path)
+    response = _prepare(context)
+    plan, _ = context.service.plans.get(response.plan_id)
+    evidence_id = plan.research_evidence.research.record.evidence_id
+    path = context.service.evidence.store.path(evidence_id)
+    if operation == "delete":
+        path.unlink()
+    else:
+        path.write_text("corrupted source declaration", encoding="utf-8")
+    assert isinstance(context.service.get(response.plan_id), PlanResponse)
+    result = context.service.decide(response.plan_id, decision="approve")
+    assert isinstance(result, PlanStarted), result
+    assert len(context.runner.calls) == 1
+    job = context.service.jobs.get_job(result.job_id)
+    assert job is not None
+    assert job["research_evidence_hash"] == plan.research_evidence.content_hash
+
+
+def test_missing_evidence_fails_before_program_checks(tmp_path: Path) -> None:
+    context = plan_context(tmp_path)
+    arguments = dict(context.arguments)
+    arguments.pop("evidence_id")
+    result = context.service.prepare(
+        PreflightRequest(kind="backtest", arguments=arguments), "0" * 32
+    )
+    assert isinstance(result, PlanRejected)
+    assert result.code == "research_evidence_invalid"
+    assert not context.preflight.requests
+    assert not context.runner.calls
+
+
+def test_binding_failure_returns_exact_values_in_typed_repair_response(
+    tmp_path: Path,
+) -> None:
+    from tradingdev.app.contracts.research_evidence import ResearchEvidenceSaved
+    from tradingdev.domain.research_evidence import ResearchEvidenceDraft
+
+    context = plan_context(tmp_path)
+    original = context.service.evidence.load(context.arguments["evidence_id"])
+    payload = original.draft.model_dump(mode="json")
+    payload["parameter_provenance"] = []
+    saved = context.service.evidence.save(ResearchEvidenceDraft.model_validate(payload))
+    assert isinstance(saved, ResearchEvidenceSaved)
+    arguments = dict(context.arguments)
+    arguments.pop("evidence_id")
+    result = context.service.prepare(
+        PreflightRequest(kind="backtest", arguments=arguments), saved.evidence_id
+    )
+    assert isinstance(result, PlanRejected)
+    assert result.code == "research_evidence_binding_invalid"
+    assert result.required_parameter_bindings is not None
+    assert result.required_parameter_bindings[0].target_id == "base"
+    values = {
+        item.parameter_path: item.value
+        for item in result.required_parameter_bindings[0].parameters
+    }
+    assert values["/config/k_period"] == 14
+    assert result.required_parameter_paths == sorted(values)
+    assert not context.runner.calls
+
+
+def test_changed_execution_policy_blocks_approval_without_rewriting_saved_explanations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tradingdev.domain.approved_research as approved
+    from tradingdev.domain.execution_assumptions import resolve_execution_assumptions
+
+    context = plan_context(tmp_path)
+    response = _prepare(context)
+    plan, _ = context.service.plans.get(response.plan_id)
+
+    def changed_policy(manifest: ExecutionManifest) -> Any:
+        return resolve_execution_assumptions(manifest).model_copy(
+            update={"policy_version": "changed-policy"}
+        )
+
+    monkeypatch.setattr(approved, "resolve_execution_assumptions", changed_policy)
+    retained = context.service.get(response.plan_id)
+    assert isinstance(retained, PlanResponse)
+    loaded, _ = context.service.plans.get(response.plan_id)
+    assert loaded.research_evidence == plan.research_evidence
+    result = context.service.decide(response.plan_id, decision="approve")
+    assert isinstance(result, PlanRejected)
+    assert "policy changed" in result.error
+    assert not context.runner.calls

@@ -11,9 +11,9 @@ import yaml
 
 from tests.integration.execution_fixtures import (
     confirm_prepared,
-    execution_options,
     research_arguments,
     research_from_config,
+    save_execution_evidence,
 )
 from tests.integration.test_mcp_protocol import (
     RUN_ARGUMENTS,
@@ -72,7 +72,11 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
                 **research_arguments(RUN_ARGUMENTS),
                 revision_id=revision_id,
                 parameters={"fast_period": fast_period},
-                **execution_options({"fast_period": fast_period, "slow_period": 8}),
+                **{
+                    "evidence_id": await save_execution_evidence(
+                        client, {"fast_period": fast_period, "slow_period": 8}
+                    )
+                },
             )
             started = await confirm_prepared(client, prepared)
             assert started["job_id"], started
@@ -103,7 +107,11 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
             **research_arguments(RUN_ARGUMENTS),
             revision_id=revision_id,
             parameters={"unknown_parameter": 1},
-            **execution_options({"fast_period": 3, "slow_period": 8}),
+            **{
+                "evidence_id": await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                )
+            },
         )
         assert rejected["success"] is False, rejected
         assert rejected["code"] == "invalid_execution_request"

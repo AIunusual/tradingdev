@@ -19,8 +19,9 @@ Strategy development workflow
      read get_strategy_contract(section="research") and the relevant source's
      capabilities. Use applicable policy; omission does not mean zero costs or
      unavailable annualization. Keep questions focused on unresolved choices.
-   - Names are optional. Use automatic naming when none was requested; keep routine
-     names and internal IDs in the HTML, not as questions the user must answer.
+   - Names are optional. For a new unnamed request, omit save_strategy.strategy_id
+     so the backend names it; do not invent an ID. Keep routine names in the HTML,
+     not as questions the user must answer.
 
 2. Discover the relevant strategy and capabilities.
    - Call list_strategies before writing code; get_strategy reads source/config.
@@ -28,6 +29,11 @@ Strategy development workflow
      not fitted state or proof that a configuration runs. Unknown means unknown.
    - Discover source settings with list_data_sources. For separate ML research,
      get_ml_contract describes the available models, features and evaluation modes.
+   - Read get_strategy_contract(section="evidence") when selecting parameters and
+     recording rules. Preserve explicit values; otherwise propose a small fixed set
+     of alternatives. Check primary references using the host's actual web tools
+     when available. Without retrieval, label proposals unverified and ask about
+     unclear ranges; never invent browsing, common settings or source claims.
 
 3. Read the contract and author a revision when code is needed.
    - Read get_strategy_contract(section="core") before drafting. Retrieve its
@@ -53,13 +59,16 @@ Strategy development workflow
    - Generated Python is executed during checks; this is not a security sandbox.
 
 5. Prepare the requested execution.
+   - Save the checked rules, formulas, parameter descriptions and origins through
+     save_research_evidence; use its evidence_id for preparation. Follow the
+     evidence contract for source-value claims and complete parameter bindings.
    - Use prepare_comparison for fixed parameter alternatives (1–8 sets),
      prepare_backtest for one run, or prepare_walk_forward for training/validation.
      Each fixed candidate needs its selection rationale. Read the core contract's
      comparison limits; never turn a comparison into a best-return search.
      Use prepare_optimization only for an explicitly requested parameter search.
-     Supply human-language presentation labels/units for all effective parameters.
-   - Use returned missing parameter paths to repair presentation. A next_tool
+   - Use returned missing bindings to save corrected evidence and prepare again.
+     A next_tool
      suggestion applies only after its required_configuration is satisfied.
      Do not remove training/validation to bypass a rejection. train_model does
      not train a bundled strategy instance; fit() is not an MCP tool.
@@ -73,6 +82,7 @@ Strategy development workflow
 6. Present the prepared plan for review.
    - Quote confirmation_summary verbatim, preferably as a Markdown blockquote.
      Preserve every label, value, unit and train/test role without recalculation.
+     Do not shorten it: its execution assumptions are part of informed approval.
    - Copy confirmation_link verbatim on a separate normal Markdown line. Verify
      its destination against html_path; do not assemble or edit IDs or paths.
      No code block, file:// or invented URI.
@@ -115,7 +125,8 @@ Strategy development workflow
    - The FINAL answer must identify results and scopes, link the readable report,
      and explain how to select a parameter/result row and its requested details.
      Identify individual runs by run ID. A fixed comparison may instead use its
-     comparison_job_id, which identifies the whole frozen set. Interpret every
+     comparison_job_id, which identifies the whole frozen set. Copy the complete
+     identifier; never abbreviate it with ellipses or only a suffix. Interpret every
      candidate using readable parameter names; internal labels/IDs stay in the HTML.
      A tool result, delegated answer or intermediate link alone is not delivery;
      an orchestrator must keep the link in its own final answer. Do not substitute

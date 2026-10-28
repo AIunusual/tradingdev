@@ -10,7 +10,10 @@ import pytest
 
 from tests.e2e.llm_client import ToolCall
 from tests.e2e.workflow_arguments import effective_workflow_calls
-from tests.integration.execution_fixtures import execution_options, research_input
+from tests.integration.execution_fixtures import (
+    execution_evidence_draft,
+    research_input,
+)
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.mcp.server import create_server
 
@@ -24,12 +27,13 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
         "research": json.dumps(research_input(fees=0)),
         "parameters": '{"period": "20"}',
         "backtest_overrides": '{"position_size": 100}',
-        **{
-            key: json.dumps(value)
-            for key, value in execution_options({"period": 20}).items()
-        },
+        "evidence_id": "e" * 32,
     }
     return [
+        (
+            "save_research_evidence",
+            {"draft": json.dumps(execution_evidence_draft({"period": 20}))},
+        ),
         ("prepare_backtest", prepare),
         (
             "prepare_comparison",

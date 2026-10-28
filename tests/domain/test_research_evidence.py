@@ -519,7 +519,7 @@ def test_parameter_values_never_accept_client_supplied_executable_values() -> No
         ResearchEvidenceDraft.model_validate(payload)
 
 
-def test_reference_claims_cover_every_distinct_comparison_value() -> None:
+def test_reference_claims_are_bound_to_each_exact_comparison_value() -> None:
     target, _receipt = comparison_fixture()
     payload = evidence_draft(target).model_dump(mode="json")
     source = _reference().model_dump(mode="json")
@@ -528,24 +528,41 @@ def test_reference_claims_cover_every_distinct_comparison_value() -> None:
         for period in (10, 20, 30)
     ]
     payload["sources"] = [source]
+    declaration = {
+        "target_ids": ["candidate_1", "candidate_2", "candidate_3"],
+        "parameter_paths": ["/period"],
+        "provenance": "reference",
+        "reason": "客戶端回報手冊的三組值；語意由客戶端負責。",
+        "source_claims": [
+            {"source_id": "manual", "claim_id": f"period{period}"}
+            for period in (10, 20, 30)
+        ],
+    }
+    payload["parameter_provenance"] = [declaration]
+    with pytest.raises(ResearchEvidenceBindingError, match="candidate_1"):
+        bind_research_evidence(
+            ResearchEvidenceRecord.create(
+                ResearchEvidenceDraft.model_validate(payload)
+            ),
+            target,
+        )
     payload["parameter_provenance"] = [
         {
-            "target_ids": ["candidate_1", "candidate_2", "candidate_3"],
-            "parameter_paths": ["/period"],
-            "provenance": "reference",
-            "reason": "客戶端回報手冊的三組值；語意由客戶端負責。",
-            "source_claims": [
-                {"source_id": "manual", "claim_id": f"period{period}"}
-                for period in (10, 20, 30)
-            ],
+            **declaration,
+            "target_ids": [f"candidate_{index}"],
+            "source_claims": [{"source_id": "manual", "claim_id": f"period{period}"}],
         }
+        for index, period in enumerate((10, 20, 30), 1)
     ]
     bound = bind_research_evidence(
         ResearchEvidenceRecord.create(ResearchEvidenceDraft.model_validate(payload)),
         target,
     )
     assert [entry.value for entry in bound.parameters] == [10, 20, 30]
-    payload["parameter_provenance"][0]["source_claims"].pop()
+    assert [
+        [claim.claim_id for claim in entry.source_claims] for entry in bound.parameters
+    ] == [["period10"], ["period20"], ["period30"]]
+    payload["parameter_provenance"][2]["source_claims"][0]["claim_id"] = "period20"
     with pytest.raises(ResearchEvidenceBindingError, match="candidate_3"):
         bind_research_evidence(
             ResearchEvidenceRecord.create(

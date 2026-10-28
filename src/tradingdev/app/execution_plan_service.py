@@ -17,6 +17,7 @@ from tradingdev.adapters.presentation.confirmation import (
     render_confirmation_text,
 )
 from tradingdev.adapters.storage.execution_plans import ExecutionPlanStore
+from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
 from tradingdev.app.contracts.plans import (
     ExecutionDecision,
     PlanRejected,
@@ -30,7 +31,9 @@ from tradingdev.app.job_config import bind_strategy_revision
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.preflight_service import PreflightError, PreflightService
 from tradingdev.app.prepared_execution import PreparedComparison, PreparedExecution
+from tradingdev.app.research_evidence_service import ResearchEvidenceService
 from tradingdev.app.strategy_service import StrategyService
+from tradingdev.domain.approved_research import ApprovedResearch
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution_plan import ExecutionPlan
 from tradingdev.domain.preflight import ComparisonPreflightReceipt, PreflightReceipt
@@ -38,9 +41,15 @@ from tradingdev.domain.presentation.comparison_confirmation import (
     build_comparison_confirmation,
 )
 from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentation,
     ConfirmationPresentationError,
     build_confirmation_document,
+)
+from tradingdev.domain.presentation.research_confirmation import (
+    enrich_research_confirmation,
+)
+from tradingdev.domain.research_evidence import (
+    ParameterBindingTarget,
+    ResearchEvidenceBindingError,
 )
 
 if TYPE_CHECKING:
@@ -77,19 +86,31 @@ class ExecutionPlanService:
         self.jobs = job_store or JobStore(workspace=workspace)
         self.plans = ExecutionPlanStore(workspace, self.jobs.store)
         self.preflight = preflight or PreflightService(workspace)
+        self.evidence = ResearchEvidenceService(workspace)
         self.submission = ExecutionSubmissionService(
             self.jobs, process_runner or ProcessRunner(workspace=workspace)
         )
         self.strategies = StrategyService(workspace, store=self.jobs.store)
 
     def prepare(
-        self, request: PreflightRequest, presentation: ConfirmationPresentation
+        self, request: PreflightRequest, evidence_id: str
     ) -> PlanResponse | PlanRejected:
         """Return a ready document after bounded program checks, without market data."""
+        try:
+            record = self.evidence.load(evidence_id)
+        except (OSError, ValueError) as exc:
+            return PlanRejected(
+                success=False, code="research_evidence_invalid", error=str(exc)
+            )
         try:
             checked = self.preflight.prepare(request)
             plan_id = uuid4().hex
             manifest = checked.prepared.manifest
+            research_evidence = ApprovedResearch.create(record, manifest)
+            SubmittedResearchStore.validate_publication_size(
+                manifest, research_evidence
+            )
+            presentation = research_evidence.research.record.draft.presentation
             if isinstance(manifest, ComparisonManifest):
                 if not isinstance(checked.receipt, ComparisonPreflightReceipt):
                     raise ValueError(
@@ -104,13 +125,17 @@ class ExecutionPlanService:
                 document = build_confirmation_document(
                     manifest, presentation, checked.receipt, plan_id=plan_id
                 )
+            document = enrich_research_confirmation(
+                document, research_evidence.research
+            )
             created = datetime.now(UTC)
             payload = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "plan_id": plan_id,
                 "manifest": manifest.model_dump(mode="json"),
                 "original_config_path": str(checked.prepared.original_config_path),
                 "preflight": checked.receipt.model_dump(mode="json"),
+                "research_evidence": research_evidence.model_dump(mode="json"),
                 "document": document.model_dump(mode="json"),
                 "created_at": created.isoformat().replace("+00:00", "Z"),
                 "expires_at": (created + timedelta(hours=1))
@@ -123,6 +148,17 @@ class ExecutionPlanService:
             text = render_confirmation_text(document)
             self.plans.publish(plan, text, render_confirmation_html(document))
             return self._response(plan, {"state": "ready", "job_id": None})
+        except ResearchEvidenceBindingError as exc:
+            return PlanRejected(
+                success=False,
+                code="research_evidence_binding_invalid",
+                error=str(exc),
+                required_parameter_paths=exc.required_parameter_paths,
+                required_parameter_bindings=[
+                    ParameterBindingTarget.model_validate(target)
+                    for target in exc.required_parameter_bindings
+                ],
+            )
         except ConfirmationPresentationError as exc:
             return PlanRejected(
                 success=False,
@@ -258,12 +294,15 @@ class ExecutionPlanService:
                                 )
                                 for checked in plan.preflight.candidates
                             },
+                            research_evidence=plan.research_evidence,
                         )
                         self.submission.submit(prepared, job_id=plan_id)
                     else:
                         self.submission.submit(
                             PreparedExecution(
-                                plan.manifest, Path(plan.original_config_path)
+                                plan.manifest,
+                                Path(plan.original_config_path),
+                                research_evidence=plan.research_evidence,
                             ),
                             job_id=plan_id,
                         )
@@ -304,6 +343,7 @@ class ExecutionPlanService:
 
     def _verify_ready(self, plan: ExecutionPlan) -> None:
         plan.verify()
+        plan.research_evidence.verify_current_policy(plan.manifest)
         if datetime.now(UTC) >= plan.expires_at:
             raise PlanOperationError(
                 "plan_expired", "計畫已過期，請重新準備與檢查程式。"

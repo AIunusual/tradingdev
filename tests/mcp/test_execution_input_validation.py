@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
     from tradingdev.domain.preflight import PreflightRequest
-    from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
 
 
 _PREPARE_TOOLS = [
@@ -219,9 +218,7 @@ def test_preparation_service_validation_errors_remain_private(
     context = plan_context(tmp_path)
     arguments = _arguments(tool_name, context.arguments)
 
-    def invalid_internal_dto(
-        _request: PreflightRequest, _presentation: ConfirmationPresentation
-    ) -> None:
+    def invalid_internal_dto(_request: PreflightRequest, _evidence_id: str) -> None:
         PlanResponse.model_validate({"private_record": "PRIVATE_PLAN"})
 
     monkeypatch.setattr(context.service, "prepare", invalid_internal_dto)

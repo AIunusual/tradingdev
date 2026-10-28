@@ -77,6 +77,7 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "example",
         "configuration",
         "research",
+        "evidence",
     }
     content = contract["content"]
     assert set(content) == {"base_strategy_source", "requirements", "lifecycle"}

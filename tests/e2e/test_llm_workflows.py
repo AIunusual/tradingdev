@@ -274,8 +274,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         validated=checked["validate_strategy"],
         dry_run=checked["dry_run_strategy"],
     )
-    presentation = actual_arguments.pop("presentation", None)
-    assert isinstance(presentation, dict), "Prepared plan requires presentation"
+    from tests.e2e.research_evidence import assert_saved_research
+
+    draft = assert_saved_research(calls, prepare_index)
+    actual_arguments.pop("evidence_id")
+    presentation = draft.presentation.model_dump(mode="json")
     assert presentation.get("title") and presentation.get("summary")
     assert set(presentation.get("parameter_descriptions", {})) == {
         f"/{name}" for name in scenario.parameters

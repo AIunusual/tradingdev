@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from tooling.context_budget import RequestSizes, text_size
 
-from tests.e2e.codex_harness import LIFECYCLE_TOOLS, successful_mcp_calls
+from tests.e2e.codex_harness import LIFECYCLE_TOOLS, completed_mcp_calls
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -122,14 +122,22 @@ def compact_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
 def codex_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
     """Read completed app-server calls, retaining failed application responses."""
     calls = []
-    for item in successful_mcp_calls(events):
+    for item in completed_mcp_calls(events):
         arguments = item.get("arguments", {})
         if isinstance(arguments, str):
             arguments = json.loads(arguments)
         assert isinstance(arguments, dict), item
-        calls.append(
-            ToolCall(item["tool"], arguments, tool_payload(item.get("result") or {}))
-        )
+        raw = item.get("result") or {}
+        payload = tool_payload(raw)
+        if item.get("status") == "failed" and not (
+            isinstance(payload, dict) and payload.get("success") is False
+        ):
+            payload = {
+                "success": False,
+                "error": "MCP tool rejected the request",
+                "mcp_result": raw,
+            }
+        calls.append(ToolCall(item["tool"], arguments, payload))
     return calls
 
 

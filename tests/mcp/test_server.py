@@ -255,3 +255,45 @@ def test_preparation_schema_separates_code_checks_from_historical_execution(
             "tested_fold_count",
             "sample_bars_used",
         }.intersection(receipt["properties"])
+
+
+def test_research_evidence_has_one_save_schema_and_compact_prepare_references(
+    runtime_root: Path,
+) -> None:
+    server = create_server(WorkspacePaths(runtime_root / "workspace"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    saved = tools["save_research_evidence"]
+    assert saved.annotations is not None
+    assert (
+        saved.annotations.read_only_hint,
+        saved.annotations.destructive_hint,
+        saved.annotations.idempotent_hint,
+        saved.annotations.open_world_hint,
+    ) == (False, False, False, False)
+    assert saved.input_schema["required"] == ["draft"]
+    assert "ResearchEvidenceDraft" in saved.input_schema["$defs"]
+    assert saved.output_schema is not None
+    compact = saved.output_schema["$defs"]["ResearchEvidenceSaved"]
+    assert set(compact["properties"]) == {
+        "success",
+        "evidence_id",
+        "content_hash",
+        "source_count",
+        "parameter_declaration_count",
+    }
+    for name in (
+        "prepare_backtest",
+        "prepare_comparison",
+        "prepare_walk_forward",
+        "prepare_optimization",
+    ):
+        schema = tools[name].input_schema
+        assert "evidence_id" in schema["required"]
+        assert "presentation" not in schema["properties"]
+        assert "ResearchEvidenceDraft" not in schema.get("$defs", {})
+        output = tools[name].output_schema
+        assert output is not None
+        assert (
+            "required_parameter_bindings"
+            in output["$defs"]["PlanRejected"]["properties"]
+        )

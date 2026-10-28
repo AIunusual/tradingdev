@@ -19,6 +19,7 @@ exec "${TRADINGDEV_CHECK_PYTHON:-.venv/bin/python}" -u -m pytest \
     tests/e2e/test_llm_discovery.py \
     tests/e2e/test_llm_novice_intake.py \
     tests/e2e/test_llm_comparison.py \
+    tests/e2e/test_llm_research_proposal.py \
     tests/e2e/test_llm_strategy_execution_guidance.py \
     --llm-provider "$provider" -m live_llm \
     -x -vv --capture=tee-sys --tb=short --durations=3 "$@"

@@ -35,7 +35,8 @@ strategy-created threads or processes must explicitly initialize their own strea
 base interface and revision lifecycle. Each reply identifies its selected section
 and lists `available_sections` with their purposes. The `content` object contains
 only that complete section: request `section="research"` for the research-input
-schema and shared simulation policy, `section="example"` for the Python/YAML pair,
+schema and shared simulation policy, `section="evidence"` for parameter proposals,
+source claims and formula recording, `section="example"` for the Python/YAML pair,
 or `section="configuration"` for the executable YAML schema and financial-setting
 notes. Research schema and policy are projected from their domain definitions.
 Unknown sections fail; a missing core reference does not produce an empty
@@ -859,17 +860,24 @@ workspace.
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
+5. `save_research_evidence`: save the checked trading rules/formulas, parameter
+   descriptions, proposal origins and limitations. Use the host's actual web
+   capability for primary references; record only sources actually retrieved or
+   supplied. Without retrieval, label proposals unverified and clarify unsupported
+   ranges. A fixed set of alternatives does not authorize return optimization.
+6. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
    the required research input, capture an execution manifest, check code and
    configuration offline, and prepare a
-   plain-language confirmation and HTML artifact. Only runnable or promoted
+   plain-language confirmation and HTML artifact using the saved `evidence_id`.
+   Every effective parameter must have an origin; missing bindings return exact
+   targets and values for correction through a new record. Only runnable or promoted
    generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
-6. Present `confirmation_summary` and a clickable link to the complete HTML,
+7. Present `confirmation_summary` and a clickable link to the complete HTML,
    then end the conversation turn. Wait for the user to read it and explicitly
    approve, decline or request changes in a later turn. Do not paste the full
    settings, search grid or validation evidence into the conversation.
-7. `submit_execution_decision(plan_id, decision)` relays that decision:
+8. `submit_execution_decision(plan_id, decision)` relays that decision:
    `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
    with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
    code check and another user confirmation. Initial task instructions, silence,

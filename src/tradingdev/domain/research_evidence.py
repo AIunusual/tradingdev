@@ -536,7 +536,7 @@ def _expand(
                         f"{target_id}{path}"
                     )
                 value = required[key]
-                if declaration.provenance == "reference" and not any(
+                if declaration.provenance == "reference" and not all(
                     canonical(claims[(reference.source_id, reference.claim_id)])
                     == canonical(value)
                     for reference in declaration.source_claims

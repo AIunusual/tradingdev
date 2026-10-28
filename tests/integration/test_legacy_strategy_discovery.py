@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.integration.execution_fixtures import execution_options, research_input
+from tests.integration.execution_fixtures import research_input, save_execution_evidence
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,7 +115,7 @@ async def test_legacy_strategy_discovery_and_explicit_resave(
             "prepare_backtest",
             strategy_id=_LEGACY_ID,
             research=research_input(end_date="2024-01-02"),
-            **execution_options({}),
+            **{"evidence_id": await save_execution_evidence(client, {})},
         )
         assert rejected_run["success"] is False
         assert rejected_run["code"] == "strategy_not_executable"

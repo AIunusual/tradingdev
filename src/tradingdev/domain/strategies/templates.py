@@ -9,12 +9,15 @@ from pydantic import TypeAdapter
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.domain.research import ResearchSpec
 from tradingdev.domain.research_policy import research_policy_payload
+from tradingdev.domain.strategies.research_contract import research_evidence_contract
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-type StrategyContractTopic = Literal["core", "research", "example", "configuration"]
+type StrategyContractTopic = Literal[
+    "core", "research", "evidence", "example", "configuration"
+]
 
 _CONTRACT_SECTIONS = (
     {
@@ -24,6 +27,10 @@ _CONTRACT_SECTIONS = (
     {
         "id": "research",
         "description": "Required research choices, defaults and explicit inheritance.",
+    },
+    {
+        "id": "evidence",
+        "description": "Parameter proposals, source claims and saved trading formulas.",
     },
     {"id": "example", "description": "Complete Python and YAML example to adapt."},
     {
@@ -149,6 +156,8 @@ def strategy_contract_payload(
                 "that a human supplied or approved those choices.",
             ],
         }
+    elif section == "evidence":
+        content = research_evidence_contract()
     elif section == "example":
         content = {
             "example_strategy_code": _EXAMPLE_CODE,

@@ -124,8 +124,17 @@ class CodexAppServer:
                     f"Codex exceeded {self.max_tool_calls} MCP tool calls"
                 )
                 if method == "item/completed":
-                    assert item.get("status") == "completed", (
-                        f"Codex MCP call failed: {item}"
+                    result = item.get("result")
+                    returned_error = (
+                        item.get("status") == "failed"
+                        and item.get("error") is None
+                        and isinstance(result, dict)
+                        and bool(
+                            result.get("content") or result.get("structuredContent")
+                        )
+                    )
+                    assert item.get("status") == "completed" or returned_error, (
+                        f"Codex MCP call failed without a tool response: {item}"
                     )
                     if self.on_completed_tool is not None:
                         self.on_completed_tool(deepcopy(message))

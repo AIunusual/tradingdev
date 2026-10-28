@@ -61,8 +61,10 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
         """Read core authoring rules first; request example/configuration as needed.
 
         Each response contains one complete content section and lists all available
-        sections. configuration is the executable YAML schema; example is a complete
-        Python/YAML pair. Missing reference files fail; no partial contract is returned.
+        sections. research covers required choices/defaults; evidence covers parameter
+        proposals, source claims and saved formulas. configuration is the executable
+        YAML schema; example is a complete Python/YAML pair. Missing reference files
+        fail; no partial contract is returned.
         """
         return StrategyContractResponse.model_validate(
             strategy_contract_payload(package_root, section)
@@ -147,13 +149,14 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
     ) -> StrategySaveSuccess | StrategySaveFailure:
         """Save code plus authoring YAML using explicit research choices.
 
-        Omit strategy_id to create a new identity automatically; users need not
-        name strategies. A provided ID without expected_revision_id is also a
-        new strategy and must be unused. Revising requires both identifiers and
-        the expected revision must still be current. Research owns its market,
-        dates and cost settings; conflicting YAML is rejected. Inheritance needs
-        that explicitly selected revision. display_name is an optional readable
-        name retained in the config/HTML, separate from the internal ID.
+        For a new unnamed request, omit strategy_id; the backend names it. Do not
+        invent an internal ID. Users need not name strategies. A provided ID without
+        expected_revision_id is also a new strategy and must be unused. Revising
+        requires both identifiers and the expected revision must still be current.
+        Research owns its market, dates and cost settings; conflicting YAML is
+        rejected. Inheritance needs that explicitly selected revision. display_name
+        is an optional readable name retained in the config/HTML, separate from the
+        internal ID.
         Use the returned revision_id for validation and execution.
         """
         payload = SaveStrategyInput(

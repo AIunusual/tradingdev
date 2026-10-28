@@ -9,6 +9,7 @@ import anyio
 from mcp_types import ToolAnnotations
 from pydantic import JsonValue, ValidationError  # noqa: TC002
 
+from tradingdev.app.contracts.common import ErrorResponse  # noqa: TC001
 from tradingdev.app.contracts.execution_requests import (
     BacktestInput,
     ComparisonInput,
@@ -22,12 +23,14 @@ from tradingdev.app.contracts.plans import (
     PlanResponse,  # noqa: TC001
     PlanStarted,  # noqa: TC001
 )
+from tradingdev.app.contracts.research_evidence import ResearchEvidenceSaved  # noqa: TC001
 from tradingdev.domain.backtest.schemas import WalkForwardConfig  # noqa: TC001
 from tradingdev.domain.preflight import PreflightRequest
-from tradingdev.domain.presentation.confirmation import (
-    ConfirmationPresentation,  # noqa: TC001
-)
 from tradingdev.domain.research import ResearchSpec  # noqa: TC001
+from tradingdev.domain.research_evidence import (
+    EvidenceId,  # noqa: TC001
+    ResearchEvidenceDraft,  # noqa: TC001
+)
 from tradingdev.mcp.tools.input_errors import invalid_arguments
 
 if TYPE_CHECKING:
@@ -38,6 +41,27 @@ if TYPE_CHECKING:
 
 
 def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
+        )
+    )
+    def save_research_evidence(
+        draft: ResearchEvidenceDraft,
+    ) -> ResearchEvidenceSaved | ErrorResponse:
+        """Save client-reported rules, sources and parameter origins as a new record.
+
+        Read get_strategy_contract(section="evidence") for exact binding requirements.
+        Use only references actually supplied by the user or retrieved by your host;
+        without retrieval use model_proposal. The server never fetches URLs or proves
+        browsing/source truth. Reference parameter origins require explicit source
+        value claims. Revisions create a new evidence_id; saved records are immutable.
+        """
+        return service.evidence.save(draft)
+
     prepare_annotations = ToolAnnotations(
         read_only_hint=False,
         destructive_hint=False,
@@ -48,7 +72,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     async def prepare(
         kind: ExecutionKind | Literal["comparison"],
         arguments: dict[str, Any],
-        presentation: ConfirmationPresentation,
+        evidence_id: EvidenceId,
     ) -> PlanResponse | PlanRejected:
         try:
             parsed = (
@@ -67,7 +91,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         except ValidationError as exc:
             raise invalid_arguments(exc) from exc
         result = await anyio.to_thread.run_sync(
-            partial(service.prepare, request, presentation)
+            partial(service.prepare, request, evidence_id)
         )
         if isinstance(result, PlanRejected) and result.execution_guidance is not None:
             return result.model_copy(
@@ -86,16 +110,17 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     async def prepare_backtest(
         strategy_id: str,
         research: ResearchSpec,
-        presentation: ConfirmationPresentation,
+        evidence_id: EvidenceId,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
     ) -> PlanResponse | PlanRejected:
         """Prepare a frozen plan with program checks; no market data or backtest.
 
-        Requires a runnable/promoted revision. Supply presentation labels/units for
-        every constructor parameter including defaults. Missing labels return exact
-        required_parameter_paths. parameters recursively overrides base parameters;
+        Requires a runnable/promoted revision and a saved evidence_id. Read
+        get_strategy_contract(section="evidence") for research evidence requirements.
+        Binding errors return required_parameter_bindings and required_parameter_paths.
+        parameters recursively overrides base parameters;
         research requires strategy outline, market, timeframe and period, or explicit
         inheritance with an explicit generated revision_id.
         Costs belong only in research;
@@ -111,14 +136,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             "parameters": parameters,
             "backtest_overrides": backtest_overrides,
         }
-        return await prepare("backtest", args, presentation)
+        return await prepare("backtest", args, evidence_id)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_comparison(
         strategy_id: str,
         research: ResearchSpec,
         candidates: list[ParameterCandidateInput],
-        presentation: ConfirmationPresentation,
+        evidence_id: EvidenceId,
         revision_id: str | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
     ) -> PlanResponse | PlanRejected:
@@ -129,8 +154,10 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         with synthetic data. No history, training or backtest runs before approval.
         Ordinary backtest strategies only; training-required research needs the
         walk-forward workflow. This is fixed comparison, not an adaptive search.
-        Use human descriptions for the union of all constructor parameter paths.
-        Present confirmation_summary and the HTML confirmation_link verbatim,
+        A saved evidence_id must cover every candidate's effective parameter leaves.
+        Read get_strategy_contract(section="evidence") for binding requirements.
+        Copy the entire confirmation_summary and HTML confirmation_link verbatim;
+        do not omit assumptions or summarize the summary,
         end the turn and wait for the user's later decision about the whole set.
         After completion
         generate_report(comparison_job_id=job_id) retains every candidate outcome.
@@ -144,14 +171,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
                 "revision_id": revision_id,
                 "backtest_overrides": backtest_overrides,
             },
-            presentation,
+            evidence_id,
         )
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_walk_forward(
         strategy_id: str,
         research: ResearchSpec,
-        presentation: ConfirmationPresentation,
+        evidence_id: EvidenceId,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
@@ -163,7 +190,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         validation_config replaces the complete validation section; use automatic
         folds or explicit inclusive UTC day windows within the research period.
         Omission keeps the selected configuration.
-        Supply human parameter presentation as for prepare_backtest. Program checks
+        Supply a saved evidence_id as for prepare_backtest. Program checks
         do not prove training or folds will succeed. Present confirmation_summary
         verbatim and copy the HTML confirmation_link verbatim; verify its destination
         against html_path, end the turn and await the user's later decision.
@@ -176,7 +203,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             "backtest_overrides": backtest_overrides,
             "validation_config": validation_config,
         }
-        return await prepare("walk_forward", args, presentation)
+        return await prepare("walk_forward", args, evidence_id)
 
     @mcp.tool(annotations=prepare_annotations)
     async def prepare_optimization(
@@ -188,7 +215,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         train_end: str,
         test_start: str,
         test_end: str,
-        presentation: ConfirmationPresentation,
+        evidence_id: EvidenceId,
         revision_id: str | None = None,
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
@@ -198,7 +225,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         Dates are inclusive UTC days: train_start < train_end < test_start < test_end.
         Research covers exactly train_start 00:00 through
         test_end 23:59:59.999999 UTC.
-        Use human parameter descriptions. The HTML contains ranges, objective
+        The saved evidence_id must cover base and every merged search-axis option;
+        read get_strategy_contract(section="evidence") for binding requirements.
+        The HTML contains ranges, objective
         direction, costs and program-check limits. Present confirmation_summary verbatim
         and copy the HTML confirmation_link verbatim; verify its destination against
         html_path, end the turn and await a later decision.
@@ -217,7 +246,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
             "parameters": parameters,
             "backtest_overrides": backtest_overrides,
         }
-        return await prepare("optimization", args, presentation)
+        return await prepare("optimization", args, evidence_id)
 
     @mcp.tool(
         annotations=ToolAnnotations(

@@ -22,6 +22,7 @@ from tests.e2e.strategy_scenarios import market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.execution_fixtures import (
     confirmation_presentation,
+    execution_evidence_draft,
     research_input,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
@@ -52,9 +53,6 @@ def comparison_arguments() -> dict[str, Any]:
             }
             for period in (9, 14)
         ],
-        "presentation": confirmation_presentation(
-            {"config": KDStrategyConfig().model_dump(), "fit_config": None}
-        ),
     }
 
 
@@ -140,7 +138,7 @@ def verify_comparison_delivery(
     status = completed[-1]
     assert status["run_id"] is None and status["metrics"] is None
     assert status["comparison"]["outcome"] == "all_succeeded"
-    assert status["comparison"]["counts"]["succeeded"] == 2
+    assert status["comparison"]["counts"]["succeeded"] == len(plan.manifest.candidates)
     paths = WorkspacePaths(workspace.workspace)
     store = SQLiteStore(paths)
     with closing(store.connect()) as connection:
@@ -215,7 +213,7 @@ def verify_comparison_delivery(
     assert evidence["manifest"] == saved.model_dump(mode="json")
     assert evidence["receipt"] == receipt.model_dump(mode="json")
     assert evidence["ledger"] == ledger.model_dump(mode="json")
-    assert len(payload["comparison_table"]["rows"]) == 2
+    assert len(payload["comparison_table"]["rows"]) == len(saved.candidates)
     for index, (candidate, row) in enumerate(
         zip(saved.candidates, payload["comparison_table"]["rows"], strict=True)
     ):
@@ -223,6 +221,9 @@ def verify_comparison_delivery(
         assert row["detail"] == f"#result-{index}-0"
         assert f"href='#result-{index}-0'" in html and f"id='result-{index}-0'" in html
         assert payload["runs"][index]["identity"]["run_id"] == run_ids[index]
+        assert [scope["scope_id"] for scope in payload["runs"][index]["scopes"]] == [
+            "full"
+        ]
     report_path = Path(report["path"])
     report_manifest = json.loads(report_path.with_name("manifest.json").read_text())
     assert report_manifest["fixed_comparison"] == evidence
@@ -242,7 +243,9 @@ def assert_comparison_references(text: str, *, job_id: str, run_ids: list[str]) 
     """Locate saved results by all child IDs or their unique comparison parent.
 
     Candidate wording may be paraphrased. Its correspondence to metrics, outcome
-    states and navigation instructions requires semantic review of the final prose.
+    states, natural-language scope and navigation instructions requires semantic
+    review of the final prose. The report itself must retain exact saved scope IDs;
+    users need not see an internal English scope label in their conversation.
     """
     visible = visible_text(text)
 
@@ -260,7 +263,6 @@ def assert_comparison_references(text: str, *, job_id: str, run_ids: list[str]) 
         "Final reply must identify every result using all child run IDs, or the "
         "exact comparison job ID"
     )
-    assert mentions("full"), "Final reply must identify the results' full scope"
 
 
 async def direct_comparison(
@@ -276,7 +278,24 @@ async def direct_comparison(
         return result
 
     await call("get_strategy", strategy_id="kd_crossover")
-    prepared = await call("prepare_comparison", **comparison_arguments())
+    parameters = {"config": KDStrategyConfig().model_dump(), "fit_config": None}
+    paths = list(confirmation_presentation(parameters)["parameter_descriptions"])
+    evidence = await call(
+        "save_research_evidence",
+        draft=execution_evidence_draft(
+            parameters,
+            target_paths={
+                "candidate_1": paths,
+                "candidate_2": paths,
+            },
+        ),
+    )
+    assert evidence["success"], evidence
+    prepared = await call(
+        "prepare_comparison",
+        **comparison_arguments(),
+        evidence_id=evidence["evidence_id"],
+    )
     assert prepared["success"], prepared
     assert not any(path.is_file() for path in workspace.data_root.rglob("*"))
     assert not list((workspace.workspace / "comparisons").rglob("snapshot.parquet"))
@@ -382,6 +401,7 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
         "比較工作：`parent`，K=9 與 K=14 的結果皆為 `full` scope。",
         "比較工作：parent，full scope；較短與較長週期分別列在報告中。",
         "比較工作：parent，full scope；完整報告保留各組設定及結果。",
+        "比較工作：parent，UTC 2024-01-01 至 2024-01-08，兩組完整期間比較。",
         "| 比較工作 | 候選 | 範圍 |\n|---|---|---|\n"
         "| parent | K=9 | full |\n| parent | K=14 | full |",
     ],
@@ -400,8 +420,6 @@ def test_comparison_references_accept_child_ids_or_parent_without_exact_labels(
     "text",
     [
         "比較工作：another_parent，K=9、K=14，full scope。",
-        "比較工作：parent，K=9、K=14。",  # Missing scope.
-        "結果：parent_candidate_1、parent_candidate_2。",  # Old path needs scope too.
         "結果：parent_candidate_1，full scope。",  # Partial child selection.
         "比較工作：parent_other，K=9、K=14，full scope。",
         "[閱讀報告](</parent/K=9/K=14/full>)",  # Hidden URL values are not prose.

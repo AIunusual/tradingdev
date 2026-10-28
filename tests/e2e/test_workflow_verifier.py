@@ -24,7 +24,7 @@ from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS, Scenario, market_frame
 from tests.e2e.test_llm_workflows import assert_workflow
 from tests.e2e.verify_strategy import verify_execution_snapshot
-from tests.integration.execution_fixtures import execution_options
+from tests.integration.execution_fixtures import execution_evidence_draft
 from tests.integration.mcp_harness import (
     MCPWorkspace,
     temporary_mcp_workspace,
@@ -164,12 +164,17 @@ async def _complete_workflow(
                 name, strategy_id=scenario.strategy_id, revision_id=saved["revision_id"]
             )
             assert result["success"], result
+        evidence = await call(
+            "save_research_evidence",
+            draft=execution_evidence_draft(scenario.parameters),
+        )
+        assert evidence["success"], evidence
         prepared = await call(
             "prepare_backtest",
             strategy_id=scenario.strategy_id,
             revision_id=saved["revision_id"],
             research={"kind": "inherit_selected_revision"},
-            **execution_options(scenario.parameters),
+            evidence_id=evidence["evidence_id"],
             **({"parameters": scenario.overrides} if scenario.experiment else {}),
         )
         assert prepared["success"], prepared

@@ -22,6 +22,7 @@ from tests.e2e.strategy_execution_guidance import (
     assert_guidance_workflow,
     assert_guidance_workspace,
     guidance_arguments,
+    seed_guidance_evidence,
 )
 from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
 
@@ -315,6 +316,7 @@ def test_guidance_rejects_saved_execution_or_market_files(
 def test_guidance_live_fixture_without_model() -> None:
     """Real stdio MCP and rejection workers, without cached prices or substitutes."""
     with temporary_mcp_workspace() as workspace:
+        seed_guidance_evidence(workspace)
 
         async def run() -> list[ToolCall]:
             calls: list[ToolCall] = []

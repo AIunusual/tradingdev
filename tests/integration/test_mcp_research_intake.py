@@ -12,7 +12,11 @@ import pytest
 import yaml
 
 from tests.e2e.conversation import links_to_file
-from tests.integration.execution_fixtures import execution_options, research_input
+from tests.integration.execution_fixtures import (
+    execution_evidence_draft,
+    research_input,
+    save_execution_evidence,
+)
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 
 if TYPE_CHECKING:
@@ -72,7 +76,9 @@ async def test_omitted_finances_and_inherited_choices_survive_worker_round_trip(
                 "prepare_backtest",
                 **identity,
                 research=selection,
-                **execution_options({"fast_period": 10, "slow_period": 30}),
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 10, "slow_period": 30}
+                ),
             )
             assert prepared["success"], prepared
             assert links_to_file(
@@ -116,11 +122,11 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
     arguments = {
         "strategy_id": "kd_crossover",
         "research": research_input(start_date="2026-01-01", end_date="2026-02-01"),
-        **execution_options(
-            {"config": KDStrategyConfig().model_dump(), "fit_config": None}
-        ),
     }
     async with mcp_workspace.connect() as client:
+        arguments["evidence_id"] = await save_execution_evidence(
+            client, {"config": KDStrategyConfig().model_dump(), "fit_config": None}
+        )
         rejected = await client.call("prepare_walk_forward", **arguments)
         assert rejected["success"] is False
         assert "validation_config" in rejected["error"]
@@ -129,11 +135,21 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
             **arguments,
             validation_config={"n_splits": 2, "train_ratio": 0.6},
         )
-        # The bundled walk-forward file has additional fit parameters. Use the
-        # public missing-label recovery contract to describe that selected config.
+        # The selected walk-forward config has additional fit parameters. Repair
+        # the saved record using the public exact-binding response.
         assert prepared["success"] is False
         assert prepared["required_parameter_paths"]
-        arguments["presentation"]["parameter_descriptions"] = {
+        assert prepared["code"] == "research_evidence_binding_invalid", prepared
+        draft = execution_evidence_draft(
+            {},
+            target_paths={
+                target["target_id"]: [
+                    item["parameter_path"] for item in target["parameters"]
+                ]
+                for target in prepared["required_parameter_bindings"]
+            },
+        )
+        draft["presentation"]["parameter_descriptions"] = {
             path: {
                 "label": f"分段訓練設定 {path}",
                 "description": "此設定控制已選定策略的訊號或訓練程序。",
@@ -141,6 +157,9 @@ async def test_walk_forward_replaces_old_windows_without_changing_the_research(
             }
             for path in prepared["required_parameter_paths"]
         }
+        saved = await client.call("save_research_evidence", draft=draft)
+        assert saved["success"], saved
+        arguments["evidence_id"] = saved["evidence_id"]
         prepared = await client.call(
             "prepare_walk_forward",
             **arguments,

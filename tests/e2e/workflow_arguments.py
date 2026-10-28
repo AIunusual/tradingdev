@@ -16,15 +16,15 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from tradingdev.app.contracts.execution_requests import ParameterCandidateInput
 from tradingdev.app.contracts.reports import ReportCommentary
 from tradingdev.domain.backtest.schemas import WalkForwardConfig
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
 from tradingdev.domain.research import ResearchSpec, research_payload
+from tradingdev.domain.research_evidence import EvidenceId, ResearchEvidenceDraft
 
 if TYPE_CHECKING:
     from tests.e2e.llm_client import ToolCall
 
 _PREPARE: dict[str, TypeAdapter[Any]] = {
     "research": TypeAdapter(ResearchSpec),
-    "presentation": TypeAdapter(ConfirmationPresentation),
+    "evidence_id": TypeAdapter(EvidenceId),
     "parameters": TypeAdapter(dict[str, JsonValue] | None),
     "backtest_overrides": TypeAdapter(dict[str, JsonValue] | None),
 }
@@ -34,6 +34,7 @@ _PAGE: dict[str, TypeAdapter[Any]] = {
 }
 _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
     "save_strategy": {"research": TypeAdapter(ResearchSpec)},
+    "save_research_evidence": {"draft": TypeAdapter(ResearchEvidenceDraft)},
     "build_dataset": {"horizon": TypeAdapter(int)},
     "train_model": {
         "parameters": TypeAdapter(dict[str, JsonValue] | None),

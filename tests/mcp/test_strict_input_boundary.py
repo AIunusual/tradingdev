@@ -12,7 +12,6 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context  # noqa: TC002 — SDK resolves tool annotations.
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent
-from tests.integration.execution_fixtures import execution_options
 from tests.mcp.execution_fixtures import plan_context
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner
@@ -35,7 +34,7 @@ _START_ARGUMENTS = {
         "start_date": "2024-01-01",
         "end_date": "2024-01-03",
     },
-    **execution_options({}),
+    "evidence_id": "e" * 32,
 }
 
 

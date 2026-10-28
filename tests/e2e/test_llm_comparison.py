@@ -19,6 +19,7 @@ from tests.integration.test_comparison_workflow import (
 )
 
 if TYPE_CHECKING:
+    from tests.e2e.conversation_user import ObservedPlanUser
     from tests.e2e.llm_client import ToolCall
     from tests.integration.mcp_harness import MCPWorkspace
 
@@ -35,8 +36,9 @@ REQUEST = (
 async def _run(
     workspace: MCPWorkspace,
     pytestconfig: pytest.Config,
-    user: ComparisonUser,
+    user: ObservedPlanUser,
     calls: list[ToolCall],
+    request: str = REQUEST,
 ) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}
@@ -48,19 +50,19 @@ async def _run(
     }
     async with workspace.connect() as client:
         names = list(client.output_schemas)
-        assert all(name not in REQUEST for name in names)
+        assert all(name not in request for name in names)
         options["tool_names"] = names
         if provider == "local":
             await run_local_model(
                 client,
-                REQUEST,
+                request,
                 base_url=pytestconfig.getoption("llm_base_url"),
                 temperature=pytestconfig.getoption("llm_temperature"),
                 reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                 **options,
             )
             return
-    result = codex_calls(await run_codex(workspace.root, REQUEST, **options))
+    result = codex_calls(await run_codex(workspace.root, request, **options))
     assert calls == result, "The observer must retain all raw tool attempts"
 
 

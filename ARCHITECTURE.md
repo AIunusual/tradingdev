@@ -206,8 +206,9 @@ worker 執行時再次檢查資格。指定 revision 不存在時不會退回 cu
 ### 準備、確認與執行回測
 
 一般回測與 walk-forward 共用 BacktestService、JobStore 與背景回測 worker。
-MCP 先以 `prepare_backtest`、`prepare_comparison`、`prepare_walk_forward` 或 `prepare_optimization`
-準備執行計畫：傳入具型別的研究需求，解析有效市場、期間、成本與來源標籤，
+MCP 先以 `save_research_evidence` 保存規則、公式與參數來源，再以 `prepare_backtest`、
+`prepare_comparison`、`prepare_walk_forward` 或 `prepare_optimization` 準備執行計畫：
+傳入證據識別碼與具型別的研究需求，解析有效市場、期間、成本與來源標籤，
 再解析資料位置與策略建構子參數，形成 manifest。
 ExecutionPlanService 經 PreflightService 完成離線程式與設定檢查，確認程序已停止並清理臨時內容後，
 才發佈白話文字與 HTML 確認文件。準備不建立正式 job 或 run；失敗回傳結構化錯誤。
@@ -250,7 +251,8 @@ PreflightService 將設定準備、策略匯入、建構子與執行模式檢查
 須等待使用者同意後的正式執行。合成訊號通過不證明交易規則完全正確、沒有前視或可獲利。
 受監督子程序的標準暫存環境指向本次受管理目錄；程序監督不是完整 Python sandbox。
 
-確認計畫保存不可變 manifest、程式檢查證據及呈現內容；計畫摘要共同綁定這些資料。
+確認計畫保存不可變 manifest、程式檢查證據、研究說明與版本化執行假設，以及呈現內容；
+計畫摘要共同綁定這些資料。原始說明記錄修改或刪除不影響已準備的計畫。
 模型提供確認頁標題、摘要與每個參數的白話名稱／說明／單位，後端提供全部有效數值、
 必備章節及實際檢查結果。參數說明必須完整對應固定建構子與搜尋候選的各個葉節點，
 包括巢狀設定及內建策略的訓練設定；遺漏時回傳可供模型補齊的欄位路徑。
@@ -260,7 +262,10 @@ PreflightService 將設定準備、策略匯入、建構子與執行模式檢查
 不必閱讀程式、內部變數或設定檔。完整文字與 HTML 共讀同一份具型別的確認文件，
 核心章節不可省略；設定來源與年化取樣方式明列，技術身分、保存名稱、政策版本及
 繼承版本放在獨立資訊區。對話摘要使用策略說明，不帶頁面標題或策略名稱。
-目前摘要與參數解釋仍是模型文字；沒有完整交易公式契約或公式與任意 Python 等價的證明。
+交易條件、公式、變數單位及參數來源隨計畫保存；這些仍是呼叫端聲明，
+不證明模型已查閱來源，也不證明公式與任意 Python 或 ML 模型等價。
+提交與 worker 啟動前會核對執行政策，成功結果各保存可獨立讀取的研究說明副本；
+歷史讀取使用原有文字，不以目前政策重寫。缺失的已宣告證據會拒絕讀取。
 工具回覆只提供後端產生的
 `confirmation_summary` 與 HTML 位置，完整文字保留在計畫產物，不重貼到對話。
 
@@ -569,7 +574,7 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 ### MCP 回覆契約
 
 `mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
-及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、research、
+及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、research、evidence、
 configuration、example 章節提供，每個回覆列出可讀章節；research schema 與模擬政策
 直接由 domain 定義產生，完整欄位不重複注入初始指引。ML 研究解讀集中在 `get_ml_contract`，
 資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由

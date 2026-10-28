@@ -7,6 +7,7 @@ from pydantic import Field
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.execution_plan import PlanState
 from tradingdev.domain.preflight import ProgramReceipt
+from tradingdev.domain.research_evidence import ParameterBindingTarget  # noqa: TC001
 from tradingdev.domain.strategies.capabilities import (
     StrategyExecutionGuidance,  # noqa: TC001 — Pydantic resolves the nested schema.
 )
@@ -31,6 +32,7 @@ class PlanResponse(ContractModel):
 
 class PlanRejected(ErrorResponse):
     required_parameter_paths: list[str] | None = None
+    required_parameter_bindings: list[ParameterBindingTarget] | None = None
     execution_guidance: StrategyExecutionGuidance | None = None
     next_tool: Literal["prepare_walk_forward"] | None = None
 
