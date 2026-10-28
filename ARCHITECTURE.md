@@ -450,7 +450,7 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 包含有限值與不可用指標的 `null`；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
 簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。每列附上自身的 horizon、window、n_quantiles、
+並提供候選數與多重比較限制。排名列附上自身的 horizon、window、n_quantiles、
 候選擬合參數與 signal_fingerprint，重跑後比對指紋即可確認是否重現；
 報酬指標（年化報酬、MDD、Sharpe、alpha、beta）由預測建出的模擬 long/short
 帳本計算，不含成本、未送出任何委託，因此不是回測結果。報酬統計只採非重疊
