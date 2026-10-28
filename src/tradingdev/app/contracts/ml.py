@@ -153,7 +153,7 @@ class LeaderboardRow(ContractModel):
     """How many entries share this rank."""
     n_observations: int
     summary: dict[str, float | None]
-    """Headline metrics; ``None`` marks a measured-but-failed score.
+    """Headline metrics; ``None`` marks an unavailable or non-finite score.
 
     The ranked metric is finite by definition, but the same candidate can have
     failed on another one. Keeping that key with a null says so; dropping it

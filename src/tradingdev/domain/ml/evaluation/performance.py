@@ -17,15 +17,18 @@ import numpy as np
 import pandas as pd
 
 from tradingdev.domain.performance.sampling import bar_duration_ns
+from tradingdev.domain.research_policy import CRYPTO_DAILY_PERIODS_PER_YEAR
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_NS_PER_YEAR = 365 * 86_400 * 10**9
+_NS_PER_YEAR = CRYPTO_DAILY_PERIODS_PER_YEAR * 86_400 * 10**9
 
 
 def periods_per_year(timeframe: str, horizon: int = 1) -> float | None:
-    """Compounding periods in a year for ``horizon``-bar holding intervals.
+    """Periods in a continuous crypto year for ``horizon``-bar intervals.
+
+    The caller must verify the market and consecutive interval boundaries.
 
     ``None`` when the bar frequency has no fixed length (months, years) or is
     unparseable, so no caller can mistake a guess for a measurement.
@@ -109,9 +112,11 @@ def return_metrics(
         drawdown = np.where(peak > 0, 1.0 - equity / peak, 0.0)
     max_drawdown = _finite(float(np.max(drawdown))) if drawdown.size else None
 
+    # Once capital is nonpositive, later negative factors cannot revive it
+    # into a valid compounded investment return.
     total = float(np.prod(1.0 + book) - 1.0)
     annual_return: float | None = None
-    if periods_per_year is not None and total > -1.0:
+    if periods_per_year is not None and np.all(equity > 0.0) and total > -1.0:
         with np.errstate(over="ignore", invalid="ignore"):
             annual_return = _finite(
                 float(np.power(1.0 + total, periods_per_year / n_periods) - 1.0)

@@ -165,13 +165,13 @@ class LeaderboardEntry:
     label: str
     context: EvaluationContext
     metrics: Mapping[str, float | None]
-    """Measured metrics, where ``None`` means *measured and not finite*.
+    """Measured metrics, where ``None`` means unavailable or non-finite.
 
     Three states are deliberately distinguishable, because a failed run must
     not disappear from the parameter grid it belongs to:
 
     - key absent: the metric was never recorded for this candidate;
-    - key present, value ``None``: it was measured and produced NaN/Inf, so the
+    - key present, value ``None``: unavailable (including NaN/Inf), so the
       candidate exists at its coordinates but has no score;
     - key present, finite value: an ordinary measurement.
 

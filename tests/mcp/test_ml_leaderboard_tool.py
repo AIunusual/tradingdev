@@ -380,3 +380,29 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
     assert filtered.n_candidates == filtered.n_ranked == 1
     assert filtered.next_offset is None
     assert filtered.ranked[0].entry_id == entries[0].entry_id
+
+
+def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
+    mcp: MCPServer,
+    workspace: WorkspacePaths,
+    recorded: str,
+) -> None:
+    frame = pd.read_parquet(workspace.ml_datasets / recorded / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    MLService(workspace=workspace).evaluate_signal(
+        realized,
+        realized,
+        dataset_id=recorded,
+        window=30,
+        record=True,
+    )
+    args = {"metric": "ic_mean", "dataset_id": recorded}
+    assert _dispatch(mcp, "leaderboard", args)["success"] is False
+    board = LeaderboardPageResponse.model_validate(
+        _dispatch(mcp, "leaderboard", {**args, "allow_parameter_axes": True})
+    )
+    assert board.parameter_axes["window"] == [20, 30]
+    assert board.n_candidates == 3
+    assert {row.window for row in board.ranked} == {20, 30}
+    assert all(row.signal_fingerprint for row in board.ranked)
+    assert any("surface" in text for text in board.caveats)

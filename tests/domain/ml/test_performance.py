@@ -137,3 +137,12 @@ class TestReturnMetrics:
         result = return_metrics([0.9] * 200, [0.0] * 200, periods_per_year=525_600.0)
         assert result.annual_return is None
         assert result.max_drawdown == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("returns", [[-2.0, -2.0], [0.0, -3.0, 0.0, -3.0]])
+def test_nonpositive_capital_cannot_revive_into_a_rankable_annual_return(
+    returns: list[float],
+) -> None:
+    result = return_metrics(returns, [0.0] * len(returns), periods_per_year=365.0)
+    assert result.annual_return is None
+    assert result.max_drawdown is not None and result.max_drawdown >= 1.0

@@ -453,12 +453,14 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 並提供候選數與多重比較限制。每列附上自身的 horizon、window、n_quantiles、
 候選擬合參數與 signal_fingerprint，重跑後比對指紋即可確認是否重現；
 報酬指標（年化報酬、MDD、Sharpe、alpha、beta）由預測建出的模擬 long/short
-帳本計算，不含成本、未送出任何委託，因此不是回測結果。`allow_parameter_axes`
+帳本計算，不含成本、未送出任何委託，因此不是回測結果。報酬統計只採非重疊
+持有網格；年化須有 crypto-only provider 與連續的實際 label 區間證據，其他市場或
+缺棒時回傳 `null`。本金曾非正時，年化報酬也不可用。`allow_parameter_axes`
 只放行 horizon、window、n_quantiles 三軸，讓敏感度分析的參數平原得以排序，
 仍拒絕不同商品、期間、特徵集或特徵程式碼，且同一 horizon 僅能對應單一 dataset
 版本；此時排名描述的是曲面而非單一可比較測量，回應會列出各軸取值並加上警語。
 NaN 或 Inf 的指標一律存成 `null` 而不刪除，因此「未記錄」「已測但失敗」「有限值」
-三種狀態可分辨；失敗候選不參與排序，但其 skipped 列仍帶 window、horizon、
+三種狀態可分辨（`null` 也包含缺乏計算依據）；無有效分數的候選不參與排序，但其 skipped 列仍帶 window、horizon、
 n_quantiles，參數平原不會把倖存的點誤讀成相鄰設定。
 MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。

@@ -11,6 +11,7 @@ import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.evaluation import simulate_strategy_returns
 from tradingdev.domain.ml.leaderboard import build_entry_id, signal_fingerprint
 from tradingdev.domain.ml.registry import LeaderboardStore
 
@@ -878,3 +879,97 @@ class TestFeatureIdentity:
         board = service.leaderboard("ic_mean", feature_set="technical")
         assert board["n_candidates"] == 1
         assert board["ranked"][0]["model_id"] == _BAD_MODEL
+
+
+class TestReturnSampling:
+    @pytest.mark.parametrize("horizon", [1, 3])
+    def test_performance_uses_holding_intervals_including_cash(
+        self, service: MLService, workspace: WorkspacePaths, horizon: int
+    ) -> None:
+        built = service.build_dataset(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            feature_set="returns",
+            horizon=horizon,
+        )
+        dataset_id = built["dataset"]["dataset_id"]
+        realized = _returns(workspace, dataset_id)
+        signal = [1.0 if index % 2 else -1.0 for index in range(len(realized))]
+        result = service.evaluate_signal(
+            signal,
+            realized,
+            dataset_id=dataset_id,
+            window=20,
+            n_quantiles=2,
+            record=True,
+        )
+        # Derive expectations from explicit non-overlapping intervals, rather
+        # than calling the new performance function under test.
+        simulation = simulate_strategy_returns(
+            pd.Series(signal),
+            pd.Series(realized),
+            horizon=horizon,
+            n_quantiles=2,
+        )
+        book = simulation.long_short.iloc[::horizon].to_numpy()
+        market = np.asarray(realized)[::horizon]
+        assert book[0] == 0.0  # Real warm-up cash interval must remain counted.
+        factor = 8760.0 / horizon
+        beta = float(np.cov(book, market, ddof=1)[0, 1] / np.var(market, ddof=1))
+        expected = {
+            "n_return_periods": len(book),
+            "periods_per_year": factor,
+            "annual_return": float(np.prod(1.0 + book) ** (factor / len(book)) - 1.0),
+            "sharpe": float(np.mean(book) / np.std(book, ddof=1) * np.sqrt(factor)),
+            "beta": beta,
+            "alpha": float((np.mean(book) - beta * np.mean(market)) * factor),
+        }
+        stored = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        ranked = service.leaderboard("annual_return", dataset_id=dataset_id)["ranked"][
+            0
+        ]
+        for key, value in expected.items():
+            assert result["metrics"][key] == pytest.approx(value)
+            assert stored.metrics[key] == pytest.approx(value)
+            if key in ranked["summary"]:
+                assert ranked["summary"][key] == pytest.approx(value)
+        assert ranked["value"] == pytest.approx(expected["annual_return"])
+
+    @pytest.mark.parametrize(
+        "source,gap", [("yahoo_finance", False), ("binance_vision", True)]
+    )
+    def test_unknown_or_discontinuous_calendar_does_not_guess_annualization(
+        self, service: MLService, workspace: WorkspacePaths, source: str, gap: bool
+    ) -> None:
+        if gap:
+            path = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            bars = pd.read_parquet(path).drop(index=150)
+            bars.to_parquet(path, index=False)
+        built = service.build_dataset(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            feature_set="returns",
+            source=source,
+        )
+        dataset_id = built["dataset"]["dataset_id"]
+        realized = _returns(workspace, dataset_id)
+        result = service.evaluate_signal(
+            realized,
+            realized,
+            dataset_id=dataset_id,
+            window=20,
+            record=True,
+        )
+        stored = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        for key in ("annual_return", "sharpe", "alpha", "periods_per_year"):
+            assert result["metrics"][key] is None
+            assert stored.metrics[key] is None
+        assert result["metrics"]["max_drawdown"] is not None
+        assert result["metrics"]["beta"] is not None
+        board = service.leaderboard("annual_return", dataset_id=dataset_id)
+        assert board["ranked"] == []
+        assert len(board["skipped"]) == 1

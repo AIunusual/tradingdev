@@ -237,7 +237,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
 
         Choose metric from get_ml_contract. dataset_id filters one verified version;
         allow_mixed does not make incompatible contexts comparable. limit is 1..100.
-        allow_parameter_axes ranks one instrument/dataset/feature code across
+        allow_parameter_axes ranks one research identity across
         window, horizon and n_quantiles, which is a sensitivity surface rather
         than one comparable measurement. Each page slices ranked and skipped
         independently at the same offset; counts and caveats cover all

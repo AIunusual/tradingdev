@@ -20,6 +20,7 @@ from tradingdev.adapters.storage.filesystem import (
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
 from tradingdev.app.ml_training import MLTrainingService
+from tradingdev.domain.data.crawlers.registry import describe_sources
 from tradingdev.domain.ml.calendar import (
     CalendarMode,
     MissingPolicy,
@@ -80,6 +81,7 @@ from tradingdev.domain.ml.validation import (
     get_validation_scheme,
     validation_scheme_names,
 )
+from tradingdev.domain.performance.sampling import bar_duration_ns
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -164,6 +166,8 @@ _ML_GUIDANCE = {
         "strata are reported; ties can produce fewer strata than requested. "
         "A metric that comes out NaN or Inf is recorded as null rather than "
         "dropped, so a failed run keeps its place in the parameter grid. "
+        "Annualised simulated metrics require verified continuous crypto "
+        "holding intervals; other calendars remain unavailable. "
         "Training-data evaluation remains in-sample. "
         "Panel-trained models may be evaluated on a separate compatible "
         "single-symbol dataset; panel datasets themselves are refused."
@@ -298,8 +302,9 @@ class MLService:
             raise ValueError("n_quantiles must be between 2 and 10")
 
         manifest: dict[str, Any] | None = None
+        annual_periods: float | None = None
         if record or dataset_id is not None:
-            horizon, manifest = self._recording_horizon(
+            horizon, manifest, annual_periods = self._recording_horizon(
                 dataset_id,
                 horizon,
                 forward_returns=forward_returns,
@@ -336,14 +341,13 @@ class MLService:
         # The book is long/short, and its benchmark is holding the same asset
         # over the same holding intervals, so alpha/beta describe the signal's
         # exposure rather than an unrelated index.
+        # Off-grid zeros are placeholders, not additional holding intervals.
+        # Keep cash returns on the grid and align the benchmark to that grid.
+        decisions = pred.index[::horizon]
         performance = return_metrics(
-            simulated.long_short,
-            fwd.loc[simulated.long_short.index],
-            periods_per_year=(
-                None
-                if manifest is None
-                else periods_per_year(str(manifest["timeframe"]), horizon)
-            ),
+            simulated.long_short.loc[decisions],
+            fwd.loc[decisions],
+            periods_per_year=annual_periods,
         )
         metrics.update(performance.as_metrics())
 
@@ -395,8 +399,8 @@ class MLService:
         *,
         n_observations: int,
         forward_returns: list[float],
-    ) -> tuple[int, dict[str, Any]]:
-        """Adopt the saved label horizon, rejecting an explicit mismatch."""
+    ) -> tuple[int, dict[str, Any], float | None]:
+        """Verify evaluation rows and resolve their horizon and annualisation."""
         if not dataset_id:
             raise ValueError(
                 "recording an evaluation requires dataset_id, so the record "
@@ -435,15 +439,47 @@ class MLService:
             raise ValueError(
                 "forward_returns do not match the stored dataset in row order"
             )
-        if horizon is None:
-            return dataset_horizon, manifest
-        if horizon != dataset_horizon:
+        if horizon is not None and horizon != dataset_horizon:
             raise ValueError(
                 f"horizon {horizon} does not match the dataset's horizon "
                 f"{dataset_horizon}; omit it to adopt the dataset's, or record "
                 "against the dataset the signal was computed on"
             )
-        return horizon, manifest
+        annual_periods = self._dataset_periods_per_year(entries, manifest)
+        return dataset_horizon, manifest, annual_periods
+
+    @staticmethod
+    def _dataset_periods_per_year(
+        intervals: pd.DataFrame, manifest: dict[str, Any]
+    ) -> float | None:
+        """Annualise only verified continuous intervals in a known crypto market."""
+        source = next(
+            (
+                item
+                for item in describe_sources()
+                if item["source"] == manifest.get("source")
+            ),
+            None,
+        )
+        if source is None or set(source["asset_classes"]) != {"crypto"}:
+            return None
+        timeframe = str(manifest["timeframe"])
+        horizon = int(manifest["horizon"])
+        duration = bar_duration_ns(timeframe)
+        if duration is None:
+            return None
+        starts = pd.to_datetime(intervals["timestamp"], utc=True).reset_index(drop=True)
+        ends = pd.to_datetime(intervals["label_end"], utc=True).reset_index(drop=True)
+        expected = pd.Timedelta(duration * horizon, unit="ns")
+        if not (ends - starts).eq(expected).all():
+            return None
+        if (
+            not ends.iloc[:-1]
+            .reset_index(drop=True)
+            .equals(starts.iloc[1:].reset_index(drop=True))
+        ):
+            return None
+        return periods_per_year(timeframe, horizon)
 
     def _record_evaluation(
         self,

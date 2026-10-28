@@ -427,12 +427,16 @@ long/short book built from the predictions: costs are excluded and no order was
 ever sent, so they are not backtest results. Alpha and beta regress that book
 against holding the measured asset over the same intervals, which makes them a
 statement about market exposure rather than about an unrelated index. Annualised
-figures need the dataset's timeframe and horizon; without a dataset the calendar
-is unknown, so they stay unset instead of assuming 252 or 365 days.
+figures use only the non-overlapping decision grid, including its cash intervals.
+They require a crypto-only provider and consecutive label intervals matching the
+declared timeframe and horizon, using the shared 365-day crypto policy. Without
+that evidence (including Yahoo, gaps or no dataset), they are `null`. Annualised
+return is also `null` if compounded capital becomes nonpositive; subsequent
+losses cannot revive a bankrupt book into a profitable candidate.
 
 A metric that comes out NaN or Inf is stored as an explicit `null`, never removed
 from the record. Three states therefore stay distinguishable: a key that is
-absent was never recorded, a key holding `null` was measured and failed, and a
+absent was never recorded, a key holding `null` is unavailable or non-finite, and a
 finite value is an ordinary measurement. This matters for parameter surfaces. If
 the run at `window=20` fails, deleting its score would leave `window=10` and
 `window=30` looking adjacent, and any slope or flatness fitted along that
@@ -451,8 +455,8 @@ placeholder zeros is meaningless until the validity mask is applied.
 version, so models on it can be compared separately from rebuilt versions.
 Records must match its manifest's data context and row count; unknown or invalid
 IDs fail. Other filters combine with this selector. Different IC windows or
-quantile counts require `allow_mixed=True`, which never bypasses dataset
-verification.
+quantile counts require `allow_parameter_axes=True` or `allow_mixed=True`; neither
+bypasses dataset verification.
 
 `allow_parameter_axes=True` is the narrower opt-in a sensitivity study needs: it
 permits horizon, IC window and quantile count to differ and nothing else.

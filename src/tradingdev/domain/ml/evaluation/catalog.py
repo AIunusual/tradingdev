@@ -181,7 +181,8 @@ _DEFINITIONS = [
         "performance",
         "numpy/pandas",
         "Simulated long/short return compounded over the measured span and "
-        "expressed per year; needs a bar frequency to annualise. Excludes "
+        "expressed per year; requires positive capital and verified continuous "
+        "crypto holding intervals. Unavailable otherwise. Excludes "
         "costs and is not a mark-to-market equity curve.",
         summary=True,
         direction="maximize",
