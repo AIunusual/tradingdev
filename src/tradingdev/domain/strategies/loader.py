@@ -7,7 +7,6 @@ import importlib
 import importlib.util
 import inspect
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,16 +28,6 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
-
-
-@dataclass(frozen=True)
-class StrategyModuleSpec:
-    """Resolved strategy module metadata."""
-
-    strategy_id: str
-    source_path: Path
-    class_name: str
-    bundled: bool
 
 
 class StrategyLoader:
