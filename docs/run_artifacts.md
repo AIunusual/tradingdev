@@ -466,10 +466,13 @@ quantile counts require `allow_parameter_axes=True` or `allow_mixed=True`; neith
 bypasses dataset verification.
 
 `allow_parameter_axes=True` is the narrower opt-in a sensitivity study needs: it
-permits horizon, IC window and quantile count to differ and nothing else.
+permits horizon, IC window and quantile count to differ under these constraints.
 Instrument or panel symbols, period, feature set and code fingerprint must still
 match, and one horizon may hold only one dataset ID and content hash, because a new horizon
-rebuilds its labels on its own dataset. A ranking across those axes describes a
+rebuilds its labels on its own dataset. Across horizons, provider and underlying
+source-bar equivalence are not verified. Inspect dataset manifests and source
+data separately before treating the sweep as a controlled comparison; the tool
+reports this limitation in its caveats. A ranking across those axes describes a
 parameter surface, not one comparable measurement, so the response reports the
 observed values of each axis and appends a caveat saying so. Every row states its
 own horizon, window and quantile count, so a point on the surface is readable

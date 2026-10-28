@@ -392,8 +392,8 @@ def _examples(groups: Mapping[str, LeaderboardEntry]) -> str:
 def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
     """Why a parameter surface cannot be read, or ``None`` when it can.
 
-    A surface may span datasets, but only because a different ``horizon``
-    rebuilds the labels. Within one horizon the measured data must still be a
+    A surface may span datasets across horizons; common source-bar provenance
+    is not verified by this context. Within one horizon the data must be a
     single dataset version, so a rebuilt or corrected dataset is never averaged
     into the same row of the grid.
     """
@@ -402,8 +402,8 @@ def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
         return (
             "entries were not measured on the same instrument, dates, feature "
             f"set or feature code ({len(identities)} distinct identities; "
-            f"{_examples(identities)}. window, horizon and n_quantiles may vary "
-            "between them, but nothing else may. Filter by "
+            f"{_examples(identities)}. These identity fields must match even "
+            "when window, horizon and n_quantiles vary. Filter by "
             "symbol/timeframe/feature_set to rank separately, or rebuild both "
             "sides on one feature code. allow_mixed=True permits ranking "
             "incompatible contexts but does not make them comparable."
@@ -418,8 +418,8 @@ def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
         horizon = sorted(mixed)[0]
         return (
             f"horizon {horizon} was measured on {len(mixed[horizon])} different "
-            "dataset versions. A parameter surface may span datasets only "
-            "because each horizon rebuilds its labels, so one horizon must have "
+            "dataset versions. A parameter surface may span datasets across "
+            "horizons, but one horizon must have "
             "one dataset version: re-record against a single dataset_id, or "
             "rank each version separately."
         )

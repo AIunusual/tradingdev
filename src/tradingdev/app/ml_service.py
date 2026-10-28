@@ -187,7 +187,8 @@ _ML_GUIDANCE = {
         "comparing that fingerprint with a fresh predict shows whether a re-run "
         "reproduced the recorded signal. allow_mixed permits incompatible "
         "contexts but does not make them comparable; allow_parameter_axes "
-        "permits only window, horizon and n_quantiles to differ, which ranks a "
+        "relaxes window, horizon and n_quantiles within the saved identity, "
+        "without verifying shared source bars across horizons. This ranks a "
         "sensitivity surface and must not be read as one comparable "
         "measurement. A candidate with no finite score is still recorded, and "
         "its skipped row carries its window, horizon and n_quantiles, so the "
@@ -613,9 +614,10 @@ class MLService:
         supplied dataset is verified against its records. Mixed contexts raise
         ``ValueError`` unless ``allow_mixed`` is enabled; that opt-in does not
         make their measurements comparable. ``allow_parameter_axes`` permits
-        only the sweepable settings (window, horizon, n_quantiles) to differ,
-        which is what a parameter surface needs. Invalid metrics, datasets or
-        empty results also fail. Returns a ``LeaderboardResponse`` payload.
+        the sweepable settings (window, horizon, n_quantiles) to differ within
+        the saved identity; cross-horizon source-bar equivalence is unverified.
+        Invalid metrics, datasets or empty results also fail.
+        Returns a ``LeaderboardResponse`` payload.
         """
         manifest = self._load_dataset(dataset_id)[1] if dataset_id is not None else None
         store = LeaderboardStore(self._workspace.ml_leaderboard)
@@ -692,6 +694,12 @@ class MLService:
                 "candidates span more than one evaluation setting "
                 f"({_describe_axes(axes)}); the ranking describes a parameter "
                 "surface, not one comparable measurement"
+            )
+        if len(axes["horizon"]) > 1:
+            caveats.append(
+                "cross-horizon source and raw-data equivalence is not verified; "
+                "check dataset manifests and source bars before treating the "
+                "surface as a controlled comparison"
             )
         return {
             "success": True,

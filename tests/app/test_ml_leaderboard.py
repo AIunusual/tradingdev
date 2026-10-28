@@ -635,6 +635,9 @@ class TestParameterSurface:
         board = service.leaderboard("ic_mean", allow_parameter_axes=True)
         assert board["n_candidates"] == 2
         assert board["parameter_axes"]["horizon"] == [1, 3]
+        assert any(
+            "raw-data equivalence is not verified" in item for item in board["caveats"]
+        )
         assert {row["dataset_id"] for row in board["ranked"]} == dataset_ids
         assert all(row["window"] == 20 for row in board["ranked"])
 
