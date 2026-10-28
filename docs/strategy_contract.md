@@ -745,6 +745,8 @@ feature-column match, then returns one page of `signal` and `forward_returns` in
 dataset row order with their `model_id`, `dataset_id` and horizon. `offset` starts
 at zero; `limit` defaults to 100 and accepts 1–500. `n_rows` is the complete
 dataset count, not the page length; `next_offset=null` marks the final page.
+`signal_fingerprint` hashes the complete signal in dataset row order, regardless
+of `offset` or `limit`, for comparison with evaluation and leaderboard records.
 `MLService.predict` retains complete arrays for backend and Python callers.
 MCP evaluation does not require retrieving every preview page. Prediction does not establish
 whether the requested data or its label interval was used for fitting or
@@ -819,6 +821,13 @@ Returns are indexed by decision row, not realization time, and do not form a
 mark-to-market equity curve. A constant signal cannot form a long/short book and
 is rejected.
 
+Additional performance statistics use only the holding grid, including its cash
+intervals, with the benchmark on the same grid. Annualised statistics require a
+verified continuous crypto calendar; annual return also requires positive capital
+throughout. Unavailable values stay `null`. See the
+[recorded-metric contract](run_artifacts.md#recorded-signal-evaluations) for the
+market policy and storage rules.
+
 The separate Python `MLService.evaluate_signal` accepts equal-length, finite
 numeric signal and forward-return arrays. Without a dataset ID, that caller is
 responsible for chronological single-asset alignment and the correct horizon;
@@ -840,8 +849,10 @@ caller-declared `model_id` label. Recording and candidate-replacement semantics 
 only matching measurement contexts. Its optional `dataset_id` filter selects a
 verified dataset version and checks that recorded data context matches its
 manifest; differences in evaluation settings still require compatible context.
-`allow_mixed=True` opts into incomparable
-contexts and must not be presented as a controlled comparison. Retain its
+`allow_parameter_axes=True` permits window, horizon and quantile-count variations
+under the [parameter-surface rules](run_artifacts.md#recorded-signal-evaluations);
+it does not make those measurements comparable. `allow_mixed=True` opts into
+incompatible contexts and must not be presented as a controlled comparison. Retain its
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
 

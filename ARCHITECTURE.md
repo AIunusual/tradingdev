@@ -447,11 +447,25 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 它不判斷資料是否曾用於訓練或選參。MCP `evaluate_signal` 以 model／dataset ID
 呼叫 `evaluate_prediction`，由後端對完整資料產生訊號並核對資料列、報酬、horizon
 及非重疊標籤區間，拒絕 panel。Python `MLService.evaluate_signal` 保留陣列計算入口；
-提供 dataset ID 時仍須符合完整資料集契約。指定記錄才將有限指標交 leaderboard store
-保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
+提供 dataset ID 時仍須符合完整資料集契約。指定記錄才交 leaderboard store 保存，
+包含有限值與不可用指標的 `null`；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
 簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。MCP 在完整候選集合完成比較與排序後分頁，拒絕時
+並提供候選數與多重比較限制。排名列附上自身的 horizon、window、n_quantiles、
+候選擬合參數與 signal_fingerprint，重跑後比對指紋即可確認是否重現；
+報酬指標（年化報酬、MDD、Sharpe、alpha、beta）由預測建出的模擬 long/short
+帳本計算，不含成本、未送出任何委託，因此不是回測結果。報酬統計只採非重疊
+持有網格；年化須有 crypto-only provider 與連續的實際 label 區間證據，其他市場或
+缺棒時回傳 `null`。本金曾非正時，年化報酬也不可用。`allow_parameter_axes`
+只放行 horizon、window、n_quantiles 三軸，讓敏感度分析的參數平原得以排序，
+仍拒絕不同商品、K 棒頻率、期間、特徵集或特徵程式碼，且同一 horizon 僅能對應單一 dataset
+版本。跨 horizon 的供應商與原始行情一致性尚未驗證，須另外核對；回應會列出
+各軸取值及此限制，不能將曲面排名當成已受控的單一可比較測量。
+新紀錄將 NaN 或 Inf 指標存成 `null` 而不刪除，因此「未記錄」「已測但失敗」「有限值」
+三種狀態可分辨（`null` 也包含缺乏計算依據）；無有效分數的候選不參與排序，但其 skipped 列仍帶 window、horizon、
+n_quantiles，參數平原不會把倖存的點誤讀成相鄰設定。舊紀錄的缺欄位無法區分未測與不可用，
+需要此證據時須重新評估並記錄。
+MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的

@@ -20,6 +20,7 @@ from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+from tradingdev.domain.ml.leaderboard import signal_fingerprint
 from tradingdev.domain.ml.registry.artifact_store import ModelArtifactStore
 from tradingdev.domain.ml.registry.leaderboard_store import LeaderboardStore
 
@@ -192,6 +193,10 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert row["dataset_id"] == dataset_id and row["model_id"] == model["model_id"]
     assert row["n_observations"] == dataset["rows"]
     assert row["value"] == evaluation["metrics"]["hit_rate"]
+    assert row["parameters"] == model["parameters"]
+    assert row["signal_fingerprint"] == prediction["signal_fingerprint"]
+    assert row["signal_fingerprint"] == evaluation["signal_fingerprint"]
+    assert row["signal_fingerprint"] == evaluation["recorded"]["signal_fingerprint"]
     return MLEvidence(dataset, model, prediction, evaluation, leaderboard)
 
 
@@ -233,6 +238,9 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert entry.n_observations == len(frame)
     assert entry.metric("hit_rate") == pytest.approx(hit_rate)
     assert entry.context.data_fingerprint == dataset["content_hash"]
+    assert entry.parameters == artifact.parameters
+    assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
+    assert entry.signal_fingerprint == evidence.prediction["signal_fingerprint"]
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
 
 

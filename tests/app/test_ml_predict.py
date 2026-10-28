@@ -131,6 +131,42 @@ class TestPredict:
         assert verdict["n_observations"] == prediction["n_rows"]
         assert set(verdict["metrics"])
 
+    def test_the_prediction_fingerprint_identifies_the_signal(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        """A re-run must be checkable against the stored evaluation."""
+        model_id, dataset_id = trained
+        prediction = service.predict(model_id=model_id, dataset_id=dataset_id)[
+            "prediction"
+        ]
+        verdict = service.evaluate_signal(
+            prediction["signal"],
+            prediction["forward_returns"],
+            horizon=prediction["horizon"],
+            record=True,
+            model_id=model_id,
+            dataset_id=dataset_id,
+        )
+        assert prediction["signal_fingerprint"] == verdict["signal_fingerprint"]
+        assert (
+            verdict["recorded"]["signal_fingerprint"] == verdict["signal_fingerprint"]
+        )
+        stored = service.leaderboard("ic_mean")["ranked"][0]
+        assert stored["entry_id"] == verdict["recorded"]["entry_id"]
+        assert stored["signal_fingerprint"] == prediction["signal_fingerprint"]
+
+    def test_the_paged_preview_keeps_the_full_signal_fingerprint(
+        self, service: MLService, trained: tuple[str, str]
+    ) -> None:
+        """Hashing the returned page instead of the signal would break checks."""
+        model_id, dataset_id = trained
+        full = service.predict(model_id=model_id, dataset_id=dataset_id)["prediction"]
+        page = service.predict_page(model_id=model_id, dataset_id=dataset_id, limit=10)[
+            "prediction"
+        ]
+        assert len(page["signal"]) == 10 < page["n_rows"]
+        assert page["signal_fingerprint"] == full["signal_fingerprint"]
+
     @pytest.mark.parametrize(
         "model_kind",
         ["xgboost_direction", "lightgbm_direction", "catboost_direction"],

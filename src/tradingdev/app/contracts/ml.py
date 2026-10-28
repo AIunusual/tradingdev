@@ -90,6 +90,8 @@ class RecordedEvaluation(ContractModel):
     context: str
     n_candidates: int
     """How many candidates are now recorded; the size of the comparison."""
+    signal_fingerprint: str
+    """Hash of the evaluated signal; compare it with a re-run to check reproduction."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -97,6 +99,12 @@ class SignalEvaluationResponse(ContractModel):
 
     success: Literal[True]
     evaluation_id: str
+    signal_fingerprint: str
+    """Hash of the evaluated signal values in dataset row order.
+
+    Stored separately from entry identity for modelled candidates. Ad-hoc
+    candidates without a model ID also include it in their entry identity.
+    """
     n_observations: int
     horizon: int
     window: int
@@ -120,18 +128,37 @@ class PredictionEvaluationResponse(SignalEvaluationResponse):
 
 
 class LeaderboardRow(ContractModel):
-    """One placed candidate and the headline numbers behind its rank."""
+    """One placed candidate and the headline numbers behind its rank.
+
+    The row is self-describing: the evaluation settings it was measured under,
+    the candidate's own hyperparameters and the hash of its signal all travel
+    with the metric, so a parameter surface or a reproduction check needs no
+    second lookup.
+    """
 
     rank: int
     entry_id: str
     label: str
     model_id: str
     dataset_id: str
+    horizon: int
+    window: int
+    n_quantiles: int
+    parameters: dict[str, JsonValue]
+    """Fitted hyperparameters when available; empty does not imply defaults."""
+    signal_fingerprint: str
+    """Hash of the signal this row was measured on; empty on older records."""
     value: float
     tied: int
     """How many entries share this rank."""
     n_observations: int
-    summary: dict[str, float]
+    summary: dict[str, float | None]
+    """Headline metrics; ``None`` marks an unavailable or non-finite score.
+
+    The ranked metric is finite by definition, but the same candidate can have
+    failed on another one. Keeping that key with a null says so; dropping it
+    would hide the failure behind a shorter list.
+    """
 
 
 class LeaderboardSkipped(ContractModel):
@@ -140,6 +167,15 @@ class LeaderboardSkipped(ContractModel):
     entry_id: str
     label: str
     reason: str
+    horizon: int
+    window: int
+    n_quantiles: int
+    """The settings this candidate was measured under.
+
+    Reported so a failed run keeps its coordinates on the parameter grid.
+    Without them the surviving points look adjacent, and a slope or flatness
+    computed over them would be wrong.
+    """
 
 
 class LeaderboardResponse(ContractModel):
@@ -158,6 +194,12 @@ class LeaderboardResponse(ContractModel):
     n_ranked: int
     """Candidates actually placed; the size of the comparison that decided."""
     context: str
+    parameter_axes: dict[str, list[int]]
+    """Every observed value of horizon, window and n_quantiles.
+
+    The grid coordinates behind the ranking: when an axis holds more than one
+    value the rows span a parameter surface rather than one measurement.
+    """
     ranked: list[LeaderboardRow]
     skipped: list[LeaderboardSkipped]
     caveats: list[str]
@@ -375,6 +417,8 @@ class PredictionSummary(ContractModel):
     signal: list[float]
     forward_returns: list[float]
     """Preview returns aligned with signal; evaluate_signal uses all saved rows."""
+    signal_fingerprint: str
+    """Hash of the complete signal, not only the returned page."""
 
 
 class PredictionResponse(ContractModel):
