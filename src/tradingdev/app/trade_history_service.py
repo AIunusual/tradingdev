@@ -17,19 +17,28 @@ from tradingdev.adapters.storage.performance import (
     PerformanceStore,
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
 from tradingdev.domain.execution import ManifestError
+from tradingdev.domain.research_scope import (
+    effective_scope_parameters,
+    scope_parameter_sources,
+    verify_research_scopes,
+)
 from tradingdev.domain.strategies.execution import finite_strategy_value
 
 if TYPE_CHECKING:
     from pydantic import JsonValue
 
+    from tradingdev.domain.approved_research import ApprovedResearch
     from tradingdev.domain.execution import ExecutionManifest
+    from tradingdev.domain.execution_assumptions import ExecutionAssumptions
     from tradingdev.domain.performance.artifacts import (
         ObservationsBundle,
         PerformanceBundle,
         PerformanceScope,
         ScopeObservations,
     )
+    from tradingdev.domain.research_evidence import BoundParameterProvenance
 
 
 class HistoryReadError(ValueError):
@@ -64,6 +73,9 @@ class LoadedHistoryScope:
     parameter_provenance: str
     parameters_complete: bool
     execution_config: dict[str, Any] | None
+    research_evidence: ApprovedResearch | None = None
+    parameter_sources: tuple[BoundParameterProvenance, ...] = ()
+    execution_assumptions: ExecutionAssumptions | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +87,8 @@ class LoadedHistoryRun:
     observations: ObservationsBundle
     manifest: ExecutionManifest | None
     manifest_artifact: dict[str, Any] | None
+    research_evidence: ApprovedResearch | None = None
+    research_artifact: dict[str, Any] | None = None
 
 
 class TradeHistoryService:
@@ -138,8 +152,25 @@ class TradeHistoryService:
                     "execution_manifest_invalid",
                     "Manifest strategy identity differs from the recorded run",
                 )
+        try:
+            evidence = SubmittedResearchStore(self._workspace).load_run(
+                run, self._store, manifest
+            )
+            if evidence is not None:
+                assert manifest is not None
+                verify_research_scopes(manifest, performance, observations)
+        except (ManifestError, ValueError) as exc:
+            raise HistoryReadError("research_evidence_invalid", str(exc)) from exc
         return LoadedHistoryRun(
-            run, performance, observations, manifest, manifest_artifact
+            run,
+            performance,
+            observations,
+            manifest,
+            manifest_artifact,
+            evidence,
+            self._store.get_artifact(f"{run_id}:research_evidence")
+            if evidence is not None
+            else None,
         )
 
     def load_scope(self, run_id: str, scope: str | None = None) -> LoadedHistoryScope:
@@ -170,19 +201,15 @@ class TradeHistoryService:
             complete = False
             config = None
         else:
-            execution = manifest.strategy_execution
-            raw = execution.constructor_kwargs
-            base = raw.get("config", {}) if execution.kind == "bundled" else raw
-            if not isinstance(base, dict):
-                raise HistoryReadError(
-                    "parameters_unavailable",
-                    "Saved constructor parameters are not an object",
-                )
-            parameters = deepcopy(base)
-            provenance = "execution_manifest"
-            if manifest.kind == "optimization":
-                _overlay(parameters, selected.parameters)
-                provenance = "execution_manifest_and_trial"
+            try:
+                parameters = effective_scope_parameters(manifest, selected)
+            except ValueError as exc:
+                raise HistoryReadError("parameters_unavailable", str(exc)) from exc
+            provenance = (
+                "execution_manifest_and_trial"
+                if manifest.optimization
+                else "execution_manifest"
+            )
             complete = True
             config = manifest.config_copy()
         return LoadedHistoryScope(
@@ -194,6 +221,17 @@ class TradeHistoryService:
             parameter_provenance=provenance,
             parameters_complete=complete,
             execution_config=config,
+            research_evidence=loaded.research_evidence,
+            parameter_sources=scope_parameter_sources(
+                loaded.research_evidence, manifest, loaded.performance, scope_id
+            )
+            if loaded.research_evidence is not None and manifest is not None
+            else (),
+            execution_assumptions=loaded.research_evidence.assumptions_for(
+                manifest.manifest_hash
+            )
+            if loaded.research_evidence is not None and manifest is not None
+            else None,
         )
 
     def find_runs(
@@ -489,15 +527,6 @@ def _context(scope: LoadedHistoryScope) -> dict[str, Any]:
     if isinstance(recorded, dict):
         context.update(recorded)
     return context
-
-
-def _overlay(target: dict[str, JsonValue], overrides: dict[str, JsonValue]) -> None:
-    for name, value in overrides.items():
-        previous = target.get(name)
-        if isinstance(previous, dict) and isinstance(value, dict):
-            _overlay(previous, value)
-        else:
-            target[name] = deepcopy(value)
 
 
 def _subset(requested: dict[str, JsonValue], actual: dict[str, JsonValue]) -> bool:

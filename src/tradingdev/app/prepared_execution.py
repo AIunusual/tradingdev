@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tradingdev.domain.approved_research import ApprovedResearch
     from tradingdev.domain.comparison import ComparisonManifest
     from tradingdev.domain.execution import ExecutionManifest
 
@@ -19,6 +20,7 @@ class PreparedExecution:
     manifest: ExecutionManifest
     original_config_path: Path
     synthetic_fixture_rows: tuple[int, ...] = ()
+    research_evidence: ApprovedResearch | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class PreparedComparison:
     manifest: ComparisonManifest
     original_config_path: Path
     candidate_fixture_rows: dict[str, tuple[int, ...]]
+    research_evidence: ApprovedResearch | None = None
 
 
 type PreparedSubmission = PreparedExecution | PreparedComparison

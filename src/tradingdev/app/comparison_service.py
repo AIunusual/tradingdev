@@ -10,6 +10,7 @@ from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_dataset import ExecutionDataset, execution_data_binding
+from tradingdev.app.execution_submission import verify_submission_research
 from tradingdev.app.run_lineage import read_strategy_snapshot
 from tradingdev.app.run_publisher import RunPublicationBinding, RunPublisher
 from tradingdev.app.strategy_service import StrategyNotExecutableError, StrategyService
@@ -75,6 +76,7 @@ class ComparisonService:
                 **(worker_handle.job_fields() if worker_handle is not None else {}),
             )
         try:
+            verify_submission_research(self.jobs, job_id, manifest)
             first = manifest.candidates[0].manifest
             # Check shared source identity before any real data is acquired.
             read_strategy_snapshot(

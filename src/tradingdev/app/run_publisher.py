@@ -19,6 +19,10 @@ from tradingdev.adapters.storage.performance import (
     PerformanceArtifactError,
     PerformanceStore,
 )
+from tradingdev.adapters.storage.submitted_research import (
+    ResearchSnapshot,
+    SubmittedResearchStore,
+)
 from tradingdev.app.execution_dataset import execution_data_binding
 from tradingdev.app.run_lineage import (
     StrategySourceSnapshot,
@@ -35,11 +39,13 @@ from tradingdev.domain.performance.artifacts import (
     bundles_from_pipeline,
     validate_projection,
 )
+from tradingdev.domain.research_scope import verify_research_scopes
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.adapters.storage.sqlite import SQLiteStore
+    from tradingdev.domain.approved_research import ApprovedResearch
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
     from tradingdev.domain.execution_target import ExecutionTarget
 
@@ -75,6 +81,8 @@ class _Publication:
     dataset_fingerprint: dict[str, str]
     details: PerformanceArtifacts | None
     pipeline: PipelineResult | None
+    research_evidence: ApprovedResearch | None
+    research_target: ExecutionTarget | None
 
 
 class RunPublisher:
@@ -84,6 +92,7 @@ class RunPublisher:
         self._workspace = workspace
         self._store = store
         self._manifests = ExecutionManifestStore(workspace)
+        self._research = SubmittedResearchStore(workspace)
 
     def publish(
         self,
@@ -168,6 +177,9 @@ class RunPublisher:
             "performance_json": "performance.json",
             "observations_json": "observations.json",
         }
+        approved = self._research.load_for_job(job, parent)
+        if approved is not None:
+            required["research_evidence"] = "research_evidence.json"
         if strategy.get("source_hash") is not None:
             required["strategy_source"] = "strategy.py"
         artifacts = self._store.list_artifacts(binding.run_id)
@@ -236,6 +248,10 @@ class RunPublisher:
         ):
             raise ManifestError("Published performance identity differs")
         validate_projection(details, run["metrics"])
+        if approved is not None:
+            verify_research_scopes(manifest, details.performance, details.observations)
+        if self._research.load_run(run, self._store, manifest) != approved:
+            raise ManifestError("Published research differs from approved submission")
         marker = run_dir / ".result-publication"
         if marker.exists():
             if marker.is_symlink():
@@ -262,6 +278,7 @@ class RunPublisher:
                         "strategy.py",
                         "dataset_fingerprint.json",
                         "pipeline_result.pkl",
+                        "research_evidence.json",
                     )
                 ],
             )
@@ -298,6 +315,20 @@ class RunPublisher:
                 dataset_id=context.dataset_fingerprint["dataset_id"],
             )
             self._register(context, "result_json", result_path)
+            if context.research_evidence is not None:
+                assert context.research_target is not None
+                research_path = self._research.publish_run(
+                    binding.job_id,
+                    run_id,
+                    context.research_evidence,
+                    context.research_target,
+                )
+                self._register(
+                    context,
+                    "research_evidence",
+                    research_path,
+                    {"research_evidence_hash": context.research_evidence.content_hash},
+                )
             if context.manifest is not None:
                 self._register(
                     context,
@@ -402,6 +433,7 @@ class RunPublisher:
         if executed is not None and not isinstance(executed, ExecutionManifest):
             raise ManifestError("Invalid executed manifest")
         expected = binding.expected_manifest
+        parent: ExecutionTarget | None = None
         if expected is not None:
             expected.verify()
             if executed is None:
@@ -415,7 +447,7 @@ class RunPublisher:
                 comparison = comparisons.load_manifest(
                     binding.job_id, expected_hash=parent_hash
                 )
-                parent: ExecutionTarget = comparison
+                parent = comparison
                 ledger = comparisons.load_ledger(
                     binding.job_id, expected_hash=parent_hash
                 )
@@ -471,6 +503,36 @@ class RunPublisher:
             or binding.run_id != binding.job_id
         ):
             raise ManifestError("Result manifest is not bound to a submitted job")
+        evidence = None
+        if parent is not None:
+            evidence = self._research.load_for_job(job, parent)
+            if evidence is not None:
+                assert expected is not None
+                snapshot = ResearchSnapshot(
+                    job_id=binding.job_id,
+                    run_id=binding.run_id,
+                    target=parent,
+                    research_evidence=evidence,
+                )
+                if snapshot.manifest_for_run().model_dump(
+                    mode="json"
+                ) != expected.model_dump(mode="json"):
+                    raise ManifestError(
+                        "Research evidence differs from the published manifest"
+                    )
+        elif (
+            job.get("research_evidence_hash") is not None
+            or self._research.path(binding.job_id).exists()
+        ):
+            raise ManifestError(
+                "Research evidence requires an accepted execution target"
+            )
+        if evidence is None and (
+            self._research.path(binding.run_id, run=True).exists()
+            or self._store.get_artifact(f"{binding.run_id}:research_evidence")
+            is not None
+        ):
+            raise ManifestError("Run research has no declared submission evidence")
         details = (
             bundles_from_pipeline(binding.run_id, pipeline, safe)
             if pipeline is not None
@@ -484,6 +546,12 @@ class RunPublisher:
             != (executed.manifest_hash if executed is not None else None)
         ):
             raise ManifestError("Performance artifacts differ from the executed result")
+        if evidence is not None:
+            if details is None or executed is None:
+                raise ManifestError(
+                    "Research publication requires complete performance scopes"
+                )
+            verify_research_scopes(executed, details.performance, details.observations)
         if binding.run_id != binding.job_id and details is None:
             raise ValueError(
                 "Child run publication requires complete performance artifacts"
@@ -517,6 +585,8 @@ class RunPublisher:
             dataset_fingerprint=_dataset_fingerprint(job),
             details=details,
             pipeline=pipeline,
+            research_evidence=evidence,
+            research_target=parent,
         )
 
     def _register(
@@ -557,6 +627,11 @@ class RunPublisher:
                 "performance_artifact_invalid",
                 "An existing run has different identity or results",
             )
+        if (
+            self._research.load_run(existing, self._store, context.manifest)
+            != context.research_evidence
+        ):
+            raise ManifestError("Existing run research differs from its submission")
         # PerformanceStore performs the same integrity check under its publication
         # lock; summary-only legacy results still need protection against rewriting.
         if context.details is None:

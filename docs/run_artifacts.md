@@ -57,6 +57,7 @@ workspace/
       result.json
       performance.json
       observations.json
+      research_evidence.json
       config.yaml
       strategy.py
       dataset_fingerprint.json
@@ -64,6 +65,8 @@ workspace/
   feature_requests/
   research_evidence/
     <evidence_id>.json
+  submitted_research/
+    <job_id>.json
   execution_plans/
     <plan_id>/
       confirmation.txt
@@ -108,6 +111,33 @@ option's merged parameter subtree as `search_<group>_<option>`; the base value
 alone does not explain the search grid. Bound content retains the complete record,
 target values, execution identities and its own digest. These are explanation
 bindings, not proof that the supplied formulas faithfully implement Python or ML.
+
+`ApprovedResearch` freezes bound declarations together with one versioned execution
+policy disclosure per distinct manifest. Submission and worker startup compare the
+saved policy with the simulator's current policy before acquiring data or running
+the strategy. Historical reads validate the saved content and identity without
+replacing its wording with today's policy.
+
+`submitted_research/<job_id>.json` retains the complete target and approved snapshot
+before worker launch; the job stores its expected `research_evidence_hash`. The
+canonical envelope is limited to 4 MiB, with its size checked before confirmation.
+Successful runs receive an independently readable `research_evidence.json`, registered
+as artifact type `research_evidence` with its byte hash, parent job ID and approved
+content hash. Publication rollback and comparison recovery include this artifact.
+A failed comparison can retain its parent disclosure even when no run was published.
+Removing the original draft, confirmation HTML or submitted copy does not invalidate
+a completed run's registered copy. Missing or changed declared evidence is an error;
+legacy runs and direct callers that never supplied evidence remain explicitly
+`not_recorded`, rather than receiving reconstructed explanations.
+
+Historical scope reads verify parameter membership before attaching provenance.
+Optimization binds each training trial to its Cartesian search position, including
+duplicate-valued options, and the selected test scope to the saved winning trial.
+Walk-forward constructor settings remain distinct from fitted model parameters.
+Walk-forward reads require the complete numbered train/test fold set and summary,
+ordered disjoint test windows, and training observations before their test window.
+Active explicit windows are checked using inclusive UTC calendar days. Automatic
+fold checks do not reconstruct the original dataset or prove its split geometry.
 
 ## SQLite Tables
 

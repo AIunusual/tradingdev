@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.execution_submission import verify_submission_research
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -34,6 +35,7 @@ def _run_backtest(job_id: str) -> None:
         manifest = job_store.load_manifest(job_id)
         if not isinstance(manifest, ExecutionManifest):
             raise ManifestError("Comparison requires the comparison worker")
+        verify_submission_research(job_store.get_default_job_store(), job_id, manifest)
         job_store.update_job(job_id, status="running_backtest")
         run = service.run_manifest(manifest)
         job_store.update_job(job_id, data_downloaded=True, dataset_id=run.dataset_id)
