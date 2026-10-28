@@ -181,12 +181,9 @@ strategy. Generated code must express configurable values as constructor
 parameters rather than derive hidden defaults from environment state. This
 captures declared arguments, not arbitrary Python behavior or dependency versions.
 
-Allowed import roots for generated strategies are intentionally small:
-
-- Python standard library: `__future__`, `collections`, `dataclasses`,
-  `datetime`, `enum`, `math`, `statistics`, `typing`.
-- Runtime libraries: `numpy`, `pandas`, `talib`, `typing_extensions`.
-- Project APIs: `tradingdev`.
+The static validator is the maintained source for allowed imports and blocked
+calls. MCP `get_strategy_contract(section="core")` returns its exact `static_policy`
+lists; these are static restrictions, not a Python security sandbox.
 
 Prefer `tradingdev.domain.indicators` (`sma`, `ema`, `rsi`, `macd`,
 `bollinger_bands`, `atr`, `adx`, `stochastic`) for standard indicators. This

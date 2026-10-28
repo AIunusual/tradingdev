@@ -10,6 +10,7 @@ from tradingdev.domain.backtest.schemas import BacktestRunConfig
 from tradingdev.domain.research import ResearchSpec
 from tradingdev.domain.research_policy import research_policy_payload
 from tradingdev.domain.strategies.research_contract import research_evidence_contract
+from tradingdev.domain.strategies.validator import static_policy_payload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,6 +48,7 @@ def strategy_contract_payload(
     content: dict[str, Any]
     if section == "core":
         content = {
+            "static_policy": static_policy_payload(),
             "base_strategy_source": (
                 package_root / "domain" / "strategies" / "base.py"
             ).read_text(encoding="utf-8"),
@@ -68,11 +70,10 @@ def strategy_contract_payload(
                 "section=example when a complete starting example is needed. "
                 "Use list_data_sources for source-specific market settings.",
                 "Generated Python must pass the repository Ruff and strict Mypy "
-                "policy. Allowed import roots: __future__, collections, dataclasses, "
-                "datetime, enum, math, statistics, typing, typing_extensions, numpy, "
-                "pandas, talib, tradingdev. No network, subprocess, destructive "
-                "filesystem access, dynamic imports, eval or exec. These checks "
-                "and workspace paths are not a security sandbox.",
+                "policy. static_policy lists the enforced import/call restrictions. "
+                "No network, subprocess, destructive filesystem access, dynamic "
+                "imports, eval or exec. These checks and workspace paths are not "
+                "a security sandbox.",
                 "Prefer tradingdev.domain.indicators: sma, ema, rsi, macd, "
                 "bollinger_bands, atr, adx, stochastic. It preserves TA-Lib warm-up, "
                 "NaNs and index alignment. Direct talib requires float64 NumPy "

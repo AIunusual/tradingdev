@@ -80,7 +80,12 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "evidence",
     }
     content = contract["content"]
-    assert set(content) == {"base_strategy_source", "requirements", "lifecycle"}
+    assert set(content) == {
+        "base_strategy_source",
+        "requirements",
+        "lifecycle",
+        "static_policy",
+    }
     assert "class BaseStrategy" in content["base_strategy_source"]
     assert "get_numpy_rng()" in " ".join(content["requirements"])
     assert "effective_config" in " ".join(content["lifecycle"])
@@ -568,3 +573,24 @@ def test_checking_an_older_revision_does_not_approve_current(
     assert checked.metadata.dry_run is not None
     assert checked.metadata.validation.revision_id == saved["revision_id"]
     assert checked.metadata.dry_run.revision_id == saved["revision_id"]
+
+
+def test_core_import_policy_agrees_with_actual_static_validator(tmp_path: Path) -> None:
+    from tradingdev.domain.strategies.validator import StrategyValidator
+
+    policy = strategy_contract_payload(_PACKAGE_ROOT)["content"]["static_policy"]
+    checker = StrategyValidator()
+    source = tmp_path / "imports.py"
+    for name in policy["allowed_import_roots"]:
+        source.write_text(f"import {name}\n")
+        assert checker.static_policy_scan(source) == []
+    for name in policy["blocked_import_roots"]:
+        source.write_text(f"import {name}\n")
+        assert [item.code for item in checker.static_policy_scan(source)] == [
+            "banned_import"
+        ]
+    source.write_text("import nonexistent_indicator_package\n")
+    diagnostics = checker.static_policy_scan(source)
+    assert diagnostics[0].code == "import_not_allowed"
+    assert diagnostics[0].fix is not None
+    assert ", ".join(policy["allowed_import_roots"]) in diagnostics[0].fix

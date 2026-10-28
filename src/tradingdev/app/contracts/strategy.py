@@ -18,9 +18,19 @@ class StrategyContractSection(ContractModel):
     description: str
 
 
+class StrategyStaticPolicyContract(ContractModel):
+    """Exact rules exported by the static validator, not security isolation."""
+
+    allowed_import_roots: list[str]
+    blocked_import_roots: list[str]
+    blocked_call_names: list[str]
+    blocked_attribute_calls: list[str]
+
+
 class StrategyCoreContract(ContractModel):
     """Required authoring and lifecycle rules, without optional examples."""
 
+    static_policy: StrategyStaticPolicyContract
     base_strategy_source: str
     requirements: list[str]
     lifecycle: list[str]
