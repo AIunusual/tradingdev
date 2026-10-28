@@ -15,6 +15,7 @@ from tradingdev.domain.backtest.schemas import BacktestRunConfig, ParallelConfig
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.signals import check_signal_frame, copy_signal_frame
 from tradingdev.domain.strategies.validator import diagnostic
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ class SignalContractChecker:
 
     The contract is one gate used at two depths: validation runs a short
     fixture, dry-run a longer one. Both must agree on the rules checked here
-    (return type, no input mutation, signal column limited to -1/0/1).
+    (input preservation, aligned market rows and finite signals in -1/0/1).
     """
 
     def __init__(self, loader: StrategyLoader | None = None) -> None:
@@ -152,53 +153,18 @@ class SignalContractChecker:
                         "effective_config": effective_config,
                     }
                 df = _fixture_df(fixture_rows)
-                before = df.copy(deep=True)
+                before = copy_signal_frame(df)
                 result = strategy.generate_signals(df)
-            if not isinstance(result, pd.DataFrame):
-                diagnostics.append(
-                    _contract_diagnostic(
-                        code="signals_not_dataframe",
-                        message="generate_signals must return DataFrame",
-                        fix="Return the copied DataFrame with a signal column.",
-                    )
-                )
+            diagnostics.extend(check_signal_frame(before, df, result))
+            if (
+                not isinstance(result, pd.DataFrame)
+                or not result.columns.is_unique
+                or "signal" not in result.columns
+            ):
                 return {
                     "diagnostics": diagnostics,
                     "effective_config": effective_config,
                 }
-            if not df.equals(before):
-                diagnostics.append(
-                    _contract_diagnostic(
-                        code="input_mutated",
-                        message="generate_signals must not mutate input",
-                        fix="Start with result = df.copy() and mutate result only.",
-                    )
-                )
-            if "signal" not in result.columns:
-                diagnostics.append(
-                    _contract_diagnostic(
-                        code="missing_signal_column",
-                        message="result must include signal column",
-                        fix="Add result['signal'] with values -1, 0, or 1.",
-                    )
-                )
-                return {
-                    "diagnostics": diagnostics,
-                    "effective_config": effective_config,
-                }
-            signals = result["signal"]
-            values = set(signals.dropna().unique())
-            if not values.issubset({-1, 0, 1}):
-                diagnostics.append(
-                    _contract_diagnostic(
-                        code="invalid_signal_values",
-                        message="signal values must be limited to -1, 0, and 1",
-                        fix=(
-                            "Map all generated signals to the project convention: "
-                            "-1, 0, 1."
-                        ),
-                    )
-                )
             return {
                 "diagnostics": diagnostics,
                 "signal_analysis": _signal_analysis(result),

@@ -137,7 +137,6 @@ def test_eight_candidates_share_one_snapshot_and_keep_independent_execution_stat
             if "execution_data" in df:
                 frames.append(df)
                 assert df.at[0, "close"] == 100.0
-                df.loc[:, "close"] += 1.0
             return super().generate_signals(df)
 
     def create(
@@ -189,8 +188,12 @@ def test_eight_candidates_share_one_snapshot_and_keep_independent_execution_stat
 
 
 @pytest.mark.parametrize("fail_all", [False, True])
+@pytest.mark.parametrize("raise_after_mutation", [False, True])
 def test_strategy_failure_preserves_all_outcomes_and_continues_later_candidates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_all: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_all: bool,
+    raise_after_mutation: bool,
 ) -> None:
     fixture = _comparison(tmp_path)
     attempted: list[int] = []
@@ -206,7 +209,8 @@ def test_strategy_failure_preserves_all_outcomes_and_continues_later_candidates(
                 assert df.at[0, "close"] == 100.0
                 if fail_all or self.number == 2:
                     df.loc[:, "close"] = -1.0
-                    raise RuntimeError(f"setting {self.number} failed")
+                    if raise_after_mutation:
+                        raise RuntimeError(f"setting {self.number} failed")
             return super().generate_signals(df)
 
     monkeypatch.setattr(
@@ -227,7 +231,8 @@ def test_strategy_failure_preserves_all_outcomes_and_continues_later_candidates(
     assert ledger.is_complete
     for row in ledger.candidates:
         if row.status == "failed":
-            assert row.reason is not None and "failed" in row.reason
+            reason = "failed" if raise_after_mutation else "input_mutated"
+            assert row.reason is not None and reason in row.reason
             assert fixture.jobs.get_run(row.run_id) is None
     job = fixture.jobs.get_job("comparison")
     assert job is not None and job["status"] == "done"

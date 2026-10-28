@@ -383,6 +383,44 @@ def test_validation_diagnostics_remain_a_completed_check_result(tmp_path: Path) 
     assert "code" not in result
 
 
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        (
+            '        result["signal"] = np.nan\n        return result',
+            "invalid_signal_values",
+        ),
+        ("        return result.iloc[:-1].copy()", "signal_row_count_mismatch"),
+        (
+            "        result.index = result.index + 1000\n        return result",
+            "signal_index_mismatch",
+        ),
+    ],
+)
+def test_invalid_frame_diagnostics_survive_typed_mcp_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+    expected_code: str,
+) -> None:
+    server, service = _server(tmp_path)
+    example = strategy_contract_payload(_PACKAGE_ROOT, "example")["content"]
+    saved = service.save_draft(
+        example["example_strategy_code"].replace("        return result", replacement),
+        example["example_yaml_config"],
+        research_for_config(example["example_yaml_config"]),
+        strategy_id="contract_strategy",
+    )
+    assert saved.success
+    monkeypatch.setattr(service, "_quality_gate_diagnostics", lambda _path: [])
+    result = _call(server, "validate_strategy", {"strategy_id": "contract_strategy"})
+    response = StrategyValidationFailure.model_validate(result)
+    assert not response.success and response.status == "draft"
+    assert expected_code in {item.code for item in response.diagnostics}
+    assert response.revision_id == saved.revision_id
+    assert "error" not in result
+
+
 def test_typed_lifecycle_returns_signal_evidence_and_rejects_wrong_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

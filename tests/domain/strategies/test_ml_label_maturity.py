@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import pytest
 
@@ -223,10 +222,9 @@ def test_glft_fit_only_trains_on_mature_direction_outcomes(
 
     def skip_parameter_search(
         _strategy: GLFTMLStrategy,
-        feat_df: pd.DataFrame,
-        ml_directions: npt.NDArray[np.float64],
+        search_frame: pd.DataFrame,
     ) -> None:
-        assert len(ml_directions) == len(feat_df)
+        pd.testing.assert_frame_equal(search_frame, original)
 
     monkeypatch.setattr(FLAMLAutoMLDirectionModel, "train", train)
     monkeypatch.setattr(FLAMLAutoMLDirectionModel, "predict_proba", predict_proba)

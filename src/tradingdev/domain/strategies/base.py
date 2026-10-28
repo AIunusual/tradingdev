@@ -40,7 +40,11 @@ class BaseStrategy(ABC):
             df: OHLCV DataFrame (may already contain indicator columns).
 
         Returns:
-            DataFrame with a ``signal`` column added.
+            A separate DataFrame with all input rows in their original order,
+            identical index and unchanged timestamp/OHLCV columns, plus a
+            ``signal`` column. Every signal must be a finite real -1, 0 or 1;
+            warm-up rows use zero, never missing values or dropped rows.
+            Do not mutate the input. Indicator columns may contain warm-up NaNs.
         """
         ...
 

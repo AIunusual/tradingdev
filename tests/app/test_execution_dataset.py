@@ -22,6 +22,7 @@ from tradingdev.app.strategy_service import StrategyNotExecutableError
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.randomness import get_numpy_rng, get_random, get_seed
 from tradingdev.domain.strategies.execution import StrategyExecution
+from tradingdev.domain.strategies.signals import SignalContractError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -228,7 +229,8 @@ def test_candidate_mutation_cannot_contaminate_next_candidate(
         with pytest.raises(ValueError, match="failed after mutation"):
             service.run_manifest(mutating, loaded_dataset=snapshot)
     else:
-        service.run_manifest(mutating, loaded_dataset=snapshot)
+        with pytest.raises(SignalContractError, match="input_mutated"):
+            service.run_manifest(mutating, loaded_dataset=snapshot)
     service.run_manifest(healthy, loaded_dataset=snapshot)
     assert len(data.loads) == 1
     assert len(strategies) == len(engines) == len(frames) == 2

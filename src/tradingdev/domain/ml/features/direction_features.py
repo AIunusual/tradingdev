@@ -87,7 +87,8 @@ class DirectionFeatureEngineer:
         Returns:
             DataFrame with original columns + feature columns + target.
             DVOL changes remain unknown when either comparison endpoint is missing.
-            Rows with NaN features are dropped.
+            Rows with NaN features are dropped; retained source indices identify
+            their original rows and are never model input features.
         """
         close = df["close"].astype(float)
         high = df["high"].astype(float)
@@ -197,7 +198,7 @@ class DirectionFeatureEngineer:
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
         if include_target:
             result["target"] = result["target"].astype(int)
 

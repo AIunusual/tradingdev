@@ -36,6 +36,7 @@ from tradingdev.domain.strategies.contract import (
     SignalContractChecker,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -330,7 +331,7 @@ class BacktestService:
                 dataset_id=dataset.dataset_id,
             )
 
-        signals = strategy.generate_signals(dataset.frame)
+        signals = generate_checked_signals(strategy, dataset.frame)
         result = engine.run(signals)
         result.metric_metadata["strategy_parameters"] = deepcopy(
             strategy.get_parameters()

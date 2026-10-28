@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.domain.validation.leakage_gate import (
     WalkForwardLeakageError,
     audit_fold_windows,
@@ -136,11 +137,11 @@ class WalkForwardValidator:
 
         strategy.fit(train_df)
 
-        train_signals = strategy.generate_signals(train_df)
+        train_signals = generate_checked_signals(strategy, train_df)
         train_result = self._engine.run(train_signals)
         train_metrics = train_result.metrics
 
-        test_signals = strategy.generate_signals(test_df)
+        test_signals = generate_checked_signals(strategy, test_df)
         test_result = self._engine.run(test_signals)
         test_metrics = test_result.metrics
 

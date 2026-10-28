@@ -16,6 +16,7 @@ from tradingdev.domain.optimization.grid_search import (
 )
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
+from tradingdev.domain.strategies.signals import generate_checked_signals
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
@@ -42,7 +43,7 @@ def _evaluate_kd_combo(
     This is a module-level function so it can be pickled by joblib.
     """
     trial = KDStrategy(config=trial_config)
-    signals = trial.generate_signals(df)
+    signals = generate_checked_signals(trial, df)
     result = engine.run(signals)
     return trial_config, finite_metric_value(result.metrics.get(target))
 

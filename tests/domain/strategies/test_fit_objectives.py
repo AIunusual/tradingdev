@@ -88,10 +88,11 @@ def test_glft_ml_search_selects_minimum_available_amount_drawdown(
         strategy._ml_model,
         "predict_proba",
         lambda frame: pd.DataFrame(
-            {0: np.full(len(frame), 0.1), 1: np.full(len(frame), 0.9)}
+            {0: np.full(len(frame), 0.1), 1: np.full(len(frame), 0.9)},
+            index=frame.index,
         ),
     )
-    strategy._grid_search_glft(sample_ohlcv_df, np.ones(len(sample_ohlcv_df)))
+    strategy._grid_search_glft(sample_ohlcv_df)
     assert strategy.get_parameters()["best_gamma"] == 200.0
 
 
