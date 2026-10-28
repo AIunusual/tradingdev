@@ -1265,7 +1265,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 19 uses two navigation levels within one offline HTML
+Report schema 2 / template 20 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.
@@ -1291,9 +1291,19 @@ Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.
 The overview, if selected, stays first; other sections keep their requested order.
 Unknown result hashes leave the main view visible rather than opening empty details.
-The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
-`trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
-`provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.
+The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
+`ledger`, `trades`, `limitations`, `provenance`; comparison is `overview`, `research`,
+`metrics`, `equity`, `provenance`; trades is `overview`, `research`, `ledger`,
+`trades`, `provenance`.
+The `research` section belongs to the main view. It displays saved trading formulas,
+plain-language rules, parameter origins and source claims, limitations and versioned
+execution assumptions. Each scope's settings show its own parameter origins and
+saved policy. Shared research snapshots are stored once under their content hash in
+the report's `research_documents`; runs reference that hash. A comparison with no
+successful runs still retains its parent's disclosure. Explicitly omitting the
+section changes visibility, not the saved payload or evidence validation. Missing
+legacy explanations remain labelled as absent; reports never synthesize formulas
+or infer that reference URLs were actually visited.
 The old `executions` and `account_history` section IDs are invalid, with no alias
 or compatibility shim. Their MCP history query tools and saved observations are
 unchanged. Existing reports retain their original versions and remain untouched.

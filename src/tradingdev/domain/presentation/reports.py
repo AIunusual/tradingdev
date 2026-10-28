@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 REPORT_SCHEMA_VERSION = 2
-REPORT_TEMPLATE_VERSION = "19"
+REPORT_TEMPLATE_VERSION = "20"
 SCOPED_REPORT_SECTIONS = frozenset(
     {"settings", "metrics", "equity", "ledger", "trades"}
 )
@@ -31,6 +31,12 @@ REPORT_SECTIONS = MappingProxyType(
                 "All run/scope parameters, dates, roles and saved performance, "
                 "linked to individual result details when detail sections "
                 "are selected.",
+            ),
+            ReportSectionDefinition(
+                "research",
+                "交易規則、公式與參數依據",
+                "Saved pre-execution rules, formulas, source claims, parameter "
+                "provenance and execution assumptions; absence stays explicit.",
             ),
             ReportSectionDefinition(
                 "settings",
@@ -81,7 +87,7 @@ REPORT_SECTIONS = MappingProxyType(
 REPORT_RECIPES = MappingProxyType(
     {
         "standard": tuple(REPORT_SECTIONS),
-        "comparison": ("overview", "metrics", "equity", "provenance"),
-        "trades": ("overview", "ledger", "trades", "provenance"),
+        "comparison": ("overview", "research", "metrics", "equity", "provenance"),
+        "trades": ("overview", "research", "ledger", "trades", "provenance"),
     }
 )

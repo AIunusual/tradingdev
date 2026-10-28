@@ -23,6 +23,11 @@ from tradingdev.adapters.reporting.labels import (
 from tradingdev.adapters.reporting.labels import (
     scope_name as _scope_name,
 )
+from tradingdev.adapters.reporting.research import (
+    execution_assumptions_html,
+    parameter_sources_html,
+    render_research_documents,
+)
 from tradingdev.adapters.reporting.tables import render_table
 from tradingdev.domain.presentation.reports import (
     REPORT_SECTIONS,
@@ -471,7 +476,9 @@ def _parameters_html(parameters: dict[str, Any]) -> str:
     )
 
 
-def _scope_settings(run: dict[str, Any], scope: dict[str, Any]) -> str:
+def _scope_settings(
+    run: dict[str, Any], scope: dict[str, Any], research: dict[str, Any] | None = None
+) -> str:
     context = _object(scope["metadata"].get("execution_context"))
     observations = scope["observations"]
     coverage: dict[str, Any] = {
@@ -536,6 +543,17 @@ def _scope_settings(run: dict[str, Any], scope: dict[str, Any]) -> str:
         + details_html("策略參數（原始名稱與完整精度）", scope["parameters"])
         + _pairs_html(controls)
         + "</div></div>"
+        + (
+            "<h3>此參數組的選擇依據</h3>"
+            + parameter_sources_html(
+                scope["parameter_sources"],
+                research["draft"]["presentation"]["parameter_descriptions"],
+            )
+            if research is not None and scope.get("parameter_sources")
+            else "<p class='notice'>此範圍沒有可直接對應的參數選擇說明；"
+            "彙總結果應選擇原始訓練／測試範圍查看，不由模型推測來源。</p>"
+        )
+        + execution_assumptions_html(scope.get("execution_assumptions"))
         + details_html("全部保存範圍中繼資料（原始欄位）", scope["metadata"])
     )
 
@@ -708,7 +726,13 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
                 f"{escape(_scope_name(scope['scope_id']))}</h3>"
             )
             if section == "settings":
-                result += _scope_settings(run, scope)
+                result += _scope_settings(
+                    run,
+                    scope,
+                    payload.get("research_documents", {}).get(
+                        run.get("research_evidence_hash")
+                    ),
+                )
             elif section == "metrics":
                 result += _metrics(scope, ri, si)
             elif scope["observations"] is None:
@@ -819,6 +843,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
     for key in payload["sections"]:
         if key == "overview":
             content = _overview(payload)
+        elif key == "research":
+            content = render_research_documents(payload)
         elif key == "provenance":
             content = _provenance(payload)
         elif key == "limitations":
@@ -831,6 +857,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         )
         if key == "overview":
             overview.insert(0, rendered)
+        elif key == "research":
+            overview.append(rendered)
         else:
             (sections if has_details else overview).append(rendered)
     if "fixed_comparison" in payload:
@@ -904,7 +932,9 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         + "".join(overview)
         + (
             "<section><h2>選擇結果</h2><ul>" + "".join(links) + "</ul></section>"
-            if has_details and not overview
+            if has_details
+            and "overview" not in payload["sections"]
+            and "fixed_comparison" not in payload
             else ""
         )
         + commentary
