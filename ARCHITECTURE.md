@@ -457,7 +457,7 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 持有網格；年化須有 crypto-only provider 與連續的實際 label 區間證據，其他市場或
 缺棒時回傳 `null`。本金曾非正時，年化報酬也不可用。`allow_parameter_axes`
 只放行 horizon、window、n_quantiles 三軸，讓敏感度分析的參數平原得以排序，
-仍拒絕不同商品、期間、特徵集或特徵程式碼，且同一 horizon 僅能對應單一 dataset
+仍拒絕不同商品、K 棒頻率、期間、特徵集或特徵程式碼，且同一 horizon 僅能對應單一 dataset
 版本。跨 horizon 的供應商與原始行情一致性尚未驗證，須另外核對；回應會列出
 各軸取值及此限制，不能將曲面排名當成已受控的單一可比較測量。
 新紀錄將 NaN 或 Inf 指標存成 `null` 而不刪除，因此「未記錄」「已測但失敗」「有限值」

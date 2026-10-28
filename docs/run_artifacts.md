@@ -467,8 +467,8 @@ bypasses dataset verification.
 
 `allow_parameter_axes=True` is the narrower opt-in a sensitivity study needs: it
 permits horizon, IC window and quantile count to differ under these constraints.
-Instrument or panel symbols, period, feature set and code fingerprint must still
-match, and one horizon may hold only one dataset ID and content hash, because a new horizon
+Instrument or panel symbols, timeframe, period, feature set and code fingerprint
+must still match, and one horizon may hold only one dataset ID and content hash, because a new horizon
 rebuilds its labels on its own dataset. Across horizons, provider and underlying
 source-bar equivalence are not verified. Inspect dataset manifests and source
 data separately before treating the sweep as a controlled comparison; the tool
