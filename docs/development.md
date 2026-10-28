@@ -222,7 +222,17 @@ git push -u origin feature/my-task
 | 程式／政策／工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
 真實模型策略測試另依變更選取。程式候選的文件審查需要 Codex 登入與額度；
-可用 `TRADINGDEV_CODEX_MODEL` 指定審查模型。審查程式與來源入口見
+這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
+`TRADINGDEV_CODEX_MODEL` 指定，例如：
+
+```bash
+TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+```
+
+文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
+修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
+上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 
 先列出責任範圍或規劃固定 Git 版本的證據；以下命令不呼叫模型、不代表檢查通過：
