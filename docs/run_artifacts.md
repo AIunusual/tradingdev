@@ -412,22 +412,81 @@ result without a leaderboard write.
 
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset
-IDs, a display label, and an evaluation context: symbol or panel symbols,
+IDs, a display label, the candidate's own fitted hyperparameters, the hash of the
+signal that was measured, and an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
-build-time code fingerprint and dataset content hash. Comparison uses the saved
-context; changed data or feature code does not silently inherit an old context.
+build-time code fingerprint and dataset content hash. The fitted parameters are
+copied from the model artifact, so a row still says how that model was configured
+after the artifact is retrained. Ad-hoc signals and records whose model artifact
+cannot be loaded have empty parameters. Older records missing the new fields
+read as `parameters={}` and `signal_fingerprint=""`; reads do not reconstruct them.
+Empty parameters are not fitted defaults, and an empty fingerprint is not
+reproduction evidence. Re-evaluate and record to obtain that evidence.
+Comparison uses the saved context; changed data or feature code does not silently
+inherit an old context.
+
+The recorded metrics include annualised return, maximum drawdown, Sharpe, alpha
+and beta alongside the signal-quality ones. They describe the simulated
+long/short book built from the predictions: costs are excluded and no order was
+ever sent, so they are not backtest results. Alpha and beta regress that book
+against holding the measured asset over the same intervals, which makes them a
+statement about market exposure rather than about an unrelated index. Annualised
+figures use only the non-overlapping decision grid, including its cash intervals.
+They require a crypto-only provider and consecutive label intervals matching the
+declared timeframe and horizon, using the shared 365-day crypto policy. Without
+that evidence (including Yahoo, gaps or no dataset), they are `null`. Annualised
+return is also `null` if compounded capital becomes nonpositive; subsequent
+losses cannot revive a bankrupt book into a profitable candidate.
+
+A metric that comes out NaN or Inf is stored as an explicit `null`, never removed
+from newly written records. Three states therefore stay distinguishable: a key that is
+absent was never recorded, a key holding `null` is unavailable or non-finite, and a
+finite value is an ordinary measurement. This matters for parameter surfaces. If
+the run at `window=20` fails, deleting its score would leave `window=10` and
+`window=30` looking adjacent, and any slope or flatness fitted along that
+shortened axis would be wrong. A candidate with no score is skipped when ranking,
+but its `skipped` row still reports its horizon, window and quantile count, and
+the response's `parameter_axes` still lists the value it was measured at.
+Older evaluations dropped unavailable values: a missing key there cannot establish
+whether a metric was unmeasured or unavailable. Re-evaluate and record when that
+distinction is needed; reading an old record does not recover missing evidence.
+
+Consumers must read `null` as a gap at a known coordinate. A consumer whose own
+type cannot represent null must keep the coordinate and record validity beside
+the value: when a number is unavoidable, write `0` as a placeholder and mark the
+row invalid. `0` is never a substitute for a missing score, because zero is a
+perfectly plausible IC or Sharpe, so a slope, flatness or ranking computed over
+placeholder zeros is meaningless until the validity mask is applied.
 
 `leaderboard(dataset_id=...)` verifies and selects one immutable dataset
 version, so models on it can be compared separately from rebuilt versions.
 Records must match its manifest's data context and row count; unknown or invalid
 IDs fail. Other filters combine with this selector. Different IC windows or
-quantile counts require `allow_mixed=True`, which never bypasses dataset
-verification.
+quantile counts require `allow_parameter_axes=True` or `allow_mixed=True`; neither
+bypasses dataset verification.
+
+`allow_parameter_axes=True` is the narrower opt-in a sensitivity study needs: it
+permits horizon, IC window and quantile count to differ under these constraints.
+Instrument or panel symbols, timeframe, period, feature set and code fingerprint
+must still match, and one horizon may hold only one dataset ID and content hash, because a new horizon
+rebuilds its labels on its own dataset. Across horizons, provider and underlying
+source-bar equivalence are not verified. Inspect dataset manifests and source
+data separately before treating the sweep as a controlled comparison; the tool
+reports this limitation in its caveats. A ranking across those axes describes a
+parameter surface, not one comparable measurement, so the response reports the
+observed values of each axis and appends a caveat saying so. Every row states its
+own horizon, window and quantile count, so a point on the surface is readable
+without a second lookup.
 
 The entry ID includes the dataset, evaluation context and model ID.
 With no model ID, it also includes a signal fingerprint computed from a
 canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. MCP evaluation validates the model that generated its
+boundaries are preserved. That fingerprint is now computed for every record and
+stored in its own `signal_fingerprint` field, including records that carry a model
+ID, where it is deliberately kept out of the ID: folding it in would rename every
+existing entry. A re-run reproduces a recorded candidate when its
+`signal_fingerprint` equals the stored one, and no migration is needed. MCP
+evaluation validates the model that generated its
 signal. Existing records and Python array callers may instead use a
 caller-declared model label: their ID alone does not prove signal origin. The
 stored format has no provenance discriminator, so a leaderboard must not label
