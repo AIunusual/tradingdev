@@ -439,7 +439,7 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 `domain/ml/validation/temporal.py` 以共享 timestamp 分折，保持同日期各商品的
 訓練／測試角色一致，再以來源行情保留的 label start/end 排除跨邊界的標籤資訊。
 含向前補值觀測的 panel 不接受折間驗證，須改用原始共同日期或丟棄缺值。
-驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)。
+驗證檢查的範圍及訊號評估語意見 [ML 研究契約](docs/ml_research.md#ml-research-contract)。
 
 `MLService.predict` 載入驗證過的 dataset、核對模型 blob hash 與特徵欄位順序，
 再載入 pickle 產生完整訊號；MCP `predict` 經 `predict_page` 只回傳指定預覽頁。
@@ -470,7 +470,7 @@ MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
 讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。
 模型 pickle 需要可信的工作區；hash 只檢查內容一致性，不是 sandbox。格式、身分與重記語意集中在
-[ML 研究產物](docs/run_artifacts.md#ml-research-artifacts)。
+[ML 研究產物](docs/ml_research.md#ml-research-artifacts)。
 
 ## 績效計算與對話摘要
 
@@ -512,7 +512,7 @@ LLM 可先探索指標目錄與該 run 的可用範圍，再查詢未出現在�
 Walk-forward 保存每個 fold 的訓練／測試結果；其摘要是各 fold 的統計分布，
 不是整段期間重新計算的報酬。最佳化分別保存各 trial 與選定參數的樣本外測試。
 比較 run 時會指出定義、套件、設定、範圍與資金基準差異，避免直接排名不可比的結果。
-具體 scope 與數值契約見 [績效範圍與來源](docs/run_artifacts.md#performance-scopes-and-provenance)。
+具體 scope 與數值契約見 [績效範圍與來源](docs/performance_artifacts.md#performance-scopes-and-provenance)。
 
 ## 一致性、程序管理與保證範圍
 
