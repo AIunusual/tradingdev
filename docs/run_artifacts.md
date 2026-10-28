@@ -458,6 +458,39 @@ row invalid. `0` is never a substitute for a missing score, because zero is a
 perfectly plausible IC or Sharpe, so a slope, flatness or ranking computed over
 placeholder zeros is meaningless until the validity mask is applied.
 
+A report is assembled from a JSON payload and rendered from it, so signal
+evidence reaches a report by being projectable into that payload's scope shape
+rather than by anyone writing markup. `ml_signal_scope` produces one such scope
+per recorded candidate: `kind` is `ml_signal` and `mode` is `signal`, so a reader
+cannot mistake it for a backtest; `values` keeps the same three-state `null`
+behaviour; `observations` is present and null, because a signal evaluation
+records no orders and no equity curve. The three tunable settings are reported
+in `metadata`, not merged into `parameters`: a fitted parameter dictionary may
+legitimately contain a key of the same name, and merging would silently
+overwrite one of them, so `parameters` means exactly what the model was fitted
+with. `ml_report_block` collects the whole candidate set, including candidates
+that failed to rank, with block-level definitions, the observed parameter axes,
+the skipped rows and their coordinates, and the ranking caveats.
+
+Signal metric definitions now carry the two fields a portfolio metric definition
+already had, `modes` and `requires_annualization`, so one definition shape
+serves both. `modes` is always `signal`; only annualised return, Sharpe and alpha
+require annualisation. A stored `SignalEvaluationBundle` records them too.
+
+Whether a metric is shown by default follows one mechanical rule: show it when
+it is a summary metric and it declares an optimisation direction. Anything else
+is stored in full and left unticked, which is how a report keeps evidence a
+reader may not want without putting it in the default view. `beta` is the case
+worth naming: it is a summary metric with no direction, so it describes exposure
+rather than quality and is not shown unless asked for. A block therefore reports
+`visible_metrics` and `hidden_metrics` alongside the data, so a consumer other
+than the HTML renderer applies the same rule instead of inventing its own.
+Failed scores are never hidden by this rule: a `null` cell is shown as a gap.
+
+Projecting signal evidence adds a block to a report payload only when such
+evidence was requested. A report without it keeps a byte-identical payload and
+therefore the same `report_id`.
+
 `leaderboard(dataset_id=...)` verifies and selects one immutable dataset
 version, so models on it can be compared separately from rebuilt versions.
 Records must match its manifest's data context and row count; unknown or invalid

@@ -58,6 +58,7 @@ from tradingdev.domain.ml.leaderboard import (
     rank_entries,
     rankable_metrics,
     signal_fingerprint,
+    surface_caveats,
 )
 from tradingdev.domain.ml.models.registry import (
     ModelKind,
@@ -89,13 +90,6 @@ if TYPE_CHECKING:
     from tradingdev.domain.ml.calendar import PanelAlignment
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
-
-
-def _describe_axes(axes: dict[str, list[int]]) -> str:
-    """Name only the axes a candidate set actually varies."""
-    return ", ".join(
-        f"{name}={values}" for name, values in axes.items() if len(values) > 1
-    )
 
 
 @dataclass(frozen=True)
@@ -689,18 +683,7 @@ class MLService:
         ]
         contexts = sorted({entry.context.describe() for entry in entries})
         caveats = list(result.caveats)
-        if any(len(values) > 1 for values in axes.values()):
-            caveats.append(
-                "candidates span more than one evaluation setting "
-                f"({_describe_axes(axes)}); the ranking describes a parameter "
-                "surface, not one comparable measurement"
-            )
-        if len(axes["horizon"]) > 1:
-            caveats.append(
-                "cross-horizon source and raw-data equivalence is not verified; "
-                "check dataset manifests and source bars before treating the "
-                "surface as a controlled comparison"
-            )
+        caveats.extend(surface_caveats(axes))
         return {
             "success": True,
             "metric": result.metric,
