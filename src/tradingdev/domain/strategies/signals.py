@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from numbers import Real
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import pandas as pd
 
 from tradingdev.domain.strategies.schemas import StrategyDiagnostic
@@ -25,6 +27,59 @@ class SignalContractError(ValueError):
         )
 
 
+def _same_nested_value(left: object, right: object) -> bool:
+    """Compare ordinary nested feature values, including arrays and missing scalars."""
+    if left is right:
+        return True
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, np.ndarray) and isinstance(right, np.ndarray):
+        if left.shape != right.shape or left.dtype != right.dtype:
+            return False
+        if left.dtype.hasobject:
+            return all(
+                _same_nested_value(a, b)
+                for a, b in zip(left.flat, right.flat, strict=True)
+            )
+        try:
+            return bool(np.array_equal(left, right, equal_nan=True))
+        except TypeError:
+            return bool(np.array_equal(left, right))
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _same_nested_value(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(
+            _same_nested_value(a, b) for a, b in zip(left, right, strict=True)
+        )
+    try:
+        return bool(left == right) or bool(
+            pd.isna(cast("Any", left)) and pd.isna(cast("Any", right))
+        )
+    except TypeError, ValueError:
+        return False
+
+
+def _same_input(before: pd.DataFrame, after: pd.DataFrame) -> bool:
+    if not (
+        after.index.identical(before.index)
+        and after.columns.identical(before.columns)
+        and after.dtypes.equals(before.dtypes)
+    ):
+        return False
+    for position, dtype in enumerate(before.dtypes):
+        left, right = before.iloc[:, position], after.iloc[:, position]
+        if pd.api.types.is_object_dtype(dtype):
+            if not all(
+                _same_nested_value(a, b) for a, b in zip(left, right, strict=True)
+            ):
+                return False
+        elif not left.equals(right):
+            return False
+    return True
+
+
 def check_signal_frame(
     before: pd.DataFrame, after: pd.DataFrame, result: object
 ) -> list[StrategyDiagnostic]:
@@ -36,11 +91,7 @@ def check_signal_frame(
             StrategyDiagnostic(code=code, phase="contract", message=message, fix=fix)
         )
 
-    if not (
-        after.equals(before)
-        and after.index.identical(before.index)
-        and after.columns.identical(before.columns)
-    ):
+    if not _same_input(before, after):
         reject(
             "input_mutated",
             "generate_signals must not mutate input",
@@ -108,11 +159,23 @@ def check_signal_frame(
 
 
 def copy_signal_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    """Own market arrays and axis data, including mutable Index array views."""
+    """Own arrays, nested feature values and mutable Index array views."""
     copied = frame.copy(deep=True)
     # DataFrame.copy deliberately shares the otherwise immutable Index data.
     copied.index = frame.index.copy(deep=True)
     copied.columns = frame.columns.copy(deep=True)
+    # Pandas also shares Python objects inside object-dtype cells, even for a
+    # deep copy. Detach ordinary nested feature values as well as numeric arrays.
+    for position, dtype in enumerate(frame.dtypes):
+        if pd.api.types.is_object_dtype(dtype):
+            copied.isetitem(
+                position,
+                pd.Series(
+                    [deepcopy(value) for value in frame.iloc[:, position]],
+                    index=copied.index,
+                    dtype=object,
+                ).array,
+            )
     return copied
 
 

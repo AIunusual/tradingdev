@@ -25,6 +25,7 @@ def _frame() -> pd.DataFrame:
         {
             "timestamp": pd.date_range("2024-01-01", periods=8, freq="h", tz="UTC"),
             "close": np.arange(8, dtype=float) + 100,
+            "feature": [{"values": [i]} for i in range(8)],
         },
         index=pd.Index(np.arange(100, 108), name="source_row"),
     )
@@ -86,6 +87,11 @@ class _FaultyStrategy(BaseStrategy):
         elif self.fault in {"mutate_columns_array", "raise_after_columns_mutation"}:
             df.columns.array[0] = "changed"
             if self.fault == "raise_after_columns_mutation":
+                raise RuntimeError("strategy failed")
+        elif self.fault in {"mutate_object", "raise_after_object_mutation"}:
+            nested = cast("dict[str, list[int]]", df.at[df.index[0], "feature"])
+            nested["values"][0] = 999
+            if self.fault == "raise_after_object_mutation":
                 raise RuntimeError("strategy failed")
         elif self.fault == "raise_after_mutation":
             df["close"] += 100
@@ -159,6 +165,7 @@ def test_same_fault_is_rejected_in_program_checks_and_actual_generation(
         "raise_after_mutation",
         "raise_after_index_mutation",
         "raise_after_columns_mutation",
+        "raise_after_object_mutation",
     ],
 )
 def test_strategy_exception_cannot_poison_the_next_candidates_market_data(
@@ -170,11 +177,14 @@ def test_strategy_exception_cannot_poison_the_next_candidates_market_data(
         generate_checked_signals(_FaultyStrategy(fault), frame)
     pd.testing.assert_frame_equal(frame, before)
     assert frame.index.tolist() == list(range(100, 108))
-    assert frame.columns.tolist() == ["timestamp", "close"]
+    assert frame.columns.tolist() == ["timestamp", "close", "feature"]
+    assert frame.at[100, "feature"] == {"values": [0]}
 
 
-@pytest.mark.parametrize("fault", ["mutate_index_array", "mutate_columns_array"])
-def test_axis_array_mutation_cannot_change_input_or_comparison_snapshot(
+@pytest.mark.parametrize(
+    "fault", ["mutate_index_array", "mutate_columns_array", "mutate_object"]
+)
+def test_nested_or_axis_mutation_cannot_change_input_or_comparison_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fault: str,
@@ -190,7 +200,8 @@ def test_axis_array_mutation_cannot_change_input_or_comparison_snapshot(
     with pytest.raises(SignalContractError, match="input_mutated"):
         generate_checked_signals(_FaultyStrategy(fault), frame)
     assert frame.index.tolist() == list(range(100, 108))
-    assert frame.columns.tolist() == ["timestamp", "close"]
+    assert frame.columns.tolist() == ["timestamp", "close", "feature"]
+    assert frame.at[100, "feature"] == {"values": [0]}
 
 
 @pytest.mark.parametrize("dtype", ["int64", "float64", "Int64", "object"])
@@ -215,3 +226,35 @@ def test_valid_states_preserve_nondefault_rows_and_keep_feature_nan(
     assert result["indicator"].isna().all()
     pd.testing.assert_frame_equal(result[frame.columns], before)
     pd.testing.assert_frame_equal(frame, before)
+
+
+@pytest.mark.parametrize("container", ["dict", "list"])
+@pytest.mark.parametrize("mutate", [False, True])
+def test_nested_array_features_are_compared_by_value_without_false_mutation(
+    container: str,
+    mutate: bool,
+) -> None:
+    class NestedArrayStrategy(BaseStrategy):
+        def get_parameters(self) -> dict[str, Any]:
+            return {}
+
+        def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+            if mutate:
+                value = cast("Any", df.at[0, "feature"])
+                array = value["array"] if container == "dict" else value[0]
+                assert isinstance(array, np.ndarray)
+                array[0] = 999
+            return df.assign(signal=0)
+
+    array = np.array([1.0, np.nan, 2.0])
+    nested = (
+        {"array": array, "missing": pd.NA} if container == "dict" else [array, pd.NA]
+    )
+    frame = pd.DataFrame({"close": [100.0], "feature": [nested]})
+    if mutate:
+        with pytest.raises(SignalContractError, match="input_mutated"):
+            generate_checked_signals(NestedArrayStrategy(), frame)
+    else:
+        result = generate_checked_signals(NestedArrayStrategy(), frame)
+        assert result["signal"].tolist() == [0]
+    np.testing.assert_array_equal(array, [1.0, np.nan, 2.0])
