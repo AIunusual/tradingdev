@@ -446,8 +446,8 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 它不判斷資料是否曾用於訓練或選參。MCP `evaluate_signal` 以 model／dataset ID
 呼叫 `evaluate_prediction`，由後端對完整資料產生訊號並核對資料列、報酬、horizon
 及非重疊標籤區間，拒絕 panel。Python `MLService.evaluate_signal` 保留陣列計算入口；
-提供 dataset ID 時仍須符合完整資料集契約。指定記錄才將有限指標交 leaderboard store
-保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
+提供 dataset ID 時仍須符合完整資料集契約。指定記錄才交 leaderboard store 保存，
+包含有限值與不可用指標的 `null`；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
 簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
 並提供候選數與多重比較限制。每列附上自身的 horizon、window、n_quantiles、

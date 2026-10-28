@@ -417,7 +417,11 @@ signal that was measured, and an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
 build-time code fingerprint and dataset content hash. The fitted parameters are
 copied from the model artifact, so a row still says how that model was configured
-after the artifact is retrained, and stay empty for ad-hoc signals that have none.
+after the artifact is retrained. Ad-hoc signals and records whose model artifact
+cannot be loaded have empty parameters. Older records missing the new fields
+read as `parameters={}` and `signal_fingerprint=""`; reads do not reconstruct them.
+Empty parameters are not fitted defaults, and an empty fingerprint is not
+reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
 
