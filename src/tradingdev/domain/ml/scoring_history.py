@@ -29,8 +29,8 @@ def align_scoring_history(
         scored: Frame about to be scored.
 
     Returns:
-        The clipped history and the scored frame, both with UTC timestamps when
-        they identify rows by a ``timestamp`` column.
+        The clipped history and the scored frame, with time identities copied
+        into UTC ``timestamp`` columns for concatenation. Inputs are unchanged.
 
     Raises:
         ValueError: If either frame has no time identity, or if its timestamps
@@ -70,7 +70,5 @@ def _with_utc_time(
     frame: pd.DataFrame,
     stamps: pd.DatetimeIndex,
 ) -> pd.DataFrame:
-    """Normalize a timestamp column so two frames never concat as objects."""
-    if "timestamp" not in frame.columns:
-        return frame
+    """Keep time identity when consumers concatenate with ``ignore_index=True``."""
     return frame.assign(timestamp=stamps)

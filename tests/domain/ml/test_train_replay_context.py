@@ -20,6 +20,7 @@ from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.retrainer import RollingRetrainer
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
+from tradingdev.domain.ml.scoring_history import align_scoring_history
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
     SafetyVolumeStrategyConfig,
 )
@@ -261,3 +262,53 @@ def test_safety_risk_scoring_keeps_preceding_history() -> None:
     )
     assert len(first) == len(history) + 1
     _assert_chronological(recorder.contexts)
+
+
+@pytest.mark.parametrize("history_index", [False, True])
+@pytest.mark.parametrize("scored_index", [False, True])
+def test_mixed_time_representations_keep_real_features_and_signals(
+    history_index: bool, scored_index: bool
+) -> None:
+    frame = _market_frame(170)
+    history = frame.iloc[:160].copy()
+    scored = frame.iloc[160:].copy()
+    # Equivalent instants with different time zones must share one chronology.
+    history["timestamp"] = history["timestamp"].dt.tz_convert("Asia/Taipei")
+    if history_index:
+        history = history.set_index("timestamp")
+    if scored_index:
+        scored = scored.set_index("timestamp")
+    original_history = history.copy(deep=True)
+    original_scored = scored.copy(deep=True)
+
+    aligned, normalized = align_scoring_history(history, scored)
+    np.testing.assert_array_equal(
+        aligned["timestamp"].to_numpy(), frame["timestamp"].iloc[:160].to_numpy()
+    )
+    np.testing.assert_array_equal(
+        normalized["timestamp"].to_numpy(), frame["timestamp"].iloc[160:].to_numpy()
+    )
+    retrainer = RollingRetrainer(
+        XGBoostModelConfig(),
+        retrain_interval=1000,
+        threshold=0.6,
+        cooldown=0,
+        lookback=80,
+    )
+    # Real feature filtering; a long horizon leaves no mature retraining rows.
+    signals = retrainer.run(scored, history, _AlwaysLong(), FeatureEngineer(80, 1000))
+    np.testing.assert_array_equal(signals, np.ones(len(scored), dtype=int))
+    pd.testing.assert_frame_equal(history, original_history)
+    pd.testing.assert_frame_equal(scored, original_scored)
+
+
+def test_partial_replay_excludes_overlapping_and_future_training_rows() -> None:
+    frame = _market_frame(170)
+    history = frame.set_index("timestamp")
+    scored = frame.iloc[80:100].copy()
+
+    aligned, normalized = align_scoring_history(history, scored)
+
+    assert len(aligned) == 80
+    assert aligned["timestamp"].max() < normalized["timestamp"].min()
+    pd.testing.assert_frame_equal(normalized, scored)

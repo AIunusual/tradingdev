@@ -252,8 +252,10 @@ Whether the two frames overlap can only be decided from timestamps, so a scoring
 request with a non-empty scored frame requires a time identity, whether or not
 the frames overlap: that frame, and any non-empty training history, must carry a
 `timestamp` column or a `DatetimeIndex` with non-missing, unique and strictly
-increasing values. Timestamps are compared in UTC, a `timestamp` column is
-rewritten in UTC, and naive values are interpreted as UTC. A frame with no
+increasing values. Either representation can be used independently for each
+frame. Internal scoring copies carry a UTC `timestamp` column, including when
+the input uses a `DatetimeIndex`; the original frames are unchanged. Naive
+values are interpreted as UTC. A frame with no
 identity, or with duplicated or decreasing timestamps, raises `ValueError`.
 
 An empty scored frame produces no signals. `RollingRetrainer` and the
@@ -264,18 +266,19 @@ empty result.
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 
-Predictions are mapped back by source row. Feature warm-up and missing indicator
-values may remove rows; recursive indicators can also leave subsequent rows
+Quantile predictions are mapped back by source row. Its feature warm-up and
+missing indicator values may remove rows; recursive indicators can also leave subsequent rows
 unavailable. A bar without
 features emits `signal=0` and resets the position, holding count, entry price,
 and size weight. Once features become available, entry conditions are evaluated
 again. A single state machine processes every input row, including unscorable
 rows and chunk boundaries; output length and index match the input.
-Parameter-search evaluation uses the same gap handling on the full source frame.
+Quantile parameter-search evaluation uses the same gap handling on the full
+source frame.
 Its scoring features omit targets, so a missing future label does not prevent
 prediction on an otherwise usable tail bar.
-Model probability arrays must contain one finite four-class vector per scored
-feature row; malformed model output is rejected instead of treated as missing
+Quantile model probability arrays must contain one finite four-class vector per
+scored feature row; malformed model output is rejected instead of treated as missing
 features. Float32 and float64 model outputs are normalized to float64.
 `QuantileFeatureEngineer.transform()` always preserves surviving input index
 labels; callers that need positional mapping supply a positional index.
