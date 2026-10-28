@@ -41,7 +41,11 @@ async def test_parameter_experiments_preserve_source_and_base_settings(
         code, yaml_config, saved = await save_example(client)
         if walk_forward:
             config = yaml.safe_load(yaml_config)
-            config["validation"] = {"n_splits": 2, "train_ratio": 0.6}
+            config["validation"] = {
+                "mode": "automatic",
+                "n_splits": 2,
+                "train_ratio": 0.6,
+            }
             saved = await client.call(
                 "save_strategy",
                 strategy_id=STRATEGY_ID,

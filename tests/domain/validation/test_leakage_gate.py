@@ -14,10 +14,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+    ExplicitWalkForwardConfig,
+)
 from tradingdev.domain.validation.leakage_gate import (
     WalkForwardLeakageError,
     audit_fold_windows,
@@ -106,7 +109,9 @@ class TestSplitterWindowConsistency:
     """Lock `split` and `split_windows` together so the audit cannot drift."""
 
     @staticmethod
-    def _assert_consistent(config: WalkForwardConfig, df: pd.DataFrame) -> None:
+    def _assert_consistent(
+        config: AutomaticWalkForwardConfig | ExplicitWalkForwardConfig, df: pd.DataFrame
+    ) -> None:
         splitter = DataSplitter(config)
         folds = splitter.split(df)
         windows = splitter.split_windows(df)
@@ -121,7 +126,9 @@ class TestSplitterWindowConsistency:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         self._assert_consistent(
-            WalkForwardConfig(n_splits=2, train_ratio=0.7, expanding=False),
+            AutomaticWalkForwardConfig(
+                mode="automatic", n_splits=2, train_ratio=0.7, expanding=False
+            ),
             walk_forward_ohlcv_df,
         )
 
@@ -129,7 +136,9 @@ class TestSplitterWindowConsistency:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         self._assert_consistent(
-            WalkForwardConfig(n_splits=3, train_ratio=0.6, expanding=True),
+            AutomaticWalkForwardConfig(
+                mode="automatic", n_splits=3, train_ratio=0.6, expanding=True
+            ),
             walk_forward_ohlcv_df,
         )
 
@@ -139,7 +148,8 @@ class TestSplitterWindowConsistency:
         ts = walk_forward_ohlcv_df["timestamp"]
         boundary = ts.iloc[len(ts) // 2]
         self._assert_consistent(
-            WalkForwardConfig(
+            ExplicitWalkForwardConfig(
+                mode="explicit",
                 train_start=ts.iloc[0].to_pydatetime(),
                 train_end=boundary.to_pydatetime(),
                 test_start=(boundary + timedelta(days=1)).to_pydatetime(),
@@ -157,7 +167,9 @@ class TestValidatorGate:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         """Regression guard: without a label horizon nothing is rejected."""
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7)
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7
+        )
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(
             KDStrategy(config=KDStrategyConfig()), walk_forward_ohlcv_df
@@ -167,7 +179,9 @@ class TestValidatorGate:
     def test_label_horizon_blocks_leaking_folds(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7, label_horizon=5)
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7, label_horizon=5
+        )
         validator = WalkForwardValidator(config=config, engine=self.engine)
         with pytest.raises(WalkForwardLeakageError) as excinfo:
             validator.validate(
@@ -180,7 +194,9 @@ class TestValidatorGate:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         """A blocked run must not produce partial results."""
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7, label_horizon=5)
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7, label_horizon=5
+        )
         validator = WalkForwardValidator(config=config, engine=self.engine)
         with pytest.raises(WalkForwardLeakageError):
             validator.validate(

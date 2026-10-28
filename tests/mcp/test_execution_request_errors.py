@@ -268,7 +268,7 @@ def test_valid_configuration_with_wrong_mode_remains_a_mode_rejection(
     def read(path: Path) -> dict[str, Any]:
         config = load_config(path)
         if tool == "prepare_backtest":
-            config["validation"] = {}
+            config["validation"] = {"mode": "automatic"}
         else:
             config.pop("validation", None)
         return config
@@ -336,7 +336,7 @@ def test_invalid_execution_config_is_rejected_before_job_creation(
         else:
             config["parallel"] = {"reserve_cores": "not-an-integer"}
         if tool == "prepare_walk_forward":
-            config["validation"] = {}
+            config["validation"] = {"mode": "automatic"}
         return config
 
     module = "optimization_service" if tool == "prepare_optimization" else "job_service"

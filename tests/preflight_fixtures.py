@@ -86,7 +86,11 @@ def make_preflight_fixture(
         },
     }
     if kind == "walk_forward":
-        config["validation"] = validation or {"n_splits": 2, "train_ratio": 0.5}
+        config["validation"] = validation or {
+            "mode": "automatic",
+            "n_splits": 2,
+            "train_ratio": 0.5,
+        }
     saved = strategies.save_draft(
         code,
         yaml.safe_dump(config),

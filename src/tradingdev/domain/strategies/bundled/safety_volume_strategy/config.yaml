@@ -55,6 +55,7 @@ strategy:
     monthly_volume_target: 12500000  # 月度單邊 12.5M
 
 validation:
+  mode: explicit
   train_start: "2024-12-01"
   train_end: "2024-12-31"
   test_start: "2025-01-01"

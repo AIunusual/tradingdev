@@ -649,8 +649,11 @@ MCP `prepare_walk_forward` alone accepts `validation_config` to replace the enti
 effective validation mapping before research resolution and manifest capture.
 There is no merge with base validation settings; omitted or `null` input preserves
 them. Active explicit train/test windows use inclusive UTC calendar days and must
-fit within the research period. Purged-mode dates are inactive and do not constrain
-that period. Failed containment does not change the requested dates or publish a
+fit within the research period. New settings require `mode: automatic`, `explicit`
+or `purged` and reject fields belonging to another mode. Historical flat settings
+remain readable with their recorded mode precedence; they cannot be submitted as
+new execution inputs. See the [strategy split contract](strategy_contract.md#strategy-walk-forward-settings).
+Failed containment does not change the requested dates or publish a
 plan; the caller must supply suitable windows or automatic-fold settings.
 
 Manifest decoding preserves stored JSON without reapplying today's config defaults.

@@ -149,9 +149,14 @@ def test_old_bundled_validation_requires_an_explicit_research_window_choice(
         "research": research_input(start_date="2026-01-01", end_date="2026-02-01"),
     }
     if selection == "automatic":
-        arguments["validation_config"] = {"n_splits": 2, "train_ratio": 0.6}
+        arguments["validation_config"] = {
+            "mode": "automatic",
+            "n_splits": 2,
+            "train_ratio": 0.6,
+        }
     elif selection == "explicit":
         arguments["validation_config"] = {
+            "mode": "explicit",
             "train_start": "2026-01-01",
             "train_end": "2026-01-14",
             "test_start": "2026-01-15",
@@ -172,8 +177,8 @@ def test_old_bundled_validation_requires_an_explicit_research_window_choice(
         config = prepared.manifest.config_copy()
         assert config["backtest"]["start_date"].startswith("2026-01-01")
         if selection == "automatic":
-            assert config["validation"]["train_start"] is None
-            assert config["validation"]["test_end"] is None
+            assert "train_start" not in config["validation"]
+            assert "test_end" not in config["validation"]
             assert config["validation"]["n_splits"] == 2
         else:
             assert config["validation"]["test_end"].startswith("2026-01-31")

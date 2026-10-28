@@ -147,7 +147,11 @@ def test_bundled_preparation_does_not_construct_fit_or_score_untrained_models(
         ),
     )
     if kind == "walk_forward":
-        request.arguments["validation_config"] = {"n_splits": 2, "train_ratio": 0.5}
+        request.arguments["validation_config"] = {
+            "mode": "automatic",
+            "n_splits": 2,
+            "train_ratio": 0.5,
+        }
     result = execute_preflight(
         request, source_workspace=workspace, directory=tmp_path / "preflight"
     )
@@ -201,10 +205,15 @@ def test_invalid_purged_configuration_is_rejected_without_splitting_data(
         tmp_path,
         monkeypatch,
         kind="walk_forward",
-        validation={"purged_split": True, "label_horizon": 5, "n_splits": 2, **invalid},
     )
+    request.arguments["validation_config"] = {
+        "mode": "purged",
+        "label_horizon": 5,
+        "n_splits": 2,
+        **invalid,
+    }
     _forbid_historical_execution(monkeypatch)
-    with pytest.raises(PreflightError, match="label horizon|embargo"):
+    with pytest.raises(PreflightError, match="label_horizon|embargo"):
         execute_preflight(
             request, source_workspace=workspace, directory=tmp_path / "preflight"
         )

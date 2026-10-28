@@ -88,7 +88,7 @@ async def _save_runnable(
     config["backtest"].update(symbol="ETH/USDT", timeframe="4h", fees=0, slippage=0)
     config["data"]["requirements"]["market"].update(symbol="ETH/USDT", timeframe="4h")
     if walk_forward:
-        config["validation"] = {"n_splits": 2}
+        config["validation"] = {"mode": "automatic", "n_splits": 2}
     saved = await client.call(
         "save_strategy",
         strategy_id=STRATEGY_ID,

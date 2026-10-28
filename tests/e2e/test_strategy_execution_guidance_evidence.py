@@ -78,7 +78,7 @@ def evidence() -> tuple[list[ToolCall], list[ModelTurn]]:
             {
                 **deepcopy(strategy),
                 "success": True,
-                "yaml_config": "validation:\n  n_splits: 2\n",
+                "yaml_config": "validation:\n  mode: automatic\n  n_splits: 2\n",
             },
         ),
     ]

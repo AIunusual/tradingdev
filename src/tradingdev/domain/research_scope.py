@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import itertools
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from tradingdev.domain.backtest.schemas import BacktestConfig, WalkForwardConfig
+from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.optimization.grid_search import (
     finite_metric_value,
@@ -19,6 +19,10 @@ from tradingdev.domain.optimization.grid_search import (
 from tradingdev.domain.parameter_values import parameter_leaves
 from tradingdev.domain.research_evidence_values import canonical
 from tradingdev.domain.strategies.execution import merge_strategy_parameters
+from tradingdev.domain.validation.config import (
+    ExplicitWalkForwardConfig,
+    parse_walk_forward_config,
+)
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
@@ -107,6 +111,48 @@ def verify_research_scopes(
         )
 
 
+def _saved_fold_layout(
+    raw: object,
+) -> tuple[int, dict[str, tuple[datetime, datetime]]]:
+    """Read frozen fold identity; legacy records are never new execution inputs.
+
+    Old manifests contain the normalized flat configuration. Preserve its mode
+    precedence (purged ignores dates), without updating saved values or hashes.
+    """
+    if not isinstance(raw, dict):
+        raise ManifestError("Saved walk-forward configuration is not an object")
+    if "mode" in raw:
+        config = parse_walk_forward_config(raw)
+    else:
+        dates = ("train_start", "train_end", "test_start", "test_end")
+        expected = set(dates) | {
+            "n_splits",
+            "train_ratio",
+            "expanding",
+            "target_metric",
+            "label_horizon",
+            "embargo_bars",
+            "purged_split",
+        }
+        if set(raw) != expected or type(raw["purged_split"]) is not bool:
+            raise ManifestError("Saved walk-forward configuration is incomplete")
+        if not raw["purged_split"] and raw["train_start"] is not None:
+            config = ExplicitWalkForwardConfig.model_validate(
+                {"mode": "explicit", **{key: raw[key] for key in dates}}
+            )
+        else:
+            count = raw["n_splits"]
+            if type(count) is not int or count < 1:
+                raise ManifestError("Saved walk-forward fold count is invalid")
+            return count, {}
+    if isinstance(config, ExplicitWalkForwardConfig):
+        return 1, {
+            "train": (config.train_start, config.train_end),
+            "test": (config.test_start, config.test_end),
+        }
+    return config.n_splits, {}
+
+
 def _verify_walk_forward(
     manifest: ExecutionManifest,
     performance: PerformanceBundle,
@@ -114,9 +160,7 @@ def _verify_walk_forward(
 ) -> None:
     """Bind fold membership and explicit windows without reconstructing market data."""
     config = manifest.config_copy()
-    validation = WalkForwardConfig.model_validate(config["validation"])
-    explicit = not validation.purged_split and validation.train_start is not None
-    count = 1 if explicit else validation.n_splits
+    count, explicit = _saved_fold_layout(config["validation"])
     expected = {
         f"fold/{index}/{split}" for index in range(count) for split in ("train", "test")
     }
@@ -156,8 +200,7 @@ def _verify_walk_forward(
             if performance.scopes[scope_id].kind != "backtest":
                 raise ManifestError("Research walk-forward fold is not a scalar scope")
             if explicit:
-                start = getattr(validation, f"{split}_start")
-                end = getattr(validation, f"{split}_end")
+                start, end = explicit[split]
                 lower, upper = inclusive_day_window(start, end)
                 _verify_dates(
                     observations,

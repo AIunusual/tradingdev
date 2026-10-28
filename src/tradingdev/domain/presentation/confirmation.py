@@ -17,6 +17,7 @@ from tradingdev.domain.parameter_values import effective_candidates, parameter_l
 from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import ResearchMetadata
+from tradingdev.domain.validation.config import parse_walk_forward_config
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
@@ -509,53 +510,19 @@ def _validation_section(value: object) -> ConfirmationSection:
     if value is None:
         return _section("validation", paragraphs=("本次不採用分段訓練與驗證。",))
     values = _object(value, "validation")
-    _known_fields(
-        values,
-        {
-            "train_start",
-            "train_end",
-            "test_start",
-            "test_end",
-            "n_splits",
-            "train_ratio",
-            "expanding",
-            "target_metric",
-            "label_horizon",
-            "embargo_bars",
-            "purged_split",
-        },
-        "validation",
-    )
+    config = parse_walk_forward_config(values)
+    common = {"mode", "target_metric", "label_horizon"}
     dates = ("train_start", "train_end", "test_start", "test_end")
-    purged = values["purged_split"] is True
-    explicit = not purged and all(values[key] is not None for key in dates)
-    horizon = values["label_horizon"]
-    if not isinstance(horizon, int) or (purged and horizon < 1):
-        raise ValueError("Purged validation requires a positive label horizon")
-    if purged:
-        mode = "淨化分段：固定起點、逐次擴大訓練區間"
-        date_description = "淨化分段不使用指定日期；區間由資料筆數與分段組數決定。"
-        ratio_description = (
-            "淨化分段不使用此比例；訓練使用測試段之前的資料並扣除隔離區間。"
-        )
-        expanding_description = (
-            f"淨化分段固定逐次擴大；此欄設定值（{_text(values['expanding'])}）不使用。"
-        )
-    else:
-        mode = "使用指定日期的一組訓練／測試區間" if explicit else "依資料筆數自動分段"
-        date_description = (
-            "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒；包含起訖 UTC 整日。"
-            if explicit
-            else "未指定日期，由自動分段決定。"
-        )
-        ratio_description = (
-            "指定日期模式不使用此設定。" if explicit else "每組資料中用於訓練的比例。"
-        )
-        expanding_description = (
-            "指定日期模式不使用此設定。" if explicit else "啟用時保留更早的訓練資料。"
-        )
-    date_values = {key: values[key] for key in dates}
-    if explicit:
+    mode_fields = {
+        "automatic": {"n_splits", "train_ratio", "expanding"},
+        "explicit": set(dates),
+        "purged": {"n_splits", "embargo_bars"},
+    }
+    _known_fields(values, common | mode_fields[config.mode], "validation")
+    fields = []
+    if config.mode == "explicit":
+        fields.append(_field("分段方式", "使用指定日期的一組訓練／測試區間"))
+        date_values = {}
         for start_key, end_key in (
             ("train_start", "train_end"),
             ("test_start", "test_end"),
@@ -566,69 +533,84 @@ def _validation_section(value: object) -> ConfirmationSection:
             )
             date_values[start_key] = f"{lower:%Y-%m-%d %H:%M:%S} UTC（含）"
             date_values[end_key] = f"{upper:%Y-%m-%d %H:%M:%S} UTC（不含）"
-    fields = [
-        _field("分段方式", mode),
-        *[
+        fields.extend(
             _field(
                 label,
                 date_values[key],
-                f"{date_description} 原始設定：{values[key]}。"
-                if explicit
-                else date_description,
-                missing="不使用" if purged else "由自動分段決定",
+                "日期先轉為 UTC（無時區視為 UTC），再忽略時分秒；包含起訖 UTC 整日。"
+                f" 原始設定：{values[key]}。",
             )
             for key, label in zip(
                 dates, ("訓練開始", "訓練結束", "測試開始", "測試結束"), strict=True
             )
-        ],
-        _field(
-            "預定分段組數",
-            1 if explicit else values["n_splits"],
-            f"指定日期模式固定為一組，此設定不使用（設定值：{values['n_splits']}）。"
-            if explicit
-            else (
-                "額外保留第一段作為訓練；後續每段依序測試，資料不足時會拒絕執行。"
-                if purged
-                else "實際可完成組數取決於資料量。"
+        )
+        fields.append(_field("預定分段組數", 1))
+    else:
+        fields.extend(
+            [
+                _field(
+                    "分段方式",
+                    "依資料筆數自動分段"
+                    if config.mode == "automatic"
+                    else "淨化分段：固定起點、逐次擴大訓練區間",
+                ),
+                _field(
+                    "預定分段組數",
+                    config.n_splits,
+                    "實際資料須能形成完整分段；資料不足時會拒絕執行。",
+                ),
+            ]
+        )
+        if config.mode == "automatic":
+            fields.extend(
+                [
+                    _field(
+                        "自動分段的訓練比例",
+                        _percentage(config.train_ratio),
+                        "每組資料中用於訓練的比例。",
+                    ),
+                    _field(
+                        "訓練區間逐次擴大",
+                        config.expanding,
+                        "啟用時保留更早的訓練資料。",
+                    ),
+                ]
+            )
+        else:
+            fields.extend(
+                [
+                    _field(
+                        "訓練區間逐次擴大",
+                        True,
+                        "額外保留第一段作為訓練；每組訓練區間先扣除標籤前視與隔離根數。",
+                    ),
+                    _field(
+                        "額外隔離根數",
+                        config.embargo_bars,
+                        "淨化之外再多移除的 K 線。",
+                        unit="根 K 線",
+                        detail=True,
+                    ),
+                ]
+            )
+    horizon = config.label_horizon
+    fields.extend(
+        [
+            _field(
+                "驗證紀錄重點指標",
+                _metric(config.target_metric),
+                "用於驗證紀錄；策略如何訓練另依其策略設定。",
             ),
-        ),
-        _field(
-            "自動分段的訓練比例",
-            _percentage(values["train_ratio"]),
-            ratio_description,
-        ),
-        _field(
-            "訓練區間逐次擴大",
-            True if purged else values["expanding"],
-            expanding_description,
-        ),
-        _field(
-            "驗證紀錄重點指標",
-            _metric(values["target_metric"]),
-            "用於驗證紀錄；策略如何訓練另依其策略設定。",
-        ),
-        _field(
-            "標籤前視根數",
-            horizon if horizon > 0 else f"未啟用檢查（設定值：{horizon}）",
-            "大於 0 時正式執行會先檢查標籤區間重疊；未啟用不代表標籤安全，"
-            "也不代表策略沒有使用未來資料。",
-            unit="根 K 線" if horizon > 0 else None,
-            detail=True,
-        ),
-        _field(
-            "淨化分段",
-            values["purged_split"],
-            "啟用時每組訓練區間會先移除與測試區間重疊的資料；需要前視根數大於 0。",
-            detail=True,
-        ),
-        _field(
-            "額外隔離根數",
-            values["embargo_bars"],
-            "淨化之外再多移除的 K 線；只有啟用淨化分段時才會生效。",
-            unit="根 K 線",
-            detail=True,
-        ),
-    ]
+            _field(
+                "標籤前視根數",
+                horizon if horizon > 0 else "未啟用檢查（設定值：0）",
+                "大於 0 時正式執行會先檢查標籤區間重疊；未啟用不代表標籤安全，"
+                "也不代表策略沒有使用未來資料。",
+                unit="根 K 線" if horizon > 0 else None,
+                detail=True,
+            ),
+        ]
+    )
     return _section("validation", fields)
 
 

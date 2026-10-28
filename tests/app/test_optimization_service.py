@@ -443,7 +443,7 @@ def test_start_optimization_requires_runnable_strategy(tmp_path: Path) -> None:
 def test_start_optimization_rejects_walk_forward_settings(tmp_path: Path) -> None:
     config_path = tmp_path / "strategy.yaml"
     config_path.write_text(
-        "strategy:\n  id: fixture\nvalidation:\n  n_splits: 2\n",
+        "strategy:\n  id: fixture\nvalidation:\n  mode: automatic\n  n_splits: 2\n",
         encoding="utf-8",
     )
     service, job_store, runner = _service(

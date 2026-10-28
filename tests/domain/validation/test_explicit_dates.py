@@ -16,15 +16,18 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from tradingdev.domain.backtest.schemas import WalkForwardConfig
 from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.strategies.bundled.kd_strategy.config import KDStrategyConfig
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+    ExplicitWalkForwardConfig,
+    PurgedWalkForwardConfig,
+)
 from tradingdev.domain.validation.date_windows import (
     WalkForwardSplitError,
     inclusive_day_window,
 )
-from tradingdev.domain.validation.purged_splitter import PurgedDataSplitter
 from tradingdev.domain.validation.splitter import DataSplitter
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 
@@ -55,7 +58,7 @@ class _FitRecorder(KDStrategy):
 
 class TestConfigRejectsLeakingDates:
     def test_adjacent_days_are_accepted(self) -> None:
-        config = WalkForwardConfig(**_dates())
+        config = ExplicitWalkForwardConfig(mode="explicit", **_dates())
         assert config.train_end is not None
         assert config.test_start is not None
         assert config.train_end.date() < config.test_start.date()
@@ -63,39 +66,57 @@ class TestConfigRejectsLeakingDates:
     def test_shared_inclusive_end_day_is_rejected(self) -> None:
         """The issue's probe: train_end == test_start shares a day of bars."""
         with pytest.raises(ValidationError, match="precede the test window"):
-            WalkForwardConfig(**_dates(train_end="2024-01-11", test_start="2024-01-11"))
+            ExplicitWalkForwardConfig(
+                mode="explicit",
+                **_dates(train_end="2024-01-11", test_start="2024-01-11"),
+            )
 
     def test_train_period_ending_inside_the_test_period_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="precede the test window"):
-            WalkForwardConfig(**_dates(train_end="2024-01-15", test_start="2024-01-11"))
+            ExplicitWalkForwardConfig(
+                mode="explicit",
+                **_dates(train_end="2024-01-15", test_start="2024-01-11"),
+            )
 
     def test_reversed_train_period_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="precede the test window"):
-            WalkForwardConfig(
-                **_dates(train_start="2024-01-10", train_end="2024-01-01")
+            ExplicitWalkForwardConfig(
+                mode="explicit",
+                **_dates(train_start="2024-01-10", train_end="2024-01-01"),
             )
 
     def test_reversed_test_period_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="precede the test window"):
-            WalkForwardConfig(**_dates(test_start="2024-01-20", test_end="2024-01-11"))
+            ExplicitWalkForwardConfig(
+                mode="explicit",
+                **_dates(test_start="2024-01-20", test_end="2024-01-11"),
+            )
 
     def test_partial_dates_are_rejected_instead_of_falling_back(self) -> None:
-        with pytest.raises(ValidationError, match="missing: test_start, test_end"):
-            WalkForwardConfig(train_start="2024-01-01", train_end="2024-01-10")
+        with pytest.raises(ValidationError, match="Field required"):
+            ExplicitWalkForwardConfig.model_validate(
+                {
+                    "mode": "explicit",
+                    "train_start": "2024-01-01",
+                    "train_end": "2024-01-10",
+                }
+            )
 
     def test_no_dates_still_selects_the_automatic_split(self) -> None:
-        config = WalkForwardConfig(n_splits=2, train_ratio=0.7)
-        assert config.train_start is None
-        assert config.test_start is None
+        config = AutomaticWalkForwardConfig(
+            mode="automatic", n_splits=2, train_ratio=0.7
+        )
+        assert config.mode == "automatic"
 
     def test_non_utc_timestamps_are_compared_as_utc_days(self) -> None:
         """03:00 at +08:00 is the previous UTC day, so the days still overlap."""
         with pytest.raises(ValidationError, match="precede the test window"):
-            WalkForwardConfig(
+            ExplicitWalkForwardConfig(
+                mode="explicit",
                 **_dates(
                     train_end=datetime.fromisoformat("2024-01-11T20:00:00+00:00"),
                     test_start=datetime.fromisoformat("2024-01-12T03:00:00+08:00"),
-                )
+                ),
             )
 
 
@@ -109,32 +130,19 @@ class TestConfigRejectsLeakingDates:
     ],
     ids=["partial", "overlapping", "reversed_train", "reversed_test"],
 )
-def test_purged_dates_do_not_affect_schema_or_fold_geometry(
-    walk_forward_ohlcv_df: pd.DataFrame, dates: dict[str, Any]
-) -> None:
-    config = WalkForwardConfig(
-        purged_split=True, label_horizon=5, embargo_bars=2, n_splits=2, **dates
-    )
-    baseline = PurgedDataSplitter(
-        WalkForwardConfig(
-            purged_split=True, label_horizon=5, embargo_bars=2, n_splits=2
+def test_purged_dates_are_rejected(dates: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        PurgedWalkForwardConfig(
+            mode="purged", label_horizon=5, embargo_bars=2, n_splits=2, **dates
         )
-    )
-    splitter = PurgedDataSplitter(config)
-    expected = baseline.split_windows(walk_forward_ohlcv_df)
-    assert splitter.split_windows(walk_forward_ohlcv_df) == expected
-    for (train, test), (train_window, test_window) in zip(
-        splitter.split(walk_forward_ohlcv_df), expected, strict=True
-    ):
-        assert train.equals(walk_forward_ohlcv_df.iloc[slice(*train_window)])
-        assert test.equals(walk_forward_ohlcv_df.iloc[slice(*test_window)])
 
 
 class TestExplicitSplitGeometry:
     def test_offset_dates_select_the_full_utc_calendar_days(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(
+        config = ExplicitWalkForwardConfig(
+            mode="explicit",
             train_start="2024-01-02T03:00:00+08:00",
             train_end="2024-01-03T03:00:00+08:00",
             test_start="2024-01-04T03:00:00+08:00",
@@ -153,7 +161,7 @@ class TestExplicitSplitGeometry:
     def test_train_window_covers_the_whole_end_day(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(**_dates())
+        config = ExplicitWalkForwardConfig(mode="explicit", **_dates())
         train_df, test_df = DataSplitter(config).split(walk_forward_ohlcv_df)[0]
         last_train = train_df["timestamp"].max()
         assert last_train.date() == datetime(2024, 1, 10).date()
@@ -163,7 +171,7 @@ class TestExplicitSplitGeometry:
     def test_split_halves_are_disjoint_and_adjacent(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(**_dates())
+        config = ExplicitWalkForwardConfig(mode="explicit", **_dates())
         train_df, test_df = DataSplitter(config).split(walk_forward_ohlcv_df)[0]
         assert set(train_df["timestamp"]).isdisjoint(test_df["timestamp"])
         gap = test_df["timestamp"].min() - train_df["timestamp"].max()
@@ -172,7 +180,7 @@ class TestExplicitSplitGeometry:
     def test_split_and_split_windows_describe_the_same_rows(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        splitter = DataSplitter(WalkForwardConfig(**_dates()))
+        splitter = DataSplitter(ExplicitWalkForwardConfig(mode="explicit", **_dates()))
         train_df, test_df = splitter.split(walk_forward_ohlcv_df)[0]
         windows = splitter.split_windows(walk_forward_ohlcv_df)
         assert len(windows) == 1
@@ -186,7 +194,8 @@ class TestExplicitSplitGeometry:
         """``model_construct`` bypasses the validator; the splitter must not."""
         ts = walk_forward_ohlcv_df["timestamp"]
         boundary = ts.iloc[len(ts) // 2]
-        config = WalkForwardConfig.model_construct(
+        config = ExplicitWalkForwardConfig.model_construct(
+            mode="explicit",
             train_start=ts.iloc[0].to_pydatetime(),
             train_end=boundary.to_pydatetime(),
             test_start=boundary.to_pydatetime(),
@@ -198,7 +207,8 @@ class TestExplicitSplitGeometry:
     def test_window_matching_no_rows_is_reported(
         self, sample_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(
+        config = ExplicitWalkForwardConfig(
+            mode="explicit",
             train_start="2030-01-01",
             train_end="2030-01-10",
             test_start="2030-01-11",
@@ -211,7 +221,7 @@ class TestExplicitSplitGeometry:
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
         with pytest.raises(WalkForwardSplitError, match="sorted ascending"):
-            DataSplitter(WalkForwardConfig(**_dates())).split(
+            DataSplitter(ExplicitWalkForwardConfig(mode="explicit", **_dates())).split(
                 walk_forward_ohlcv_df.iloc[::-1]
             )
 
@@ -220,7 +230,7 @@ class TestValidatorTrainsOnPastOnly:
     def test_fit_receives_only_the_train_window(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(**_dates())
+        config = ExplicitWalkForwardConfig(mode="explicit", **_dates())
         strategy = _FitRecorder()
         engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
         WalkForwardValidator(config=config, engine=engine).validate(
@@ -234,7 +244,7 @@ class TestValidatorTrainsOnPastOnly:
     def test_fold_metadata_does_not_overlap(
         self, walk_forward_ohlcv_df: pd.DataFrame
     ) -> None:
-        config = WalkForwardConfig(**_dates())
+        config = ExplicitWalkForwardConfig(mode="explicit", **_dates())
         engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
         results = WalkForwardValidator(config=config, engine=engine).validate(
             _FitRecorder(), walk_forward_ohlcv_df

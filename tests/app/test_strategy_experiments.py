@@ -96,7 +96,7 @@ def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
             "slippage": 0,
             "periods_per_year": 365,
         },
-        "validation": {"n_splits": 2, "train_ratio": 0.5},
+        "validation": {"mode": "automatic", "n_splits": 2, "train_ratio": 0.5},
         "random_seed": 42,
     }
     saved = strategies.save_draft(

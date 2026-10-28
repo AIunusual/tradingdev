@@ -19,7 +19,7 @@ from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.research import ResearchMetadata
 from tradingdev.domain.research_policy import DEFAULT_FEES, DEFAULT_SLIPPAGE
 from tradingdev.domain.strategies.capabilities import TrainingRequirement
-from tradingdev.domain.validation.date_windows import utc_calendar_day
+from tradingdev.domain.validation.config import WalkForwardConfig
 from tradingdev.shared.utils.json_values import strict_json_value
 
 
@@ -68,94 +68,6 @@ class BacktestConfig(BaseModel):
         if self.mode == "signal" and self.init_cash is None:
             msg = "init_cash is required when mode is 'signal'"
             raise ValueError(msg)
-        return self
-
-
-class WalkForwardConfig(BaseModel):
-    """Walk-forward validation configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    train_start: dt.datetime | None = None
-    train_end: dt.datetime | None = None
-    test_start: dt.datetime | None = None
-    test_end: dt.datetime | None = None
-    n_splits: int = 1
-    train_ratio: float = 0.8
-    expanding: bool = False
-    target_metric: str = "sharpe_ratio"
-    label_horizon: int = 0
-    """Bars a label looks ahead; >0 enables the leakage gate on the folds.
-
-    With ``0`` no fold geometry is audited (a plain price-series walk-forward
-    has no forward-looking label). Set it to the prediction horizon when the
-    folds train on interval-based labels, so bars whose answer is computed
-    from test-window prices are rejected before any fold runs.
-    """
-    embargo_bars: int = 0
-    """Extra bars removed around each test window, on top of the purge.
-
-    Purge width is derivable from ``label_horizon``; this buffer is not, and
-    exists because financial features are serially correlated. Only used by
-    the purged splitter.
-    """
-    purged_split: bool = False
-    """Use :class:`PurgedDataSplitter` instead of :class:`DataSplitter`.
-
-    Requires ``label_horizon >= 1``. Folds are then purged and embargoed by
-    construction, so the leakage gate passes instead of blocking the run.
-    """
-
-    @model_validator(mode="after")
-    def explicit_dates_ordered(self) -> Self:
-        """Require active explicit dates to be ordered and disjoint by UTC day.
-
-        Every boundary is an inclusive UTC calendar day, so a train window
-        ending on the day the test window starts shares that day's bars with
-        the test set. ``train_end`` and ``test_start`` must therefore name
-        different days; reversed or partially specified periods are rejected
-        instead of silently falling back to the automatic split. Purged mode
-        does not use these dates, so their completeness and order are irrelevant.
-        """
-        if self.purged_split:
-            return self
-        train_start, train_end = self.train_start, self.train_end
-        test_start, test_end = self.test_start, self.test_end
-        if (
-            train_start is None
-            or train_end is None
-            or test_start is None
-            or test_end is None
-        ):
-            missing = [
-                name
-                for name, value in (
-                    ("train_start", train_start),
-                    ("train_end", train_end),
-                    ("test_start", test_start),
-                    ("test_end", test_end),
-                )
-                if value is None
-            ]
-            if len(missing) == 4:
-                return self
-            raise ValueError(
-                "Explicit walk-forward dates must be given all together; "
-                f"missing: {', '.join(missing)}"
-            )
-
-        days = tuple(
-            utc_calendar_day(value)
-            for value in (train_start, train_end, test_start, test_end)
-        )
-        if not (days[0] <= days[1] < days[2] <= days[3]):
-            raise ValueError(
-                "Explicit walk-forward dates must satisfy "
-                "train_start <= train_end < test_start <= test_end as inclusive "
-                f"UTC calendar days (got train {days[0]}..{days[1]}, "
-                f"test {days[2]}..{days[3]}); the train window's last day must "
-                "precede the test window's first day"
-            )
         return self
 
 

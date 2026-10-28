@@ -726,7 +726,7 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
         },
     }
     if walk_forward:
-        config["validation"] = {"target_metric": "total_return"}
+        config["validation"] = {"mode": "automatic", "target_metric": "total_return"}
     manifest = ExecutionManifest.create(
         kind="walk_forward" if walk_forward else "backtest",
         config=config,

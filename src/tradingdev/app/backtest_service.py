@@ -20,7 +20,6 @@ from tradingdev.domain.backtest.schemas import (
     BacktestConfig,
     BacktestRunConfig,
     ParallelConfig,
-    WalkForwardConfig,
 )
 from tradingdev.domain.execution import (
     ExecutionManifest,
@@ -37,6 +36,11 @@ from tradingdev.domain.strategies.contract import (
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import generate_checked_signals
+from tradingdev.domain.validation.config import (
+    ExplicitWalkForwardConfig,
+    WalkForwardConfig,
+    parse_walk_forward_config,
+)
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 from tradingdev.domain.validation.report import summarize_results
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
@@ -188,15 +192,7 @@ class BacktestService:
         config: WalkForwardConfig, backtest: BacktestConfig
     ) -> None:
         """Check active split settings without claiming data-dependent fold coverage."""
-        if config.purged_split:
-            if config.label_horizon < 1:
-                raise ValueError("Purged validation requires a positive label horizon")
-            if config.embargo_bars < 0:
-                raise ValueError("Purged validation embargo must not be negative")
-        explicit = not config.purged_split and config.train_start is not None
-        if explicit:
-            assert config.train_start is not None and config.train_end is not None
-            assert config.test_start is not None and config.test_end is not None
+        if isinstance(config, ExplicitWalkForwardConfig):
             train_lower, _ = inclusive_day_window(config.train_start, config.train_end)
             _, test_upper = inclusive_day_window(config.test_start, config.test_end)
             if train_lower < research_datetime(
@@ -211,10 +207,6 @@ class BacktestService:
                     "entire validation configuration with automatic folds or valid "
                     "explicit windows; keep the requested research period."
                 )
-        if not explicit and config.n_splits < 1:
-            raise ValueError("Automatic validation requires positive n_splits")
-        if not explicit and not config.purged_split and not 0 < config.train_ratio < 1:
-            raise ValueError("Automatic validation train_ratio must be between 0 and 1")
 
     def check_execution(
         self,
@@ -314,7 +306,7 @@ class BacktestService:
         )
 
         if manifest.kind == "walk_forward":
-            wf_cfg = WalkForwardConfig(**raw_config["validation"])
+            wf_cfg = parse_walk_forward_config(raw_config["validation"])
             validator = WalkForwardValidator(config=wf_cfg, engine=engine)
             folds = validator.validate(strategy, dataset.frame)
             pipeline = PipelineResult(

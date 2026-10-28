@@ -69,7 +69,7 @@ uv run python -m tradingdev \
   --walk-forward
 ```
 
-The split settings (`train_start`, `test_start`, `purged_split`,
+The split settings (`train_start`, `test_start`, `mode`,
 `label_horizon`, ...) are documented in
 [Strategy Walk-Forward Settings](../strategy_contract.md#strategy-walk-forward-settings).
 A config that declares `validation` cannot be run as a simple backtest, and

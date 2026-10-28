@@ -245,3 +245,41 @@ def test_preparation_service_validation_errors_remain_private(
     assert context.preflight.requests == []
     assert context.runner.calls == []
     assert context.service.jobs.list_all_jobs() == []
+
+
+@pytest.mark.parametrize("protocol_mode", ["legacy", "auto"])
+@pytest.mark.parametrize(
+    "validation",
+    [
+        {"n_splits": 2},
+        {"mode": "automatic", "embargo_bars": 0},
+        {"mode": "automatic", "n_splits": True},
+        {"mode": "purged", "label_horizon": 0},
+        {"mode": "purged", "label_horizon": 1, "train_ratio": 0.8},
+        {"mode": "explicit", "train_start": "2024-01-01"},
+    ],
+)
+def test_invalid_fold_mode_is_rejected_before_preflight(
+    tmp_path: Path,
+    protocol_mode: str,
+    validation: dict[str, Any],
+) -> None:
+    context = plan_context(tmp_path)
+    arguments = context.arguments | {"validation_config": validation}
+    tool = next(
+        tool
+        for tool in asyncio.run(context.server.list_tools())
+        if tool.name == "prepare_walk_forward"
+    )
+    assert not Draft202012Validator(tool.input_schema).is_valid(arguments)
+
+    async def check() -> None:
+        async with Client(context.server, mode=protocol_mode) as client:
+            result = await client.call_tool("prepare_walk_forward", arguments)
+            assert result.is_error
+            assert "validation_config" in str(result.content)
+
+    asyncio.run(check())
+    assert context.preflight.requests == []
+    assert context.runner.calls == []
+    assert context.service.jobs.list_all_jobs() == []

@@ -378,6 +378,7 @@ strategy:
     min_monthly_pnl: -1500
 
 validation:
+  mode: explicit
   train_start: "2024-01-01"
   train_end: "2024-12-31"
   test_start: "2025-01-01"

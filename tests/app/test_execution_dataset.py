@@ -399,7 +399,9 @@ def test_shared_snapshot_replays_rng_independently_of_candidate_order_and_failur
 def test_walk_forward_can_reuse_captured_data(tmp_path: Path) -> None:
     service, data, _loader, _strategy = _service(tmp_path, rows=100)
     manifest = service.prepare_execution(
-        _raw_config(validation={"n_splits": 2, "train_ratio": 0.5}),
+        _raw_config(
+            validation={"mode": "automatic", "n_splits": 2, "train_ratio": 0.5}
+        ),
         kind="walk_forward",
     )
     snapshot = service.load_execution_dataset(manifest)

@@ -167,7 +167,7 @@ def test_damaged_historical_strategy_shape_is_rejected(strategy: object) -> None
 def test_comparison_cannot_hide_walk_forward_execution() -> None:
     selected = candidate(1, 10)
     config = selected.manifest.config_copy()
-    config["validation"] = {"n_splits": 2}
+    config["validation"] = {"mode": "automatic", "n_splits": 2}
     walk_forward = ExecutionManifest.create(
         kind="walk_forward",
         config=config,

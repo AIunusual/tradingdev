@@ -15,12 +15,14 @@ from tradingdev.app.backtest_service import BacktestService
 from tradingdev.domain.backtest.schemas import (
     BacktestConfig,
     ParallelConfig,
-    WalkForwardConfig,
 )
 from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.signals import SignalContractError
+from tradingdev.domain.validation.config import (
+    AutomaticWalkForwardConfig,
+)
 from tradingdev.domain.validation.walk_forward import WalkForwardValidator
 from tradingdev.mcp.workers.optimization import _run_single_combo
 
@@ -85,7 +87,10 @@ def test_walk_forward_checks_training_and_test_outputs_before_their_engine(
     engine = Mock()
     engine.run.return_value.metrics = {}
     validator = WalkForwardValidator(
-        WalkForwardConfig(), cast("BaseBacktestEngine", engine)
+        AutomaticWalkForwardConfig(
+            mode="automatic",
+        ),
+        cast("BaseBacktestEngine", engine),
     )
     with pytest.raises(SignalContractError, match="invalid_signal_values"):
         validator.run_fold(0, FaultyFoldStrategy(), frame.iloc[:12], frame.iloc[12:])
