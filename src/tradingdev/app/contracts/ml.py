@@ -91,7 +91,7 @@ class RecordedEvaluation(ContractModel):
     n_candidates: int
     """How many candidates are now recorded; the size of the comparison."""
     signal_fingerprint: str
-    """Hash of the stored signal; compare it with a re-run to check reproduction."""
+    """Hash of the evaluated signal; compare it with a re-run to check reproduction."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -102,8 +102,8 @@ class SignalEvaluationResponse(ContractModel):
     signal_fingerprint: str
     """Hash of the evaluated signal values in dataset row order.
 
-    Kept out of ``evaluation_id`` and out of the leaderboard entry identity so
-    a re-run can be compared with a stored candidate without renaming it.
+    Stored separately from entry identity for modelled candidates. Ad-hoc
+    candidates without a model ID also include it in their entry identity.
     """
     n_observations: int
     horizon: int
@@ -145,7 +145,7 @@ class LeaderboardRow(ContractModel):
     window: int
     n_quantiles: int
     parameters: dict[str, JsonValue]
-    """The candidate's fitted hyperparameters; empty for ad-hoc signals."""
+    """Fitted hyperparameters when available; empty does not imply defaults."""
     signal_fingerprint: str
     """Hash of the signal this row was measured on; empty on older records."""
     value: float
