@@ -51,12 +51,20 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 | --- | --- |
 | [README](../README.md) | 使用者安裝、操作與結果解讀。 |
 | [架構](../ARCHITECTURE.md) | 模組責任與跨層流程。 |
-| [策略契約](strategy_contract.md)、[執行產物](run_artifacts.md) | 策略作者及整合者需要的正式契約。 |
+| [策略契約](strategy_contract.md) | 策略作者的 Python／YAML、訊號、訓練與 revision 要求。 |
+| [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
+| [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
+| [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
 
 行為改變時同步更新受影響的契約與操作說明。實作或測試案例調整而工具職責未變時，
 通常不需要擴寫本指南。刪減內容前確認仍保留必要操作、資料保存與安全限制。
+
+新增、改名或拆分契約時，同步檢查 [review_scope.py](../tooling/review_scope.py) 的責任選取
+及 [test_review_scope.py](../tests/tooling/test_review_scope.py) 的證據涵蓋。新文件會自動納入
+審查，但未知章節保守保留，拆檔本身不代表減少上下文。量測應分開報告文件閱讀量、
+審查輸入與產品 MCP；不把 bytes 當成 tokens。
 
 一般文件只走文件檢查；已登錄簡報走簡報專項；政策、程式、依賴或檢查工具變更走
 程式檢查。完整分類規則見 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
