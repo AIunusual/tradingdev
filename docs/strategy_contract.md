@@ -185,12 +185,15 @@ The static validator is the maintained source for allowed imports and blocked
 calls. MCP `get_strategy_contract(section="core")` returns its exact `static_policy`
 lists; these are static restrictions, not a Python security sandbox.
 
-Prefer `tradingdev.domain.indicators` (`sma`, `ema`, `rsi`, `macd`,
-`bollinger_bands`, `atr`, `adx`, `stochastic`) for standard indicators. This
-facade calls the official TA-Lib Python wrapper, preserves the input index,
-and exposes named result fields for indicators with multiple outputs. Bundled
-strategies and feature engineering must use this facade rather than call
-TA-Lib directly. Bollinger Bands use population standard deviation.
+Prefer the public `tradingdev.domain.indicators` facade for standard indicators.
+Bundled strategies and feature engineering must use it rather than call TA-Lib
+directly. Discover its installed exports with
+`get_strategy_contract(section="indicators")`, then supply `indicator="macd"`
+(or another catalog name) for its actual signature, named result fields,
+implementation and transitive local input/parameter checks. This is read-only
+reference material, not strategy execution. Missing source fails instead of
+returning an incomplete reference; resolve it before authoring. The catalog does
+not recommend profitable parameters or replace research confirmation.
 
 The facade preserves TA-Lib's native warm-up NaNs and NaN propagation, including
 NaNs that can extend to the end of the output after an interior missing value.
@@ -201,29 +204,13 @@ unavailable indicator values. OHLC inputs must have identical indexes and
 lengths, and infinite input values are rejected. Empty inputs produce empty
 float64 outputs with the same index.
 
-Periods must be integers other than booleans and at most 100,000. SMA, EMA,
-RSI, ADX, Bollinger Bands, and MACD fast/slow periods require at least 2 bars;
-ATR, MACD signal, and Stochastic periods allow 1. Bollinger Bands expose only
-population standard deviation: the previous `ddof` parameter is removed.
-The `std` argument to `bollinger_bands` must be finite and in the inclusive
-range `0 <= std <= 3e37`. Negative values, values above `3e37`, NaN, and
-positive or negative infinity raise `ValueError`.
-
-Generated strategies may also import `talib` directly. Use its Function API
-with float64 NumPy arrays, unpack multi-output tuples, and restore the input
-index when constructing pandas Series. The output order is `line, signal,
-histogram` for `MACD`, `upper, middle, lower` for `BBANDS`, and `k, d` for
-`STOCH`; these are not pandas-ta DataFrames with parameter-encoded column names.
-The same warm-up and missing-value rules apply. The import allowlist rejects
-`pandas_ta`; existing generated strategies using it must be revised and
-validated again. Static validation does not enforce the numerical rules above.
-
-The public `indicator_column` helper has also been removed. Remove its imports
-and calls, replacing pandas-ta column-name lookups with the facade's named
-result fields, such as `macd(close).histogram` or `bollinger_bands(close).upper`.
-When calling `talib` directly, unpack its output tuples in the order described
-above instead. The facade's result objects expose named fields and are not
-tuples to unpack.
+Numerical limits and warm-up details are available in each selected API reference,
+derived from its implementation rather than a second handwritten parameter table.
+Generated strategies may use the direct TA-Lib Function API when permitted by the
+current import policy, but must manage dtype, tuple outputs and index restoration
+themselves. Prefer the facade's named result fields; they are not tuples. For old
+or unknown APIs, discover the installed catalog rather than guessing replacement
+names. Source/type checks alone do not establish numerical or trading correctness.
 
 Ruff treats `tradingdev` as first-party code. Separate its imports from
 third-party `numpy`, `pandas`, and `talib` imports with a blank line.

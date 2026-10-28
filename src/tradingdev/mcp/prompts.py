@@ -38,7 +38,9 @@ Strategy development workflow
 3. Read the contract and author a revision when code is needed.
    - Read get_strategy_contract(section="core") before drafting. Retrieve its
      research section for required choices/default policy, configuration for YAML,
-     and example when useful. Do not copy an example's market, dates or timeframe.
+     and example when useful. Discover indicator APIs through section="indicators";
+     request the chosen indicator by name before relying on its API.
+     Do not copy an example's market, dates or timeframe.
    - Save source and base YAML with save_strategy; keep the returned revision_id.
      Omit unspecified capital/cost assumptions so the shared policy resolves them;
      preserve explicit values, including zero. These are simulation assumptions,

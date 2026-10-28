@@ -78,6 +78,7 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
         "configuration",
         "research",
         "evidence",
+        "indicators",
     }
     content = contract["content"]
     assert set(content) == {
@@ -573,6 +574,49 @@ def test_checking_an_older_revision_does_not_approve_current(
     assert checked.metadata.dry_run is not None
     assert checked.metadata.validation.revision_id == saved["revision_id"]
     assert checked.metadata.dry_run.revision_id == saved["revision_id"]
+
+
+def test_remote_indicator_catalog_resolves_one_complete_api(tmp_path: Path) -> None:
+    server, _service = _server(tmp_path)
+    catalog = asyncio.run(
+        server.call_tool("get_strategy_contract", {"section": "indicators"})
+    )
+    assert isinstance(catalog, CallToolResult)
+    assert catalog.structured_content is not None
+    content = catalog.structured_content["content"]
+    assert content["selected"] is None
+    assert any(row["name"] == "bollinger_bands" for row in content["catalog"])
+    response = asyncio.run(
+        server.call_tool(
+            "get_strategy_contract",
+            {"section": "indicators", "indicator": "bollinger_bands"},
+        )
+    )
+    assert isinstance(response, CallToolResult)
+    assert response.structured_content is not None
+    selected = response.structured_content["content"]["selected"]
+    assert selected["result_fields"] == ["lower", "middle", "upper"]
+    assert "0 <= std <= 3e37" in selected["source"]
+    assert "_validate_period" in {
+        item["name"] for item in selected["supporting_source"]
+    }
+
+
+@pytest.mark.parametrize(
+    "section", ["core", "research", "evidence", "example", "configuration"]
+)
+def test_indicator_selection_cannot_be_silently_ignored(
+    tmp_path: Path, section: str
+) -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    server, _service = _server(tmp_path)
+    with pytest.raises(ToolError, match="only valid"):
+        asyncio.run(
+            server.call_tool(
+                "get_strategy_contract", {"section": section, "indicator": "macd"}
+            )
+        )
 
 
 def test_core_import_policy_agrees_with_actual_static_validator(tmp_path: Path) -> None:
