@@ -17,6 +17,10 @@ from tradingdev.app.research import SelectedResearchRevision, resolve_research_c
 from tradingdev.domain.data.requirements import DataRequirement
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.execution import ExecutionManifest, OptimizationSpec
+from tradingdev.domain.execution_assumptions import (
+    resolve_execution_assumptions,
+    summarize_execution_assumptions,
+)
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.presentation.confirmation import (
     SECTION_TITLES,
@@ -165,11 +169,13 @@ def _document(manifest: ExecutionManifest) -> ConfirmationDocument:
 
 
 @pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])
-def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
+def test_chat_summary_preserves_major_rules_and_html_retains_full_review(
+    kind: Any,
+) -> None:
     document = _document(_manifest(kind))
     summary = render_confirmation_summary(document, mode="signal")
     html = unescape(render_confirmation_html(document))
-    assert len(summary.splitlines()) <= 8
+    assert len(summary.splitlines()) <= 18
     assert len(summary) < 900
     assert document.title not in summary
     assert document.summary in summary
@@ -184,9 +190,23 @@ def test_chat_summary_is_short_and_html_retains_full_review(kind: Any) -> None:
         "時間邊界：依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）",
         "完整 HTML",
         "於對話回覆",
+        "訊號延後一根 K 棒",
+        "下一棒 open",
+        "1 表示做多，-1 表示做空",
+        "0 表示平倉",
+        "當時可用資金及成交成本",
+        "相同方向的訊號不加碼",
+        "停損 未設定；停利 未設定",
+        "一般訊號的滑價反映於成交價",
+        "觀測到的 UTC 日報酬",
+        "不模擬完整保證金、清算",
     ):
         assert expected in summary
     assert "確認前僅檢查程式" in summary
+    assert "stoplimit" not in summary
+    assert "部位權重：" not in summary
+    assert "每月虧損限制：" not in summary
+    assert "停損停利後進場：" not in summary
     assert "閱讀本頁不會啟動回測" in html
     assert "依 K 棒時間戳記篩選，包含起訖兩端（有相符資料時）" in html
     assert "純日期代表當日 00:00:00" in html
@@ -278,8 +298,8 @@ def test_volume_summary_uses_actual_trade_notional_instead_of_unused_capital(
     summary = render_confirmation_summary(document, mode="volume")
     assert "固定名目金額、逐筆累計損益" in summary
     assert "單次投入金額：" in summary
-    assert str(position_size or 200) in summary
-    assert "初始資金" not in summary
+    assert str(200 if position_size is None else position_size) in summary
+    assert "初始資金：" not in summary
     assert "10000" not in summary
     assert "此計算方式不使用初始資金" in render_confirmation_html(document)
 
@@ -500,7 +520,12 @@ def test_volume_engine_default_position_and_unused_settings_are_explicit(
         backtest={"mode": "volume", "init_cash": None, "position_size": value}
     )
     text = render_confirmation_text(_document(manifest))
-    assert "單次投入金額：200（" in text
+    if value is None:
+        assert "單次投入金額：200（執行政策預設）" in text
+    else:
+        assert "單次投入金額：0.0" in text
+        assert "不開新倉，也不產生零數量交易" in text
+        assert "200（" not in text
     assert "此計算方式不使用初始資金" in text
     assert "每月最大虧損門檻：1500.0" in text
     assert "每月最大虧損門檻：1500.0" in render_confirmation_text(
@@ -509,6 +534,72 @@ def test_volume_engine_default_position_and_unused_settings_are_explicit(
     assert "此計算方式不使用這項設定" in render_confirmation_text(
         _document(_manifest())
     )
+
+
+@pytest.mark.parametrize("mode", ["signal", "volume"])
+@pytest.mark.parametrize("active_stop", [False, True])
+def test_confirmation_renders_the_same_resolver_rules_in_every_view(
+    mode: Any, active_stop: bool
+) -> None:
+    config = {"mode": mode}
+    if active_stop:
+        config.update(stop_loss=0.05, take_profit=0.1, re_entry_after_sl=False)
+    manifest = _manifest(backtest=config)
+    assumptions = resolve_execution_assumptions(manifest)
+    document = _document(manifest)
+    section = next(
+        section for section in document.sections if section.id == "execution"
+    )
+    assert section.paragraphs == tuple(
+        f"{item.label}：{item.value}" for item in assumptions.items
+    )
+    assert len(section.paragraphs) == 14
+    assert section.summary_paragraphs == summarize_execution_assumptions(assumptions)
+    text = render_confirmation_text(document)
+    html = unescape(render_confirmation_html(document))
+    summary = render_confirmation_summary(document, mode=mode)
+    for paragraph in section.paragraphs:
+        assert paragraph in text and paragraph in html
+    for paragraph in section.summary_paragraphs:
+        assert paragraph in summary
+    assert "不證明合成檢查已通過" in text
+    assert "每根 K 線調整投入金額" not in text
+    assert "依回測引擎預設資金配置" not in text
+    # Measured baseline fixtures range from 754 to 976 characters. Keep normal
+    # confirmations bounded without deleting the active execution assumptions.
+    assert len(summary) < (1050 if active_stop else 900)
+    if active_stop:
+        assert "停損 5%；停利 10%" in summary
+        assert "停損停利後進場：" in summary
+        if mode == "signal":
+            assert "stoplimit" in summary
+            assert "出場滑價為零" in summary
+            assert "不使用行情 high/low" in summary
+        else:
+            assert "跨月不自行解除此等待" in summary
+    else:
+        assert "停損停利後進場：" not in summary
+    if mode == "volume":
+        assert "只在新倉時乘上基礎金額" in summary
+        assert "持有期間不重平衡" in summary
+        assert "帳戶報酬及其年化指標不適用" in summary
+
+
+def test_confirmation_summary_reads_its_saved_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _document(_manifest())
+    expected = render_confirmation_summary(document, mode="signal")
+
+    def fail_resolution(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Rendering must not resolve current execution policy")
+
+    monkeypatch.setattr(
+        "tradingdev.domain.execution_assumptions.resolve_execution_assumptions",
+        fail_resolution,
+    )
+    restored = ConfirmationDocument.model_validate_json(document.model_dump_json())
+    assert render_confirmation_summary(restored, mode="signal") == expected
 
 
 def test_feature_paths_stay_in_technical_details_while_sources_remain_visible() -> None:

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
 from tradingdev.domain.backtest.metrics import (
     calculate_metrics_from_simulation,
     timestamp_index,
@@ -34,7 +35,8 @@ class VolumeBacktestEngine(BaseBacktestEngine):
     * ``re_entry_after_sl`` (default ``True``): After every SL/TP
       exit the simulator immediately re-enters in the direction
       indicated by the current signal.  Set to ``False`` to go flat
-      after a stop-out and wait for the next signal change.
+      after a stop-out, skip the rest of that bar, and wait for a later shifted
+      signal to differ from the stop-out bar's signal, including a change to zero.
     * ``signal_as_position`` (default ``False``): When ``True``,
       ``signal=0`` is interpreted as "go flat" (close any open
       position).  When ``False`` (legacy), ``signal=0`` means
@@ -97,7 +99,11 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         if not np.all(np.isfinite(prices)) or np.any(prices <= 0):
             raise ValueError("Prices must be finite and positive")
         n = len(close)
-        size_quote = self._position_size or 200.0
+        size_quote = (
+            DEFAULT_VOLUME_POSITION_SIZE
+            if self._position_size is None
+            else self._position_size
+        )
 
         # Dynamic position sizing: per-bar weight if available
         if "size_weight" in df.columns:
@@ -119,6 +125,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         entry_price = 0.0
         entry_idx = 0
         pos_qty = 0.0
+        blocked_signal: int | None = None
 
         # Monthly circuit breaker state
         monthly_pnl = 0.0
@@ -148,6 +155,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
             c = float(close[i])
             h = float(high[i])
             lo = float(low[i])
+
+            if blocked_signal is not None and sig != blocked_signal:
+                blocked_signal = None
 
             # --- Month boundary check ---
             if has_timestamps:
@@ -197,7 +207,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     # Check circuit breaker before re-entry
                     if has_timestamps and monthly_pnl <= -self._monthly_max_loss:
                         circuit_breaker_active = True
-                    elif re_entry and sig != 0:
+                    elif re_entry and sig != 0 and size_quote != 0:
                         # Re-entry after SL happens intra-bar; use
                         # close as best estimate of the re-entry fill.
                         eff = size_quote * weights[i]
@@ -207,6 +217,13 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         cash -= eff * fee_rate
                         monthly_pnl -= eff * fee_rate
                         pos_dir = sig
+
+                    if not re_entry:
+                        # The stop used this bar's high/low. Never travel back to
+                        # its open to create a new position, even on a reversal.
+                        blocked_signal = sig
+                        equity[i] = cash
+                        continue
 
             if circuit_breaker_active:
                 equity[i] = cash
@@ -258,7 +275,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 pos_dir = sig
 
             # --- new entry from flat at open ---
-            elif pos_dir == 0 and sig != 0:
+            elif (
+                pos_dir == 0 and sig != 0 and blocked_signal is None and size_quote != 0
+            ):
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o

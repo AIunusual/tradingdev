@@ -47,7 +47,7 @@ def render_confirmation_link(html_path: str) -> str:
 def render_confirmation_summary(
     document: ConfirmationDocument, *, mode: Literal["signal", "volume"]
 ) -> str:
-    """Keep the chat review short; the HTML retains every setting and limitation."""
+    """Show major settings and the saved concise backend execution rules."""
     labels = {
         "strategy": {"執行方式"},
         "market": {"回測商品", "回測 K 線週期", "回測開始", "回測結束", "時間邊界"},
@@ -79,6 +79,8 @@ def render_confirmation_summary(
         ]
         if values:
             lines.append("；".join(values))
+        if section.id == "execution":
+            lines.extend(section.summary_paragraphs)
     lines.append("確認前僅檢查程式，未取得真實行情、訓練或執行回測。")
     lines.append(
         "請先閱讀完整 HTML 確認單中的設定與檢查限制，再於對話回覆同意、拒絕或修改要求。"

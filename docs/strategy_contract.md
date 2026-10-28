@@ -82,6 +82,26 @@ sell-only instruction to close a long. Both modes shift signals by one bar and
 execute signal-driven entries and exits at the following bar's open, falling back
 to close when open is absent. Stop-loss and take-profit rules are separate.
 
+Signal execution explicitly fixes the critical vectorbt 1.2.0 sizing, reversal,
+order-cost and stop defaults under the versioned execution policy. An omitted
+`position_size` uses available capital after execution costs; a specified amount
+requests that quote-currency notional, with partial fills allowed when cash is
+insufficient. Zero opens no positions. Repeated same-direction signals do not
+add to a position. Fixed-notional shorts do not lock cash, so this is not a
+guarantee of unleveraged exposure. Neither mode models complete margin,
+liquidation, borrowing or funding-payment rules, or provides a leverage setting.
+
+Signal stops use the entry bar's **close** as their reference and, on later bars,
+inspect only the range between **open and close**, not the market `high`/`low`
+columns. Stop-loss takes priority over take-profit and ordinary signals. A gap
+across a threshold fills at open; otherwise the threshold price is used. The
+fixed `stoplimit` policy applies no exit slippage to these stop orders, while
+commission still applies. A zero stop is a zero-distance threshold, not disabled.
+Stops do not execute on the entry bar; after a stop exit, a later signal-state
+change is needed for another entry. `re_entry_after_sl` does not affect signal
+mode. These are historical simulation assumptions, not exchange execution
+guarantees or isolation from every possible global vectorbt setting.
+
 The published SMA example is explicitly long-only: emit `1` on every row where
 both averages are finite and the fast average exceeds the slow average, otherwise
 emit `0`, including equality and warm-up. Adapt this example to the user's actual
@@ -102,10 +122,33 @@ nonmissing, unique, increasing timestamps; they are normalized to UTC.
 
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
-zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
+zero is not a trade-suppression flag. The weight multiplies the base notional
+only when opening a new position, including reversal and stop re-entry; changes
+while holding do not rebalance the existing position. An omitted or null
+`position_size` uses 200 quote-currency units; explicit zero opens no positions
+and creates no zero-quantity trades. Emit `signal=0` to prevent new entries; set
 `signal_as_position: true` if zero should also close an existing position. With
 the default `false`, zero retains an existing position. An opposite nonzero
 signal closes the current position and opens one in the opposite direction.
+
+Volume stops first check an existing position against the current bar's high/low,
+using entry price as the reference; stop-loss wins if both thresholds are hit,
+and fills use the threshold price. A zero stop disables it. New positions are
+not checked for stops on their entry bar. With `re_entry_after_sl: true`, a
+nonzero shifted signal re-enters at the stop bar's close unless the monthly loss
+breaker has triggered. With `false`, no new position opens on that bar; the
+simulator stays flat until a later shifted signal differs from the stop bar's
+signal, including a change to zero. An opposite signal on the stop bar itself
+does not open a position and becomes the signal that must subsequently change.
+A new month resets the monthly breaker but does not clear this signal wait;
+signal changes during a monthly pause can clear the wait, while the monthly
+pause still prevents entry. Fees and separate notional slippage charges apply
+on each entry and exit, including a final close at the last bar's close.
+
+The confirmation text, chat summary and HTML show the same backend-resolved
+execution assumptions. They describe simulator policy, not proof that strategy
+code or an ML model implements the requested idea, avoids look-ahead, or passed
+preflight checks; completed checks are recorded separately.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names

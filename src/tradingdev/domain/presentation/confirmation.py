@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
+from tradingdev.domain.execution_assumptions import (
+    resolve_execution_assumptions,
+    summarize_execution_assumptions,
+)
 from tradingdev.domain.parameter_values import effective_candidates, parameter_leaves
 from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
@@ -99,6 +104,7 @@ class ConfirmationSection(_ConfirmationModel):
     title: NonemptyText
     fields: tuple[ConfirmationField, ...] = ()
     paragraphs: tuple[str, ...] = ()
+    summary_paragraphs: tuple[str, ...] = ()
 
 
 class ConfirmationIdentity(_ConfirmationModel):
@@ -429,43 +435,26 @@ def _execution_fields(
         _field(
             "單次投入金額",
             backtest["position_size"],
-            "策略若提供部位權重，會依每根 K 線調整投入金額。"
-            if volume
-            else "未指定固定金額時，依回測引擎預設資金配置。",
             unit="報價貨幣",
-            missing="200（引擎預設）" if volume else "未指定固定金額",
+            missing=f"{DEFAULT_VOLUME_POSITION_SIZE:g}（執行政策預設）"
+            if volume
+            else "未指定固定金額",
         ),
-        _field("手續費率", _percentage(backtest["fees"]), "每次進場、出場分別計入。"),
-        _field(
-            "滑價率",
-            _percentage(backtest["slippage"]),
-            "逐筆另計滑價成本。" if volume else "滑價反映於成交價格。",
-        ),
+        _field("手續費率", _percentage(backtest["fees"])),
+        _field("滑價率", _percentage(backtest["slippage"])),
         _field("停損幅度", _percentage(backtest["stop_loss"])),
         _field("停利幅度", _percentage(backtest["take_profit"])),
     ]
-    for key, label, description in (
-        (
-            "signal_as_position",
-            "沒有持倉訊號時平倉",
-            "啟用時，零訊號會平倉；未啟用時等待反向訊號或停損停利。",
-        ),
-        (
-            "re_entry_after_sl",
-            "停損停利後允許重新進場",
-            "依仍有效的持倉訊號，允許再次進場。",
-        ),
-        (
-            "monthly_max_loss",
-            "每月最大虧損門檻",
-            "達門檻後暫停當月新倉；須有時間資料才能按月計算。",
-        ),
+    for key, label in (
+        ("signal_as_position", "沒有持倉訊號時平倉"),
+        ("re_entry_after_sl", "停損停利後允許重新進場"),
+        ("monthly_max_loss", "每月最大虧損門檻"),
     ):
         fields.append(
             _field(
                 label,
                 backtest[key],
-                description if volume else "此計算方式不使用這項設定。",
+                "" if volume else "此計算方式不使用這項設定。",
                 detail=True,
                 unit="報價貨幣" if key == "monthly_max_loss" else None,
             )
@@ -475,7 +464,6 @@ def _execution_fields(
             _field(
                 "年化計算的每年日數",
                 backtest["periods_per_year"],
-                "未設定時，年化績效不可用。",
                 detail=True,
                 unit="天",
             ),
@@ -514,10 +502,6 @@ def _execution_fields(
             ),
         ]
     )
-    if volume and backtest["position_size"] == 0:
-        fields[2] = fields[2].model_copy(
-            update={"value_text": "200（設定為零時使用引擎預設）"}
-        )
     return fields
 
 
@@ -930,6 +914,7 @@ def build_confirmation_document(
     execution_fields = _execution_fields(
         backtest, _object(config["parallel"], "parallel"), config["random_seed"]
     )
+    assumptions = resolve_execution_assumptions(manifest)
     research_fields, research_identity = _research_presentation(
         config["research"], market_fields, execution_fields, backtest
     )
@@ -986,7 +971,15 @@ def build_confirmation_document(
                 if parameters
                 else ("此策略沒有可調整的建構參數。",),
             ),
-            _section("execution", execution_fields),
+            _section(
+                "execution",
+                execution_fields,
+                tuple(f"{item.label}：{item.value}" for item in assumptions.items),
+            ).model_copy(
+                update={
+                    "summary_paragraphs": summarize_execution_assumptions(assumptions)
+                }
+            ),
             _validation_section(config["validation"]),
             _optimization_section(manifest, presentation),
             preflight_section,
