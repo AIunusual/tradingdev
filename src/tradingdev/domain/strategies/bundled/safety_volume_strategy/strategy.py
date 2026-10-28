@@ -367,9 +367,9 @@ class SafetyVolumeStrategy(BaseStrategy):
                 ctx,
                 include_target=False,
             )
-            if len(feat_pred) > 0:
+            if combined_idx in feat_pred.index:
                 proba = current_model.predict_proba(
-                    feat_pred.iloc[[-1]],
+                    feat_pred.loc[[combined_idx]],
                 )
                 if 1 in proba.columns:
                     p_safe_arr[i] = np.float64(

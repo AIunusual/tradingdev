@@ -248,6 +248,11 @@ the scored frame. Scoring the training frame itself therefore contributes no
 history, so its prediction contexts stay chronological instead of continuing
 from the tail of one copy into the head of the next.
 
+This context correction does not make training-frame scores out-of-sample:
+the initial model has already been fitted on that training window. Walk-forward
+`train_metrics` remain in-sample diagnostics; use the held-out `test_metrics`
+to assess generalization.
+
 Whether the two frames overlap can only be decided from timestamps, so a scoring
 request with a non-empty scored frame requires a time identity, whether or not
 the frames overlap: that frame, and any non-empty training history, must carry a
@@ -618,13 +623,21 @@ prices. Inference without targets retains those rows when their features are
 complete. Quantile and SafetyVolume's risk model use their separate target
 builders; they also leave outcomes beyond the supplied frame unavailable.
 
-`FeatureEngineer.transform()` preserves surviving source index labels; there is
-no index-reset option. Callers needing row positions supply a positional index.
+`FeatureEngineer.transform()` and `RiskFeatureEngineer.transform()` preserve
+surviving source index labels; there is no index-reset option. Callers needing
+row positions supply a positional index.
 SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
 prediction skips a bar whose own features are unavailable, rather than reusing
 an earlier prediction. Its threshold search evaluates the complete source frame,
 leaves unavailable rows without entry signals, and measures cooldown in source
 bars, including gaps.
+
+SafetyVolume's rolling Risk Gate also predicts only from the current source
+bar's features. If they are unavailable, it keeps the neutral `P(safe)=0.5`
+instead of assigning an earlier bar's probability. Its state machine still uses
+the configured risk threshold and holding rules; a missing risk feature does not
+unconditionally flatten a position. Threshold search continues to evaluate its
+filtered validation feature rows, unlike Quantile's full-frame gap handling.
 
 The XGBoost and FLAML direction model training APIs require at least one labelled
 training row. A supplied validation frame must also be non-empty. Empty inputs

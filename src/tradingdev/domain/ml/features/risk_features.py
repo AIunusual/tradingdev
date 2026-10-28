@@ -62,7 +62,7 @@ class RiskFeatureEngineer:
         *,
         include_target: bool = True,
     ) -> pd.DataFrame:
-        """Transform OHLCV into a risk-oriented feature DataFrame."""
+        """Transform OHLCV while retaining surviving source index labels."""
         close = df["close"].astype(float)
         high = df["high"].astype(float)
         low = df["low"].astype(float)
@@ -127,7 +127,7 @@ class RiskFeatureEngineer:
             [df, pd.DataFrame(features, index=df.index)],
             axis=1,
         )
-        result = result.dropna().reset_index(drop=True)
+        result = result.dropna()
 
         self._feature_names = [c for c in result.columns if c not in _EXCLUDE_COLS]
         return result
