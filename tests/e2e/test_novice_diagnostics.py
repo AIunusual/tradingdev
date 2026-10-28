@@ -25,11 +25,13 @@ from tests.e2e.novice_diagnostics import (
 from tests.e2e.novice_intake import ObservedIntakeUser
 from tests.integration.execution_fixtures import synthetic_preflight_receipt
 from tests.integration.mcp_harness import MCPWorkspace, temporary_mcp_workspace
+from tests.research_evidence_fixtures import research_evidence_draft
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.adapters.storage.strategy_revisions import StrategyRevisionStore
+from tradingdev.domain.approved_research import ApprovedResearch
 from tradingdev.domain.data.requirements import DataRequirement, MarketDataSpec
 from tradingdev.domain.data.schemas import DataConfig
 from tradingdev.domain.execution import ExecutionManifest
@@ -44,6 +46,10 @@ from tradingdev.domain.presentation.confirmation import (
     ConfirmationPresentation,
     build_confirmation_document,
 )
+from tradingdev.domain.presentation.research_confirmation import (
+    enrich_research_confirmation,
+)
+from tradingdev.domain.research_evidence import ResearchEvidenceRecord
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.schemas import StrategyMetadata, ValidationResult
 
@@ -157,20 +163,28 @@ def _fixture(root: Path) -> EvidenceFixture:
     receipt = PreflightReceipt.model_validate(
         synthetic_preflight_receipt(manifest.manifest_hash)
     )
-    document = build_confirmation_document(
-        manifest,
-        ConfirmationPresentation(
-            title="Fixture", summary="Saved evidence", parameter_descriptions={}
+    record = ResearchEvidenceRecord.create(
+        research_evidence_draft(
+            manifest,
+            ConfirmationPresentation(
+                title="Fixture", summary="Saved evidence", parameter_descriptions={}
+            ),
+        )
+    )
+    research = ApprovedResearch.create(record, manifest)
+    document = enrich_research_confirmation(
+        build_confirmation_document(
+            manifest, record.draft.presentation, receipt, plan_id="a" * 32
         ),
-        receipt,
-        plan_id="a" * 32,
+        research.research,
     )
     created = datetime.now(UTC)
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "plan_id": "a" * 32,
         "manifest": manifest.model_dump(mode="json"),
         "preflight": receipt.model_dump(mode="json"),
+        "research_evidence": research.model_dump(mode="json"),
         "document": document.model_dump(mode="json"),
         "original_config_path": revision.config_path,
         "created_at": created.isoformat().replace("+00:00", "Z"),

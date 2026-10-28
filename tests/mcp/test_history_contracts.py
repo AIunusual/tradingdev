@@ -356,6 +356,7 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         )
         assert [section.id for section in catalog.sections] == [
             "overview",
+            "research",
             "settings",
             "metrics",
             "equity",
@@ -369,6 +370,7 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
         ]
         assert catalog.templates["trades"] == [
             "overview",
+            "research",
             "ledger",
             "trades",
             "provenance",
