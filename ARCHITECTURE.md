@@ -450,7 +450,17 @@ purged K-fold 使用測試區間外資料，首末折僅一側、中間折可有
 保存；舊紀錄或 Python 呼叫端宣告的 model ID 並不證明訊號來源。
 簡化報酬與分層統計由 domain 計算，不等同完整交易引擎。
 `leaderboard` 使用 domain 指標目錄決定排序方向，預設拒絕混合測量條件，
-並提供候選數與多重比較限制。MCP 在完整候選集合完成比較與排序後分頁，拒絕時
+並提供候選數與多重比較限制。每列附上自身的 horizon、window、n_quantiles、
+候選擬合參數與 signal_fingerprint，重跑後比對指紋即可確認是否重現；
+報酬指標（年化報酬、MDD、Sharpe、alpha、beta）由預測建出的模擬 long/short
+帳本計算，不含成本、未送出任何委託，因此不是回測結果。`allow_parameter_axes`
+只放行 horizon、window、n_quantiles 三軸，讓敏感度分析的參數平原得以排序，
+仍拒絕不同商品、期間、特徵集或特徵程式碼，且同一 horizon 僅能對應單一 dataset
+版本；此時排名描述的是曲面而非單一可比較測量，回應會列出各軸取值並加上警語。
+NaN 或 Inf 的指標一律存成 `null` 而不刪除，因此「未記錄」「已測但失敗」「有限值」
+三種狀態可分辨；失敗候選不參與排序，但其 skipped 列仍帶 window、horizon、
+n_quantiles，參數平原不會把倖存的點誤讀成相鄰設定。
+MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的

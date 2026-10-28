@@ -34,6 +34,10 @@ from tradingdev.domain.ml.evaluation import (
 )
 from tradingdev.domain.ml.evaluation.artifacts import strata_records
 from tradingdev.domain.ml.evaluation.catalog import summarize_signal_metrics
+from tradingdev.domain.ml.evaluation.performance import (
+    periods_per_year,
+    return_metrics,
+)
 from tradingdev.domain.ml.feature_cache import (
     FeatureCacheIdentity,
     data_fingerprint,
@@ -49,6 +53,7 @@ from tradingdev.domain.ml.leaderboard import (
     LeaderboardEntry,
     build_entry_id,
     comparability_error,
+    parameter_axes,
     rank_entries,
     rankable_metrics,
     signal_fingerprint,
@@ -82,6 +87,13 @@ if TYPE_CHECKING:
     from tradingdev.domain.ml.calendar import PanelAlignment
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
+
+
+def _describe_axes(axes: dict[str, list[int]]) -> str:
+    """Name only the axes a candidate set actually varies."""
+    return ", ".join(
+        f"{name}={values}" for name, values in axes.items() if len(values) > 1
+    )
 
 
 @dataclass(frozen=True)
@@ -150,6 +162,8 @@ _ML_GUIDANCE = {
         "must be at least 2, quantiles 2..10, with enough finite observations. "
         "Both Pearson and Spearman IC families, hit rate, turnover and prediction "
         "strata are reported; ties can produce fewer strata than requested. "
+        "A metric that comes out NaN or Inf is recorded as null rather than "
+        "dropped, so a failed run keeps its place in the parameter grid. "
         "Training-data evaluation remains in-sample. "
         "Panel-trained models may be evaluated on a separate compatible "
         "single-symbol dataset; panel datasets themselves are refused."
@@ -164,8 +178,17 @@ _ML_GUIDANCE = {
         "record=True replaces only the same model/dataset/evaluation context. "
         "leaderboard metrics have declared directions; never assume higher is "
         "better. Filter by dataset_id to compare one verified dataset version. "
-        "allow_mixed permits incompatible contexts but does not make them "
-        "comparable. Ranking and selection caveats cover all candidates, even "
+        "Each row reports the window, horizon and n_quantiles it was measured "
+        "under, the candidate's fitted parameters and its signal_fingerprint; "
+        "comparing that fingerprint with a fresh predict shows whether a re-run "
+        "reproduced the recorded signal. allow_mixed permits incompatible "
+        "contexts but does not make them comparable; allow_parameter_axes "
+        "permits only window, horizon and n_quantiles to differ, which ranks a "
+        "sensitivity surface and must not be read as one comparable "
+        "measurement. A candidate with no finite score is still recorded, and "
+        "its skipped row carries its window, horizon and n_quantiles, so the "
+        "grid keeps the point where it failed instead of joining its "
+        "neighbours. Ranking and selection caveats cover all candidates, even "
         "when only one page is returned; a winner is not a profit guarantee."
     ),
 }
@@ -274,8 +297,9 @@ class MLService:
         if not 2 <= n_quantiles <= 10:
             raise ValueError("n_quantiles must be between 2 and 10")
 
+        manifest: dict[str, Any] | None = None
         if record or dataset_id is not None:
-            horizon = self._recording_horizon(
+            horizon, manifest = self._recording_horizon(
                 dataset_id,
                 horizon,
                 forward_returns=forward_returns,
@@ -309,12 +333,30 @@ class MLService:
             ],
         }
 
+        # The book is long/short, and its benchmark is holding the same asset
+        # over the same holding intervals, so alpha/beta describe the signal's
+        # exposure rather than an unrelated index.
+        performance = return_metrics(
+            simulated.long_short,
+            fwd.loc[simulated.long_short.index],
+            periods_per_year=(
+                None
+                if manifest is None
+                else periods_per_year(str(manifest["timeframe"]), horizon)
+            ),
+        )
+        metrics.update(performance.as_metrics())
+
         evaluation_id = self._evaluation_id(
             signal, forward_returns, horizon, window, n_quantiles
         )
+        # Hash every signal, modelled or not: a re-run can only be checked
+        # against the recorded candidate if the recorded row carries this value.
+        fingerprint = signal_fingerprint(signal)
         payload: dict[str, Any] = {
             "success": True,
             "evaluation_id": evaluation_id,
+            "signal_fingerprint": fingerprint,
             "n_observations": int(len(aligned)),
             "horizon": horizon,
             "window": window,
@@ -335,7 +377,8 @@ class MLService:
                     "strata_monotonicity": payload["strata_monotonicity"],
                     "long_short_spread": payload["long_short_spread"],
                 },
-                signal=signal,
+                fingerprint=fingerprint,
+                manifest=manifest,
                 n_observations=int(len(aligned)),
                 horizon=horizon,
                 window=window,
@@ -352,7 +395,7 @@ class MLService:
         *,
         n_observations: int,
         forward_returns: list[float],
-    ) -> int:
+    ) -> tuple[int, dict[str, Any]]:
         """Adopt the saved label horizon, rejecting an explicit mismatch."""
         if not dataset_id:
             raise ValueError(
@@ -393,20 +436,21 @@ class MLService:
                 "forward_returns do not match the stored dataset in row order"
             )
         if horizon is None:
-            return dataset_horizon
+            return dataset_horizon, manifest
         if horizon != dataset_horizon:
             raise ValueError(
                 f"horizon {horizon} does not match the dataset's horizon "
                 f"{dataset_horizon}; omit it to adopt the dataset's, or record "
                 "against the dataset the signal was computed on"
             )
-        return horizon
+        return horizon, manifest
 
     def _record_evaluation(
         self,
         metrics: dict[str, Any],
         *,
-        signal: list[float],
+        fingerprint: str,
+        manifest: dict[str, Any] | None,
         n_observations: int,
         horizon: int,
         window: int,
@@ -420,10 +464,14 @@ class MLService:
                 "recording an evaluation requires dataset_id, so the record "
                 "knows what it was measured on"
             )
+        if manifest is None:
+            raise ValueError(
+                "recording an evaluation requires the dataset manifest it was "
+                "measured against"
+            )
         if model_id is not None and not _MODEL_ID.match(model_id):
             raise ValueError(f"malformed model_id: {model_id}")
 
-        _, manifest = self._load_dataset(dataset_id)
         context = EvaluationContext(
             symbol=self._manifest_symbol(manifest),
             timeframe=str(manifest["timeframe"]),
@@ -436,27 +484,38 @@ class MLService:
             code_fingerprint=str(manifest["code_fingerprint"]),
             data_fingerprint=str(manifest["content_hash"]),
         )
-        # Persist only rankable finite metrics.
-        finite_metrics = {
-            key: float(value)
-            for key, value in metrics.items()
-            if isinstance(value, (int, float)) and math.isfinite(float(value))
-        }
-        # Distinguish ad-hoc signals when no model ID identifies the candidate.
-        fingerprint = "" if model_id else signal_fingerprint(signal)
+        # Every measured metric is stored, including the ones that failed. A
+        # NaN or Inf becomes an explicit None so the candidate keeps its
+        # coordinates on the parameter grid: dropping the key would let a later
+        # surface read 10 and 30 as adjacent after 20 failed. Non-numeric values
+        # are not metrics at all and are still dropped.
+        stored_metrics: dict[str, float | None] = {}
+        for key, value in metrics.items():
+            if value is None:
+                stored_metrics[key] = None
+            elif isinstance(value, (int, float)):
+                number = float(value)
+                stored_metrics[key] = number if math.isfinite(number) else None
+        label, parameters = self._candidate_identity(model_id, fingerprint)
         entry = LeaderboardEntry(
             entry_id=build_entry_id(
                 model_id=model_id or "",
                 dataset_id=dataset_id,
                 context=context,
-                signal_fingerprint=fingerprint,
+                # A model ID already names the candidate, so folding the hash
+                # in would change every existing entry_id. It is stored in its
+                # own field instead. Without a model ID the hash is the only
+                # thing separating two ad-hoc signals on the same dataset.
+                signal_fingerprint="" if model_id else fingerprint,
             ),
-            label=self._entry_label(model_id, fingerprint),
+            label=label,
             context=context,
-            metrics=finite_metrics,
+            metrics=stored_metrics,
             n_observations=n_observations,
             model_id=model_id or "",
             dataset_id=dataset_id,
+            parameters=parameters,
+            signal_fingerprint=fingerprint,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -465,6 +524,7 @@ class MLService:
             "replaced": replaced,
             "context": context.describe(),
             "n_candidates": len(store.entries()),
+            "signal_fingerprint": fingerprint,
         }
 
     @staticmethod
@@ -476,17 +536,27 @@ class MLService:
         symbols = manifest.get("symbols") or []
         return ",".join(str(item) for item in symbols)
 
-    def _entry_label(self, model_id: str | None, fingerprint: str = "") -> str:
-        """A readable name for a recorded candidate."""
+    def _candidate_identity(
+        self, model_id: str | None, fingerprint: str
+    ) -> tuple[str, dict[str, Any]]:
+        """A readable name for a recorded candidate and its fitted settings.
+
+        The parameters come from the artifact itself, so a row describes the
+        model that produced it even if the artifact is later retrained.
+        """
         if not model_id:
-            return (
+            label = (
                 f"ad-hoc signal ({fingerprint[:8]})" if fingerprint else "ad-hoc signal"
             )
+            return label, {}
         try:
             artifact = ModelArtifactStore(self._workspace.models).load(model_id)
         except FileNotFoundError, ValueError:
-            return model_id
-        return f"{artifact.model_name} ({artifact.framework})"
+            return model_id, {}
+        return (
+            f"{artifact.model_name} ({artifact.framework})",
+            dict(artifact.parameters),
+        )
 
     def leaderboard(
         self,
@@ -499,14 +569,17 @@ class MLService:
         feature_set: str | None = None,
         top_k: int | None = None,
         allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
     ) -> dict[str, Any]:
         """Rank recorded evaluations using the metric's declared direction.
 
         Filters narrow candidates by dataset or measurement conditions. A
         supplied dataset is verified against its records. Mixed contexts raise
         ``ValueError`` unless ``allow_mixed`` is enabled; that opt-in does not
-        make their measurements comparable. Invalid metrics, datasets or empty
-        results also fail. Returns a ``LeaderboardResponse`` payload.
+        make their measurements comparable. ``allow_parameter_axes`` permits
+        only the sweepable settings (window, horizon, n_quantiles) to differ,
+        which is what a parameter surface needs. Invalid metrics, datasets or
+        empty results also fail. Returns a ``LeaderboardResponse`` payload.
         """
         manifest = self._load_dataset(dataset_id)[1] if dataset_id is not None else None
         store = LeaderboardStore(self._workspace.ml_leaderboard)
@@ -542,8 +615,11 @@ class MLService:
             raise ValueError(
                 "no recorded evaluations; call evaluate_signal with record=True first"
             )
+        axes = parameter_axes(entries)
         if not allow_mixed:
-            mismatch = comparability_error(entries)
+            mismatch = comparability_error(
+                entries, allow_parameter_axes=allow_parameter_axes
+            )
             if mismatch:
                 raise ValueError(mismatch)
 
@@ -555,20 +631,32 @@ class MLService:
                 "label": item.entry.label,
                 "model_id": item.entry.model_id,
                 "dataset_id": item.entry.dataset_id,
+                "horizon": item.entry.context.horizon,
+                "window": item.entry.context.window,
+                "n_quantiles": item.entry.context.n_quantiles,
+                "parameters": dict(item.entry.parameters),
+                "signal_fingerprint": item.entry.signal_fingerprint,
                 "value": item.value,
                 "tied": item.tied,
                 "n_observations": item.entry.n_observations,
                 "summary": {
-                    key: float(value)
+                    key: None if value is None else float(value)
                     for key, value in summarize_signal_metrics(
                         dict(item.entry.metrics)
                     ).items()
-                    if isinstance(value, (int, float))
+                    if value is None or isinstance(value, (int, float))
                 },
             }
             for item in result.ranked
         ]
         contexts = sorted({entry.context.describe() for entry in entries})
+        caveats = list(result.caveats)
+        if any(len(values) > 1 for values in axes.values()):
+            caveats.append(
+                "candidates span more than one evaluation setting "
+                f"({_describe_axes(axes)}); the ranking describes a parameter "
+                "surface, not one comparable measurement"
+            )
         return {
             "success": True,
             "metric": result.metric,
@@ -576,16 +664,23 @@ class MLService:
             "n_candidates": len(entries),
             "n_ranked": len(result.ranked),
             "context": contexts[0] if len(contexts) == 1 else "mixed",
+            "parameter_axes": axes,
             "ranked": ranked,
             "skipped": [
                 {
                     "entry_id": item.entry.entry_id,
                     "label": item.entry.label,
                     "reason": item.reason,
+                    # A candidate with no score is still a point on the grid:
+                    # without these coordinates a failed run leaves a hole that
+                    # reads as two adjacent settings.
+                    "horizon": item.entry.context.horizon,
+                    "window": item.entry.context.window,
+                    "n_quantiles": item.entry.context.n_quantiles,
                 }
                 for item in result.skipped
             ],
-            "caveats": list(result.caveats),
+            "caveats": caveats,
         }
 
     def leaderboard_page(
@@ -600,6 +695,7 @@ class MLService:
         offset: int = 0,
         limit: int = 20,
         allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
     ) -> dict[str, Any]:
         """Page output only after ranking and comparing the full candidate set."""
         if type(offset) is not int or offset < 0:
@@ -614,6 +710,7 @@ class MLService:
             horizon=horizon,
             feature_set=feature_set,
             allow_mixed=allow_mixed,
+            allow_parameter_axes=allow_parameter_axes,
         )
         ranked, skipped = result["ranked"], result["skipped"]
         total = max(len(ranked), len(skipped))
@@ -895,6 +992,9 @@ class MLService:
                 "horizon": int(manifest["horizon"]),
                 "signal": signal,
                 "forward_returns": realized,
+                # Covers every saved row, not a page, so a re-run can be
+                # compared with the fingerprint stored on the leaderboard.
+                "signal_fingerprint": signal_fingerprint(signal),
             },
         }
 

@@ -231,13 +231,17 @@ def register(mcp: MCPServer, service: MLService) -> None:
         offset: int = 0,
         limit: int = 20,
         allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
         """Page recorded evaluations ranked with the metric's declared direction.
 
         Choose metric from get_ml_contract. dataset_id filters one verified version;
         allow_mixed does not make incompatible contexts comparable. limit is 1..100.
-        Each page slices ranked and skipped independently at the same offset; counts
-        and caveats cover all candidates. Follow next_offset; inspect caveats.
+        allow_parameter_axes ranks one instrument/dataset/feature code across
+        window, horizon and n_quantiles, which is a sensitivity surface rather
+        than one comparable measurement. Each page slices ranked and skipped
+        independently at the same offset; counts and caveats cover all
+        candidates. Follow next_offset; inspect caveats.
         """
         try:
             result = service.leaderboard_page(
@@ -250,6 +254,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 offset=offset,
                 limit=limit,
                 allow_mixed=allow_mixed,
+                allow_parameter_axes=allow_parameter_axes,
             )
         except (ValueError, TypeError) as exc:
             return ErrorResponse(

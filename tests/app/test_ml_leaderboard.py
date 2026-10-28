@@ -11,6 +11,7 @@ import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.leaderboard import build_entry_id, signal_fingerprint
 from tradingdev.domain.ml.registry import LeaderboardStore
 
 if TYPE_CHECKING:
@@ -130,9 +131,10 @@ class TestRecording:
         assert again["recorded"]["replaced"] is True
         assert again["recorded"]["n_candidates"] == 1
 
-    def test_only_finite_metrics_are_stored(
+    def test_no_non_finite_metric_reaches_storage(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
+        """A failed score is stored as None; NaN/Inf itself is never written."""
         dataset_id = _build(service)
         _record(
             service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
@@ -140,7 +142,9 @@ class TestRecording:
         entries = LeaderboardStore(workspace.ml_leaderboard).entries()
         assert len(entries) == 1
         assert entries[0].metrics
-        assert all(np.isfinite(value) for value in entries[0].metrics.values())
+        assert all(
+            value is None or np.isfinite(value) for value in entries[0].metrics.values()
+        )
 
     def test_recording_an_unknown_dataset_is_refused(
         self, service: MLService, workspace: WorkspacePaths
@@ -207,6 +211,95 @@ class TestRecording:
             service.evaluate_signal(
                 short, short, window=20, record=True, dataset_id=dataset_id
             )
+
+    def test_the_record_keeps_the_fitted_hyperparameters(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A row that only names a model cannot be read back as a setting."""
+        dataset_id = _build(service)
+        trained = service.train_model(
+            dataset_id=dataset_id,
+            model_kind="lightgbm_direction",
+            parameters={"n_estimators": 12, "max_depth": 3, "n_jobs": 1},
+        )
+        model_id = str(trained["model"]["model_id"])
+        service.evaluate_prediction(
+            model_id=model_id, dataset_id=dataset_id, window=20, record=True
+        )
+        entry = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        assert entry.parameters == trained["model"]["parameters"]
+        assert entry.parameters["n_estimators"] == 12
+        assert entry.parameters["max_depth"] == 3
+
+    def test_an_unknown_artifact_records_no_parameters(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A caller-declared model ID with no saved artifact stays unexplained."""
+        dataset_id = _build(service)
+        _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        entry = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        assert entry.parameters == {}
+        assert entry.signal_fingerprint
+
+    def test_every_recorded_entry_carries_its_signal_fingerprint(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        realized = _returns(workspace, dataset_id)
+        # quality 1.0 evaluates exactly the realised returns as the signal.
+        recorded = _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        entry = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        assert entry.signal_fingerprint == recorded["signal_fingerprint"]
+        assert entry.signal_fingerprint == signal_fingerprint(realized)
+        assert recorded["recorded"]["signal_fingerprint"] == entry.signal_fingerprint
+
+    def test_a_different_signal_records_a_different_fingerprint(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        scaled = _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        flipped = _record(
+            service,
+            workspace,
+            dataset_id=dataset_id,
+            model_id=_GOOD_MODEL,
+            quality=-1.0,
+        )
+        assert scaled["signal_fingerprint"] != flipped["signal_fingerprint"]
+
+    def test_the_fingerprint_does_not_change_the_entry_id(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A new signal for the same candidate must not become a new candidate."""
+        dataset_id = _build(service)
+        first = _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=1.0
+        )
+        second = _record(
+            service, workspace, dataset_id=dataset_id, model_id=_GOOD_MODEL, quality=0.5
+        )
+        assert first["signal_fingerprint"] != second["signal_fingerprint"]
+        assert (
+            first["recorded"]["entry_id"]
+            == second["recorded"]["entry_id"]
+            == build_entry_id(
+                model_id=_GOOD_MODEL,
+                dataset_id=dataset_id,
+                context=LeaderboardStore(workspace.ml_leaderboard).entries()[0].context,
+            )
+        )
+        assert second["recorded"]["replaced"] is True
+        assert len(LeaderboardStore(workspace.ml_leaderboard).entries()) == 1
+        assert (
+            LeaderboardStore(workspace.ml_leaderboard).entries()[0].signal_fingerprint
+            == second["signal_fingerprint"]
+        )
 
     def test_a_wrong_horizon_is_refused_but_omitting_it_is_adopted(
         self, service: MLService, workspace: WorkspacePaths
@@ -446,6 +539,222 @@ class TestContract:
         contract = service.get_contract()
         assert "rank_icir" in contract["leaderboard_metrics"]
         assert "n_periods" not in contract["leaderboard_metrics"]
+
+
+class TestParameterSurface:
+    """A window sweep is a surface, and must be reachable without allow_mixed."""
+
+    @staticmethod
+    def _sweep(
+        service: MLService, workspace: WorkspacePaths, windows: tuple[int, ...]
+    ) -> str:
+        dataset_id = _build(service)
+        realized = _returns(workspace, dataset_id)
+        for window in windows:
+            service.evaluate_signal(
+                realized,
+                realized,
+                window=window,
+                record=True,
+                dataset_id=dataset_id,
+                model_id=_GOOD_MODEL,
+            )
+        return dataset_id
+
+    def test_the_strict_guard_still_refuses_a_sweep(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        self._sweep(service, workspace, (20, 30))
+        with pytest.raises(ValueError, match="not measured on the same conditions"):
+            service.leaderboard("ic_mean")
+
+    def test_a_sweep_is_ranked_when_the_axes_are_allowed(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = self._sweep(service, workspace, (20, 30))
+        board = service.leaderboard(
+            "ic_mean", dataset_id=dataset_id, allow_parameter_axes=True
+        )
+        assert board["n_candidates"] == board["n_ranked"] == 2
+        assert board["parameter_axes"] == {
+            "horizon": [1],
+            "window": [20, 30],
+            "n_quantiles": [5],
+        }
+        assert sorted(row["window"] for row in board["ranked"]) == [20, 30]
+        assert all(row["horizon"] == 1 for row in board["ranked"])
+        assert any(
+            "parameter surface" in caveat and "window=[20, 30]" in caveat
+            for caveat in board["caveats"]
+        )
+
+    def test_one_setting_carries_no_surface_caveat(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = self._sweep(service, workspace, (20,))
+        board = service.leaderboard(
+            "ic_mean", dataset_id=dataset_id, allow_parameter_axes=True
+        )
+        assert board["parameter_axes"] == {
+            "horizon": [1],
+            "window": [20],
+            "n_quantiles": [5],
+        }
+        assert not any("parameter surface" in caveat for caveat in board["caveats"])
+
+    def test_a_horizon_sweep_across_datasets_is_rankable(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A new horizon rebuilds the labels, so each point has its own dataset."""
+        dataset_ids = set()
+        for horizon in (1, 3):
+            dataset_id = str(
+                service.build_dataset(
+                    symbol="BTC/USDT",
+                    timeframe="1h",
+                    start_date="2024-01-01",
+                    end_date="2024-01-31",
+                    feature_set="returns",
+                    horizon=horizon,
+                )["dataset"]["dataset_id"]
+            )
+            dataset_ids.add(dataset_id)
+            realized = _returns(workspace, dataset_id)
+            service.evaluate_signal(
+                realized,
+                realized,
+                window=20,
+                record=True,
+                dataset_id=dataset_id,
+                model_id=_GOOD_MODEL,
+            )
+        assert len(dataset_ids) == 2
+        with pytest.raises(ValueError, match="not measured on the same conditions"):
+            service.leaderboard("ic_mean")
+        board = service.leaderboard("ic_mean", allow_parameter_axes=True)
+        assert board["n_candidates"] == 2
+        assert board["parameter_axes"]["horizon"] == [1, 3]
+        assert {row["dataset_id"] for row in board["ranked"]} == dataset_ids
+        assert all(row["window"] == 20 for row in board["ranked"])
+
+    def test_a_failed_point_keeps_its_coordinates(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A failed run at window=20 must not turn 10 and 30 into neighbours."""
+        dataset_id = self._sweep(service, workspace, (10, 30))
+        store = LeaderboardStore(workspace.ml_leaderboard)
+        sample = store.entries()[0]
+        failed_context = replace(sample.context, window=20)
+        store.record(
+            replace(
+                sample,
+                entry_id=build_entry_id(
+                    model_id=sample.model_id,
+                    dataset_id=sample.dataset_id,
+                    context=failed_context,
+                    signal_fingerprint="",
+                ),
+                context=failed_context,
+                metrics={**sample.metrics, "ic_mean": None},
+            )
+        )
+
+        board = service.leaderboard(
+            "ic_mean", dataset_id=dataset_id, allow_parameter_axes=True
+        )
+
+        assert board["parameter_axes"]["window"] == [10, 20, 30]
+        assert board["n_candidates"] == 3
+        assert board["n_ranked"] == 2
+        assert [row["window"] for row in board["skipped"]] == [20]
+        assert "measured but is not finite" in board["skipped"][0]["reason"]
+
+    def test_a_ranked_row_reports_its_own_failed_metric_as_null(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """Ranking on one metric must not hide a failure on another."""
+        dataset_id = self._sweep(service, workspace, (20,))
+        store = LeaderboardStore(workspace.ml_leaderboard)
+        sample = store.entries()[0]
+        store.record(
+            replace(
+                sample,
+                metrics={**sample.metrics, "ic_mean": 0.5, "sharpe": None},
+            )
+        )
+
+        board = service.leaderboard("ic_mean", dataset_id=dataset_id)
+
+        summary = board["ranked"][0]["summary"]
+        assert "sharpe" in summary
+        assert summary["sharpe"] is None
+        assert summary["ic_mean"] == 0.5
+
+    def test_one_horizon_keeps_one_dataset_version(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        """A rebuilt dataset at the same horizon must not share a grid row."""
+        source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+        first = _build(service)
+        _record(service, workspace, dataset_id=first, model_id=_GOOD_MODEL, quality=1.0)
+        frame = pd.read_parquet(source)
+        frame["close"] *= np.linspace(1.0, 1.2, len(frame))
+        frame.to_parquet(source, index=False)
+        second = _build(service)
+        assert second != first
+        _record(
+            service, workspace, dataset_id=second, model_id=_GOOD_MODEL, quality=1.0
+        )
+        with pytest.raises(ValueError, match="different dataset versions"):
+            service.leaderboard("ic_mean", allow_parameter_axes=True)
+
+    def test_the_axis_opt_in_does_not_mix_instruments(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        btc = _build(service, "BTC/USDT")
+        eth = _build(service, "ETH/USDT")
+        _record(service, workspace, dataset_id=btc, model_id=_GOOD_MODEL, quality=1.0)
+        _record(service, workspace, dataset_id=eth, model_id=_BAD_MODEL, quality=-1.0)
+        with pytest.raises(ValueError, match="distinct identities"):
+            service.leaderboard("ic_mean", allow_parameter_axes=True)
+
+    def test_the_axis_opt_in_does_not_mix_dataset_versions(
+        self, workspace: WorkspacePaths
+    ) -> None:
+        service = MLService(workspace=workspace, feature_code_fingerprint="v1")
+        old_id = _build(service)
+        _record(service, workspace, dataset_id=old_id, model_id=_GOOD_MODEL, quality=1)
+        updated = MLService(workspace=workspace, feature_code_fingerprint="v2")
+        new_id = _build(updated)
+        _record(updated, workspace, dataset_id=new_id, model_id=_GOOD_MODEL, quality=1)
+        with pytest.raises(ValueError, match="distinct identities"):
+            updated.leaderboard("ic_mean", allow_parameter_axes=True)
+
+    def test_a_ranked_row_states_its_own_settings(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = self._sweep(service, workspace, (20,))
+        row = service.leaderboard("ic_mean", dataset_id=dataset_id)["ranked"][0]
+        assert row["horizon"] == 1
+        assert row["window"] == 20
+        assert row["n_quantiles"] == 5
+        assert row["parameters"] == {}
+        assert row["signal_fingerprint"] == signal_fingerprint(
+            _returns(workspace, dataset_id)
+        )
+
+    def test_paging_keeps_the_grid_and_the_surface_caveat(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = self._sweep(service, workspace, (20, 30, 40))
+        page = service.leaderboard_page(
+            "ic_mean", dataset_id=dataset_id, limit=1, allow_parameter_axes=True
+        )
+        assert page["n_candidates"] == 3
+        assert page["parameter_axes"]["window"] == [20, 30, 40]
+        assert len(page["ranked"]) == 1
+        assert page["next_offset"] == 1
+        assert any("parameter surface" in caveat for caveat in page["caveats"])
 
 
 class TestFeatureIdentity:

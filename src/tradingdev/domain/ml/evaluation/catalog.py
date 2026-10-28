@@ -1,6 +1,9 @@
 """Signal metric definitions, separate from portfolio-performance metrics.
 
-Inputs are predictions and forward returns, not equity or executed trades.
+Inputs are predictions and forward returns, not equity or executed trades. The
+``book_*``-free return and risk entries describe the *simulated* long/short
+book built from those predictions: costs are excluded and no order was ever
+sent, so they are not backtest results either.
 """
 
 from __future__ import annotations
@@ -171,6 +174,76 @@ _DEFINITIONS = [
         "forward return of the bottom quantile.",
         summary=True,
         direction="maximize",
+    ),
+    _definition(
+        "annual_return",
+        "fraction",
+        "performance",
+        "numpy/pandas",
+        "Simulated long/short return compounded over the measured span and "
+        "expressed per year; needs a bar frequency to annualise. Excludes "
+        "costs and is not a mark-to-market equity curve.",
+        summary=True,
+        direction="maximize",
+    ),
+    _definition(
+        "max_drawdown",
+        "fraction",
+        "risk",
+        "numpy/pandas",
+        "Largest peak-to-trough loss of the simulated long/short equity, as a "
+        "positive fraction of the peak; 0.20 means a 20% drawdown.",
+        summary=True,
+        direction="minimize",
+    ),
+    _definition(
+        "sharpe",
+        "ratio",
+        "risk_adjusted",
+        "numpy/pandas",
+        "Mean simulated per-period return divided by its standard deviation "
+        "(ddof=1), scaled by the square root of periods per year. Assumes a "
+        "zero risk-free rate and excludes costs.",
+        summary=True,
+        direction="maximize",
+    ),
+    _definition(
+        "alpha",
+        "fraction",
+        "performance",
+        "numpy/pandas",
+        "Annualised mean simulated return left unexplained by the benchmark's "
+        "own return, where the benchmark is holding the measured asset over "
+        "the same intervals.",
+        summary=True,
+        direction="maximize",
+    ),
+    _definition(
+        "beta",
+        "ratio",
+        "exposure",
+        "numpy/pandas",
+        "Sensitivity of the simulated long/short return to the benchmark's "
+        "return over the same intervals; near zero means little directional "
+        "market exposure. Exposure is described, not preferred, so it cannot "
+        "rank candidates.",
+        summary=True,
+    ),
+    _definition(
+        "periods_per_year",
+        "count",
+        "period",
+        "numpy/pandas",
+        "Holding intervals in a year for the dataset's timeframe and horizon; "
+        "the annualisation these return metrics assumed.",
+    ),
+    _definition(
+        "n_return_periods",
+        "count",
+        "period",
+        "pandas",
+        "Holding intervals in the simulated return series; distinct from "
+        "n_periods, which counts rolling IC windows.",
     ),
     _definition(
         "n_periods",
