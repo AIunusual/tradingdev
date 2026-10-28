@@ -24,7 +24,7 @@ uv sync --locked --all-extras --python 3.14
 | `./scripts/format.sh` | 自動修正 lint 與格式，會修改檔案。 |
 | `./scripts/check-docs.sh` | 唯讀檢查 Markdown 與本機檔案／標題連結；不呼叫模型或執行 Python 品質檢查、pytest。 |
 | `./scripts/check-presentations.sh` | 檢查文件、簡報重建一致性、頁碼與離線資源；不呼叫模型或完整 pytest。 |
-| `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy 與上述文件品質。 |
+| `./scripts/check-fast.sh` | 唯讀檢查 Ruff、格式、strict Mypy、文件品質及 MCP 契約探索／上下文預算。 |
 | `./scripts/check-full.sh` | 一律執行快速品質檢查與完整離線 pytest，不依變更類型縮減；不呼叫模型。 |
 | `uv run --all-extras pytest` | 完整離線測試，包含真實 MCP／worker；不呼叫模型。 |
 
@@ -345,6 +345,25 @@ uv run --no-sync python -m tooling.context_budget --tools list_strategies get_st
 投影，以及包含輸出 schema 的 MCP wire metadata；每項提供字元與 UTF-8 bytes。
 這些不是 token 數，也不代表所有客戶端都將 wire metadata 放進模型上下文。
 指定 `--tools` 時須保留所選集合，不能把縮小集合的量測當成完整產品的成本。
+
+`check-fast.sh`（以及經由它執行的 commit／完整候選檢查）另執行以下機械檢查：
+
+```bash
+uv run --no-sync python -m tooling.prompt_contracts
+```
+
+它在獨立臨時工作區呼叫實際 MCP 的策略契約、全部公開指標參考，以及 ML、指標
+目錄、報告章節與資料來源的探索入口，不下載行情、執行策略、啟動 worker 或呼叫
+模型。策略章節清單須與輸入 schema 一致，每個入口須可讀且符合輸出 schema；
+server instructions、工具描述及策略契約敘述中的 `section=...` 引用須存在。
+程式來源與 schema 內容不當成流程敘述解析。這只涵蓋明示的策略章節引用，並非
+所有工具名稱、自然語言語意或完整多回合流程的正確性證明。
+
+容量預算集中於 `tooling/prompt_contracts.py`，分別限制初始指引、完整工具輸入
+投影、兩者總和，以及單次策略章節、指標參考與其他探索回覆的 UTF-8 bytes。
+輸出保留實測大小、預算與另外列出的 wire metadata；超量直接失敗，不截斷內容。
+這些是防止未經檢視持續增長的維護界線，不是 tokens 或最低模型視窗規格；變更
+預算前須檢查內容歸屬、按需入口與實測需求，不能只為通過檢查而提高數值。
 
 Local 真實模型測試另記錄每輪實際序列化 HTTP request 的字元、bytes、相對首輪增量
 與累積峰值，以及工具回覆大小。Provider 有回傳 usage 時保留其實際 token 計數；

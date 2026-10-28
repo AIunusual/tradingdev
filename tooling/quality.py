@@ -51,6 +51,7 @@ def main() -> None:
             *PYTHON_PATHS,
         )
         run("tooling.documentation")
+        run("tooling.prompt_contracts")
 
 
 if __name__ == "__main__":
