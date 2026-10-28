@@ -525,6 +525,11 @@ data:
         path: "workspace/data/processed/btc_funding_rate_2025.parquet"
 ```
 
+Feature values join market bars on exact timestamps. Earlier matched values may
+fill subsequent gaps, but leading gaps remain missing rather than using later
+observations. Strategies must handle these missing values without backfilling
+from the future; unmatched feature timestamps do not seed the fill.
+
 ### Strategy Walk-Forward Settings
 
 The top-level YAML `validation` mapping configures strategy backtests through

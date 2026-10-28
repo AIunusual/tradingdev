@@ -488,6 +488,29 @@ class TestGLFTImpliedVolatility:
         with pytest.raises(ValueError, match="dvol"):
             strategy.generate_signals(sample_ohlcv_df)
 
+    def test_leading_missing_dvol_blocks_entries_until_a_value_is_available(
+        self,
+        sample_ohlcv_with_dvol_df: pd.DataFrame,
+    ) -> None:
+        strategy = GLFTStrategy(
+            config=_make_implied_config(
+                gamma=0.0, kappa=1000.0, ema_window=2, momentum_guard=False
+            )
+        )
+        complete = strategy.generate_signals(sample_ohlcv_with_dvol_df)
+        assert complete["signal"].iloc[:50].ne(0).any()
+
+        frame = sample_ohlcv_with_dvol_df.copy()
+        frame.loc[frame.index[:50], "dvol"] = np.nan
+        before = frame.copy(deep=True)
+        result = strategy.generate_signals(frame)
+
+        assert result["signal"].iloc[:50].eq(0).all()
+        assert result["signal"].iloc[50:].ne(0).any()
+        assert not result["signal"].isna().any()
+        pd.testing.assert_frame_equal(result[frame.columns], before)
+        pd.testing.assert_frame_equal(frame, before)
+
     def test_fit_implied_ignores_vol_window(
         self,
         large_ohlcv_df: pd.DataFrame,
