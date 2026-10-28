@@ -7,16 +7,18 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import TypeAdapter
 
 from tradingdev.domain.backtest.schemas import BacktestRunConfig
+from tradingdev.domain.indicators.reference import indicator_reference
 from tradingdev.domain.research import ResearchSpec
 from tradingdev.domain.research_policy import research_policy_payload
 from tradingdev.domain.strategies.research_contract import research_evidence_contract
+from tradingdev.domain.strategies.validator import static_policy_payload
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 type StrategyContractTopic = Literal[
-    "core", "research", "evidence", "example", "configuration"
+    "core", "research", "evidence", "example", "configuration", "indicators"
 ]
 
 _CONTRACT_SECTIONS = (
@@ -32,6 +34,10 @@ _CONTRACT_SECTIONS = (
         "id": "evidence",
         "description": "Parameter proposals, source claims and saved trading formulas.",
     },
+    {
+        "id": "indicators",
+        "description": "Installed indicator catalog and selected API/source reference.",
+    },
     {"id": "example", "description": "Complete Python and YAML example to adapt."},
     {
         "id": "configuration",
@@ -41,12 +47,18 @@ _CONTRACT_SECTIONS = (
 
 
 def strategy_contract_payload(
-    package_root: Path, section: StrategyContractTopic = "core"
+    package_root: Path,
+    section: StrategyContractTopic = "core",
+    *,
+    indicator: str | None = None,
 ) -> dict[str, Any]:
     """Read one complete section; advertise the others without injecting them."""
+    if indicator is not None and section != "indicators":
+        raise ValueError("indicator is only valid with section=indicators")
     content: dict[str, Any]
     if section == "core":
         content = {
+            "static_policy": static_policy_payload(),
             "base_strategy_source": (
                 package_root / "domain" / "strategies" / "base.py"
             ).read_text(encoding="utf-8"),
@@ -68,16 +80,15 @@ def strategy_contract_payload(
                 "section=example when a complete starting example is needed. "
                 "Use list_data_sources for source-specific market settings.",
                 "Generated Python must pass the repository Ruff and strict Mypy "
-                "policy. Allowed import roots: __future__, collections, dataclasses, "
-                "datetime, enum, math, statistics, typing, typing_extensions, numpy, "
-                "pandas, talib, tradingdev. No network, subprocess, destructive "
-                "filesystem access, dynamic imports, eval or exec. These checks "
-                "and workspace paths are not a security sandbox.",
-                "Prefer tradingdev.domain.indicators: sma, ema, rsi, macd, "
-                "bollinger_bands, atr, adx, stochastic. It preserves TA-Lib warm-up, "
-                "NaNs and index alignment. Direct talib requires float64 NumPy "
-                "arrays; unpack MACD as line/signal/histogram, BBANDS as "
-                "upper/middle/lower, STOCH as k/d. pandas_ta is unsupported. "
+                "policy. static_policy lists the enforced import/call restrictions. "
+                "No network, subprocess, destructive filesystem access, dynamic "
+                "imports, eval or exec. These checks and workspace paths are not "
+                "a security sandbox.",
+                "Prefer tradingdev.domain.indicators for technical indicators. "
+                "Read section=indicators for the installed function catalog, then "
+                "select indicator by name for its signature, named result fields, "
+                "implementation and parameter/input checks. Resolve unavailable "
+                "references before coding; do not guess APIs or tuple orders. "
                 "Separate first-party tradingdev imports from third-party imports.",
                 "Set random_seed at the YAML root, never in backtest. Use "
                 "tradingdev.domain.randomness.get_random() or get_numpy_rng() "
@@ -121,6 +132,8 @@ def strategy_contract_payload(
                 "seed arbitrary global or third-party RNGs.",
             ],
         }
+    elif section == "indicators":
+        content = indicator_reference(indicator)
     elif section == "research":
         content = {
             "research_schema": TypeAdapter(ResearchSpec).json_schema(),

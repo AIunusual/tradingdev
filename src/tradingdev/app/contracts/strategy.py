@@ -1,14 +1,18 @@
 """Public response contracts for strategy discovery and lifecycle operations."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import JsonValue, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.research_evidence import ResearchEvidenceDraft
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.schemas import StrategyStatus
 from tradingdev.domain.strategies.templates import StrategyContractTopic
+
+type IndicatorSelection = Annotated[
+    str, Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+]
 
 
 class StrategyContractSection(ContractModel):
@@ -18,9 +22,44 @@ class StrategyContractSection(ContractModel):
     description: str
 
 
+class StrategyStaticPolicyContract(ContractModel):
+    """Exact rules exported by the static validator, not security isolation."""
+
+    allowed_import_roots: list[str]
+    blocked_import_roots: list[str]
+    blocked_call_names: list[str]
+    blocked_attribute_calls: list[str]
+
+
+class IndicatorAPISummary(ContractModel):
+    name: str
+    signature: str
+    summary: str
+
+
+class IndicatorSource(ContractModel):
+    name: str
+    source: str
+
+
+class IndicatorAPIDetail(IndicatorAPISummary):
+    documentation: str
+    source: str
+    supporting_source: list[IndicatorSource]
+    result_fields: list[str]
+
+
+class StrategyIndicatorContract(ContractModel):
+    namespace: str
+    module_contract: str
+    catalog: list[IndicatorAPISummary]
+    selected: IndicatorAPIDetail | None
+
+
 class StrategyCoreContract(ContractModel):
     """Required authoring and lifecycle rules, without optional examples."""
 
+    static_policy: StrategyStaticPolicyContract
     base_strategy_source: str
     requirements: list[str]
     lifecycle: list[str]
@@ -68,12 +107,14 @@ class StrategyContractResponse(ContractModel):
         | StrategyEvidenceContract
         | StrategyExampleContract
         | StrategyConfigurationContract
+        | StrategyIndicatorContract
     )
 
     @model_validator(mode="after")
     def validate_section_content(self) -> Self:
         expected = {
             "core": StrategyCoreContract,
+            "indicators": StrategyIndicatorContract,
             "research": StrategyResearchContract,
             "evidence": StrategyEvidenceContract,
             "example": StrategyExampleContract,

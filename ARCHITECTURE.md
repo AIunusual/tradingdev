@@ -581,8 +581,10 @@ Manifest 的 hash 用於完整性檢查，不能防禦同時控制資料庫與�
 
 `mcp/prompts.py` 提供依任務階段編排的啟動指引，保留契約探索、執行同意、報告交付
 及證據保存規則。策略詳細規則由 `get_strategy_contract` 的 core、research、evidence、
-configuration、example 章節提供，每個回覆列出可讀章節；research schema 與模擬政策
-直接由 domain 定義產生，完整欄位不重複注入初始指引。ML 研究解讀集中在 `get_ml_contract`，
+configuration、example、indicators 章節提供，每個回覆列出可讀章節；research schema、
+模擬政策與靜態 import 規則直接由 domain 定義產生。指標目錄取自公開 facade，選定
+名稱後讀取實際簽名、具名結果與本地檢查來源；來源不可用時明確失敗，不執行指標。
+完整欄位不重複注入初始指引。ML 研究解讀集中在 `get_ml_contract`，
 資料來源能力由 crawler registry 經 `list_data_sources` 提供，報告章節由
 `get_report_sections` 提供。工具描述與輸入 schema 保留呼叫前需要的條件與參數說明，
 不另載入整份研究手冊。這些入口都是標準 MCP tools，不依賴客戶端能讀取伺服器檔案
@@ -591,6 +593,9 @@ configuration、example 章節提供，每個回覆列出可讀章節；research
 `tooling/context_budget.py` 量測實際註冊的 instructions 與工具投影；Local 測試記錄
 序列化 request 的大小及峰值。這些開發量測不改變產品工具內容，也不推測其他客戶端
 如何選工具、壓縮歷史或預留輸出，使用方式見[開發指南](docs/development.md#量測模型上下文)。
+`tooling/prompt_contracts.py` 接入快速品質檢查，以實際 MCP 註冊／探索回覆檢查策略
+章節選單、明示章節引用、schema 與 UTF-8 容量預算；它不呼叫模型，也不證明自然
+語言語意或完整多回合流程正確。超量須審視內容歸屬，不能默默截斷契約。
 
 MCP 使用 StrictMCPServer 拒絕未知頂層參數，避免拼錯名稱卻套用預設值；
 `app/contracts` 的 DTO 再檢查 service 回覆，讓協定輸出可被工具 schema 驗證。

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from tradingdev.app.contracts.common import (
@@ -16,6 +17,7 @@ from tradingdev.app.contracts.common import (
 from tradingdev.app.contracts.strategy import (
     BundledStrategyResponse,
     GeneratedStrategyResponse,
+    IndicatorSelection,  # noqa: TC001 — MCP resolves tool annotations.
     LegacyStrategyResponse,
     StrategyContractResponse,
     StrategyDryRunFailure,
@@ -57,18 +59,31 @@ def register(mcp: MCPServer, service: StrategyService, package_root: Path) -> No
     )
     def get_strategy_contract(
         section: StrategyContractTopic = "core",
+        indicator: IndicatorSelection | None = None,
     ) -> StrategyContractResponse:
         """Read core authoring rules first; request example/configuration as needed.
 
         Each response contains one complete content section and lists all available
         sections. research covers required choices/defaults; evidence covers parameter
         proposals, source claims and saved formulas. configuration is the executable
-        YAML schema; example is a complete Python/YAML pair. Missing reference files
+        YAML schema; example is a complete Python/YAML pair. indicators lists the
+        installed public API; pass indicator only with that section to retrieve one
+        function and its input/parameter checks from source. Missing reference files
         fail; no partial contract is returned.
         """
-        return StrategyContractResponse.model_validate(
-            strategy_contract_payload(package_root, section)
-        )
+        try:
+            payload = strategy_contract_payload(
+                package_root, section, indicator=indicator
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        except (OSError, TypeError) as exc:
+            raise ToolError(
+                "Installed contract source is unavailable. Restore the package's "
+                "Python source files before authoring; "
+                "no partial reference was returned."
+            ) from exc
+        return StrategyContractResponse.model_validate(payload)
 
     @mcp.tool(
         annotations=ToolAnnotations(

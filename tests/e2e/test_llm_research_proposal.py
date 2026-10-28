@@ -62,6 +62,18 @@ class ProposalUser(ObservedPlanUser):
             assert config["backtest"]["fees"] == 0.0006
             assert config["backtest"]["slippage"] == 0.0005
             calls = effective_workflow_calls(turn.calls)
+            first_save = next(
+                index
+                for index, call in enumerate(calls)
+                if call.name == "save_strategy"
+            )
+            assert any(
+                call.name == "get_strategy_contract"
+                and call.arguments.get("section") == "indicators"
+                and call.arguments.get("indicator") == "bollinger_bands"
+                and call.result.get("content", {}).get("selected") is not None
+                for call in calls[:first_save]
+            ), "Discover the installed Bollinger API before authoring"
             prepare_index = next(
                 index
                 for index, call in enumerate(calls)
