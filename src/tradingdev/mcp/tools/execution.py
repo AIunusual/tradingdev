@@ -115,20 +115,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a frozen plan with program checks; no market data or backtest.
+        """Prepare one frozen backtest plan using synthetic program checks only.
 
-        Requires a runnable/promoted revision and a saved evidence_id. Read
-        get_strategy_contract(section="evidence") for research evidence requirements.
-        Binding errors return required_parameter_bindings and required_parameter_paths.
-        parameters recursively overrides base parameters;
-        research requires strategy outline, market, timeframe and period, or explicit
-        inheritance with an explicit generated revision_id.
-        Costs belong only in research;
-        backtest_overrides changes other execution settings.
-        Present confirmation_summary verbatim and copy the HTML confirmation_link
-        verbatim; verify its destination against html_path. Then end the turn and
-        wait for a later explicit user decision before submitting this exact plan.
-        """
+        Requires a runnable/promoted revision and saved evidence_id. parameters
+        recursively overrides base parameters; costs belong only in research,
+        backtest_overrides changes other execution settings. Explicit inheritance
+        of a generated strategy requires revision_id.
+        Follow the shared confirmation workflow: show confirmation_summary and
+        HTML confirmation_link verbatim, end the turn and await explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,
@@ -149,19 +143,13 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     ) -> PlanResponse | PlanRejected:
         """Prepare 1–8 fixed parameter sets for independent backtests on shared data.
 
-        Supply each candidate's label, selection rationale and parameter overrides;
-        the backend freezes complete constructor values and checks every candidate
-        with synthetic data. No history, training or backtest runs before approval.
-        Ordinary backtest strategies only; training-required research needs the
-        walk-forward workflow. This is fixed comparison, not an adaptive search.
-        A saved evidence_id must cover every candidate's effective parameter leaves.
-        Read get_strategy_contract(section="evidence") for binding requirements.
-        Copy the entire confirmation_summary and HTML confirmation_link verbatim;
-        do not omit assumptions or summarize the summary,
-        end the turn and wait for the user's later decision about the whole set.
-        After completion
-        generate_report(comparison_job_id=job_id) retains every candidate outcome.
-        """
+        Each candidate needs a label, rationale and parameter overrides. Ordinary
+        backtest strategies only; training-required research needs walk-forward.
+        evidence_id must cover every candidate's effective parameter leaves;
+        see get_strategy_contract(section="evidence"). Preparation is synthetic only.
+        Follow the shared confirmation workflow: show confirmation_summary and
+        HTML confirmation_link verbatim, end the turn and await whole-set approval.
+        Report the completed set with generate_report(comparison_job_id=job_id)."""
         return await prepare(
             "comparison",
             {
@@ -184,19 +172,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         backtest_overrides: dict[str, JsonValue] | None = None,
         validation_config: WalkForwardConfig | None = None,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a walk-forward plan without market data, training or backtests.
+        """Prepare training/validation using synthetic program checks only.
 
-        Requires validation training/test windows and a runnable/promoted revision.
-        validation_config replaces the complete validation section; use automatic
-        mode=automatic folds, mode=explicit inclusive UTC day windows, or
-        mode=purged folds with a positive label_horizon. Only fields for the
-        chosen mode are accepted; explicit windows must fit the research period.
-        Omission keeps the selected configuration.
-        Supply a saved evidence_id as for prepare_backtest. Program checks
-        do not prove training or folds will succeed. Present confirmation_summary
-        verbatim and copy the HTML confirmation_link verbatim; verify its destination
-        against html_path, end the turn and await the user's later decision.
-        """
+        validation_config replaces the complete validation section; omission keeps
+        the selected configuration. Choose mode=automatic folds, mode=explicit
+        inclusive UTC day windows, or mode=purged folds with positive label_horizon.
+        Explicit windows must fit the research period. Supply saved evidence_id.
+        Follow the shared confirmation workflow: show confirmation_summary and
+        HTML confirmation_link verbatim, end the turn and await explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,
@@ -222,19 +205,14 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
         parameters: dict[str, JsonValue] | None = None,
         backtest_overrides: dict[str, JsonValue] | None = None,
     ) -> PlanResponse | PlanRejected:
-        """Prepare a pinned search with program and grid checks; no candidate backtests.
+        """Prepare an explicitly requested parameter search; no candidate backtests.
 
         Dates are inclusive UTC days: train_start < train_end < test_start < test_end.
-        Research covers exactly train_start 00:00 through
-        test_end 23:59:59.999999 UTC.
-        The saved evidence_id must cover base and every merged search-axis option;
-        read get_strategy_contract(section="evidence") for binding requirements.
-        The HTML contains ranges, objective
-        direction, costs and program-check limits. Present confirmation_summary verbatim
-        and copy the HTML confirmation_link verbatim; verify its destination against
-        html_path, end the turn and await a later decision.
-        An approved search has no second worker-side confirmation.
-        """
+        Research covers exactly train_start 00:00 through test_end 23:59:59.999999 UTC.
+        evidence_id must cover base and every merged search-axis option;
+        see get_strategy_contract(section="evidence").
+        Follow the shared confirmation workflow: show confirmation_summary and
+        HTML confirmation_link verbatim, end the turn and await explicit approval."""
         args = {
             "strategy_id": strategy_id,
             "research": research,
@@ -261,9 +239,7 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     def get_execution_plan(plan_id: str) -> PlanResponse | PlanRejected:
         """Read saved confirmation and program-check evidence without rerunning code.
 
-        Copy confirmation_link verbatim to deliver the HTML; its destination is
-        html_path, with special path characters encoded for Markdown.
-        """
+        Use the shared confirmation workflow when presenting a ready plan."""
         return service.get(plan_id)
 
     @mcp.tool(
@@ -291,12 +267,9 @@ def register(mcp: MCPServer, service: ExecutionPlanService) -> None:
     ) -> PlanStarted | PlanRejected:
         """Relay the user's explicit later decision about this exact reviewed plan.
 
-        Only approval after presenting its summary/HTML permits approve; the initial
-        request, silence, questions and ambiguous replies are not consent. decline and
-        revise cancel without launching; changes/expiry require a newly prepared plan
-        and fresh approval. The backend verifies identity, expiry and source integrity
-        and deduplicates submissions; it cannot prove the decision's human origin.
-        """
+        approve starts execution; decline/revise cancel. Follow the shared decision
+        workflow: changes or expiry need a new plan and fresh approval. The backend
+        verifies plan integrity; it cannot prove the decision's human origin."""
         return await anyio.to_thread.run_sync(
             partial(service.decide, plan_id, decision=decision)
         )

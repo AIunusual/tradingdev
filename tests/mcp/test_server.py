@@ -203,8 +203,9 @@ def test_confirmation_rules_are_shared_with_brief_tool_reminders(
         } <= set(schema["$defs"]["PlanResponse"]["required"])
     decision = " ".join((tools["submit_execution_decision"].description or "").split())
     assert "explicit later decision" in decision
-    assert "questions and ambiguous replies are not consent" in decision
-    assert "newly prepared plan and fresh approval" in decision
+    assert "questions and ambiguous replies are not consent" in instructions
+    assert "new plan, presentation and fresh approval" in instructions
+    assert "new plan and fresh approval" in decision
     assert "cannot prove the decision's human origin" in decision
 
 
