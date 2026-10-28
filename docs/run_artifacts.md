@@ -62,6 +62,8 @@ workspace/
       dataset_fingerprint.json
       pipeline_result.pkl
   feature_requests/
+  research_evidence/
+    <evidence_id>.json
   execution_plans/
     <plan_id>/
       confirmation.txt
@@ -76,6 +78,36 @@ workspace/
 Comparison snapshots and receipts are published only after approval and data
 loading. A failed or cancelled comparison may have neither `snapshot.parquet`
 nor `receipt.json` if it stopped before data publication.
+
+## Research Evidence Records
+
+`ResearchEvidenceService` saves client-authored explanations without fetching
+sources, executing strategies or acquiring market data. Each
+`research_evidence/<evidence_id>.json` is a canonical UTF-8 record, limited to
+512 KiB, with a creation time, 32-character hexadecimal ID and content digest.
+Publication does not replace an existing record; an identical record can be
+retried. Reads check the ID, schema, digest and canonical bytes, rejecting unsafe
+paths and symbolic links. These checks detect inconsistency, not an attacker
+who can rewrite both the record and its digest; approved content must retain its
+own expected digest.
+
+The draft contains human parameter descriptions, trading conditions and formulas,
+variable meanings, limitations, source declarations and parameter provenance.
+Sources identify client-reported web retrieval or user-supplied references;
+neither their presence nor a hash proves that browsing occurred or that a claim
+is true. Reference-backed parameter declarations must cite explicit source claim
+values matching the effective values. A source supporting only a formula cannot
+also establish a suggested parameter value.
+
+`bind_research_evidence` expands grouped provenance declarations against the
+complete fixed execution, rejecting missing, overlapping or unknown targets and
+parameter pointers. Values come from the manifest, not from a repeated client
+copy. A single constructor uses target `base`; fixed comparisons use
+`candidate_1` through `candidate_8`. Optimization also binds each search-axis
+option's merged parameter subtree as `search_<group>_<option>`; the base value
+alone does not explain the search grid. Bound content retains the complete record,
+target values, execution identities and its own digest. These are explanation
+bindings, not proof that the supplied formulas faithfully implement Python or ML.
 
 ## SQLite Tables
 
