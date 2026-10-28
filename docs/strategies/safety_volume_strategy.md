@@ -18,6 +18,10 @@
   - safe=0: 即使選對方向也會虧損超過門檻
 - **決策**: `P(safe) >= risk_threshold` → 允許進場
 - **特徵**: 波動率（多 horizon）、ATR、布林帶寬度、ADX、成交量異常、K 線結構、收益率偏度/峰度
+- **時間戳**: 評分資料必須有時間戳且依時間排序；可接受的輸入、例外與空白資料的處理見
+  [訓練契約](../strategy_contract.md#training-before-scoring)。
+- **缺少特徵**: 當根無法計算風險特徵時，使用中性值 `P(safe)=0.5`，不沿用前一根的預測；
+  是否進出場仍依風險門檻與持倉規則判定，不保證自動平倉。
 
 ### Layer 2: Direction (SMA Crossover)
 

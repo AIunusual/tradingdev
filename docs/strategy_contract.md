@@ -241,27 +241,49 @@ training windows or predictions. Use the walk-forward execution path for this
 strategy; the simple-backtest and optimization paths do not fit it before scoring.
 
 Scoring a window that overlaps the training history must not duplicate that
-history or replay future bars into it. `QuantileStrategy.generate_signals()`
-treats only the training rows that strictly precede the scored frame as history,
-matched on timestamps taken from a `timestamp` column or a `DatetimeIndex` and
-normalized to UTC (naive values are interpreted as UTC). Both frames must carry
-non-missing, unique, strictly increasing timestamps; missing or invalid time
-identities are rejected rather than assuming the training frame precedes scoring.
+history or replay future bars into it. `QuantileStrategy.generate_signals()`,
+`XGBoostStrategy.generate_signals()` (through `RollingRetrainer`) and the
+SafetyVolume Risk Gate loop keep only the training rows that strictly precede
+the scored frame. Scoring the training frame itself therefore contributes no
+history, so its prediction contexts stay chronological instead of continuing
+from the tail of one copy into the head of the next.
+
+This context correction does not make training-frame scores out-of-sample:
+the initial model has already been fitted on that training window. Walk-forward
+`train_metrics` remain in-sample diagnostics; use the held-out `test_metrics`
+to assess generalization.
+
+Whether the two frames overlap can only be decided from timestamps, so a scoring
+request with a non-empty scored frame requires a time identity, whether or not
+the frames overlap: that frame, and any non-empty training history, must carry a
+`timestamp` column or a `DatetimeIndex` with non-missing, unique and strictly
+increasing values. Either representation can be used independently for each
+frame. Internal scoring copies carry a UTC `timestamp` column, including when
+the input uses a `DatetimeIndex`; the original frames are unchanged. Naive
+values are interpreted as UTC. A frame with no
+identity, or with duplicated or decreasing timestamps, raises `ValueError`.
+
+An empty scored frame produces no signals. `RollingRetrainer` and the
+SafetyVolume Risk Gate return before validating either frame, while
+`QuantileStrategy.generate_signals()` validates both frames before returning an
+empty result.
+
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
 
-Predictions are mapped back by source row. Feature warm-up and missing indicator
-values may remove rows; recursive indicators can also leave subsequent rows
+Quantile predictions are mapped back by source row. Its feature warm-up and
+missing indicator values may remove rows; recursive indicators can also leave subsequent rows
 unavailable. A bar without
 features emits `signal=0` and resets the position, holding count, entry price,
 and size weight. Once features become available, entry conditions are evaluated
 again. A single state machine processes every input row, including unscorable
 rows and chunk boundaries; output length and index match the input.
-Parameter-search evaluation uses the same gap handling on the full source frame.
+Quantile parameter-search evaluation uses the same gap handling on the full
+source frame.
 Its scoring features omit targets, so a missing future label does not prevent
 prediction on an otherwise usable tail bar.
-Model probability arrays must contain one finite four-class vector per scored
-feature row; malformed model output is rejected instead of treated as missing
+Quantile model probability arrays must contain one finite four-class vector per
+scored feature row; malformed model output is rejected instead of treated as missing
 features. Float32 and float64 model outputs are normalized to float64.
 `QuantileFeatureEngineer.transform()` always preserves surviving input index
 labels; callers that need positional mapping supply a positional index.
@@ -601,13 +623,21 @@ prices. Inference without targets retains those rows when their features are
 complete. Quantile and SafetyVolume's risk model use their separate target
 builders; they also leave outcomes beyond the supplied frame unavailable.
 
-`FeatureEngineer.transform()` preserves surviving source index labels; there is
-no index-reset option. Callers needing row positions supply a positional index.
+`FeatureEngineer.transform()` and `RiskFeatureEngineer.transform()` preserve
+surviving source index labels; there is no index-reset option. Callers needing
+row positions supply a positional index.
 SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
 prediction skips a bar whose own features are unavailable, rather than reusing
 an earlier prediction. Its threshold search evaluates the complete source frame,
 leaves unavailable rows without entry signals, and measures cooldown in source
 bars, including gaps.
+
+SafetyVolume's rolling Risk Gate also predicts only from the current source
+bar's features. If they are unavailable, it keeps the neutral `P(safe)=0.5`
+instead of assigning an earlier bar's probability. Its state machine still uses
+the configured risk threshold and holding rules; a missing risk feature does not
+unconditionally flatten a position. Threshold search continues to evaluate its
+filtered validation feature rows, unlike Quantile's full-frame gap handling.
 
 The XGBoost and FLAML direction model training APIs require at least one labelled
 training row. A supplied validation frame must also be non-empty. Empty inputs
