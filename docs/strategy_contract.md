@@ -1084,6 +1084,12 @@ but fail preparation. Reduce the proposed candidate/search options or the
 strategy's parameter structure, or shorten explanations to fit; retain complete
 descriptions and origins for every effective parameter. Never omit required
 bindings or silently split the user's requested comparison to evade these limits.
+Each captured parameter value and reference claim value must also be finite,
+acyclic JSON with at most 4,096 value nodes and depth 16 (root depth zero).
+Strings are limited to 4,000 characters and object keys to 512 characters.
+These checks apply independently of the overall byte/binding budgets; simplify
+an affected value or the strategy parameter structure before preparing again.
+The tool schema specifies additional field lengths, list counts and identifiers.
 
 Optional `backtest_overrides` capture other engine settings in the same plan;
 research supplies capital, costs and annualization choices.
