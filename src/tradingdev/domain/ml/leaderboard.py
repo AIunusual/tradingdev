@@ -12,7 +12,7 @@ import json
 import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import NormalDist
 from typing import Any, Literal
 
@@ -93,6 +93,41 @@ class EvaluationContext:
             f"code={self.code_fingerprint or '-'}, data={self.data_fingerprint or '-'})"
         )
 
+    @property
+    def identity_key(self) -> str:
+        """What these entries were measured *on*, excluding the tunable axes.
+
+        Ranking one metric across different ``window``, ``horizon`` or
+        ``n_quantiles`` is a deliberate sensitivity study, not a mistake, so
+        the surface needs an identity that survives those changes. Instrument,
+        dates, feature set and feature code stay, because no re-parameterisation
+        makes those comparable.
+
+        Dataset content is deliberately absent: a different ``horizon`` rebuilds
+        the labels, so every point of a horizon sweep necessarily lives on its
+        own dataset. Keeping one dataset version per horizon is checked
+        separately by :func:`comparability_error`.
+        """
+        return "|".join(
+            (
+                self.symbol,
+                self.timeframe,
+                self.start_date,
+                self.end_date,
+                f"features={self.feature_set}",
+                f"code={self.code_fingerprint}",
+            )
+        )
+
+    @property
+    def tunable_parameters(self) -> dict[str, int]:
+        """The numeric settings a parameter surface sweeps."""
+        return {
+            "horizon": self.horizon,
+            "window": self.window,
+            "n_quantiles": self.n_quantiles,
+        }
+
     def matches(
         self,
         *,
@@ -110,6 +145,18 @@ class EvaluationContext:
         )
 
 
+def _stored_metric(value: float | None) -> float | None:
+    """Project a metric onto what JSON can hold without losing the row.
+
+    JSON has no NaN or Infinity, and deleting the key would erase the evidence
+    that the run happened at all, so both collapse to an explicit ``null``.
+    """
+    if value is None:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 @dataclass(frozen=True)
 class LeaderboardEntry:
     """One evaluated candidate, with what it was evaluated on."""
@@ -117,10 +164,38 @@ class LeaderboardEntry:
     entry_id: str
     label: str
     context: EvaluationContext
-    metrics: Mapping[str, float]
+    metrics: Mapping[str, float | None]
+    """Measured metrics, where ``None`` means unavailable or non-finite.
+
+    Three states are deliberately distinguishable, because a failed run must
+    not disappear from the parameter grid it belongs to:
+
+    - key absent: the metric was never recorded for this candidate;
+    - key present, value ``None``: unavailable (including NaN/Inf), so the
+      candidate exists at its coordinates but has no score;
+    - key present, finite value: an ordinary measurement.
+
+    Dropping the middle case would let a reader mistake 10 and 30 for adjacent
+    settings after 20 failed, and any slope or flatness computed over that
+    surviving subset would be wrong.
+    """
     n_observations: int
     model_id: str = ""
     dataset_id: str = ""
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+    """The candidate's own hyperparameters as fitted.
+
+    A row that records only ``model_id`` cannot say how that model was
+    configured, so a later parameter study cannot read the settings back.
+    Empty for ad-hoc signals, which have no fitted parameters.
+    """
+    signal_fingerprint: str = ""
+    """Hash of the evaluated signal, kept apart from ``entry_id``.
+
+    Recording it separately lets a re-run be checked against the stored
+    candidate without changing how candidates are identified; ``""`` marks
+    rows written before it was kept.
+    """
 
     def metric(self, name: str) -> float | None:
         """Return a finite metric value, or None when missing/non-finite."""
@@ -137,8 +212,12 @@ class LeaderboardEntry:
             "label": self.label,
             "model_id": self.model_id,
             "dataset_id": self.dataset_id,
+            "parameters": dict(self.parameters),
+            "signal_fingerprint": self.signal_fingerprint,
             "n_observations": self.n_observations,
-            "metrics": {key: float(value) for key, value in self.metrics.items()},
+            "metrics": {
+                key: _stored_metric(value) for key, value in self.metrics.items()
+            },
             "context": {
                 "symbol": self.context.symbol,
                 "timeframe": self.context.timeframe,
@@ -176,13 +255,23 @@ class LeaderboardEntry:
         raw_metrics = record.get("metrics")
         if not isinstance(raw_metrics, Mapping):
             raise ValueError("leaderboard record is missing its metrics")
+        raw_parameters = record.get("parameters")
+        if raw_parameters is not None and not isinstance(raw_parameters, Mapping):
+            raise ValueError("leaderboard record has malformed parameters")
         return cls(
             entry_id=str(record["entry_id"]),
             label=str(record["label"]),
             model_id=str(record.get("model_id", "")),
             dataset_id=str(record.get("dataset_id", "")),
+            parameters=dict(raw_parameters or {}),
+            signal_fingerprint=str(record.get("signal_fingerprint", "")),
             n_observations=int(record.get("n_observations", 0)),
-            metrics={str(key): float(value) for key, value in raw_metrics.items()},
+            # A stored null is a measured-and-failed score, not a missing key,
+            # so it must come back as None instead of being converted or dropped.
+            metrics={
+                str(key): None if value is None else float(value)
+                for key, value in raw_metrics.items()
+            },
             context=context,
         )
 
@@ -284,29 +373,97 @@ def required_t_stat(n_candidates: int, *, alpha: float = 0.05) -> float:
     return _NORMAL.inv_cdf(1.0 - alpha / (2.0 * n_candidates))
 
 
-def comparability_error(entries: Sequence[LeaderboardEntry]) -> str | None:
-    """Why these entries cannot be ranked together, or ``None`` if they can."""
-    contexts = {entry.context.key: entry for entry in entries}
-    if len(contexts) <= 1:
-        return None
+def _examples(groups: Mapping[str, LeaderboardEntry]) -> str:
+    """A bounded, abbreviated sample of the distinct groups behind a refusal."""
     examples = []
-    for key in sorted(contexts)[:_MAX_CONTEXT_EXAMPLES]:
-        entry = contexts[key]
-        description = entry.context.describe()
+    for key in sorted(groups)[:_MAX_CONTEXT_EXAMPLES]:
+        description = groups[key].context.describe()
         if len(description) > _MAX_CONTEXT_EXAMPLE_CHARACTERS:
             description = (
                 description[:_MAX_CONTEXT_EXAMPLE_CHARACTERS] + "... [abbreviated]"
             )
         examples.append(description)
-    omitted = len(contexts) - len(examples)
+    omitted = len(groups) - len(examples)
+    return (
+        f"showing {len(examples)} examples, {omitted} omitted): {'; '.join(examples)}"
+    )
+
+
+def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
+    """Why a parameter surface cannot be read, or ``None`` when it can.
+
+    A surface may span datasets across horizons; common source-bar provenance
+    is not verified by this context. Within one horizon the data must be a
+    single dataset version, so a rebuilt or corrected dataset is never averaged
+    into the same row of the grid.
+    """
+    identities = {entry.context.identity_key: entry for entry in entries}
+    if len(identities) > 1:
+        return (
+            "entries were not measured on the same instrument, dates, feature "
+            f"set or feature code ({len(identities)} distinct identities; "
+            f"{_examples(identities)}. These identity fields must match even "
+            "when window, horizon and n_quantiles vary. Filter by "
+            "symbol/timeframe/feature_set to rank separately, or rebuild both "
+            "sides on one feature code. allow_mixed=True permits ranking "
+            "incompatible contexts but does not make them comparable."
+        )
+    versions: dict[int, set[tuple[str, str]]] = {}
+    for entry in entries:
+        versions.setdefault(entry.context.horizon, set()).add(
+            (entry.dataset_id, entry.context.data_fingerprint)
+        )
+    mixed = {horizon: values for horizon, values in versions.items() if len(values) > 1}
+    if mixed:
+        horizon = sorted(mixed)[0]
+        return (
+            f"horizon {horizon} was measured on {len(mixed[horizon])} different "
+            "dataset versions. A parameter surface may span datasets across "
+            "horizons, but one horizon must have "
+            "one dataset version: re-record against a single dataset_id, or "
+            "rank each version separately."
+        )
+    return None
+
+
+def comparability_error(
+    entries: Sequence[LeaderboardEntry], *, allow_parameter_axes: bool = False
+) -> str | None:
+    """Why these entries cannot be ranked together, or ``None`` if they can.
+
+    By default every measurement setting must match, which is what picking a
+    champion needs. ``allow_parameter_axes`` relaxes exactly one thing: entries
+    measured on the same instrument, dates, feature set and code may differ in
+    ``window``, ``horizon`` or ``n_quantiles``, because sweeping those is the
+    point of a sensitivity study. It still refuses to mix different
+    instruments, dates, feature sets, feature code, or two dataset versions
+    within one horizon.
+    """
+    if allow_parameter_axes:
+        return _surface_error(entries)
+    contexts = {entry.context.key: entry for entry in entries}
+    if len(contexts) <= 1:
+        return None
     return (
         "entries were not measured on the same conditions "
-        f"({len(contexts)} distinct contexts; showing {len(examples)} examples, "
-        f"{omitted} omitted): {'; '.join(examples)}. "
+        f"({len(contexts)} distinct contexts; {_examples(contexts)}. "
         "Filter by dataset_id or symbol/timeframe/horizon/feature_set to rank "
         "separately. allow_mixed=True permits ranking incompatible contexts "
         "but does not make them comparable."
     )
+
+
+def parameter_axes(entries: Sequence[LeaderboardEntry]) -> dict[str, list[int]]:
+    """The observed values of every tunable setting, per axis.
+
+    A ranking across a parameter surface is only readable if each point says
+    where it sits, so the caller gets the grid coordinates alongside the ranks.
+    """
+    axes: dict[str, list[int]] = {}
+    for name in ("horizon", "window", "n_quantiles"):
+        values = sorted({entry.context.tunable_parameters[name] for entry in entries})
+        axes[name] = values
+    return axes
 
 
 def _selection_caveat(
@@ -372,11 +529,12 @@ def rank_entries(
     for entry in entries:
         value = entry.metric(metric)
         if value is None:
-            raw = entry.metrics.get(metric)
+            # A stored None is a measurement that failed, not a metric nobody
+            # recorded; saying which one it is keeps the two cases apart.
             reason = (
                 f"no '{metric}' recorded"
-                if raw is None
-                else f"'{metric}' is not finite ({raw})"
+                if metric not in entry.metrics
+                else f"'{metric}' is unavailable or not finite"
             )
             skipped.append(SkippedEntry(entry=entry, reason=reason))
             continue
@@ -412,7 +570,9 @@ def rank_entries(
     if skipped:
         caveats.append(
             f"{len(skipped)} of {n_candidates + len(skipped)} entries were not "
-            f"ranked (missing or non-finite '{metric}')"
+            f"ranked for '{metric}'. They stay recorded, so a parameter grid "
+            "keeps their coordinates even when the score is unavailable; the "
+            "ranked candidates are not necessarily adjacent settings."
         )
     if n_candidates > 1 and ranked:
         caveats.append(_selection_caveat(metric, n_candidates, ranked[0], alpha=alpha))

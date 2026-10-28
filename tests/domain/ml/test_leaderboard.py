@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -12,6 +14,7 @@ from tradingdev.domain.ml.leaderboard import (
     build_entry_id,
     comparability_error,
     metric_direction,
+    parameter_axes,
     rank_entries,
     rankable_metrics,
     required_t_stat,
@@ -29,7 +32,7 @@ _CONTEXT = EvaluationContext(
 
 def _entry(
     entry_id: str,
-    **metrics: float,
+    **metrics: float | None,
 ) -> LeaderboardEntry:
     return LeaderboardEntry(
         entry_id=entry_id,
@@ -39,6 +42,17 @@ def _entry(
         n_observations=200,
         model_id=entry_id,
         dataset_id="ds_" + entry_id,
+    )
+
+
+def _windowed(
+    entry_id: str,
+    window: int,
+    **metrics: float | None,
+) -> LeaderboardEntry:
+    """One candidate measured at a given IC window."""
+    return replace(
+        _entry(entry_id, **metrics), context=replace(_CONTEXT, window=window)
     )
 
 
@@ -336,6 +350,38 @@ class TestEntryIdentity:
         restored = LeaderboardEntry.from_record(entry.to_record())
         assert restored == entry
 
+    def test_a_record_keeps_the_candidate_parameters_and_fingerprint(self) -> None:
+        """A stored row must say how the candidate was configured."""
+        entry = LeaderboardEntry(
+            entry_id="a",
+            label="xgboost_direction (xgboost)",
+            context=_CONTEXT,
+            metrics={"icir": 0.5},
+            n_observations=200,
+            model_id="a",
+            dataset_id="ds_a",
+            parameters={"n_estimators": 60, "max_depth": 3},
+            signal_fingerprint="0123456789abcdef",
+        )
+        restored = LeaderboardEntry.from_record(entry.to_record())
+        assert restored.parameters == {"n_estimators": 60, "max_depth": 3}
+        assert restored.signal_fingerprint == "0123456789abcdef"
+        assert restored == entry
+
+    def test_a_record_written_before_these_fields_reads_as_empty(self) -> None:
+        payload = _entry("a", icir=0.5).to_record()
+        del payload["parameters"]
+        del payload["signal_fingerprint"]
+        restored = LeaderboardEntry.from_record(payload)
+        assert restored.parameters == {}
+        assert restored.signal_fingerprint == ""
+
+    def test_malformed_stored_parameters_are_rejected(self) -> None:
+        payload = _entry("a", icir=0.5).to_record()
+        payload["parameters"] = ["not", "a", "mapping"]
+        with pytest.raises(ValueError, match="parameters"):
+            LeaderboardEntry.from_record(payload)
+
     def test_record_without_context_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="context"):
             LeaderboardEntry.from_record({"entry_id": "a", "metrics": {}})
@@ -471,6 +517,151 @@ class TestFeatureIdentity:
         assert restored.context.code_fingerprint == ""
 
 
+class TestParameterAxes:
+    """Sweeping the numeric settings is a study, not an incomparable mistake."""
+
+    @staticmethod
+    def _context(**overrides: object) -> EvaluationContext:
+        values: dict[str, object] = {
+            "symbol": "BTC/USDT",
+            "timeframe": "1d",
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",
+            "horizon": 1,
+        }
+        values.update(overrides)
+        return EvaluationContext(**values)  # type: ignore[arg-type]
+
+    def test_the_identity_ignores_the_tunable_settings(self) -> None:
+        base = self._context()
+        assert base.identity_key == self._context(window=30).identity_key
+        assert base.identity_key == self._context(n_quantiles=3).identity_key
+        assert base.identity_key == self._context(horizon=5).identity_key
+
+    def test_the_identity_still_separates_different_evidence(self) -> None:
+        base = self._context()
+        assert base.identity_key != self._context(symbol="ETH/USDT").identity_key
+        assert base.identity_key != self._context(feature_set="returns").identity_key
+        assert base.identity_key != self._context(code_fingerprint="v2").identity_key
+        assert base.identity_key != self._context(start_date="2024-02-01").identity_key
+
+    def test_the_identity_ignores_dataset_content(self) -> None:
+        """A new horizon rebuilds the dataset, so content cannot be identity."""
+        base = self._context()
+        assert base.identity_key == self._context(data_fingerprint="other").identity_key
+
+    def test_the_full_key_still_includes_the_tunable_settings(self) -> None:
+        """Entry identity must keep distinguishing measurements."""
+        assert self._context().key != self._context(window=30).key
+
+    def test_the_tunable_parameters_are_reported(self) -> None:
+        assert self._context(
+            horizon=4, window=30, n_quantiles=3
+        ).tunable_parameters == {
+            "horizon": 4,
+            "window": 30,
+            "n_quantiles": 3,
+        }
+
+    def test_a_window_sweep_is_rankable_only_when_allowed(self) -> None:
+        entries = [
+            LeaderboardEntry("a", "a", self._context(window=20), {"icir": 0.1}, 200),
+            LeaderboardEntry("b", "b", self._context(window=30), {"icir": 0.2}, 200),
+        ]
+        assert comparability_error(entries) is not None
+        assert comparability_error(entries, allow_parameter_axes=True) is None
+
+    def test_a_sweep_across_instruments_is_still_refused(self) -> None:
+        entries = [
+            LeaderboardEntry(
+                "a",
+                "a",
+                self._context(window=20, symbol="BTC/USDT"),
+                {"icir": 0.1},
+                200,
+            ),
+            LeaderboardEntry(
+                "b",
+                "b",
+                self._context(window=30, symbol="ETH/USDT"),
+                {"icir": 0.2},
+                200,
+            ),
+        ]
+        error = comparability_error(entries, allow_parameter_axes=True)
+        assert error is not None
+        assert "1 distinct identities" not in error
+        assert "ETH/USDT" in error and "BTC/USDT" in error
+        assert "allow_mixed=True" in error
+
+    def test_a_sweep_across_datasets_is_refused_within_one_horizon(self) -> None:
+        """A rebuilt dataset must not be averaged into the same grid row."""
+        entries = [
+            LeaderboardEntry(
+                "a", "a", self._context(data_fingerprint="v1"), {"icir": 0.1}, 200
+            ),
+            LeaderboardEntry(
+                "b", "b", self._context(data_fingerprint="v2"), {"icir": 0.2}, 200
+            ),
+        ]
+        error = comparability_error(entries, allow_parameter_axes=True)
+        assert error is not None
+        assert "horizon 1 was measured on 2 different dataset versions" in error
+        assert "re-record against a single dataset_id" in error
+
+    def test_a_horizon_sweep_may_span_datasets(self) -> None:
+        """Each horizon rebuilds its labels, so it necessarily has its own data."""
+        entries = [
+            LeaderboardEntry(
+                "a",
+                "a",
+                self._context(horizon=1, data_fingerprint="h1"),
+                {"icir": 0.1},
+                200,
+            ),
+            LeaderboardEntry(
+                "b",
+                "b",
+                self._context(horizon=3, data_fingerprint="h3"),
+                {"icir": 0.2},
+                200,
+            ),
+        ]
+        assert comparability_error(entries) is not None
+        assert comparability_error(entries, allow_parameter_axes=True) is None
+
+    def test_identical_settings_stay_comparable_under_both_modes(self) -> None:
+        entries = [
+            LeaderboardEntry("a", "a", self._context(), {"icir": 0.1}, 200),
+            LeaderboardEntry("b", "b", self._context(), {"icir": 0.2}, 200),
+        ]
+        assert comparability_error(entries) is None
+        assert comparability_error(entries, allow_parameter_axes=True) is None
+
+    def test_the_grid_reports_every_observed_axis_value(self) -> None:
+        entries = [
+            LeaderboardEntry(
+                "a", "a", self._context(window=30, horizon=1), {"icir": 0.1}, 200
+            ),
+            LeaderboardEntry(
+                "b", "b", self._context(window=20, horizon=1), {"icir": 0.2}, 200
+            ),
+            LeaderboardEntry(
+                "c", "c", self._context(window=20, horizon=5), {"icir": 0.3}, 200
+            ),
+        ]
+        assert parameter_axes(entries) == {
+            "horizon": [1, 5],
+            "window": [20, 30],
+            "n_quantiles": [5],
+        }
+
+    def test_a_single_measurement_reports_single_valued_axes(self) -> None:
+        assert parameter_axes(
+            [LeaderboardEntry("a", "a", self._context(), {"icir": 0.1}, 200)]
+        ) == {"horizon": [1], "window": [60], "n_quantiles": [5]}
+
+
 def test_comparability_error_explicitly_abbreviates_long_examples() -> None:
     entries = [
         LeaderboardEntry(
@@ -490,3 +681,61 @@ def test_comparability_error_explicitly_abbreviates_long_examples() -> None:
     assert error.count("[abbreviated]") == 3
     assert "dataset_id" in error and "does not make them comparable" in error
     assert len(error) < 1200
+
+
+class TestFailedCandidates:
+    """A run that produced NaN or Inf must not vanish from its coordinates.
+
+    Deleting the score would leave the surviving settings looking adjacent, and
+    a slope or flatness fitted across that shortened axis would be wrong.
+    """
+
+    def test_a_non_finite_metric_is_stored_as_null_not_dropped(self) -> None:
+        record = _entry("a", icir=float("nan"), hit_rate=0.6).to_record()
+        assert "icir" in record["metrics"]
+        assert record["metrics"]["icir"] is None
+        assert record["metrics"]["hit_rate"] == 0.6
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+    def test_every_non_finite_value_becomes_null(self, value: float) -> None:
+        assert _entry("a", icir=value).to_record()["metrics"]["icir"] is None
+
+    def test_a_failed_record_is_still_valid_json(self) -> None:
+        """NaN is not JSON, so storing it raw would make the file unreadable."""
+        record = _entry("a", icir=float("inf")).to_record()
+        assert json.loads(json.dumps(record))["metrics"]["icir"] is None
+
+    def test_a_stored_null_reads_back_as_a_measured_failure(self) -> None:
+        restored = LeaderboardEntry.from_record(_entry("a", icir=None).to_record())
+        assert "icir" in restored.metrics
+        assert restored.metrics["icir"] is None
+        assert restored.metric("icir") is None
+
+    def test_a_failed_score_is_reported_as_measured_not_missing(self) -> None:
+        result = rank_entries([_entry("a", icir=0.4), _entry("b", icir=None)], "icir")
+        assert _ranked_ids(result) == ["a"]
+        assert "is unavailable or not finite" in result.skipped[0].reason
+
+    def test_an_unrecorded_metric_stays_distinguishable_from_a_failure(self) -> None:
+        result = rank_entries([_entry("a"), _entry("b", icir=None)], "icir")
+        assert "no 'icir' recorded" in result.skipped[0].reason
+        assert "no 'icir' recorded" not in result.skipped[1].reason
+
+    def test_a_failed_point_stays_on_the_parameter_axis(self) -> None:
+        entries = [
+            _windowed("a", 10, icir=0.4),
+            _windowed("b", 20, icir=None),
+            _windowed("c", 30, icir=0.5),
+        ]
+        assert parameter_axes(entries)["window"] == [10, 20, 30]
+
+    def test_the_caveat_warns_that_survivors_are_not_adjacent(self) -> None:
+        result = rank_entries(
+            [
+                _windowed("a", 10, icir=0.4),
+                _windowed("b", 20, icir=None),
+                _windowed("c", 30, icir=0.5),
+            ],
+            "icir",
+        )
+        assert any("not necessarily adjacent" in caveat for caveat in result.caveats)
