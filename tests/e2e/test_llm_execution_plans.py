@@ -184,7 +184,8 @@ def _prompt(kind: PlanKind, revision_id: str | None) -> str:
 再次結束回合等待確認。模糊回覆須澄清，不可當成同意。
 持續 get_job_status 直到 done，再 get_run 查同一 run_id。
 {queries}
-最後 list_artifacts。必須取得全部結果才結束，只回覆「完成」與 run_id。
+最後以同一 run_id 呼叫 list_artifacts(run_id=該結果的 run_id)，確認該結果的產物。
+必須取得全部結果才結束，只回覆「完成」與 run_id。
 只用 MCP 工具，不用 shell、不直接改檔。不建立第二次正式執行。
 """
 
@@ -471,6 +472,13 @@ def _assert_evidence(
         and isinstance(call.result, dict)
         and call.result.get("items")
         for index, call in enumerate(calls)
+    ), json.dumps(
+        [
+            {"arguments": call.arguments, "result": call.result}
+            for call in calls
+            if call.name == "list_artifacts"
+        ],
+        ensure_ascii=False,
     )
 
 
