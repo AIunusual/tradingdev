@@ -87,7 +87,11 @@ def research_evidence_contract() -> dict[str, Any]:
             "Separate rules must not assign contradictory else branches to the same "
             "signal. State window inclusivity, minimum observations and variance "
             "conventions such as ddof when used. Warm-up conditions must describe "
-            "missing data, not the opposite. Distinguish raw execution-price inputs "
+            "missing data, not the opposite. Distinguish initial warm-up from later "
+            "missing inputs: describe both the retained internal state and emitted "
+            "signal as the code actually handles them. Include indicator definitions "
+            "needed to interpret a rule, not only a library function name. "
+            "Distinguish raw execution-price inputs "
             "from actual fills after costs. These checks remain the host's "
             "responsibility, not proof supplied by synthetic validation.",
             "Provide presentation descriptions for every effective constructor leaf. "
