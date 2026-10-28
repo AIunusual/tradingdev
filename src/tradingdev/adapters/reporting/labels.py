@@ -128,51 +128,6 @@ _ENUM_LABELS = {
 }
 
 
-RECORD_LABELS = {
-    "execution_id": "執行紀錄編號",
-    "order_id": "成交單編號",
-    "bar_index": "K 線索引（從 0 起算）",
-    "status": "執行狀態",
-    "status_info": "狀態原因",
-    "side": "買賣方向",
-    "timestamp": "K 線時間（UTC）",
-    "market.open": "市場開盤價",
-    "market.high": "市場最高價",
-    "market.low": "市場最低價",
-    "market.close": "市場收盤價",
-    "requested_price": "委託價格",
-    "filled_price": "成交價格",
-    "filled_size": "成交數量（標的單位）",
-    "fees": "成交手續費（報價貨幣）",
-    "valuation_price": "執行時權益估值價格",
-    "requested_size": "委託規模（依規模類型）",
-    "requested_size_kind": "委託規模數值類別",
-    "requested_size_type": "委託規模類型",
-    "requested_direction": "允許的持倉方向",
-    "requested_fee_rate": "單邊手續費率",
-    "requested_fixed_fees": "每次固定費用（報價貨幣）",
-    "requested_slippage": "滑價率",
-    "mark_price": "收盤估值價格",
-    "cash": "現金（報價貨幣）",
-    "free_cash": "可用現金（引擎帳本，報價貨幣）",
-    "position": "總持倉數量（標的單位）",
-    "asset_value": "持倉市值（報價貨幣）",
-    "equity": "帳戶權益（報價貨幣）",
-    "raw": "原始資料",
-    **{
-        f"{phase}.{key}": f"{phase_label}{label}（{unit}）"
-        for phase, phase_label in (("before", "執行前"), ("after", "執行後"))
-        for key, label, unit in (
-            ("cash", "現金", "報價貨幣"),
-            ("position", "總持倉", "標的單位"),
-            ("equity", "帳戶權益", "報價貨幣"),
-            ("free_cash", "可用現金", "引擎帳本，報價貨幣"),
-            ("debt", "空單負債", "引擎帳本，報價貨幣"),
-        )
-    },
-}
-
-
 def metric_label(metric_id: str) -> str:
     """Name a known metric without substituting its saved definition."""
     return _METRIC_LABELS.get(metric_id, f"未識別指標：{metric_id}")
