@@ -57,6 +57,16 @@ _BANNED_ATTR_CALLS = {
 }
 
 
+def static_policy_payload() -> dict[str, list[str]]:
+    """Expose the exact static rules; this policy is not a Python sandbox."""
+    return {
+        "allowed_import_roots": sorted(_ALLOWED_IMPORT_ROOTS),
+        "blocked_import_roots": sorted(_BANNED_IMPORTS),
+        "blocked_call_names": sorted(_BANNED_CALLS),
+        "blocked_attribute_calls": sorted(_BANNED_ATTR_CALLS),
+    }
+
+
 class StrategyValidator:
     """Pure strategy source validation helpers."""
 
