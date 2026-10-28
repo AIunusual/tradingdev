@@ -11,7 +11,7 @@ from tests.e2e.llm_client import ToolCall
 from tests.e2e.strategy_scenarios import SCENARIOS
 from tests.e2e.test_llm_workflows import assert_workflow
 from tests.integration.execution_fixtures import (
-    execution_options,
+    execution_evidence_draft,
     synthetic_preflight_receipt,
 )
 
@@ -95,11 +95,16 @@ def legacy_calls() -> list[ToolCall]:
             },
         ),
         ToolCall(
+            "save_research_evidence",
+            {"draft": execution_evidence_draft(SCENARIOS["legacy"].parameters)},
+            {"success": True, "evidence_id": "e" * 32},
+        ),
+        ToolCall(
             "prepare_backtest",
             {
                 **identity,
                 "research": {"kind": "inherit_selected_revision"},
-                **execution_options(SCENARIOS["legacy"].parameters),
+                "evidence_id": "e" * 32,
             },
             {
                 "success": True,

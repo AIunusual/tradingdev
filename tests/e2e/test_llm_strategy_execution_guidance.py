@@ -21,6 +21,7 @@ from tests.e2e.strategy_execution_guidance import (
     GUIDANCE_TOOLS,
     assert_guidance_workflow,
     assert_guidance_workspace,
+    seed_guidance_evidence,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
@@ -33,6 +34,7 @@ def test_llm_strategy_execution_guidance(pytestconfig: pytest.Config) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
+        seed_guidance_evidence(workspace)
         turns: list[ModelTurn] = []
 
         async def observe_final(turn: ModelTurn) -> None:

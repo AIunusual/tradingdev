@@ -35,7 +35,8 @@ strategy-created threads or processes must explicitly initialize their own strea
 base interface and revision lifecycle. Each reply identifies its selected section
 and lists `available_sections` with their purposes. The `content` object contains
 only that complete section: request `section="research"` for the research-input
-schema and shared simulation policy, `section="example"` for the Python/YAML pair,
+schema and shared simulation policy, `section="evidence"` for parameter proposals,
+source claims and formula recording, `section="example"` for the Python/YAML pair,
 or `section="configuration"` for the executable YAML schema and financial-setting
 notes. Research schema and policy are projected from their domain definitions.
 Unknown sections fail; a missing core reference does not produce an empty
@@ -82,6 +83,26 @@ sell-only instruction to close a long. Both modes shift signals by one bar and
 execute signal-driven entries and exits at the following bar's open, falling back
 to close when open is absent. Stop-loss and take-profit rules are separate.
 
+Signal execution explicitly fixes the critical vectorbt 1.2.0 sizing, reversal,
+order-cost and stop defaults under the versioned execution policy. An omitted
+`position_size` uses available capital after execution costs; a specified amount
+requests that quote-currency notional, with partial fills allowed when cash is
+insufficient. Zero opens no positions. Repeated same-direction signals do not
+add to a position. Fixed-notional shorts do not lock cash, so this is not a
+guarantee of unleveraged exposure. Neither mode models complete margin,
+liquidation, borrowing or funding-payment rules, or provides a leverage setting.
+
+Signal stops use the entry bar's **close** as their reference and, on later bars,
+inspect only the range between **open and close**, not the market `high`/`low`
+columns. Stop-loss takes priority over take-profit and ordinary signals. A gap
+across a threshold fills at open; otherwise the threshold price is used. The
+fixed `stoplimit` policy applies no exit slippage to these stop orders, while
+commission still applies. A zero stop is a zero-distance threshold, not disabled.
+Stops do not execute on the entry bar; after a stop exit, a later signal-state
+change is needed for another entry. `re_entry_after_sl` does not affect signal
+mode. These are historical simulation assumptions, not exchange execution
+guarantees or isolation from every possible global vectorbt setting.
+
 The published SMA example is explicitly long-only: emit `1` on every row where
 both averages are finite and the fast average exceeds the slow average, otherwise
 emit `0`, including equality and warm-up. Adapt this example to the user's actual
@@ -102,10 +123,33 @@ nonmissing, unique, increasing timestamps; they are normalized to UTC.
 
 Volume mode applies optional `size_weight` values to the following bar with
 `shift(1).fillna(1.0)`. The resulting weights must be finite and strictly positive;
-zero is not a trade-suppression flag. Emit `signal=0` to prevent new entries; set
+zero is not a trade-suppression flag. The weight multiplies the base notional
+only when opening a new position, including reversal and stop re-entry; changes
+while holding do not rebalance the existing position. An omitted or null
+`position_size` uses 200 quote-currency units; explicit zero opens no positions
+and creates no zero-quantity trades. Emit `signal=0` to prevent new entries; set
 `signal_as_position: true` if zero should also close an existing position. With
 the default `false`, zero retains an existing position. An opposite nonzero
 signal closes the current position and opens one in the opposite direction.
+
+Volume stops first check an existing position against the current bar's high/low,
+using entry price as the reference; stop-loss wins if both thresholds are hit,
+and fills use the threshold price. A zero stop disables it. New positions are
+not checked for stops on their entry bar. With `re_entry_after_sl: true`, a
+nonzero shifted signal re-enters at the stop bar's close unless the monthly loss
+breaker has triggered. With `false`, no new position opens on that bar; the
+simulator stays flat until a later shifted signal differs from the stop bar's
+signal, including a change to zero. An opposite signal on the stop bar itself
+does not open a position and becomes the signal that must subsequently change.
+A new month resets the monthly breaker but does not clear this signal wait;
+signal changes during a monthly pause can clear the wait, while the monthly
+pause still prevents entry. Fees and separate notional slippage charges apply
+on each entry and exit, including a final close at the last bar's close.
+
+The confirmation text, chat summary and HTML show the same backend-resolved
+execution assumptions. They describe simulator policy, not proof that strategy
+code or an ML model implements the requested idea, avoids look-ahead, or passed
+preflight checks; completed checks are recorded separately.
 
 Validation, dry-run, backtest and walk-forward use the same constructor binding:
 YAML parameters become keyword arguments. Missing required parameters and names
@@ -846,17 +890,24 @@ workspace.
    marks the strategy runnable when it passes.
 4. `promote_strategy`: strategy tool that marks a runnable generated strategy
    as promoted (owned by `StrategyService`).
-5. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
+5. `save_research_evidence`: save the checked trading rules/formulas, parameter
+   descriptions, proposal origins and limitations. Use the host's actual web
+   capability for primary references; record only sources actually retrieved or
+   supplied. Without retrieval, label proposals unverified and clarify unsupported
+   ranges. A fixed set of alternatives does not authorize return optimization.
+6. `prepare_backtest` / `prepare_comparison` / `prepare_walk_forward` / `prepare_optimization`: resolve
    the required research input, capture an execution manifest, check code and
    configuration offline, and prepare a
-   plain-language confirmation and HTML artifact. Only runnable or promoted
+   plain-language confirmation and HTML artifact using the saved `evidence_id`.
+   Every effective parameter must have an origin; missing bindings return exact
+   targets and values for correction through a new record. Only runnable or promoted
    generated strategies, and promoted bundled strategies, are eligible. Preparation creates a plan,
    without creating a formal job or run.
-6. Present `confirmation_summary` and a clickable link to the complete HTML,
+7. Present `confirmation_summary` and a clickable link to the complete HTML,
    then end the conversation turn. Wait for the user to read it and explicitly
    approve, decline or request changes in a later turn. Do not paste the full
    settings, search grid or validation evidence into the conversation.
-7. `submit_execution_decision(plan_id, decision)` relays that decision:
+8. `submit_execution_decision(plan_id, decision)` relays that decision:
    `approve` submits the captured manifest, `decline` cancels, and `revise` cancels
    with `confirmation_adjustment_requested`. Edits require a new plan, a fresh
    code check and another user confirmation. Initial task instructions, silence,
@@ -1009,23 +1060,45 @@ dependencies, the engine environment, market data, or RNG state, and therefore
 does not guarantee fully reproducible results. Bundled strategies remain
 Git-managed and promoted with `revision_id: null`.
 
-Every preparation requires `presentation`; callers do not supply historical
-sample budgets or minimum-history declarations. Presentation has a `title`, `summary`,
+All four MCP preparation tools require an `evidence_id` returned by
+`save_research_evidence`;
+callers do not supply historical sample budgets or minimum-history declarations.
+The saved draft contains `presentation` with a `title`, `summary`,
 and `parameter_descriptions`, which maps the union of captured constructor and
 effective candidate leaves to a distinct readable `label`, a `description`, and
 optional `unit`. Keys are
 JSON pointers relative to `strategy_execution.constructor_kwargs`: for example,
 `/fast_period` for a generated strategy or `/config/k_period` for a bundled strategy.
-The confirmation builder rejects missing or extra descriptions. The assistant
-supplies this technical mapping; the user reviews readable names, values and units.
+Research binding rejects missing or extra descriptions and incomplete provenance
+with `research_evidence_binding_invalid`. Save corrected evidence and prepare
+again using the new ID. The assistant supplies this technical mapping; the user
+reviews readable names, values and units.
+
+Evidence capacity is checked both when saving and after binding. The canonical
+JSON draft must fit within 512 KiB. Preparation allows at most 1,024 targets
+(optimization counts the base plus every search-axis option, not Cartesian
+trials) and 4,096 parameter bindings summed across targets. The complete expanded
+`BoundResearchEvidence`, including the saved record, resolved values and origins,
+must independently fit within 512 KiB. A draft can therefore save successfully
+but fail preparation. Reduce the proposed candidate/search options or the
+strategy's parameter structure, or shorten explanations to fit; retain complete
+descriptions and origins for every effective parameter. Never omit required
+bindings or silently split the user's requested comparison to evade these limits.
+Each captured parameter value and reference claim value must also be finite,
+acyclic JSON with at most 4,096 value nodes and depth 16 (root depth zero).
+Strings are limited to 4,000 characters and object keys to 512 characters.
+These checks apply independently of the overall byte/binding budgets; simplify
+an affected value or the strategy parameter structure before preparing again.
+The tool schema specifies additional field lengths, list counts and identifiers.
+
 Optional `backtest_overrides` capture other engine settings in the same plan;
 research supplies capital, costs and annualization choices.
 The short conversation summary uses `summary`, not `title` or the saved name,
 and includes resolved capital/cost sources and the annualization basis. HTML
 retains the title, saved name, complete settings, policy and inheritance details.
-This presentation schema does not contain a complete formal trading-rule or
-formula representation; model summaries and parameter descriptions do not prove
-equivalence to the strategy's Python implementation.
+The surrounding research draft also contains trading conditions, formulas, variable
+units, source claims and limitations. These client-authored explanations do not
+prove equivalence to the strategy's Python or ML implementation.
 
 The preflight receipt records offline code/configuration checks and the fixed
 synthetic signal fixtures used for generated strategies. It does not contain market

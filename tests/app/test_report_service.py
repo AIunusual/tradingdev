@@ -1613,3 +1613,37 @@ def test_registered_manifest_identity_and_byte_hash_are_checked_before_reporting
         "run"
     )
     assert history["code"] == "execution_manifest_invalid"
+
+
+@pytest.mark.parametrize(
+    ("sections", "details"),
+    [
+        (["overview", "trades"], True),
+        (["settings"], True),
+        (["research"], False),
+        ([], False),
+    ],
+)
+def test_report_delivery_guide_matches_html_and_selected_details(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    sections: list[str],
+    details: bool,
+) -> None:
+    _, _, service = context
+    _save(context)
+    response = service.generate_report(["run"], sections)
+    assert response["success"], response
+    path = Path(response["path"])
+    guide = response["navigation_instructions"]
+    assert guide in path.read_text()
+    assert _payload(path)["navigation_instructions"] == guide
+    assert (
+        json.loads(path.with_name("manifest.json").read_text())[
+            "navigation_instructions"
+        ]
+        == guide
+    )
+    assert ("點選總覽表格或結果清單中的結果列" in guide) is details
+    assert ("配對交易損益" in guide) is ("trades" in sections)
+    assert ("設定與資料覆蓋" in guide) is ("settings" in sections)
+    assert "委託、成交與帳戶核對" not in guide

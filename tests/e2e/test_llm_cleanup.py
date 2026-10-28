@@ -15,7 +15,10 @@ from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import Scenario, market_frame
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
-from tests.integration.execution_fixtures import execution_options, research_from_config
+from tests.integration.execution_fixtures import (
+    research_from_config,
+    save_execution_evidence,
+)
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
 if TYPE_CHECKING:
@@ -121,7 +124,9 @@ async def seed_cleanup_workspace(workspace: MCPWorkspace) -> CleanupSeed:
             strategy_id=STRATEGY_ID,
             revision_id=runnable_id,
             research={"kind": "inherit_selected_revision"},
-            **execution_options(config["strategy"]["parameters"]),
+            evidence_id=await save_execution_evidence(
+                client, config["strategy"]["parameters"]
+            ),
         )
         assert prepared["success"], prepared
         started = await client.call(

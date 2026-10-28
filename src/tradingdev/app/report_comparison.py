@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.comparisons import ComparisonStore
+from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
 from tradingdev.app.execution_dataset import ExecutionDataset
 from tradingdev.domain.backtest.metrics import timestamp_index
 from tradingdev.domain.comparison_results import canonical_json_object
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
         LoadedHistoryRun,
         TradeHistoryService,
     )
+    from tradingdev.domain.approved_research import ApprovedResearch
     from tradingdev.domain.comparison import ComparisonCandidate
 
 
@@ -28,6 +30,7 @@ class ReportComparison:
 
     evidence: dict[str, Any]
     runs: dict[str, LoadedHistoryRun]
+    research_evidence: ApprovedResearch | None = None
 
 
 def load_report_comparison(
@@ -47,6 +50,7 @@ def load_report_comparison(
     if not isinstance(expected_hash, str):
         raise ManifestError("Comparison job has no accepted manifest hash")
     manifest = comparisons.load_manifest(job_id, expected_hash=expected_hash)
+    research_evidence = SubmittedResearchStore(workspace).load_for_job(job, manifest)
     ledger = comparisons.load_ledger(job_id, expected_hash=expected_hash)
     if (
         job.get("status") not in {"done", "failed", "cancelled"}
@@ -124,8 +128,13 @@ def load_report_comparison(
         assert dataset is not None and timestamps is not None
         loaded = history.load_run(row.run_id)
         _verify_run(loaded, candidate, job_id, dataset.dataset_id, timestamps)
+        if loaded.research_evidence != research_evidence:
+            raise ManifestError("Comparison child research differs from its parent")
         runs[row.run_id] = loaded
     evidence = {
+        "research_evidence_status": "recorded"
+        if research_evidence is not None
+        else "not_recorded",
         "comparison_job_id": job_id,
         "status": job["status"],
         "counts": {
@@ -151,7 +160,7 @@ def load_report_comparison(
             ).hexdigest(),
         },
     }
-    return ReportComparison(evidence, runs)
+    return ReportComparison(evidence, runs, research_evidence)
 
 
 def _parameters(candidate: ComparisonCandidate) -> dict[str, Any]:

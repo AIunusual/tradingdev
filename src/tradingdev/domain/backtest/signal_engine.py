@@ -8,6 +8,7 @@ import numpy as np
 import vectorbt as vbt
 
 from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+from tradingdev.domain.backtest.execution_policy import signal_execution_defaults
 from tradingdev.domain.backtest.execution_records import extract_execution_records
 from tradingdev.domain.backtest.metrics import (
     calculate_metrics,
@@ -88,6 +89,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
         )
 
         kwargs: dict[str, Any] = {
+            **signal_execution_defaults(),
             "close": close,
             "open": open_,
             "price": open_,
@@ -100,6 +102,7 @@ class SignalBacktestEngine(BaseBacktestEngine):
             "slippage": self._slippage,
             "freq": self._freq,
             "log": True,
+            "use_stops": self._stop_loss is not None or self._take_profit is not None,
         }
 
         if self._position_size is not None:

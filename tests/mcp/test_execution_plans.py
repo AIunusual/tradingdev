@@ -37,9 +37,7 @@ def test_prepare_and_read_wait_for_a_separate_explicit_decision(
 ) -> None:
     context = plan_context(tmp_path / "研究 (case) 100% ?#")
     if json_arguments:
-        context.arguments["presentation"] = json.dumps(
-            context.arguments["presentation"]
-        )
+        context.arguments["research"] = json.dumps(context.arguments["research"])
         context.arguments["parameters"] = "null"
         context.arguments["backtest_overrides"] = "null"
 
@@ -278,3 +276,54 @@ def test_decision_tool_schema_requires_one_explicit_choice(tmp_path: Path) -> No
             assert "default" not in schema["properties"]["decision"]
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("json_draft", [False, True])
+def test_save_evidence_returns_new_compact_id_without_running_program_checks(
+    tmp_path: Path, json_draft: bool
+) -> None:
+    from tests.research_evidence_fixtures import research_evidence_draft
+
+    context = plan_context(tmp_path)
+    draft = research_evidence_draft(context.preflight.prepared.manifest).model_dump(
+        mode="json"
+    )
+
+    async def check() -> None:
+        async with Client(context.server, mode="legacy") as client:
+            arguments = {"draft": json.dumps(draft) if json_draft else draft}
+            first = await _call(client, "save_research_evidence", **arguments)
+            second = await _call(client, "save_research_evidence", **arguments)
+            assert first["success"] and second["success"]
+            assert first["evidence_id"] != second["evidence_id"]
+            assert "draft" not in first
+            assert "sources" not in first
+            assert first["source_count"] == 0
+            assert context.preflight.requests == []
+            assert context.runner.calls == []
+            prepared = await _call(
+                client,
+                "prepare_backtest",
+                **(context.arguments | {"evidence_id": first["evidence_id"]}),
+            )
+            assert prepared["success"]
+
+    asyncio.run(check())
+
+
+def test_removed_presentation_and_missing_evidence_id_fail_before_preparation(
+    tmp_path: Path,
+) -> None:
+    context = plan_context(tmp_path)
+
+    async def check() -> None:
+        async with Client(context.server, mode="legacy") as client:
+            missing = dict(context.arguments)
+            missing.pop("evidence_id")
+            for arguments in (missing, context.arguments | {"presentation": {}}):
+                result = await client.call_tool("prepare_backtest", arguments)
+                assert result.is_error
+
+    asyncio.run(check())
+    assert not context.preflight.requests
+    assert not context.runner.calls

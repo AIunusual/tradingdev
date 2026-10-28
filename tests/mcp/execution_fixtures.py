@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from tests.integration.execution_fixtures import execution_options, research_arguments
+from tests.integration.execution_fixtures import research_arguments
+from tests.research_evidence_fixtures import save_research_evidence
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -112,8 +113,6 @@ def plan_context(root: Path) -> PlanContext:
         preflight,
         {
             **research_arguments(arguments),
-            **execution_options(
-                prepared.manifest.strategy_execution.constructor_kwargs
-            ),
+            "evidence_id": save_research_evidence(service.evidence, prepared.manifest),
         },
     )

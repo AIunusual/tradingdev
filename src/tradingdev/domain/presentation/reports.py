@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 REPORT_SCHEMA_VERSION = 2
-REPORT_TEMPLATE_VERSION = "19"
+REPORT_TEMPLATE_VERSION = "21"
 SCOPED_REPORT_SECTIONS = frozenset(
     {"settings", "metrics", "equity", "ledger", "trades"}
 )
@@ -31,6 +31,12 @@ REPORT_SECTIONS = MappingProxyType(
                 "All run/scope parameters, dates, roles and saved performance, "
                 "linked to individual result details when detail sections "
                 "are selected.",
+            ),
+            ReportSectionDefinition(
+                "research",
+                "交易規則、公式與參數依據",
+                "Saved pre-execution rules, formulas, source claims, parameter "
+                "provenance and execution assumptions; absence stays explicit.",
             ),
             ReportSectionDefinition(
                 "settings",
@@ -81,7 +87,32 @@ REPORT_SECTIONS = MappingProxyType(
 REPORT_RECIPES = MappingProxyType(
     {
         "standard": tuple(REPORT_SECTIONS),
-        "comparison": ("overview", "metrics", "equity", "provenance"),
-        "trades": ("overview", "ledger", "trades", "provenance"),
+        "comparison": ("overview", "research", "metrics", "equity", "provenance"),
+        "trades": ("overview", "research", "ledger", "trades", "provenance"),
     }
 )
+
+
+def report_navigation_instructions(
+    sections: list[str], *, has_results: bool, comparison: bool
+) -> str:
+    """Describe only navigation and detail sections present in this report."""
+    details = [
+        REPORT_SECTIONS[key].title for key in sections if key in SCOPED_REPORT_SECTIONS
+    ]
+    if has_results and details:
+        return (
+            "點選總覽表格或結果清單中的結果列，可進入該組參數的詳情；"
+            "再以「返回」或「切換結果」查看其他組。已選取的詳情章節："
+            + "、".join(details)
+            + "。所有內容保存在同一份離線 HTML。"
+        )
+    if comparison and not has_results:
+        return (
+            "此比較沒有成功候選的績效結果。以下保留全部候選、無結果原因、"
+            "共用設定與行情證據；沒有推算報酬或資金曲線，也沒有單組交易明細入口。"
+        )
+    return (
+        "本報告僅呈現已選取的總覽或共用說明，未選取單組詳情章節。"
+        "所有內容保存在同一份離線 HTML。"
+    )

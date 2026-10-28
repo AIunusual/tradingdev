@@ -57,11 +57,16 @@ workspace/
       result.json
       performance.json
       observations.json
+      research_evidence.json
       config.yaml
       strategy.py
       dataset_fingerprint.json
       pipeline_result.pkl
   feature_requests/
+  research_evidence/
+    <evidence_id>.json
+  submitted_research/
+    <job_id>.json
   execution_plans/
     <plan_id>/
       confirmation.txt
@@ -76,6 +81,65 @@ workspace/
 Comparison snapshots and receipts are published only after approval and data
 loading. A failed or cancelled comparison may have neither `snapshot.parquet`
 nor `receipt.json` if it stopped before data publication.
+
+## Research Evidence Records
+
+`ResearchEvidenceService` saves client-authored explanations without fetching
+sources, executing strategies or acquiring market data. Each
+`research_evidence/<evidence_id>.json` is a canonical UTF-8 record, limited to
+512 KiB, with a creation time, 32-character hexadecimal ID and content digest.
+Publication does not replace an existing record; an identical record can be
+retried. Reads check the ID, schema, digest and canonical bytes, rejecting unsafe
+paths and symbolic links. These checks detect inconsistency, not an attacker
+who can rewrite both the record and its digest; approved content must retain its
+own expected digest.
+
+The draft contains human parameter descriptions, trading conditions and formulas,
+variable meanings, limitations, source declarations and parameter provenance.
+Sources identify client-reported web retrieval or user-supplied references;
+neither their presence nor a hash proves that browsing occurred or that a claim
+is true. Reference-backed parameter declarations must cite explicit source claim
+values matching the effective values, including JSON type. Every cited claim must
+match each bound value; differently valued settings need separate declarations.
+A source supporting only a formula cannot
+also establish a suggested parameter value.
+
+`bind_research_evidence` expands grouped provenance declarations against the
+complete fixed execution, rejecting missing, overlapping or unknown targets and
+parameter pointers. Values come from the manifest, not from a repeated client
+copy. A single constructor uses target `base`; fixed comparisons use
+`candidate_1` through `candidate_8`. Optimization also binds each search-axis
+option's merged parameter subtree as `search_<group>_<option>`; the base value
+alone does not explain the search grid. Bound content retains the complete record,
+target values, execution identities and its own digest. These are explanation
+bindings, not proof that the supplied formulas faithfully implement Python or ML.
+
+`ApprovedResearch` freezes bound declarations together with one versioned execution
+policy disclosure per distinct manifest. Submission and worker startup compare the
+saved policy with the simulator's current policy before acquiring data or running
+the strategy. Historical reads validate the saved content and identity without
+replacing its wording with today's policy.
+
+`submitted_research/<job_id>.json` retains the complete target and approved snapshot
+before worker launch; the job stores its expected `research_evidence_hash`. The
+canonical envelope is limited to 4 MiB, with its size checked before confirmation.
+Successful runs receive an independently readable `research_evidence.json`, registered
+as artifact type `research_evidence` with its byte hash, parent job ID and approved
+content hash. Publication rollback and comparison recovery include this artifact.
+A failed comparison can retain its parent disclosure even when no run was published.
+Removing the original draft, confirmation HTML or submitted copy does not invalidate
+a completed run's registered copy. Missing or changed declared evidence is an error;
+legacy runs and direct callers that never supplied evidence remain explicitly
+`not_recorded`, rather than receiving reconstructed explanations.
+
+Historical scope reads verify parameter membership before attaching provenance.
+Optimization binds each training trial to its Cartesian search position, including
+duplicate-valued options, and the selected test scope to the saved winning trial.
+Walk-forward constructor settings remain distinct from fitted model parameters.
+Walk-forward reads require the complete numbered train/test fold set and summary,
+ordered disjoint test windows, and training observations before their test window.
+Active explicit windows are checked using inclusive UTC calendar days. Automatic
+fold checks do not reconstruct the original dataset or prove its split geometry.
 
 ## SQLite Tables
 
@@ -655,14 +719,23 @@ controls, not an operating-system memory limit or a Python sandbox.
 
 ## Execution Plans and Confirmation Documents
 
-`ExecutionPlan` schema version 2 binds a unique 32-character `plan_id`, the full
+`ExecutionPlan` schema version 3 binds a unique 32-character `plan_id`, the full
 single execution or comparison manifest, `original_config_path`, the matching
-`PreflightReceipt` or `ComparisonPreflightReceipt`,
+`PreflightReceipt` or `ComparisonPreflightReceipt`, `ApprovedResearch`,
 `ConfirmationDocument`, timezone-aware `created_at`/`expires_at`, and `plan_hash`.
 The hash covers canonical JSON of every field except itself. The document and
 preflight hashes must identify the same manifest; the document also identifies
 the same plan. Plans currently expire one hour after preparation. The content
 does not change when approval state changes.
+
+`save_research_evidence(draft)` first stores the client-authored explanation and
+returns a compact ID/hash receipt. All four MCP preparation tools require this
+`evidence_id`, replacing their former inline `presentation` argument. Preparation
+loads the record, binds every effective parameter and captures the current execution
+policy; the plan retains its own full copy. Deleting or replacing the original draft
+does not change an existing plan. Binding rejection returns
+`research_evidence_binding_invalid` with `required_parameter_bindings` and
+`required_parameter_paths`; corrections require a newly saved record.
 
 `PreflightService` performs offline preparation in a supervised child with a
 60-second default budget covering imports, configuration resolution, execution-mode
@@ -720,11 +793,12 @@ If process cleanup cannot be verified, the directory is retained and the operati
 reports failure; file cleanup failure is also an error. Preparation publishes no
 regular job or run. These resource controls are not a generated-Python sandbox.
 
-Plan and confirmation-document schemas are both version 2. Older confirmation
+The plan schema is version 3; the confirmation-document schema remains version 2.
+Older confirmation
 plans must be prepared and approved again; they are not automatically migrated
 or deleted. Existing run results and reports do not need to be recomputed.
 
-`ConfirmationPresentation` accepts only model-authored title, summary and
+Within a research draft, `ConfirmationPresentation` accepts model-authored title, summary and
 `parameter_descriptions`. Description keys are JSON pointers relative to captured
 constructor arguments; each value contains a label, explanation and optional
 unit, never an executable parameter value. Labels must distinguish values and
@@ -736,10 +810,11 @@ Candidate presentation and strategy loading share the same pure parameter merge:
 partial objects preserve unnamed captured fields, empty objects preserve an
 existing object, and non-object values replace the complete entry. Each search
 group displays its merged candidate values; it does not present a partial
-override as a complete replacement. Missing or
-extra descriptions return `invalid_confirmation_presentation` with
-`required_parameter_paths`, allowing the model to repair wording without changing
-the source revision. Model units do not rescale captured values.
+override as a complete replacement. Missing or extra descriptions and duplicate
+labels are rejected during binding with `research_evidence_binding_invalid`,
+`required_parameter_bindings` and `required_parameter_paths`. Save corrected
+evidence and prepare again; wording repairs do not require a new strategy revision.
+Model units do not rescale captured values.
 
 The backend builds a version 2 typed document with fixed strategy, market, parameters,
 execution, validation, optimization, preflight and limitations sections.
@@ -757,9 +832,12 @@ the observed-UTC-daily-return basis and unavailable sampling reasons. Technical
 details include the saved strategy name, policy version, annualization decision,
 and any selected revision/config hash. The model's presentation title remains a
 separate HTML page title. Research provenance does not prove that the Python
-implements the outline. There is currently no complete formal trading-formula
-field or backend proof of equivalence between model prose and arbitrary strategy
-code; program checks retain their stated coverage.
+implements the outline. Saved research adds conditions, actions, formulas, variable
+units, parameter-value provenance and source claims to the same typed document.
+These are client explanations, not a backend proof of equivalence with arbitrary
+strategy code. The full document retains the versioned execution policy; its short
+chat summary uses the policy's selected plain-language assumptions. Program checks
+retain their stated coverage.
 
 `execution_plans/<plan_id>/confirmation.txt` and `confirmation.html` preserve the
 reviewable documents. The HTML is registered as `execution_confirmation` under
@@ -771,7 +849,9 @@ Plan states are `ready`, `awaiting_confirmation`, `submitting`, `submitted`,
 `cancelled`, or `failed`. A retained `.approval.lock` and state comparison
 serialize transitions; only one submission reservation can be active. The plan
 stays `ready` while the user reads it. On approval, the service checks expiry and
-current executable-source integrity before reserving and again before submitting.
+current executable-source integrity and the saved execution policy before reserving
+and again before submitting. A policy change requires a newly prepared plan;
+historical plan lookup keeps the saved wording.
 An internal server-owned challenge binds the submission to the same plan content;
 the client is responsible for truthfully relaying user consent. Repeating a
 successful submission returns its original job ID rather than launching twice.
@@ -1203,7 +1283,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 19 uses two navigation levels within one offline HTML
+Report schema 2 / template 21 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.
@@ -1219,7 +1299,11 @@ MCP instructions request a standard report when completing an execution with
 performance/risk interpretation, unless the user asks for summary/metrics only
 or opts out. This is a client workflow requirement, not an automatic worker step.
 The final user-facing response must deliver the returned report link, identify
-the runs/scopes and explain the selected detail views. Tool success and an
+the runs/scopes and explain the selected detail views. `generate_report` returns
+`navigation_instructions` from the same section-aware definition used by the HTML
+introduction; this text is also saved in the payload and manifest. The client must
+include it with the final link. It does not advertise unselected detail sections or
+trade links for a comparison with no successful results. Tool success and an
 intermediate link do not establish delivery. Reports and their source runs remain
 workspace artifacts after server shutdown; shutdown does not authorize cleanup.
 If report generation or delivery fails, the client should preserve those sources
@@ -1229,9 +1313,21 @@ Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.
 The overview, if selected, stays first; other sections keep their requested order.
 Unknown result hashes leave the main view visible rather than opening empty details.
-The standard recipe is `overview`, `settings`, `metrics`, `equity`, `ledger`,
-`trades`, `limitations`, `provenance`; comparison is `overview`, `metrics`, `equity`,
-`provenance`; trades is `overview`, `ledger`, `trades`, `provenance`.
+The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
+`ledger`, `trades`, `limitations`, `provenance`; comparison is `overview`, `research`,
+`metrics`, `equity`, `provenance`; trades is `overview`, `research`, `ledger`,
+`trades`, `provenance`.
+The `research` section belongs to the main view. It displays saved trading formulas,
+plain-language rules, parameter origins and source claims, limitations and versioned
+execution assumptions. Scalar backtest scopes show their own parameter origins
+and saved policy. Aggregate walk-forward summaries do not repeat per-fold origins
+or execution assumptions; inspect their original train/test folds instead.
+Shared research snapshots are stored once under their content hash in
+the report's `research_documents`; runs reference that hash. A comparison with no
+successful runs still retains its parent's disclosure. Explicitly omitting the
+section changes visibility, not the saved payload or evidence validation. Missing
+legacy explanations remain labelled as absent; reports never synthesize formulas
+or infer that reference URLs were actually visited.
 The old `executions` and `account_history` section IDs are invalid, with no alias
 or compatibility shim. Their MCP history query tools and saved observations are
 unchanged. Existing reports retain their original versions and remain untouched.

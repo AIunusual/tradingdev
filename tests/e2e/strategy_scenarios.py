@@ -116,7 +116,8 @@ init_cash=10000、fees=0、slippage=0、annualization=365；與 YAML 的相應�
 接著透過 MCP prepare_backtest 準備這個策略的執行計畫，
 research={{kind:inherit_selected_revision}}，明示上述已通過 dry-run 的 revision_id，
 沿用剛核對過的完整研究設定，不在 backtest_overrides 重複成本或期間。
-presentation 必須提供中文 title、summary，
+先依 evidence 契約保存研究說明，再將 evidence_id 傳給 prepare_backtest。
+研究說明中的 presentation 必須提供中文 title、summary，
 及 parameter_descriptions；以每個建構子參數的 JSON pointer 為 key
 （例如 /fast_period、/slow_period 或 /lookback），各自提供 label、description、unit。
 說明每個參數的白話意義與單位，不要把程式識別字當作唯一說明。

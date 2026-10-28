@@ -21,7 +21,6 @@ from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.research_preparation import ResearchPreparationService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.preflight import PreflightRequest
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
 from tradingdev.domain.strategies.loader import StrategyLoader
 
 if TYPE_CHECKING:
@@ -100,15 +99,13 @@ def test_summary_mismatch_preserves_complete_expected_and_actual_diagnostics(
 
 def _prepare(context: PlanContext) -> ToolCall:
     arguments = dict(context.arguments)
-    presentation = ConfirmationPresentation.model_validate(
-        arguments.pop("presentation")
-    )
+    evidence_id = arguments.pop("evidence_id")
     result = context.service.prepare(
         PreflightRequest(
             kind="backtest",
             arguments=arguments,
         ),
-        presentation,
+        evidence_id,
     )
     assert isinstance(result, PlanResponse), result
     return ToolCall(
@@ -358,7 +355,7 @@ def test_revision_requires_new_saved_plan_with_requested_settings(
     rejected = _decision(context, first.result["plan_id"], "revise")
     context.arguments["research"]["fees"] = user.revised_fees
     args: dict[str, Any] = {
-        key: value for key, value in context.arguments.items() if key != "presentation"
+        key: value for key, value in context.arguments.items() if key != "evidence_id"
     }
     workspace = context.service.workspace
     changed = ResearchPreparationService(

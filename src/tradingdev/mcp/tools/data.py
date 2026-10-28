@@ -89,7 +89,10 @@ def register(mcp: MCPServer, service: DataService) -> None:
     def inspect_dataset(config_path: str | None = None) -> DatasetInspection:
         """Inspect local caches, optionally against an existing run config.
 
-        This does not fetch data. Use ensure_data to acquire missing market data.
+        This does not fetch data. Missing caches do not block plan preparation;
+        approved backtest execution obtains its own data. Use ensure_data only
+        when the user explicitly requests obtaining data, not merely to prepare
+        a strategy confirmation.
         """
         path = Path(config_path) if config_path else None
         if path is not None and not path.is_file():
@@ -113,8 +116,13 @@ def register(mcp: MCPServer, service: DataService) -> None:
     ) -> EnsureDataResponse:
         """Fetch and cache OHLCV data for the requested range when needed.
 
+        Requires an explicit user request to obtain data; a request to develop
+        or prepare a strategy alone does not authorize downloading. Do not call
+        this to prepare a strategy confirmation: that stage uses code/settings
+        and synthetic fixtures only. Approved backtest execution obtains its own
+        data, so this is not a backtest prerequisite.
         Select a source from list_data_sources. Completed-year downloads may
-        replace partial caches. Inspect the cache before starting a backtest.
+        replace partial caches.
         """
         try:
             MarketDataRequest.model_validate(

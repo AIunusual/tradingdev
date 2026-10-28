@@ -9,7 +9,6 @@ from jsonschema import Draft202012Validator, ValidationError, validate
 from mcp import ClientSession
 
 from tests.integration.execution_fixtures import (
-    execution_options,
     research_arguments,
     research_input,
 )
@@ -53,6 +52,7 @@ _READ_ONLY_TOOLS = {
 # intentionally independent of the server's annotation helper.
 _MUTATING_HINTS = {
     "save_strategy": (False, True, False, False),
+    "save_research_evidence": (False, False, False, False),
     "validate_strategy": (False, True, False, True),
     "dry_run_strategy": (False, True, False, True),
     "promote_strategy": (False, True, True, False),
@@ -192,7 +192,7 @@ async def test_application_errors_follow_advertised_output_schemas(
         "timeframe": "1h",
         "start_date": "2024-01-01",
         "end_date": "2024-01-08",
-        **execution_options({}),
+        "evidence_id": "0" * 32,
     }
     failures: list[tuple[str, dict[str, Any], str, object]] = [
         (name, missing_strategy, "success", False)
@@ -252,7 +252,7 @@ async def test_application_errors_follow_advertised_output_schemas(
                     "train_end": "2024-01-03",
                     "test_start": "2024-01-04",
                     "test_end": "2024-01-08",
-                    **execution_options({}),
+                    "evidence_id": "0" * 32,
                 },
                 "success",
                 False,

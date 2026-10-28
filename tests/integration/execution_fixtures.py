@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from tests.research_fixtures import research_for_config
 from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.research_evidence import ResearchEvidenceDraft
 
 if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPClient
@@ -87,11 +88,52 @@ def confirmation_presentation(parameters: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def execution_options(parameters: dict[str, Any]) -> dict[str, Any]:
-    """Describe offline preparation without requesting market samples."""
-    return {
-        "presentation": confirmation_presentation(parameters),
-    }
+def execution_evidence_draft(
+    parameters: dict[str, Any], *, target_paths: dict[str, list[str]] | None = None
+) -> dict[str, Any]:
+    """Authored evidence for scripted protocol tests; no browser is simulated."""
+    presentation = confirmation_presentation(parameters)
+    targets = target_paths or {"base": list(presentation["parameter_descriptions"])}
+    draft = ResearchEvidenceDraft.model_validate(
+        {
+            "presentation": presentation,
+            "rules": [
+                {
+                    "rule_id": "fixture",
+                    "condition": "合成策略條件成立",
+                    "action": "依測試策略的持倉訊號執行",
+                    "formula": "signal[t] = fixture_rule(history[:t+1], parameters)",
+                }
+            ],
+            "limits": ["離線合成測資的程式測試；未宣稱參數有外部來源。"],
+            "parameter_provenance": [
+                {
+                    "target_ids": [target_id],
+                    "parameter_paths": paths,
+                    "provenance": "model_proposal",
+                    "reason": "明確固定的測試提案。",
+                }
+                for target_id, paths in targets.items()
+                if paths
+            ],
+        }
+    )
+    return draft.model_dump(mode="json")
+
+
+async def save_execution_evidence(
+    client: MCPClient,
+    parameters: dict[str, Any],
+    *,
+    target_paths: dict[str, list[str]] | None = None,
+) -> str:
+    """Use the real public save tool before a scripted prepare call."""
+    saved = await client.call(
+        "save_research_evidence",
+        draft=execution_evidence_draft(parameters, target_paths=target_paths),
+    )
+    assert saved["success"] is True, saved
+    return str(saved["evidence_id"])
 
 
 def synthetic_preflight_receipt(manifest_hash: str) -> dict[str, Any]:

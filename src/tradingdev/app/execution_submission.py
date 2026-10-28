@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from tradingdev.domain.execution import ExecutionManifest
+from tradingdev.adapters.storage.submitted_research import SubmittedResearchStore
+from tradingdev.domain.execution import ExecutionManifest, ManifestError
 
 if TYPE_CHECKING:
     from tradingdev.adapters.execution.process_runner import ProcessRunner
     from tradingdev.app.job_store import JobStore
     from tradingdev.app.prepared_execution import PreparedSubmission
+    from tradingdev.domain.execution_target import ExecutionTarget
 
 
 class ExecutionSubmissionService:
@@ -34,6 +36,10 @@ class ExecutionSubmissionService:
     ) -> dict[str, Any]:
         manifest = prepared.manifest
         manifest.verify()
+        evidence = prepared.research_evidence
+        if evidence is not None:
+            evidence.verify_current_policy(manifest)
+            SubmittedResearchStore.validate_publication_size(manifest, evidence)
         if self._job_store.get_job(selected_id) is not None:
             raise ValueError(f"Job already exists: {selected_id}")
         extra: dict[str, Any] = {
@@ -44,6 +50,8 @@ class ExecutionSubmissionService:
             and manifest.optimization is not None
         ):
             extra["total_combinations"] = manifest.optimization.total_combinations
+        if evidence is not None:
+            extra["research_evidence_hash"] = evidence.content_hash
         self._job_store.create_job(
             job_id=selected_id, manifest=manifest, extra_payload=extra
         )
@@ -55,8 +63,17 @@ class ExecutionSubmissionService:
             else "tradingdev.mcp.workers.backtest"
         )
         try:
+            if evidence is not None:
+                SubmittedResearchStore(self._job_store.workspace).save(
+                    selected_id, evidence, manifest
+                )
             identity = self._process_runner.spawn_module(module, selected_id)
         except BaseException as exc:
+            self._job_store.update_job(
+                selected_id,
+                status="failed",
+                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
+            )
             if manifest.kind == "comparison":
                 from tradingdev.adapters.storage.comparisons import ComparisonStore
 
@@ -67,11 +84,6 @@ class ExecutionSubmissionService:
                         :4000
                     ],
                 )
-            self._job_store.update_job(
-                selected_id,
-                status="failed",
-                error=f"Worker failed to start: {type(exc).__name__}: {exc}",
-            )
             raise
         self._job_store.update_job(selected_id, **identity.job_fields())
         config = (
@@ -84,3 +96,21 @@ class ExecutionSubmissionService:
             "revision_id": config["strategy"].get("revision_id"),
             "manifest_hash": manifest.manifest_hash,
         }
+
+
+def verify_submission_research(
+    job_store: JobStore, job_id: str, target: ExecutionTarget
+) -> None:
+    """Check queued disclosure before acquiring data or executing strategy code."""
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise ManifestError("Research execution requires a submitted job")
+    research = SubmittedResearchStore(job_store.workspace)
+    evidence = research.load_for_job(job, target)
+    if evidence is not None:
+        evidence.verify_current_policy(target)
+    elif (
+        research.path(job_id, run=True).exists()
+        or job_store.get_artifact(f"{job_id}:research_evidence") is not None
+    ):
+        raise ManifestError("Research execution has no declared submission evidence")

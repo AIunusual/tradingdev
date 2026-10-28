@@ -13,9 +13,9 @@ import yaml
 
 from tests.integration.execution_fixtures import (
     confirm_prepared,
-    execution_options,
     research_from_config,
     research_input,
+    save_execution_evidence,
 )
 from tradingdev.domain.execution import ExecutionManifest
 
@@ -123,7 +123,16 @@ async def test_optimization_rejects_walk_forward_config_through_mcp(
             train_end="2024-01-03",
             test_start="2024-01-04",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                },
+            ),
         )
         assert rejected["success"] is False
         assert rejected["code"] == "invalid_optimization_request"
@@ -155,7 +164,16 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             train_end="2024-01-03",
             test_start="2024-01-03",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                },
+            ),
         )
         assert not overlapping["success"]
         assert "without overlap" in overlapping["error"]
@@ -173,7 +191,16 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             train_end="2024-01-03",
             test_start="2024-01-04",
             test_end="2024-01-07",
-            **execution_options({"direction": -1, "warmup": 2}),
+            evidence_id=await save_execution_evidence(
+                client,
+                {"direction": -1, "warmup": 2},
+                target_paths={
+                    "base": ["/direction", "/warmup"],
+                    "search_1_1": ["/direction"],
+                    "search_1_2": ["/direction"],
+                    "search_1_3": ["/direction"],
+                },
+            ),
         )
         assert prepared["success"] and prepared["status"] == "ready", prepared
         manifest_hash = prepared["manifest_hash"]

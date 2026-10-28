@@ -556,7 +556,7 @@ def test_eof_without_completed_turn_is_rejected() -> None:
         ({"type": "fileChange"}, "bypassed MCP"),
         ({"server": "foreign-server"}, "foreign-server"),
         ({"tool": "unapproved_tool"}, "unapproved_tool"),
-        ({"status": "failed"}, "MCP call failed"),
+        ({"status": "failed", "result": None}, "MCP call failed"),
     ],
 )
 def test_tool_failures_and_bypass_are_rejected(

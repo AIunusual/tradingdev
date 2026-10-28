@@ -5,14 +5,16 @@ from typing import Literal, Self
 from pydantic import JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.research_evidence import ResearchEvidenceDraft
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.schemas import StrategyStatus
+from tradingdev.domain.strategies.templates import StrategyContractTopic
 
 
 class StrategyContractSection(ContractModel):
     """Discoverable purpose of one complete contract section."""
 
-    id: Literal["core", "research", "example", "configuration"]
+    id: StrategyContractTopic
     description: str
 
 
@@ -46,14 +48,24 @@ class StrategyResearchContract(ContractModel):
     notes: list[str]
 
 
+class StrategyEvidenceContract(ContractModel):
+    """Parameter selection, truthful provenance and an executable-schema example."""
+
+    selection: list[str]
+    recording: list[str]
+    confirmation_and_results: list[str]
+    unsourced_single_execution_example: ResearchEvidenceDraft
+
+
 class StrategyContractResponse(ContractModel):
     """A selected section, with references to the remaining contract material."""
 
-    section: Literal["core", "research", "example", "configuration"]
+    section: StrategyContractTopic
     available_sections: list[StrategyContractSection]
     content: (
         StrategyCoreContract
         | StrategyResearchContract
+        | StrategyEvidenceContract
         | StrategyExampleContract
         | StrategyConfigurationContract
     )
@@ -63,6 +75,7 @@ class StrategyContractResponse(ContractModel):
         expected = {
             "core": StrategyCoreContract,
             "research": StrategyResearchContract,
+            "evidence": StrategyEvidenceContract,
             "example": StrategyExampleContract,
             "configuration": StrategyConfigurationContract,
         }

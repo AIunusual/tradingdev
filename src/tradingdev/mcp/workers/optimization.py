@@ -35,6 +35,7 @@ from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
+from tradingdev.app.execution_submission import verify_submission_research
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.optimization.grid_search import (
@@ -257,6 +258,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
         if manifest.kind != "optimization" or optimization is None:
             msg = "Job requires an optimization execution manifest"
             raise ValueError(msg)
+        verify_submission_research(job_store.get_default_job_store(), job_id, manifest)
         raw_config = manifest.config_for_execution()
         BacktestService().prepare_strategy(raw_config)
         bt_cfg = BacktestConfig(**raw_config["backtest"])

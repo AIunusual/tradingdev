@@ -14,6 +14,7 @@ from tradingdev.adapters.reporting.quantstats_report import (
     QuantStatsReportError,
     build_quantstats_report,
 )
+from tradingdev.adapters.reporting.research import research_document_payload
 from tradingdev.adapters.reporting.storage import (
     ReportPublicationError,
     publish_report,
@@ -41,6 +42,7 @@ from tradingdev.domain.presentation.reports import (
     REPORT_SECTIONS,
     REPORT_TEMPLATE_VERSION,
     SCOPED_REPORT_SECTIONS,
+    report_navigation_instructions,
 )
 
 
@@ -165,10 +167,23 @@ class ReportService:
                 run_ids = list(comparison.runs)
                 payload = self._load(run_ids, loaded_runs=comparison.runs)
                 payload["fixed_comparison"] = comparison.evidence
+                snapshot = comparison.research_evidence
+                if snapshot is not None:
+                    payload["research_documents"][snapshot.content_hash] = (
+                        research_document_payload(snapshot)
+                    )
+                    payload["fixed_comparison"]["research_evidence_hash"] = (
+                        snapshot.content_hash
+                    )
             else:
                 assert run_ids is not None
                 payload = self._load(run_ids)
             payload["sections"] = list(selected)
+            payload["navigation_instructions"] = report_navigation_instructions(
+                selected,
+                has_results=bool(payload["runs"]),
+                comparison=comparison_job_id is not None,
+            )
             payload["commentary"] = [dict(note) for note in notes]
             payload["comparison_table"] = comparison_table(
                 payload,
@@ -200,6 +215,18 @@ class ReportService:
                 "content_sha256": report_id,
                 "html_sha256": hashlib.sha256(report_html).hexdigest(),
                 "sources": [run["provenance"] for run in payload["runs"]],
+                "research_documents": {
+                    key: {
+                        name: document[name]
+                        for name in (
+                            "evidence_id",
+                            "record_hash",
+                            "manifest_hash",
+                            "created_at",
+                        )
+                    }
+                    for key, document in payload["research_documents"].items()
+                },
                 "derived_analytics": {
                     run["identity"]["run_id"]: {
                         scope["scope_id"]: {
@@ -213,6 +240,7 @@ class ReportService:
                     for run in payload["runs"]
                     if "metrics" in selected
                 },
+                "navigation_instructions": payload["navigation_instructions"],
                 "scope_count": scope_count,
                 "renderers": payload.get("renderers", {}),
                 "sections": list(selected),
@@ -253,7 +281,7 @@ class ReportService:
             if comparison_job_id is not None:
                 manifest["comparison_job_id"] = comparison_job_id
                 manifest["fixed_comparison"] = payload["fixed_comparison"]
-            return publish_report(
+            published = publish_report(
                 self._workspace,
                 self._store,
                 report_id,
@@ -263,6 +291,10 @@ class ReportService:
                 scope_count=scope_count,
                 comparison_job_id=comparison_job_id,
             )
+            return {
+                **published,
+                "navigation_instructions": payload["navigation_instructions"],
+            }
         except (
             HistoryReadError,
             ReportPublicationError,
@@ -280,6 +312,7 @@ class ReportService:
         loaded_runs: dict[str, LoadedHistoryRun] | None = None,
     ) -> dict[str, Any]:
         runs: list[dict[str, Any]] = []
+        research_documents: dict[str, Any] = {}
         for run_id in run_ids:
             loaded = (
                 loaded_runs[run_id]
@@ -288,6 +321,12 @@ class ReportService:
             )
             run = loaded.run
             bundle = loaded.performance
+            research_hash = None
+            if loaded.research_evidence is not None:
+                research_hash = loaded.research_evidence.content_hash
+                research_documents[research_hash] = research_document_payload(
+                    loaded.research_evidence
+                )
             scopes: list[dict[str, Any]] = []
             config = loaded.manifest.config_copy() if loaded.manifest else None
             for scope_id, scope in bundle.scopes.items():
@@ -303,6 +342,15 @@ class ReportService:
                         parameters=history.parameters,
                         parameter_provenance=history.parameter_provenance,
                         parameters_complete=history.parameters_complete,
+                        parameter_sources=[
+                            item.model_dump(mode="json")
+                            for item in history.parameter_sources
+                        ],
+                        execution_assumptions=(
+                            history.execution_assumptions.model_dump(mode="json")
+                            if history.execution_assumptions is not None
+                            else None
+                        ),
                     )
                     entry["tables"] = {
                         "ledger": ledger_table(
@@ -334,6 +382,13 @@ class ReportService:
                         for key in ("artifact_id", "sha256")
                     }
                 )
+            if loaded.research_artifact is not None:
+                sources.append(
+                    {
+                        key: loaded.research_artifact.get(key)
+                        for key in ("artifact_id", "sha256")
+                    }
+                )
             runs.append(
                 {
                     "identity": {
@@ -354,6 +409,7 @@ class ReportService:
                     "default_scope": bundle.default_scope,
                     "selected_train_scope": bundle.selected_train_scope,
                     "execution_config": config,
+                    "research_evidence_hash": research_hash,
                     "scopes": scopes,
                     "provenance": {
                         "run_id": run_id,
@@ -376,6 +432,7 @@ class ReportService:
             "schema_version": REPORT_SCHEMA_VERSION,
             "template_version": REPORT_TEMPLATE_VERSION,
             "runs": runs,
+            "research_documents": research_documents,
             "default_scope_comparison": comparison,
         }
         return payload

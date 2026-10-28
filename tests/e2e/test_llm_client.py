@@ -1279,6 +1279,11 @@ def test_codex_events_normalize_arguments_and_both_mcp_result_encodings() -> Non
             {"success": False, "error": "Repair"},
         ),
         ToolCall(
+            "get_strategy",
+            {"strategy_id": "example"},
+            {"success": False, "error": "Repair"},
+        ),
+        ToolCall(
             "list_strategies",
             {},
             {

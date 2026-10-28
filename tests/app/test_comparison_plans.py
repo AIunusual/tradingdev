@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.app.test_comparison_preflight import _comparison
-from tests.integration.execution_fixtures import confirmation_presentation
 from tests.mcp.execution_fixtures import RecordingRunner
 from tests.preflight_fixtures import make_preflight_fixture
+from tests.research_evidence_fixtures import save_research_evidence
 
 from tradingdev.adapters.execution.preflight_worker import execute_preflight
 from tradingdev.adapters.storage.comparisons import ComparisonStore
@@ -20,7 +20,6 @@ from tradingdev.app.preflight_service import PreflightResult, PreflightService
 from tradingdev.app.prepared_execution import PreparedComparison
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.preflight import ComparisonPreflightReceipt, PreflightRequest
-from tradingdev.domain.presentation.confirmation import ConfirmationPresentation
 
 if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -62,12 +61,10 @@ def context(
         process_runner=runner,
         preflight=InlineComparisonPreflight(workspace, tmp_path / "checks"),
     )
-    result = service.prepare(
-        _comparison(single),
-        ConfirmationPresentation.model_validate(
-            confirmation_presentation({"threshold": 0.0})
-        ),
-    )
+    request = _comparison(single)
+    captured = service.preflight.prepare(request)
+    evidence_id = save_research_evidence(service.evidence, captured.prepared.manifest)
+    result = service.prepare(request, evidence_id)
     assert isinstance(result, PlanResponse), result
     assert not runner.calls
     assert service.jobs.get_job(result.plan_id) is None

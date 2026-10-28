@@ -12,10 +12,10 @@ import yaml
 
 from tests.integration.execution_fixtures import (
     confirm_prepared,
-    execution_options,
     research_arguments,
     research_from_config,
     research_input,
+    save_execution_evidence,
 )
 
 if TYPE_CHECKING:
@@ -35,9 +35,7 @@ RUN_ARGUMENTS = {
     "end_date": "2024-01-08",
 }
 
-PREPARE_ARGUMENTS = research_arguments(RUN_ARGUMENTS) | execution_options(
-    {"fast_period": 3, "slow_period": 8}
-)
+PREPARE_ARGUMENTS = research_arguments(RUN_ARGUMENTS)
 
 
 async def save_example(client: MCPClient) -> tuple[str, str, dict[str, Any]]:
@@ -124,9 +122,15 @@ async def test_generated_strategy_full_mcp_workflow(
         assert not (await client.call("promote_strategy", strategy_id=STRATEGY_ID))[
             "success"
         ]
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         assert (await client.call("list_jobs"))["items"] == []
         await make_runnable(client, saved["revision_id"])
         promoted = await client.call(
@@ -145,7 +149,12 @@ async def test_generated_strategy_full_mcp_workflow(
         assert data["success"] and data["rows"] > 0
         assert data["processed_path"] == str(cache_path)
         prepared = await client.call(
-            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+            revision_id=saved["revision_id"],
         )
         started = await confirm_prepared(client, prepared)
         assert len(started["manifest_hash"]) == 64
@@ -325,16 +334,27 @@ async def test_generated_strategy_full_mcp_workflow(
         assert old["metadata"]["status"] == "promoted"
         assert old["source_code"] == code
         rerun_prepared = await client.call(
-            "prepare_backtest", **PREPARE_ARGUMENTS, revision_id=saved["revision_id"]
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+            revision_id=saved["revision_id"],
         )
         rerun = await confirm_prepared(client, rerun_prepared)
         rerun_done = await client.wait_for_job(rerun["job_id"])
         assert rerun_done["status"] == "done"
         assert rerun_done["revision_id"] == saved["revision_id"]
         assert rerun_done["metrics"] == completed["metrics"]
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         assert Path(by_type["strategy_source"]["path"]).read_text() == code
 
 
@@ -458,7 +478,13 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
     async with mcp_workspace.connect() as client:
         await save_example(client)
         await make_runnable(client)
-        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert prepared["success"], prepared
         cache.write_bytes(b"invalid parquet")
         started = await confirm_prepared(client, prepared)
@@ -467,7 +493,13 @@ async def test_worker_failure_is_reported_and_cancelled_job_stops(
         assert failed["error"]
         assert (await client.call("list_runs"))["items"] == []
         mcp_workspace.seed_market(sample_ohlcv_with_kd)
-        prepared = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         started = await confirm_prepared(client, prepared)
         cancelled = await client.call("cancel_job", job_id=started["job_id"])
         assert cancelled["success"] and cancelled["process_terminated"], cancelled
@@ -499,9 +531,15 @@ async def test_real_quality_gates_reject_invalid_llm_output(
         codes = {item["code"] for item in rejected["diagnostics"]}
         assert {"ruff_failed", "mypy_failed"} <= codes
         assert "contract_execution_error" not in codes
-        assert not (await client.call("prepare_backtest", **PREPARE_ARGUMENTS))[
-            "success"
-        ]
+        assert not (
+            await client.call(
+                "prepare_backtest",
+                **PREPARE_ARGUMENTS,
+                evidence_id=await save_execution_evidence(
+                    client, {"fast_period": 3, "slow_period": 8}
+                ),
+            )
+        )["success"]
         malformed = await client.session.call_tool(
             "save_strategy", {"strategy_id": STRATEGY_ID}
         )
@@ -558,10 +596,22 @@ async def test_walk_forward_runs_through_real_worker(
             )["revision_id"],
         )
         await make_runnable(client)
-        wrong_mode = await client.call("prepare_backtest", **PREPARE_ARGUMENTS)
+        wrong_mode = await client.call(
+            "prepare_backtest",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert not wrong_mode["success"]
         assert "prepare_walk_forward" in wrong_mode["error"]
-        prepared = await client.call("prepare_walk_forward", **PREPARE_ARGUMENTS)
+        prepared = await client.call(
+            "prepare_walk_forward",
+            **PREPARE_ARGUMENTS,
+            evidence_id=await save_execution_evidence(
+                client, {"fast_period": 3, "slow_period": 8}
+            ),
+        )
         assert prepared["success"], prepared
         if fold_count == 1:
             confirmation = (

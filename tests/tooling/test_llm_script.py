@@ -115,6 +115,14 @@ def _script_environment(tmp_path: Path) -> dict[str, str]:
         "    Path('fixed_comparison.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    (tmp_path / "tests/e2e/test_llm_research_proposal.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_research_proposal_only():\n"
+        "    Path('research_proposal.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     environment = {
         **os.environ,
         "TRADINGDEV_CHECK_PYTHON": sys.executable,
@@ -213,6 +221,7 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
         "strategy_execution_guidance",
         "novice_intake",
         "fixed_comparison",
+        "research_proposal",
     ],
 )
 def test_script_selects_scenario_without_running_authoring_suite(
@@ -242,6 +251,6 @@ def test_script_selects_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 9 deselected" in result.stdout
+    assert "1 passed, 10 deselected" in result.stdout
     assert (script_workspace / f"{scenario}.ran").read_text() == "done"
     assert not (script_workspace / "completed.ran").exists()

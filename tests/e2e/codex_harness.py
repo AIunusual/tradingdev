@@ -34,6 +34,7 @@ LIFECYCLE_TOOLS = [
     "save_strategy",
     "validate_strategy",
     "dry_run_strategy",
+    "save_research_evidence",
     "prepare_backtest",
     "prepare_walk_forward",
     "prepare_optimization",
@@ -285,8 +286,8 @@ def verify_generated_strategy(
             process.communicate(timeout=3)
 
 
-def successful_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Extract completed MCP invocations from native app-server notifications."""
+def completed_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retain terminal tool responses, including errors the model can repair."""
     return [
         event["params"]["item"]
         for event in events
@@ -294,5 +295,6 @@ def successful_mcp_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         and isinstance(event.get("params"), dict)
         and isinstance(event["params"].get("item"), dict)
         and event["params"]["item"].get("type") == "mcpToolCall"
-        and event["params"]["item"].get("status") == "completed"
+        and event["params"]["item"].get("status") in {"completed", "failed"}
+        and isinstance(event["params"]["item"].get("result"), dict)
     ]

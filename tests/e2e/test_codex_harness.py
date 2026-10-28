@@ -414,3 +414,100 @@ def test_verifier_reaps_process_when_cleanup_verification_fails(
                     process.kill()
                 process.communicate(timeout=3)
     assert not root.exists()
+
+
+def test_codex_rejected_tool_response_can_be_repaired_without_losing_attempts(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    rejected: dict[str, Any] = {
+        "id": "bad-draft",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "save_research_evidence",
+        "arguments": {"draft": {"parameter_provenance": ["invalid"]}},
+        "status": "failed",
+        "error": None,
+        "result": {
+            "content": [{"type": "text", "text": "Invalid target_ids: use search_1_1"}],
+            "structuredContent": None,
+        },
+    }
+    repaired: dict[str, Any] = {
+        **rejected,
+        "id": "corrected-draft",
+        "arguments": {"draft": {"parameter_provenance": ["corrected"]}},
+        "status": "completed",
+        "result": {"structuredContent": {"success": True, "evidence_id": "e" * 32}},
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "completed",
+            json.dumps([rejected, repaired]),
+        ],
+    )
+    observed: list[ToolCall] = []
+    with TemporaryDirectory(prefix="tradingdev-codex-repair-") as temporary:
+        root = Path(temporary)
+        events = asyncio.run(
+            codex_harness.run_codex(root, "prompt", on_tool_call=observed.append)
+        )
+        assert codex_calls(events) == observed
+        assert len(observed) == 2
+        assert observed[0].arguments == rejected["arguments"]
+        assert observed[0].result["success"] is False
+        assert observed[0].result["mcp_result"] == rejected["result"]
+        assert observed[1].result == repaired["result"]["structuredContent"]
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
+    assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        (None, {"message": "connection closed"}),
+        ({}, None),
+        (
+            {"content": [{"type": "text", "text": "partial"}]},
+            {"message": "transport failed"},
+        ),
+    ],
+)
+def test_codex_failed_transport_remains_a_failure(
+    monkeypatch: MonkeyPatch,
+    result: Any,
+    error: Any,
+) -> None:
+    item = {
+        "id": "lost",
+        "type": "mcpToolCall",
+        "server": "tradingdev",
+        "tool": "save_research_evidence",
+        "arguments": {},
+        "status": "failed",
+        "result": result,
+        "error": error,
+    }
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "completed",
+            json.dumps([item]),
+        ],
+    )
+    with TemporaryDirectory(prefix="tradingdev-codex-transport-") as temporary:
+        root = Path(temporary)
+        with pytest.raises(AssertionError, match="failed without a tool response"):
+            asyncio.run(codex_harness.run_codex(root, "prompt"))
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
+    assert not root.exists()

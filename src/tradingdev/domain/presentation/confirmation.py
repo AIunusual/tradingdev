@@ -8,10 +8,15 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from tradingdev.domain.backtest.execution_policy import DEFAULT_VOLUME_POSITION_SIZE
+from tradingdev.domain.execution_assumptions import (
+    resolve_execution_assumptions,
+    summarize_execution_assumptions,
+)
+from tradingdev.domain.parameter_values import effective_candidates, parameter_leaves
 from tradingdev.domain.performance.sampling import daily_observation_unavailable_reason
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import ResearchMetadata
-from tradingdev.domain.strategies.execution import merge_strategy_parameters
 from tradingdev.domain.validation.date_windows import inclusive_day_window
 
 if TYPE_CHECKING:
@@ -20,6 +25,15 @@ if TYPE_CHECKING:
 type NonemptyText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1)
 ]
+type PresentationLabel = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)
+]
+type PresentationExplanation = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+]
+type PresentationPath = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+MAX_PRESENTATION_PARAMETER_DESCRIPTIONS = 4096
+
 type SectionId = Literal[
     "strategy",
     "market",
@@ -50,24 +64,25 @@ class _ConfirmationModel(BaseModel):
 class ParameterDescription(_ConfirmationModel):
     """Model-authored wording for a parameter, never its executable value."""
 
-    label: NonemptyText
-    description: NonemptyText
-    unit: NonemptyText | None = None
+    label: PresentationLabel
+    description: PresentationExplanation
+    unit: PresentationLabel | None = None
 
 
 class ConfirmationPresentation(_ConfirmationModel):
     """Plain-language metadata bound to the exact constructor in an execution plan."""
 
-    title: NonemptyText
-    summary: NonemptyText
-    parameter_descriptions: dict[str, ParameterDescription] = Field(
+    title: PresentationLabel
+    summary: PresentationExplanation
+    parameter_descriptions: dict[PresentationPath, ParameterDescription] = Field(
+        max_length=MAX_PRESENTATION_PARAMETER_DESCRIPTIONS,
         description=(
             "Human labels, meanings and units for every effective constructor "
             "parameter, including defaults; never executable values. Keys are JSON "
             "pointers into constructor arguments: /fast_period for generated "
             "strategies, /config/k_period or /fit_config/... for bundled strategies. "
             "Preparation returns required_parameter_paths for missing descriptions."
-        )
+        ),
     )
 
 
@@ -89,6 +104,7 @@ class ConfirmationSection(_ConfirmationModel):
     title: NonemptyText
     fields: tuple[ConfirmationField, ...] = ()
     paragraphs: tuple[str, ...] = ()
+    summary_paragraphs: tuple[str, ...] = ()
 
 
 class ConfirmationIdentity(_ConfirmationModel):
@@ -131,48 +147,10 @@ class ConfirmationPresentationError(ValueError):
 def parameter_paths(manifest: ExecutionManifest) -> list[str]:
     """Return exact JSON pointers relative to the captured constructor arguments."""
     manifest.verify()
-    paths = set(_parameter_leaves(manifest.strategy_execution.constructor_kwargs))
-    for _group, _candidate, pointer, value in _effective_candidates(manifest):
-        paths.update(_parameter_leaves(value, pointer))
+    paths = set(parameter_leaves(manifest.strategy_execution.constructor_kwargs))
+    for _group, _candidate, pointer, value in effective_candidates(manifest):
+        paths.update(parameter_leaves(value, pointer))
     return sorted(paths)
-
-
-def _effective_candidates(
-    manifest: ExecutionManifest,
-) -> list[tuple[int, int, str, object]]:
-    """Resolve each search-group candidate exactly as execution merges its values."""
-    if manifest.optimization is None:
-        return []
-    kwargs = manifest.strategy_execution.constructor_kwargs
-    bundled = manifest.strategy_execution.kind == "bundled"
-    captured = kwargs.get("config") if bundled else kwargs
-    if not isinstance(captured, dict):
-        raise ValueError("Strategy does not expose searchable parameters")
-    result: list[tuple[int, int, str, object]] = []
-    for group, (name, candidates) in enumerate(
-        manifest.optimization.param_ranges.items(), 1
-    ):
-        token = name.replace("~", "~0").replace("/", "~1")
-        pointer = ("/config" if bundled else "") + "/" + token
-        for candidate_index, candidate in enumerate(candidates, 1):
-            effective = merge_strategy_parameters(captured, {name: candidate})
-            result.append((group, candidate_index, pointer, effective[name]))
-    return result
-
-
-def _parameter_leaves(value: object, pointer: str = "") -> dict[str, object]:
-    if isinstance(value, dict) and value:
-        result: dict[str, object] = {}
-        for key in sorted(value):
-            token = str(key).replace("~", "~0").replace("/", "~1")
-            result.update(_parameter_leaves(value[key], pointer + "/" + token))
-        return result
-    if isinstance(value, list) and value:
-        result = {}
-        for index, item in enumerate(value):
-            result.update(_parameter_leaves(item, f"{pointer}/{index}"))
-        return result
-    return {pointer: value} if pointer else {}
 
 
 def validate_presentation(
@@ -457,43 +435,26 @@ def _execution_fields(
         _field(
             "單次投入金額",
             backtest["position_size"],
-            "策略若提供部位權重，會依每根 K 線調整投入金額。"
-            if volume
-            else "未指定固定金額時，依回測引擎預設資金配置。",
             unit="報價貨幣",
-            missing="200（引擎預設）" if volume else "未指定固定金額",
+            missing=f"{DEFAULT_VOLUME_POSITION_SIZE:g}（執行政策預設）"
+            if volume
+            else "未指定固定金額",
         ),
-        _field("手續費率", _percentage(backtest["fees"]), "每次進場、出場分別計入。"),
-        _field(
-            "滑價率",
-            _percentage(backtest["slippage"]),
-            "逐筆另計滑價成本。" if volume else "滑價反映於成交價格。",
-        ),
+        _field("手續費率", _percentage(backtest["fees"])),
+        _field("滑價率", _percentage(backtest["slippage"])),
         _field("停損幅度", _percentage(backtest["stop_loss"])),
         _field("停利幅度", _percentage(backtest["take_profit"])),
     ]
-    for key, label, description in (
-        (
-            "signal_as_position",
-            "沒有持倉訊號時平倉",
-            "啟用時，零訊號會平倉；未啟用時等待反向訊號或停損停利。",
-        ),
-        (
-            "re_entry_after_sl",
-            "停損停利後允許重新進場",
-            "依仍有效的持倉訊號，允許再次進場。",
-        ),
-        (
-            "monthly_max_loss",
-            "每月最大虧損門檻",
-            "達門檻後暫停當月新倉；須有時間資料才能按月計算。",
-        ),
+    for key, label in (
+        ("signal_as_position", "沒有持倉訊號時平倉"),
+        ("re_entry_after_sl", "停損停利後允許重新進場"),
+        ("monthly_max_loss", "每月最大虧損門檻"),
     ):
         fields.append(
             _field(
                 label,
                 backtest[key],
-                description if volume else "此計算方式不使用這項設定。",
+                "" if volume else "此計算方式不使用這項設定。",
                 detail=True,
                 unit="報價貨幣" if key == "monthly_max_loss" else None,
             )
@@ -503,7 +464,6 @@ def _execution_fields(
             _field(
                 "年化計算的每年日數",
                 backtest["periods_per_year"],
-                "未設定時，年化績效不可用。",
                 detail=True,
                 unit="天",
             ),
@@ -542,10 +502,6 @@ def _execution_fields(
             ),
         ]
     )
-    if volume and backtest["position_size"] == 0:
-        fields[2] = fields[2].model_copy(
-            update={"value_text": "200（設定為零時使用引擎預設）"}
-        )
     return fields
 
 
@@ -733,7 +689,7 @@ def _optimization_section(
             detail=True,
         ),
     ]
-    for group_index, candidate_index, pointer, candidate in _effective_candidates(
+    for group_index, candidate_index, pointer, candidate in effective_candidates(
         manifest
     ):
         fields.extend(
@@ -743,7 +699,7 @@ def _optimization_section(
                 presentation,
                 prefix=f"搜尋組 {group_index}／候選 {candidate_index}：",
             )
-            for leaf, value in _parameter_leaves(candidate, pointer).items()
+            for leaf, value in parameter_leaves(candidate, pointer).items()
         )
     return _section(
         "optimization",
@@ -958,6 +914,7 @@ def build_confirmation_document(
     execution_fields = _execution_fields(
         backtest, _object(config["parallel"], "parallel"), config["random_seed"]
     )
+    assumptions = resolve_execution_assumptions(manifest)
     research_fields, research_identity = _research_presentation(
         config["research"], market_fields, execution_fields, backtest
     )
@@ -981,7 +938,7 @@ def build_confirmation_document(
     )
     parameters = [
         _parameter_field(pointer, value, presentation)
-        for pointer, value in _parameter_leaves(
+        for pointer, value in parameter_leaves(
             manifest.strategy_execution.constructor_kwargs
         ).items()
     ]
@@ -1014,7 +971,15 @@ def build_confirmation_document(
                 if parameters
                 else ("此策略沒有可調整的建構參數。",),
             ),
-            _section("execution", execution_fields),
+            _section(
+                "execution",
+                execution_fields,
+                tuple(f"{item.label}：{item.value}" for item in assumptions.items),
+            ).model_copy(
+                update={
+                    "summary_paragraphs": summarize_execution_assumptions(assumptions)
+                }
+            ),
             _validation_section(config["validation"]),
             _optimization_section(manifest, presentation),
             preflight_section,
