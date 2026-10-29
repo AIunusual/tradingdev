@@ -210,6 +210,27 @@ def test_absent_scope_cannot_smuggle_values() -> None:
         )
 
 
+def test_metric_failure_degrades_to_unavailable_instead_of_failing_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail(*_: Any, **__: Any) -> Any:
+        raise ValueError("Equity must contain only finite values")
+
+    monkeypatch.setattr(
+        "tradingdev.domain.performance.artifacts.calculate_passive_metrics", _fail
+    )
+    pipeline, projection = _pipeline(_available([100.0, 110.0, 121.0]))
+    artifacts = bundles_from_pipeline("run-h", pipeline, projection)
+    benchmark = artifacts.performance.benchmarks["full"]
+    assert benchmark.status == "unavailable"
+    assert benchmark.reason == "benchmark_metrics_failed"
+    assert benchmark.values == {}
+    assert benchmark.equity_curve is None
+    # The aligned coverage survives, so the reader still sees what was compared.
+    assert benchmark.coverage is not None
+    assert benchmark.coverage.aligned_bars == 3
+
+
 def test_bundle_rejects_benchmarks_for_unknown_scopes() -> None:
     with pytest.raises(ValueError, match="scalar result scopes"):
         PerformanceBundle.model_validate(

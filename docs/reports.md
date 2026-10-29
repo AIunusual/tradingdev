@@ -177,9 +177,10 @@ fixed identity (asset class, symbol, weighting and rationale), the provider and
 market type actually read, whether the run's own frame was reused, the costs
 applied, and how many of the scope's bars the baseline observed. A comparison
 table puts the strategy's saved values beside the baseline's under the same
-units, with a difference only where both sides are finite and the units match;
-`amount` differences are withheld when the baseline was normalized to one quote
-currency unit because the run had no initial capital. A normalized equity chart
+units, with a difference only where both sides are finite and the units match.
+When the baseline was normalized to one quote currency unit because the run had
+no initial capital, its `amount` values are withheld instead of sitting beside
+the strategy's realized amounts, and no `amount` difference is computed. A normalized equity chart
 plots both paths as growth multiples of the same initial capital, positioned by
 bar index, so a shorter baseline never stretches across unobserved bars. The
 baseline is not selected by the client: there is no request parameter for it,
@@ -187,8 +188,9 @@ and the same market always yields the same reference. An undefined asset class
 or an unusable baseline is reported with its reason and never as a zero return.
 Reports generated from results saved before benchmark evidence existed say so
 explicitly; they are not recomputed from current market data. Walk-forward
-`test_summary` scopes and optimization trials have no baseline, because neither
-has a single equity path.
+`test_summary` scopes have no single equity path and therefore no baseline;
+optimization trials currently have none because the optimization worker does not
+capture one. Fold summaries say so instead of suggesting a re-run.
 
 The `ledger` section combines saved order attempts and end-of-bar account states
 into one chronological event table. Within a bar, original execution order comes

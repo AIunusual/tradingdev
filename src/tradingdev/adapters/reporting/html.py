@@ -328,6 +328,19 @@ _BENCHMARK_METRICS = (
     "total_pnl",
 )
 
+# Full-length series are already embedded once for the chart. Repeating them in
+# an inspectable <pre> would multiply the report size by the number of bars.
+_BENCHMARK_SERIES_KEYS = ("timestamps", "equity_curve", "returns")
+
+
+def _benchmark_evidence(benchmark: dict[str, Any]) -> dict[str, Any]:
+    """Return the scalar benchmark fields; the chart carries the series."""
+    return {
+        key: value
+        for key, value in benchmark.items()
+        if key not in _BENCHMARK_SERIES_KEYS
+    }
+
 
 def _number(value: Any) -> float | None:
     """Return a finite scalar as a float; booleans and null are not numbers."""
@@ -361,23 +374,31 @@ def _benchmark_table(scope: dict[str, Any], benchmark: dict[str, Any]) -> str:
             and comparable_unit
         ):
             difference = strategy_number - reference_number
+        # A normalized baseline is priced on one quote-currency unit, so its
+        # amounts are not the same quantity as the strategy's realized amounts.
+        show_reference = unit != "amount" or comparable_amounts
+        reference_cell = _format_metric(reference, unit) if show_reference else "—"
+        # "—" means the two columns are not comparable; a missing saved value
+        # stays visibly unknown instead of masquerading as a withheld number.
+        difference_cell = _format_metric(difference, unit) if comparable_unit else "—"
         rows.append(
             f"<tr><th>{escape(metric_label(key))}</th>"
             f"<td class='metric'>{_format_metric(strategy, unit)}</td>"
-            f"<td class='metric'>{_format_metric(reference, unit)}</td>"
-            f"<td class='metric'>{_format_metric(difference, unit)}</td>"
+            f"<td class='metric'>{reference_cell}</td>"
+            f"<td class='metric'>{difference_cell}</td>"
             f"<td>{escape(unit_label(unit))}</td></tr>"
         )
     if not rows:
         return "<p>策略與基準都沒有可比較的報酬或風險指標。</p>"
     note = (
         "差異為策略減基準；只有兩側都是有限數值且單位相同時才計算，"
-        "其餘顯示「—」。"
+        "單位不同時顯示「—」，缺少數值時顯示「未知／未記錄」。"
         + (
             ""
             if comparable_amounts
             else "此結果沒有初始本金，基準以 1 個報價貨幣單位計算，"
-            "因此不列出金額類指標的差異。"
+            "因此金額類指標不與策略並列（策略金額仍為實際成交金額），"
+            "也不計算差異。"
         )
     )
     return (
@@ -437,9 +458,15 @@ def _benchmark(scope: dict[str, Any]) -> str:
     """Show the fixed baseline, or exactly why this result has none."""
     benchmark = scope.get("benchmark")
     if not isinstance(benchmark, dict):
+        if scope.get("kind") == "fold_summary":
+            return (
+                "<p class='notice'>此範圍是各折彙總，沒有單一權益曲線，"
+                "依設計不提供基準；請查看各折的訓練／測試結果。</p>"
+            )
         return (
             "<p class='notice'>此結果沒有保存 benchmark 證據。既有結果不會被重新計算，"
-            "也不會借用其他市場的指數；重新執行同一設定即可產生基準資料。</p>"
+            "也不會借用其他市場的指數。一般回測重新執行後會依固定定義計算基準；"
+            "參數搜尋的試驗範圍目前不產生基準。</p>"
         )
     definition = _object(benchmark.get("definition"))
     status = str(benchmark.get("status"))
@@ -517,7 +544,10 @@ def _benchmark(scope: dict[str, Any]) -> str:
             title="基準全部保存指標",
         )
         + "</details>"
-        + details_html("基準來源、覆蓋與成本（原始欄位）", benchmark)
+        + details_html(
+            "基準來源、覆蓋與成本（原始欄位；權益序列見上圖）",
+            _benchmark_evidence(benchmark),
+        )
     )
 
 

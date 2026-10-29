@@ -177,9 +177,16 @@ because a baseline has no trades. Bars align on shared UTC timestamps only:
 `coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
 and a missing bar is never back-filled. An unavailable baseline carries a
 reason and no values, so it is never read as a zero return. A baseline is
-captured when the run executes; when the benchmark symbol equals the traded
-symbol, the already loaded frame is reused instead of reading the cache again.
+captured when the run executes. When the benchmark symbol equals the traded
+symbol, the already loaded frame is reused. Otherwise the baseline symbol is
+loaded through the same yearly cache the run uses: cached years are read, and a
+missing year is fetched from the run's own provider and cached like any other
+market load, so the first run of a market may reach the provider for the
+baseline symbol. The baseline load never rewrites or re-fetches the traded
+symbol's own files.
 
-Optimization scopes and the walk-forward `test_summary` have no baseline because
-neither has a single equity path. Artifacts saved before this field existed load
-unchanged and simply have no `benchmarks` mapping; reads do not recompute them.
+The walk-forward `test_summary` has no baseline because it has no single equity
+path. Optimization trial scopes are individual backtests, but the optimization
+worker does not capture a baseline for them in this version, so they have none.
+Artifacts saved before this field existed load unchanged and simply have no
+`benchmarks` mapping; reads do not recompute them.

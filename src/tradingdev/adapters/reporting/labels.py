@@ -71,6 +71,7 @@ _REASON_LABELS = {
     "invalid_benchmark_prices": "基準收盤價不是有限正數",
     "no_shared_observations": "基準與回測 K 線沒有共同的時間戳",
     "invalid_benchmark_cost_settings": "回測的成本設定無法套用到基準",
+    "benchmark_metrics_failed": "基準權益無法換算成績效指標",
 }
 
 _ENUM_LABELS = {

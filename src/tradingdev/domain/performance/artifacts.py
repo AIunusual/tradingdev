@@ -626,17 +626,27 @@ def _benchmark_scope(
             detail=str(exc),
             coverage=coverage,
         )
-    analysis = calculate_passive_metrics(
-        hold.equity,
-        init_cash=capital,
-        total_fees=hold.entry_fee,
-        total_volume=hold.entry_notional,
-        timestamps=aligned_index,
-        periods_per_year=settings["periods_per_year"],
-        risk_free_rate=settings["risk_free_rate"],
-        required_return=settings["required_return"],
-        frequency=settings["frequency"],
-    )
+    try:
+        analysis = calculate_passive_metrics(
+            hold.equity,
+            init_cash=capital,
+            total_fees=hold.entry_fee,
+            total_volume=hold.entry_notional,
+            timestamps=aligned_index,
+            periods_per_year=settings["periods_per_year"],
+            risk_free_rate=settings["risk_free_rate"],
+            required_return=settings["required_return"],
+            frequency=settings["frequency"],
+        )
+    except ValueError as exc:
+        # Supplementary evidence must never abort publishing the run itself.
+        return _absent_benchmark(
+            evidence,
+            "unavailable",
+            "benchmark_metrics_failed",
+            detail=str(exc),
+            coverage=coverage,
+        )
     metadata = normalize_json_object(analysis.metadata)
     metadata["benchmark"] = normalize_json_object(
         {
