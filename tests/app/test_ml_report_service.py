@@ -282,10 +282,10 @@ def test_invalid_saved_evidence_is_not_silently_skipped(
     assert not list((workspace.root / "reports").glob("**/*"))
 
 
-def test_no_ml_request_preserves_preintegration_report_bytes(
+def test_no_ml_request_pins_interpretation_report_bytes(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:
-    # Measured from pre-integration commit 5b27dd1 with this same fixed fixture.
+    # Template 23 adds analysis/diagnostic evidence while ML remains absent.
     _, store, service = context
     _save(context)
     with store.connect() as connection:
@@ -295,12 +295,12 @@ def test_no_ml_request_preserves_preintegration_report_bytes(
     assert "ml" not in payload and "ml" not in manifest
     assert "ml" not in manifest["omitted_sections"]
     assert result["report_id"] == (
-        "f47e34fc3583462c56e5e150c7a4863724789dfc6ee9ea89c964490c63c4b0b8"
+        "d60c2ca5109832c07f04ffabc77de8a49f94371e77e841f5d9be35c5fd985440"
     )
     assert result["sha256"] == (
-        "68084b6ef8401c43ea3e0afb9f62595c924ec6eeacd5604d18f63d95da4be5bf"
+        "6dbd2adaea0dcea97b03e240d7f990813f4a4d4b55e4e252ab626b250cfd1c68"
     )
     path = Path(result["path"]).parent / "manifest.json"
     assert hashlib.sha256(path.read_bytes()).hexdigest() == (
-        "317b84c22711d76ad580a2cfbb32a927275308b593b115cc3c4267d3b897b0b0"
+        "6d3cfc68064928d0697db826e80aff6424766ae21ac8219ac31230dbef7e97b4"
     )

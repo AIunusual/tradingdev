@@ -240,6 +240,7 @@ def test_mixed_report_keeps_ml_in_overview_and_run_details_separate() -> None:
                     "metadata": {},
                     "values": {},
                     "definitions": {},
+                    "diagnostics": [],
                 }
             ],
         }
@@ -277,14 +278,14 @@ def test_untrusted_ml_fields_are_escaped_in_html_and_embedded_json() -> None:
     assert attack in unescape(_body(document))
 
 
-def test_report_without_ml_keeps_template_21_html_bytes_unchanged() -> None:
-    # Captured from template 21 before adding the optional ML renderer. This
-    # also protects the unselected-sections list when the catalogue grows.
+def test_report_without_ml_pins_interpretation_template_bytes() -> None:
+    # Template 23 intentionally adds the explicit missing-interpretation notice.
+    # ML remains optional; unrelated renderer changes must update its version.
     payload = {"runs": [], "sections": ["limitations"], "commentary": []}
     document = render_report(payload, "legacy-report")
-    assert REPORT_TEMPLATE_VERSION == "21"
+    assert REPORT_TEMPLATE_VERSION == "23"
     assert hashlib.sha256(document.encode()).hexdigest() == (
-        "3cd5b7b489f67e875fb5348e14302387ad056033b6c3be6174f8592c610d3834"
+        "00dc963026f6a57bafecfbf08bf69c5aac4315e51e04c2c5011cc0535a048efc"
     )
     assert "data-ml-download" not in document
     assert "#ml .ml-candidate" not in document

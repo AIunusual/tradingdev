@@ -202,6 +202,7 @@ def test_history_tool_schemas_and_real_paginated_queries(
             "get_run_executions",
             "get_run_account_history",
             "get_report_sections",
+            "get_run_diagnostics",
             "generate_report",
         }
         for name, tool in tools.items():

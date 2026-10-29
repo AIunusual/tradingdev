@@ -711,16 +711,17 @@ QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能�
 
 **目標**：讓助手依研究狀態與失敗原因，選擇下一個檢查或實驗。
 
-現有基礎是流程 instructions、策略診斷與執行限制。
+PoC 已提供規則式診斷與 LLM 觀察、限制及研究建議。
 
-可參考其他 MCP 的工作流程，以及 QC 的結構化回測診斷。
+診斷元件可以替換，報告保留依據與未驗證事項。
 
-*待開發。以實際研究情境檢驗引導效果，不只增加提示文字。*
+*市場情境、波動敏感度與跨實驗引導仍待深度開發。*
 
 <!-- _footer: "參考：[QC Agents 與 diagnostics](https://www.quantconnect.com/docs/v2/ai-assistance/agents)、[backtrader-mcp](https://github.com/cloudQuant/backtrader-mcp/tree/ad6312a11c2fe7ff9a4c3fcfcfab5037a951b58c)" -->
 
 <!--
-具體診斷規則、引導內容與評估案例，留待開發任務依當時的研究需求分析。
+初期 adapter 移植 Maverick 的六項適用門檻規則，保留固定來源版本與 MIT 授權，沒有安裝整個上游 server。
+DiagnosticProvider 接收原生績效與觀察值；替換入口及證據模型擴充方式見 ARCHITECTURE.md「診斷擴充與替換」。目前沒有完成市場情境或波動敏感度的因果診斷，研究建議仍待驗證，也不自動授權下一個實驗。
 -->
 
 ---
@@ -729,16 +730,17 @@ QC 已有新策略建立、編譯、回測、最佳化及結果診斷，不能�
 
 **目標**：讓下一次對話知道已經試過什麼，以及為何保留或放棄某個假說。
 
-保存研究結論時，連回使用的策略版本與實驗結果。
+PoC 已可保存需求與階段摘要，引用報告並匯出離線閱讀包。
 
-可參考 QuantConnect 的 project memory。
+追加想法維護在同一本筆記，已匯出的版本獨立保留。
 
-*待開發。歷史結果是證據，研究記憶再補上結論與適用前提。*
+*跨研究的自動檢索與假說追蹤仍待開發，目前可依筆記代號續讀。*
 
 <!-- _footer: "參考：[QC Custom Memories](https://www.quantconnect.com/docs/v2/ai-assistance/agents#Custom-Memories)" -->
 
 <!--
-外部 LLM 可以整理結論，後端提供保存與檢索。無須因為新增記憶，就把對話模型供應商放進研究核心。
+外部 LLM 整理可編輯的研究摘要，後端提供版本檢查、保存與封存。ZIP 包含 HTML、JSON 與所引用報告，任何階段都可產生，沒有逐字聊天攔截器。
+這只完成可保存、續讀與分享的 PoC；跨研究搜尋與自動追蹤假說尚未實作。研究核心不綁定對話模型供應商，參考方向仍可包含 QuantConnect project memory。
 -->
 
 ---

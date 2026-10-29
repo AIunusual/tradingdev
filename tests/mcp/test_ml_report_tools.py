@@ -134,6 +134,7 @@ def test_ml_report_tool_delegates_explicit_selection_and_preserves_summary(
         assert options == {
             "sections": ["ml"],
             "commentary": [{"title": "觀察", "text": "保留缺值。"}],
+            "analysis": None,
             "comparison_job_id": selection.get("comparison_job_id"),
             "ml_entry_ids": ["candidate", "unavailable"],
             "ml_ranking_metric": "rank_ic_mean",
@@ -149,6 +150,7 @@ def test_ml_report_tool_delegates_explicit_selection_and_preserves_summary(
                 **selection,
                 "sections": ["ml"],
                 "commentary": [{"title": "觀察", "text": "保留缺值。"}],
+                "analysis": None,
                 "ml_entry_ids": ["candidate", "unavailable"],
                 "ml_ranking_metric": "rank_ic_mean",
                 "ml_allow_parameter_axes": True,

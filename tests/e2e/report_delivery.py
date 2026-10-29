@@ -13,7 +13,7 @@ from markdown_it import MarkdownIt
 from tests.e2e.conversation import links_to_file, visible_text
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tradingdev.adapters.storage.sqlite import SQLiteStore
-from tradingdev.app.contracts.reports import ReportResponse
+from tradingdev.app.contracts.reports import ReportAnalysis, ReportResponse
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.presentation.reports import REPORT_RECIPES
 
@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
     from tests.e2e.llm_client import ToolCall
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
+    from tradingdev.app.contracts.research_notes import NoteExport
+
+
+def verify_archive_delivery(text: str, report: NoteExport) -> None:
+    """Accept a local reading link or the documented ZIP extraction workflow."""
+    assert links_to_file(text, Path(report.path)), (
+        "Final reply must link the actual ZIP"
+    )
+    assert report.html_path is not None
+    prose = " ".join(
+        visible_text(block.content)
+        for block in MarkdownIt("commonmark").parse(text)
+        if block.type == "inline"
+    )
+    assert links_to_file(text, Path(report.html_path)) or (
+        "index.html" in prose
+        and re.search(r"解壓|extract|unzip", prose, flags=re.IGNORECASE)
+    ), "Final reply must explain the archive reading entry point"
 
 
 def verify_report_delivery(
@@ -30,6 +48,7 @@ def verify_report_delivery(
     *,
     expected_sections: list[str],
     expected_commentary: list[dict[str, str]] | None,
+    required_analysis_refs: set[tuple[str, str]] | None = None,
 ) -> str:
     """Require a matching usable report link and return its verified HTML text.
 
@@ -38,24 +57,24 @@ def verify_report_delivery(
     client will retain it after this conversation.
     """
     reports = [
-        call
-        for call in effective_workflow_calls(turn.calls)
+        (index, call)
+        for index, call in enumerate(effective_workflow_calls(turn.calls))
         if call.name == "generate_report"
         and isinstance(call.result, dict)
         and call.result.get("success") is True
         and call.arguments.get("run_ids") == [run_id]
     ]
     assert reports, "The final report turn must generate the requested run's report"
-    linked: dict[str, tuple[ToolCall, ReportResponse]] = {}
-    for call in reports:
+    linked: dict[str, tuple[int, ToolCall, ReportResponse]] = {}
+    for index, call in reports:
         response = ReportResponse.model_validate(call.result)
         if links_to_file(turn.text, Path(response.path)):
-            linked[response.report_id] = (call, response)
+            linked[response.report_id] = (index, call, response)
     assert len(linked) == 1, (
         "The final model reply must contain a clickable link to exactly one "
         "generated report for the requested run"
     )
-    call, report = next(iter(linked.values()))
+    call_index, call, report = next(iter(linked.values()))
     assert report.run_ids == [run_id], (
         "Delivered report response belongs to another run"
     )
@@ -70,16 +89,35 @@ def verify_report_delivery(
     assert selected_sections == expected_sections, (
         "Delivered report sections differ from the requested sections"
     )
+    if required_analysis_refs is not None:
+        analysis = ReportAnalysis.model_validate(call.arguments.get("analysis"))
+        assert {
+            (r.run_id, r.scope) for r in analysis.references
+        } == required_analysis_refs
+        preceding = turn.calls[:call_index]
+        for reference_run, reference_scope in required_analysis_refs:
+            assert any(
+                c.name == "get_run_diagnostics"
+                and c.result.get("success") is True
+                and c.result.get("run_id") == reference_run
+                and c.result.get("scope") == reference_scope
+                for c in preceding
+            ), "Delivered interpretation must follow diagnostics for its references"
     commentary = call.arguments.get("commentary") or []
     if expected_commentary is not None:
         assert commentary == expected_commentary, (
             "Delivered report commentary differs from the requested commentary"
         )
     else:
-        assert commentary and all(
-            item.get("title", "").strip() and item.get("text", "").strip()
-            for item in commentary
-        ), "A freely worded research report still requires nonempty commentary"
+        if call.arguments.get("analysis") is not None:
+            ReportAnalysis.model_validate(call.arguments["analysis"])
+        assert call.arguments.get("analysis") or (
+            commentary
+            and all(
+                item.get("title", "").strip() and item.get("text", "").strip()
+                for item in commentary
+            )
+        ), "A freely worded research report requires interpretation"
         assert _has_delivery_prose(turn.text, run_id), (
             "The final reply must include delivery prose beyond its run ID and links"
         )
@@ -117,6 +155,7 @@ def verify_report_delivery(
         "scope_count": report.scope_count,
         "sections": expected_sections,
         "commentary": commentary,
+        "analysis": call.arguments.get("analysis"),
     }
     for field, value in expected_manifest.items():
         assert manifest.get(field) == value, (
@@ -131,6 +170,7 @@ def verify_report_delivery(
                     "report_id": report.report_id,
                     "sections": expected_sections,
                     "commentary": manifest["commentary"],
+                    "analysis": manifest.get("analysis"),
                 },
                 ensure_ascii=False,
             ),
@@ -190,3 +230,11 @@ def _read_manifest(
     manifest = json.loads(content)
     assert isinstance(manifest, dict), "Delivered report manifest must be an object"
     return manifest
+
+
+def verify_no_execution_attempts(calls: list[ToolCall]) -> None:
+    """Check raw attempts including rejected and failed execution requests."""
+    assert not any(
+        call.name.startswith("prepare_") or call.name == "submit_execution_decision"
+        for call in calls
+    ), "Read-only research must not attempt to prepare or submit execution"

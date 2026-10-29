@@ -103,7 +103,18 @@ Strategy development workflow
      only an explicit summary/metrics-only or no-report request opts out.
      Read get_report_sections; generate_report after inspecting results, omitting
      sections for the standard complete report unless the user selects them.
-     Supply plain-text commentary in the user's language, distinct from calculations.
+     Read get_run_diagnostics for saved backtest scopes being interpreted.
+     For ML-only reports, use empty analysis references and name selected entry IDs;
+     backtest diagnostics do not evaluate ML evidence. These are heuristic
+     review prompts, not proof of causes or successful improvements. Inspect original
+     trades/equity for specific loss-period claims; market-regime sensitivity requires
+     defined regimes and aligned data, otherwise mark it unverified.
+     Supply analysis in the user's language: summary, observations with evidence,
+     hypotheses_and_limits, and a few concrete next_steps explaining what to test.
+     Bind exact run/scope references, distinguish training from test, and identify
+     scopes not analysed. For a failed comparison explain failures without metrics.
+     Retain these explanations in HTML, not just chat. Supplementary commentary is
+     optional. Recommendations do not authorize another run or parameter search.
    - Fixed comparisons require comparison_job_id, preserving the entire set even
      when no run succeeds. Do not substitute a handpicked run_ids list.
    - The FINAL answer must identify results/scopes, link the readable result report
@@ -115,7 +126,20 @@ Strategy development workflow
      must include the link and guide in its own final answer. Do not claim omitted
      sections are included.
 
-9. Preserve evidence and deliverables.
+9. Preserve research summaries and deliverables.
+   - When saving/sharing research is requested, use save_research_note at meaningful
+     stage boundaries. Summarize current needs, decisions, observations, limitations
+     and proposed next steps in the user's language; include report artifact IDs.
+     Append later requirement changes as pending, without rewriting executed facts.
+     Notes are editable client summaries, not transcripts or execution evidence.
+   - Discover/read with get_research_notes before replacing a note; retain relevant
+     earlier entries and bind expected_version. On conflict read again and reconcile.
+     export_research_note works at any stage, including before a run. Its ZIP contains
+     HTML/JSON and referenced reports. Final delivery explains selected version and
+     full extraction/opening index.html. For HTTP link download_url; it expires in
+     15 minutes. get_research_archive refreshes saved ZIP links without source files.
+     Link local ZIP/HTML paths only when the client can access the server filesystem.
+     Missing/corrupt sources require repair or explicit note correction, never rerun.
    - Completion or server shutdown never authorizes deleting reports or research
      workspaces; deletion requires explicit user authorization. Do not deliver a
      temporary path then delete it during cleanup.
