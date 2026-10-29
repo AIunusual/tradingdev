@@ -6,6 +6,7 @@ import base64
 from typing import Any
 
 from tradingdev.adapters.presentation.html import details_html, escape, json_text
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 
 ML_REPORT_STYLE = """
 #ml .ml-candidate{border-top:1px solid var(--line);padding:12px 0}
@@ -285,6 +286,7 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
         "<p class='notice'>這是尚未計入交易成本的 ML 訊號研究："
         "指標來自預測與未來報酬，模擬多空統計沒有成交紀錄或可交付的權益曲線；"
         "不代表可實現的交易績效。</p>"
+        f"<p class='notice'>{escape(ML_SAMPLE_PROVENANCE_NOTE)}</p>"
         + (
             "<p class='notice'>本節與報告中的回測執行為各自獨立的證據；"
             "並列不代表這些模型產生了任何回測執行的訊號或交易。</p>"

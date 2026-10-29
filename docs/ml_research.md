@@ -277,6 +277,12 @@ does not prove a model-to-run relationship or persist missing time series. Full
 selection, visibility and retention semantics are in the
 [report contract](reports.md#composable-offline-reports).
 
+Leaderboard records do not retain the training/evaluation split or establish
+whether evaluated rows participated in fitting or selection. A report built only
+from those records therefore establishes neither in-sample nor out-of-sample
+status. Describe the saved evaluation sample and keep that provenance unknown;
+model IDs, dataset IDs and a `full` scope are not split evidence.
+
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
 proof of a trustworthy publisher. Do not load model files from an untrusted

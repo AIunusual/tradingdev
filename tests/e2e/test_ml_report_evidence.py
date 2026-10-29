@@ -20,12 +20,16 @@ from tests.e2e.ml_report_evidence import (
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.report_service import ReportService
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tests.integration.mcp_harness import MCPWorkspace
     from tradingdev.domain.ml.leaderboard import LeaderboardEntry
+
+_UNKNOWN_PROVENANCE_CONTEXT = "現有紀錄未交代評估資料是否曾參與模型訓練。"
 
 
 @dataclass(frozen=True)
@@ -75,7 +79,7 @@ def saved_report() -> Iterator[MLReportWorkflow]:
             f"[查看橙海研究報告](<{report['path']}>)\n\n"
             "視窗 12 的平均訊號相關性為 0.2，視窗 24 的分數不可用，不能視為零。"
             "這是視窗敏感度研究，沒有提供交易成本與成交資料，"
-            "不能當成含成本的策略回測。",
+            "不能當成含成本的策略回測。" + ML_SAMPLE_PROVENANCE_NOTE,
             calls,
         )
         yield MLReportWorkflow(workspace, calls, turn, entries, names)
@@ -106,6 +110,8 @@ def test_natural_ml_request_does_not_supply_tools_ids_or_schema_answers(
             "sections",
         )
     )
+    assert "評估資料與訓練資料的關係" in ML_REPORT_REQUEST
+    assert "沒有記錄的部分請明說未知" in ML_REPORT_REQUEST
 
 
 def test_real_mcp_saved_ml_report_retains_unavailable_coordinate_and_delivery(
@@ -210,6 +216,7 @@ def test_ml_report_accepts_actual_model_commission_and_slippage_explanation(
 ) -> None:
     # Verbatim explanatory paragraphs from the failed real-model run: the
     # meaning is correct even though the final reply does not use the word 成本.
+    # Add separate provenance context to isolate this cost-wording regression.
     path = report.calls[-1].result["path"]
     text = (
         f"[橙海訊號研究離線報告](<{path}>)\n\n"
@@ -217,7 +224,7 @@ def test_ml_report_accepts_actual_model_commission_and_slippage_explanation(
         "只有一個有效平均 IC，無法判定視窗 12 較佳或結果穩健。IC 是相關係數，"
         "不能換算成報酬，也不能據此證明含手續費、滑價的策略可獲利。\n\n"
         "在「ML 訊號研究」查看候選排序與缺分數原因，展開候選證據及其他指標；"
-        "ML 證據與回測各自獨立，不代表模型已用於該回測。"
+        "ML 證據與回測各自獨立，不代表模型已用於該回測。" + _UNKNOWN_PROVENANCE_CONTEXT
     )
     replace(report, turn=replace(report.turn, text=text)).verify()
 
@@ -233,6 +240,7 @@ def test_ml_report_accepts_equivalent_transaction_cost_terms(
         f"[報告](<{path}>)\n\n"
         "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
         f"這份訊號研究不能證明含 {costs} 的策略回測可獲利。"
+        + _UNKNOWN_PROVENANCE_CONTEXT
     )
     replace(report, turn=replace(report.turn, text=text)).verify()
 
@@ -254,7 +262,9 @@ def test_ml_report_accepts_required_further_cost_aware_backtesting(
     path = report.calls[-1].result["path"]
     text = (
         f"[報告](<{path}>)\n\n"
-        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。" + explanation
+        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
+        + explanation
+        + _UNKNOWN_PROVENANCE_CONTEXT
     )
     replace(report, turn=replace(report.turn, text=text)).verify()
 
@@ -272,10 +282,137 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
     path = report.calls[-1].result["path"]
     text = (
         f"[報告](<{path}>)\n\n"
-        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。" + explanation
+        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
+        + explanation
+        + _UNKNOWN_PROVENANCE_CONTEXT
     )
     with pytest.raises(AssertionError, match="cost-aware backtest limits"):
         replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "這份研究可支持樣本內訊號關聯的描述。",
+        "這是樣本內評估。",
+        "這些結果屬於樣本外驗證。",
+        "這些結果僅是樣本內訊號關聯。",
+        "這些分數僅能支持樣本內關聯。",
+        "這是已證實的樣本外結果。",
+        "無法證明樣本外效果，但這是樣本內評估。",
+    ],
+)
+def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
+    report: MLReportWorkflow, claim: str
+) -> None:
+    text = report.turn.text + "\n\n" + claim
+    with pytest.raises(AssertionError, match="no evidence for an affirmative"):
+        replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
+    "explanation",
+    [
+        ML_SAMPLE_PROVENANCE_NOTE,
+        "無法判定這些結果是否屬於樣本內或樣本外。",
+        "不能認定這是樣本外驗證。",
+        "樣本內或樣本外的關係仍未知。",
+        "如果資料曾用於訓練，則屬於樣本內；目前沒有切分證據。",
+        "是否屬於樣本內仍未知。",
+        "結果屬於樣本內與否仍未知。",
+        "這不是已證實的樣本外評估。",
+    ],
+)
+def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
+    report: MLReportWorkflow, explanation: str
+) -> None:
+    text = report.turn.text + "\n\n" + explanation
+    replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
+    "explanation",
+    [
+        "保存紀錄缺乏訓練／評估切分證據，資料是否重疊、屬於樣本內或樣本外均未知。",
+        "目前不知道評估資料是否曾參與訓練。",
+        "模型擬合與這份評估的資料是否重疊，紀錄沒有交代。",
+        "樣本內／外來源尚不明。",
+        "無法確認這些結果的樣本內或樣本外歸屬。",
+        _UNKNOWN_PROVENANCE_CONTEXT,
+    ],
+)
+def test_ml_report_accepts_alternative_visible_unknown_provenance(
+    report: MLReportWorkflow, explanation: str
+) -> None:
+    text = report.turn.text.replace(ML_SAMPLE_PROVENANCE_NOTE, explanation)
+    replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
+    "omission",
+    ["absent", "score_unknown", "unproven_performance", "link", "fenced", "hidden"],
+)
+def test_ml_report_requires_visible_sample_provenance_in_the_final_reply(
+    report: MLReportWorkflow, omission: str
+) -> None:
+    path = report.calls[-1].result["path"]
+    replacements = {
+        "absent": "",
+        "score_unknown": "視窗 24 的分數仍未知。",
+        "unproven_performance": "尚不足以證明樣本外有效。",
+        "link": f"[{ML_SAMPLE_PROVENANCE_NOTE}](<{path}>)",
+        "fenced": f"\n\n```text\n{ML_SAMPLE_PROVENANCE_NOTE}\n```",
+        "hidden": f"\n\n<span hidden>{ML_SAMPLE_PROVENANCE_NOTE}</span>",
+    }
+    text = report.turn.text.replace(ML_SAMPLE_PROVENANCE_NOTE, replacements[omission])
+    with pytest.raises(AssertionError, match="provenance is unknown"):
+        replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+def test_ml_report_commentary_cannot_replace_final_provenance_explanation(
+    report: MLReportWorkflow,
+) -> None:
+    report_call = report.calls[-1]
+    old_path = report_call.result["path"]
+    report_call.arguments["commentary"] = [
+        {"title": "來源限制", "text": ML_SAMPLE_PROVENANCE_NOTE}
+    ]
+    report_call.result = ReportService(
+        workspace=WorkspacePaths(report.workspace.workspace)
+    ).generate_report(**report_call.arguments)
+    assert report_call.result["success"] is True
+    text = report.turn.text.replace(old_path, report_call.result["path"]).replace(
+        ML_SAMPLE_PROVENANCE_NOTE, ""
+    )
+    with pytest.raises(AssertionError, match="provenance is unknown"):
+        replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize("has_unsupported_claim", [False, True])
+def test_ml_report_commentary_also_retains_unknown_sample_provenance(
+    report: MLReportWorkflow, has_unsupported_claim: bool
+) -> None:
+    report_call = report.calls[-1]
+    old_path = report_call.result["path"]
+    report_call.arguments["commentary"] = [
+        {
+            "title": "保存來源限制",
+            "text": "這些結果屬於樣本內評估。"
+            if has_unsupported_claim
+            else ML_SAMPLE_PROVENANCE_NOTE,
+        }
+    ]
+    report_call.result = ReportService(
+        workspace=WorkspacePaths(report.workspace.workspace)
+    ).generate_report(**report_call.arguments)
+    assert report_call.result["success"] is True
+    text = report.turn.text.replace(old_path, report_call.result["path"])
+    delivered = replace(report, turn=replace(report.turn, text=text))
+    if has_unsupported_claim:
+        with pytest.raises(AssertionError, match="no evidence for an affirmative"):
+            delivered.verify()
+    else:
+        delivered.verify()
 
 
 @pytest.mark.parametrize("filename", ["report.html", "manifest.json"])

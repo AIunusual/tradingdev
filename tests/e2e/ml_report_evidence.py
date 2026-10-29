@@ -30,6 +30,7 @@ ML_REPORT_REQUEST = """請找出已儲存、名稱帶「橙海訊號研究」的
 請製作可離線開啟的報告，包含兩個候選各自的設定、數值與不可用的分數；
 最後提供可點開的報告連結，說明視窗比較與缺值應如何解讀，
 以及這份訊號研究與包含交易成本的策略回測之間能作哪些結論。
+請依保存證據說明評估資料與訓練資料的關係；沒有記錄的部分請明說未知。
 這次只整理既有研究，不需要重新取得行情、訓練或執行策略。
 """
 
@@ -59,7 +60,10 @@ _UNRELATED_OPERATIONS = {
 def seed_ml_report_candidates(
     workspace: WorkspacePaths,
 ) -> tuple[LeaderboardEntry, ...]:
-    """Store fixed existing research; no market data, dataset or model is needed."""
+    """Store research without any training/evaluation split provenance.
+
+    These records have no dataset or model artifact to establish fitting rows.
+    """
     store = LeaderboardStore(workspace.ml_leaderboard)
     entries = tuple(
         LeaderboardEntry(
@@ -190,6 +194,8 @@ def verify_ml_report_outcome(
     assert manifest["scope_count"] == len(entries)
     assert manifest["sections"] == ["ml"]
     assert manifest["commentary"] == (call.arguments.get("commentary") or [])
+    for note in manifest["commentary"]:
+        _reject_unsupported_sample_claims(note["title"] + "。" + note["text"])
     assert manifest["sources"] == []
     payload = json.loads(
         html.split("<script id='report-data' type='application/json'>", 1)[1].split(
@@ -290,6 +296,7 @@ def _verify_interpretation(text: str) -> None:
             elif not in_link and token.type in {"text", "code_inline"}:
                 prose.append(token.content)
     visible = " ".join(prose)
+    _reject_unsupported_sample_claims(visible)
     assert "12" in visible and "24" in visible, (
         "Final reply must interpret both evaluation windows"
     )
@@ -311,3 +318,62 @@ def _verify_interpretation(text: str) -> None:
         cost_terms.search(sentence) and limitation_terms.search(sentence)
         for sentence in sentences
     ), "Final reply must discuss signal evidence and cost-aware backtest limits"
+    _require_unknown_sample_provenance(sentences)
+
+
+def _require_unknown_sample_provenance(sentences: list[str]) -> None:
+    """Require visible provenance coverage, without prescribing one exact reply.
+
+    Unknown scores or unproven profitability do not explain sample provenance.
+    These topic/uncertainty checks still require human semantic review.
+    """
+    unknown = re.compile(
+        r"未知|不明|不清楚|不確定|不知道|無法|不能|尚未|未能|未確認|"
+        r"(?:未|沒有|未曾)(?:保存|記錄|紀錄|提供|交代)|缺(?:少|乏|失)"
+    )
+    training = re.compile(r"訓練|擬合")
+    relationship = re.compile(r"評估|測試|切分|分割|重疊|參與|是否|曾|保留")
+    sample_label = re.compile(r"樣本[內外]")
+    identity = re.compile(
+        r"是否|與否|歸屬|屬於|來源|關係|判定|確認|認定|區分|身分|身份|"
+        r"樣本內[／/或與、 ]*外"
+    )
+    assert any(
+        unknown.search(sentence)
+        and (
+            (training.search(sentence) and relationship.search(sentence))
+            or (sample_label.search(sentence) and identity.search(sentence))
+        )
+        for sentence in sentences
+    ), "Final reply must explain that training/evaluation provenance is unknown"
+
+
+def _reject_unsupported_sample_claims(text: str) -> None:
+    """Catch observed affirmative labels, not every mention of sample provenance.
+
+    This is a regression guard for common assertions, not a semantic classifier.
+    Questions, explicit uncertainty and conditional explanations remain valid.
+    """
+    claim = re.compile(
+        r"(?:屬於?|是|為|僅(?:能|可)?支持|只(?:能|可)?支持|可(?:以)?支持)"
+        r"\s*(?:已證實的?\s*)?樣本[內外]"
+    )
+    uncertain = re.compile(
+        r"無法|不能|不(?:足以|代表|可|是)|尚未|未能|沒有證據|缺乏證據|是否|(?:不|非)$"
+    )
+    conditional = re.compile(r"若|如果|假如|倘若")
+    unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
+    for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
+        for match in claim.finditer(sentence):
+            before = sentence[: match.start()]
+            after = re.split(r"[，,]", sentence[match.end() :], maxsplit=1)[0]
+            if (
+                uncertain.search(before)
+                or conditional.search(before)
+                or unknown_after.search(after)
+            ):
+                continue
+            raise AssertionError(
+                "Saved leaderboard has no evidence for an affirmative "
+                f"in-sample/out-of-sample claim: {match.group()}"
+            )

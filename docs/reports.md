@@ -36,6 +36,10 @@ also require semantic review. Single-run delivery still identifies its run ID.
 `app/report_ml.py` reads one complete leaderboard file generation; missing IDs,
 corrupt records and duplicate stored identities fail without publishing a partial
 report. It does not load model pickle, retrain, rerun predictions or download data.
+Leaderboard records do not save training/evaluation split evidence. Their model
+and dataset identities and `full` scope do not establish either in-sample or
+out-of-sample status. The ML view discloses this uncertainty; report commentary
+and final interpretation must retain it rather than infer a training relationship.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and

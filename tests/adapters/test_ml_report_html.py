@@ -14,10 +14,10 @@ import pytest
 
 from tradingdev.adapters.presentation.html import escape, json_text
 from tradingdev.adapters.reporting.html import render_report
-from tradingdev.adapters.reporting.ml import ML_REPORT_SCRIPT
+from tradingdev.adapters.reporting.ml import ML_REPORT_SCRIPT, render_ml_report
 from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
-from tradingdev.domain.ml.report import ml_report_block
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE, ml_report_block
 from tradingdev.domain.presentation.reports import REPORT_TEMPLATE_VERSION
 
 _CONTEXT = EvaluationContext(
@@ -144,6 +144,19 @@ def test_download_preserves_large_integer_parameters_as_original_json_bytes() ->
     assert "Uint8Array.from(atob(button.dataset.json),char=>char.charCodeAt(0))" in (
         ML_REPORT_SCRIPT
     )
+
+
+@pytest.mark.parametrize("has_runs", [False, True])
+def test_sample_provenance_is_unknown_even_with_saved_model_identity(
+    has_runs: bool,
+) -> None:
+    block = _payload(_entry(ic_mean=0.2))["ml"]
+    body = render_ml_report(block, has_runs=has_runs)
+    introduction = body.split("<h3>研究範圍與參數座標</h3>", 1)[0]
+    assert f"<p class='notice'>{escape(ML_SAMPLE_PROVENANCE_NOTE)}</p>" in introduction
+    assert "未保存訓練／評估資料的切分證據" in introduction
+    assert "無法判定這些評估結果屬於樣本內或樣本外" in introduction
+    assert "<details" not in introduction
 
 
 def test_default_visibility_preserves_directionless_beta_in_expandable_group() -> None:

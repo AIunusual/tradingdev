@@ -78,6 +78,7 @@ from tradingdev.domain.ml.registry import (
     LeaderboardStore,
     ModelArtifactStore,
 )
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 from tradingdev.domain.ml.validation import (
     get_validation_scheme,
     validation_scheme_names,
@@ -195,7 +196,8 @@ _ML_GUIDANCE = {
         "with get_report_sections and select their entry IDs with generate_report. "
         "ML reports snapshot the selected evidence without rerunning predictions "
         "or training. Keep unavailable candidates and comparison caveats; "
-        "including runs does not prove a model-to-run relationship."
+        "including runs does not prove a model-to-run relationship. "
+        f"{ML_SAMPLE_PROVENANCE_NOTE}"
     ),
 }
 

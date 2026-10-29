@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 ML_REPORT_SCHEMA_VERSION = 1
 ML_SIGNAL_KIND = "ml_signal"
 ML_SIGNAL_MODE = "signal"
+ML_SAMPLE_PROVENANCE_NOTE = (
+    "排行榜紀錄未保存訓練／評估資料的切分證據，"
+    "因此無法判定這些評估結果屬於樣本內或樣本外。"
+)
 
 
 def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
