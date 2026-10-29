@@ -320,6 +320,11 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
         "這些分數僅能支持樣本內關聯。",
         "這是已證實的樣本外結果。",
         "無法證明樣本外效果，但這是樣本內評估。",
+        "例如這些結果為樣本內評估。",
+        "例如依照上述規則，這些結果為樣本內評估。",
+        "例如依照上述規則這些結果為樣本內評估。",
+        "如上面的規則，這些結果為樣本內評估。",
+        "究竟是哪個模型未知，但這些結果是樣本內評估。",
     ],
 )
 def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
@@ -341,6 +346,9 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "是否屬於樣本內仍未知。",
         "結果屬於樣本內與否仍未知。",
         "這不是已證實的樣本外評估。",
+        "契約的一般規則是：如評估用於訓練的資料則仍為樣本內；"
+        "本次沒有證據可套用為既成事實。",
+        "本研究究竟是樣本內、樣本外，或是否完成時間隔離與防洩漏檢查，均未知。",
     ],
 )
 def test_ml_report_accepts_unknown_or_conditional_sample_provenance(

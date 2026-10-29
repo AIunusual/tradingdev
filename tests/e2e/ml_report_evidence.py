@@ -370,9 +370,11 @@ def _reject_unsupported_sample_claims(text: str) -> None:
         r"\s*(?:已證實的?\s*)?樣本[內外]"
     )
     uncertain = re.compile(
-        r"無法|不能|不(?:足以|代表|可|是)|尚未|未能|沒有證據|缺乏證據|是否|(?:不|非)$"
+        r"無法|不能|不(?:足以|代表|可|是)|尚未|未能|沒有證據|缺乏證據|是否|(?:不|非|究竟)$"
     )
-    conditional = re.compile(r"若|如果|假如|倘若")
+    conditional = re.compile(
+        r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
+    )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
     for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
         for match in claim.finditer(sentence):
