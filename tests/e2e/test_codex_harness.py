@@ -67,7 +67,9 @@ for line in sys.stdin:
         form_enabled = (isinstance(policy, dict)
                         and policy.get('granular', {}).get('mcp_elicitations'))
         result = {'thread': {'id': 'thread'},
-                  'model': request['params'].get('model') or 'fixture-default'}
+                  'model': request['params'].get('model') or 'fixture-default',
+                  'reasoningEffort': ('ultra' if mode == 'effort-mismatch'
+                                      else 'xhigh')}
     elif method == 'turn/start':
         result = {'turn': {'id': 'turn'}}
     else:
@@ -110,6 +112,42 @@ def model_environment(
     return model
 
 
+def test_codex_process_config_isolates_effort_and_host_capabilities(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(codex_harness, "resolve_codex_binary", lambda: "/test/codex")
+    command = codex_harness._command(Path("/test/isolated"), "selected-model")
+    assert command[:4] == ["/test/codex", "app-server", "--listen", "stdio://"]
+    assert command[4::2] == ["-c"] * len(command[5::2])
+    settings = {
+        key: json.loads(value)
+        for item in command[5::2]
+        for key, _, value in [item.partition("=")]
+    }
+    assert settings["model"] == "selected-model"
+    assert settings["model_reasoning_effort"] == "xhigh"
+    assert settings["features.skip_host_skill_discovery"] is True
+    assert "skip_host_skill_discovery" not in settings
+    for feature in (
+        "multi_agent",
+        "shell_tool",
+        "shell_snapshot",
+        "plugins",
+        "remote_plugin",
+        "apps",
+        "hooks",
+        "memories",
+        "code_mode",
+        "js_repl",
+    ):
+        assert settings[f"features.{feature}"] is False
+    assert settings["web_search"] == "disabled"
+    assert settings["project_doc_max_bytes"] == 0
+    assert settings["history.persistence"] == "none"
+    assert settings["log_dir"] == "/test/isolated/codex_logs"
+    assert settings["sqlite_home"] == "/test/isolated/codex_state"
+
+
 @pytest.mark.parametrize("status", ["completed", "failed", "timeout"])
 @pytest.mark.parametrize("tool_names", [None, ["get_ml_contract", "build_dataset"]])
 def test_codex_stops_client_and_detached_child(
@@ -140,6 +178,9 @@ def test_codex_stops_client_and_detached_child(
                 )
         requested = json.loads((root / "thread_request.json").read_text())
         assert requested["model"] == model_environment
+        assert set(requested["config"]) == {"mcp_servers"}, (
+            "A partial thread features table would erase process isolation flags"
+        )
         servers = requested["config"]["mcp_servers"]
         assert len(servers) == 1
         assert next(iter(servers.values()))["enabled_tools"] == (
@@ -152,6 +193,34 @@ def test_codex_stops_client_and_detached_child(
             except psutil.NoSuchProcess:
                 continue
             assert process.status() == psutil.STATUS_ZOMBIE
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("failure", ["effort-mismatch", "subagent"])
+def test_codex_rejects_bypass_and_stops_client_and_detached_child(
+    monkeypatch: MonkeyPatch, failure: str
+) -> None:
+    item = {"id": "delegated", "type": "subAgentActivity"}
+    monkeypatch.setattr(
+        codex_harness,
+        "_command",
+        lambda root, model: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            failure if failure == "effort-mismatch" else "completed",
+            json.dumps([item]),
+        ],
+    )
+    with TemporaryDirectory(prefix="tradingdev-codex-isolation-") as temporary:
+        root = Path(temporary)
+        expected = (
+            "expected 'xhigh'" if failure == "effort-mismatch" else "bypassed MCP"
+        )
+        with pytest.raises(AssertionError, match=expected):
+            asyncio.run(codex_harness.run_codex(root, "prompt"))
+        for pid in json.loads((root / "client_pids.json").read_text()):
+            assert not psutil.pid_exists(pid)
     assert not root.exists()
 
 

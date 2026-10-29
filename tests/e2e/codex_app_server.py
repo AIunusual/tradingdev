@@ -204,6 +204,7 @@ class CodexAppServer:
         thread_params: dict[str, Any],
         *,
         mcp_config: dict[str, Any],
+        expected_reasoning_effort: str | None = None,
         user_reply: TurnCallback | None = None,
         max_turns: int = 8,
     ) -> list[dict[str, Any]]:
@@ -237,9 +238,18 @@ class CodexAppServer:
             assert started.get("model") == requested_model, (
                 f"Codex selected {started.get('model')!r}, expected {requested_model!r}"
             )
+        if expected_reasoning_effort is not None:
+            assert started.get("reasoningEffort") == expected_reasoning_effort, (
+                f"Codex reasoning effort {started.get('reasoningEffort')!r}, "
+                f"expected {expected_reasoning_effort!r}"
+            )
         self.thread_id = started["thread"]["id"]
         assert isinstance(self.thread_id, str) and self.thread_id
-        print(f"[codex] thread started with model {started.get('model')}", flush=True)
+        print(
+            f"[codex] thread started with model {started.get('model')}, "
+            f"reasoning effort {started.get('reasoningEffort')}",
+            flush=True,
+        )
         turn_ids: set[str] = set()
         for turn_number in range(1, max_turns + 1):
             self.turn_started = True

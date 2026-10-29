@@ -1085,9 +1085,14 @@ def test_catalog_titles_and_recipes_match_the_rendered_document(
     _save(context)
     catalog = service.get_report_sections()
     section_ids = [section["id"] for section in catalog["sections"]]
-    assert catalog["templates"]["standard"] == section_ids
+    assert catalog["templates"]["standard"] == [
+        key for key in section_ids if key != "ml"
+    ]
     for selected in catalog["templates"].values():
         report = service.generate_report(["run"], sections=selected)
+        if "ml" in selected:
+            assert report["code"] == "invalid_report_ml_selection"
+            continue
         assert report["success"], report
         content = Path(report["path"]).read_text()
         for section in catalog["sections"]:

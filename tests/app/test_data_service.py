@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -71,9 +72,110 @@ def test_execution_checks_source_catalog_without_market_access(
 
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
     from pytest import MonkeyPatch
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "utc_start", "utc_end", "years"),
+    [
+        (
+            "2024-01-01T00:00:00+08:00",
+            "2024-01-01T01:00:00+08:00",
+            "2023-12-31T16:00:00Z",
+            "2023-12-31T17:00:00Z",
+            [2023],
+        ),
+        (
+            "2024-12-31T20:00:00-08:00",
+            "2024-12-31T22:00:00-08:00",
+            "2025-01-01T04:00:00Z",
+            "2025-01-01T06:00:00Z",
+            [2025],
+        ),
+        (
+            "2024-01-01T07:00:00+08:00",
+            "2024-01-01T09:00:00+08:00",
+            "2023-12-31T23:00:00Z",
+            "2024-01-01T01:00:00Z",
+            [2023, 2024],
+        ),
+    ],
+)
+def test_ensure_fetches_utc_years_for_offset_dates(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    start: str,
+    end: str,
+    utc_start: str,
+    utc_end: str,
+    years: list[int],
+) -> None:
+    monkeypatch.delenv("TRADINGDEV_DATA_ROOT", raising=False)
+    service = DataService(WorkspacePaths(tmp_path / "year-boundaries"))
+
+    def hourly_data(
+        *, symbol: str, timeframe: str, start: datetime, end: datetime
+    ) -> pd.DataFrame:
+        assert symbol == "BTC/USDT" and timeframe == "1h"
+        return pd.DataFrame(
+            {
+                "timestamp": pd.date_range(start, end, freq="h"),
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "volume": 1.0,
+            }
+        )
+
+    with (
+        patch(
+            "tradingdev.domain.data.crawlers.binance_api.BinanceAPICrawler.fetch",
+            side_effect=hourly_data,
+        ) as fetch,
+        patch("tradingdev.domain.data.crawlers.binance_api.BinanceAPICrawler.save_raw"),
+    ):
+        selected = service.ensure(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date=start,
+            end_date=end,
+            source="binance_api",
+        )
+        assert [call.kwargs["start"].year for call in fetch.call_args_list] == years
+        assert selected.frame["timestamp"].tolist() == list(
+            pd.date_range(utc_start, utc_end, freq="h")
+        )
+        repeated = service.ensure(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date=utc_start,
+            end_date=utc_end,
+            source="binance_api",
+        )
+        assert fetch.call_count == len(years)
+    pd.testing.assert_frame_equal(selected.frame, repeated.frame)
+    assert selected.dataset_id == repeated.dataset_id
+
+
+def test_ensure_rejects_reversed_dates_before_constructing_provider(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Invalid request bounds must fail before provider access")
+
+    monkeypatch.setattr("tradingdev.app.data_service.create_crawler", forbidden)
+    service = DataService(WorkspacePaths(tmp_path / "invalid-period"))
+    with pytest.raises(ValueError, match="end_date must not precede start_date"):
+        service.ensure(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01T00:00:00Z",
+            end_date="2024-01-01T07:00:00+08:00",
+        )
 
 
 def test_data_service_uses_shared_data_root(

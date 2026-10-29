@@ -39,6 +39,12 @@ class SignalMetricDefinitionSnapshot(SignalArtifactModel):
     description: str
     summary: bool
     optimization_direction: Literal["maximize", "minimize"] | None
+    # Stored so a signal metric keeps the same shape as a portfolio metric and
+    # can be projected into a report without a second vocabulary.
+    modes: tuple[str, ...] = ("signal",)
+    # Older snapshots did not record this flag. Do not infer historical
+    # semantics from the current catalog or mislabel unknown as False.
+    requires_annualization: bool | None = None
 
 
 class StratumStat(SignalArtifactModel):

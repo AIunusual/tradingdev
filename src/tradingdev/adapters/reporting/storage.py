@@ -88,6 +88,7 @@ def publish_report(
     run_ids: list[str],
     scope_count: int,
     comparison_job_id: str | None = None,
+    ml_entry_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Publish a matching HTML/manifest pair and transactionally register both.
 
@@ -118,6 +119,7 @@ def publish_report(
             "run_ids": run_ids,
             "schema_version": REPORT_SCHEMA_VERSION,
             "scope_count": scope_count,
+            **({"ml_entry_ids": ml_entry_ids} if ml_entry_ids is not None else {}),
             **(
                 {"comparison_job_id": comparison_job_id}
                 if comparison_job_id is not None
@@ -211,6 +213,7 @@ def publish_report(
         "sha256": hashlib.sha256(html).hexdigest(),
         "run_ids": run_ids,
         "scope_count": scope_count,
+        **({"ml_entry_ids": ml_entry_ids} if ml_entry_ids is not None else {}),
         **(
             {"comparison_job_id": comparison_job_id}
             if comparison_job_id is not None
