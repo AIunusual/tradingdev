@@ -99,6 +99,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         ),
         **_headings({"tooling", "presentation"}, "Repository 開發工具與研究原型"),
         **_headings({"strategy", "interfaces"}, "建立與驗證策略"),
+        **_headings(_PRODUCT, "研究需求與有效設定"),
         **_headings(
             {"strategy", "execution", "interfaces"},
             "準備、確認與執行回測",
@@ -157,6 +158,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     },
     "docs/strategy_contract.md": {
         **_headings(_ALL, "Strategy Contract"),
+        **_headings(_PRODUCT, "Research Inputs and Simulation Policy"),
         **_headings(
             {"strategy", "execution", "interfaces"},
             "Python Contract",
@@ -175,6 +177,12 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
     },
     "docs/run_artifacts.md": {
         **_headings(_ALL, "Run Artifacts"),
+        **_headings(
+            _PRODUCT,
+            "Research Evidence Records",
+            "Research Settings and Provenance",
+            "Fixed Comparison Evidence",
+        ),
         **_headings(_PRODUCT, "Workspace Layout", "SQLite Tables", "JSON Values"),
         **_headings(
             {"ml", "results", "interfaces"},
@@ -202,6 +210,54 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         ),
     },
 }
+
+
+# Relocated contracts keep their original section responsibilities. Unknown
+# headings still widen coverage; moving a file must not hide new contracts.
+_DOC_HEADINGS.update(
+    {
+        "docs/ml_research.md": {
+            **_headings(_ALL, "ML Research"),
+            **{
+                title: _DOC_HEADINGS["docs/strategy_contract.md"][title]
+                for title in (
+                    "ML Research Contract",
+                    "Dataset and Model Inputs",
+                    "Fold Validation and Signal Interpretation",
+                )
+            },
+            **{
+                title: _DOC_HEADINGS["docs/run_artifacts.md"][title]
+                for title in (
+                    "ML Research Artifacts",
+                    "Immutable Datasets",
+                    "Feature Matrix Cache",
+                    "Trained Models",
+                    "Recorded Signal Evaluations",
+                )
+            },
+        },
+        **{
+            path: {
+                **_headings(_ALL, title),
+                section: _DOC_HEADINGS["docs/run_artifacts.md"][section],
+            }
+            for path, title, section in (
+                (
+                    "docs/execution_plans.md",
+                    "Execution Plans",
+                    "Execution Plans and Confirmation Documents",
+                ),
+                (
+                    "docs/performance_artifacts.md",
+                    "Performance Artifacts",
+                    "Performance Scopes and Provenance",
+                ),
+                ("docs/reports.md", "Reports", "Composable Offline Reports"),
+            )
+        },
+    }
+)
 
 
 # These narrowly focused documents are selected as complete files. New paths
@@ -256,6 +312,10 @@ _EXACT_SCOPES = {
     "docs/development.md": "tooling",
     "docs/strategy_contract.md": "strategy",
     "docs/run_artifacts.md": "results",
+    "docs/ml_research.md": "ml",
+    "docs/execution_plans.md": "execution",
+    "docs/performance_artifacts.md": "results",
+    "docs/reports.md": "results",
 }
 # A directory describes a layer, not necessarily the behavior of every module
 # inside it. These exceptions keep calculated results and execution consent

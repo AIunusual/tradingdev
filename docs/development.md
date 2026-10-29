@@ -51,12 +51,20 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 | --- | --- |
 | [README](../README.md) | 使用者安裝、操作與結果解讀。 |
 | [架構](../ARCHITECTURE.md) | 模組責任與跨層流程。 |
-| [策略契約](strategy_contract.md)、[執行產物](run_artifacts.md) | 策略作者及整合者需要的正式契約。 |
+| [策略契約](strategy_contract.md) | 策略作者的 Python／YAML、訊號、訓練與 revision 要求。 |
+| [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
+| [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
+| [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
 
 行為改變時同步更新受影響的契約與操作說明。實作或測試案例調整而工具職責未變時，
 通常不需要擴寫本指南。刪減內容前確認仍保留必要操作、資料保存與安全限制。
+
+新增、改名或拆分契約時，同步檢查 [review_scope.py](../tooling/review_scope.py) 的責任選取
+及 [test_review_scope.py](../tests/tooling/test_review_scope.py) 的證據涵蓋。新文件會自動納入
+審查，但未知章節保守保留，拆檔本身不代表減少上下文。量測應分開報告文件閱讀量、
+審查輸入與產品 MCP；不把 bytes 當成 tokens。
 
 一般文件只走文件檢查；已登錄簡報走簡報專項；政策、程式、依賴或檢查工具變更走
 程式檢查。完整分類規則見 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
@@ -222,7 +230,17 @@ git push -u origin feature/my-task
 | 程式／政策／工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
 真實模型策略測試另依變更選取。程式候選的文件審查需要 Codex 登入與額度；
-可用 `TRADINGDEV_CODEX_MODEL` 指定審查模型。審查程式與來源入口見
+這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
+`TRADINGDEV_CODEX_MODEL` 指定，例如：
+
+```bash
+TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+```
+
+文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
+修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
+上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 
 先列出責任範圍或規劃固定 Git 版本的證據；以下命令不呼叫模型、不代表檢查通過：

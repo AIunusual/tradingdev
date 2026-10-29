@@ -153,7 +153,7 @@ Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413�
 
 助手會在提供確認單後等待你的回覆。最初請它回測、對計畫提問或未回覆，都不算同意。
 這個流程依賴助手如實轉交你的決定，系統無法獨立驗證回覆是否來自你本人；
-詳細限制見[執行確認契約](docs/run_artifacts.md#execution-plans-and-confirmation-documents)。
+詳細限制見[執行確認契約](docs/execution_plans.md#execution-plans-and-confirmation-documents)。
 計畫有效期為一小時，過期後需重新準備。舊版確認計畫也須重新準備並取得同意，
 既有回測結果與報告不需重算，原檔不會因此刪除。程式檢查有時間限制，超限會回報失敗。
 通過檢查不代表行情可取得、模型可成功訓練，或策略在真實資料上能正常交易；
@@ -278,7 +278,7 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
 
 1. 用 `get_ml_contract` 選擇可用特徵、模型、驗證方式與排名指標。
 2. 用 `ensure_data` 取得指定期間行情，再用 `build_dataset` 建立單一商品資料集。
-   日期邊界見[資料集輸入契約](docs/strategy_contract.md#dataset-and-model-inputs)；只寫結束日期會停在當日 UTC 零時。
+   日期邊界見[資料集輸入契約](docs/ml_research.md#dataset-and-model-inputs)；只寫結束日期會停在當日 UTC 零時。
    建置不會下載或更新行情；缺年度檔或區間無資料時失敗。成功也不保證每根 K 線齊全，須核對覆蓋與缺口。
    暖機與無法形成未來標籤的尾端資料會排除，實際筆數以回覆為準。
 3. 用 `train_model` 訓練，保存 `dataset_id`、`model_id`、有效參數與驗證回覆。
@@ -306,8 +306,8 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
 模型預測會載入 Python pickle，只應使用可信的工作區與模型檔案。
 升級 Python 或 ML 套件後，請在新環境重新訓練並使用回傳的模型 ID；
 既有 pickle 不保證能跨環境版本載入。
-完整輸入、驗證與指標語意見 [ML 研究契約](docs/strategy_contract.md#ml-research-contract)，
-保存方式見 [ML 研究產物](docs/run_artifacts.md#ml-research-artifacts)。
+完整輸入、驗證與指標語意見 [ML 研究契約](docs/ml_research.md#ml-research-contract)，
+保存方式見 [ML 研究產物](docs/ml_research.md#ml-research-artifacts)。
 
 ## 查看結果與圖表
 
@@ -395,7 +395,7 @@ uv run tradingdev-report --workspace /path/to/workspace \
 可繼續查詢原結果。若報告產生或交付失敗，請沿用已完成的結果重試，不必重新回測。
 
 報告格式、指標口徑與程式查詢介面見
-[執行結果與產物](docs/run_artifacts.md#composable-offline-reports)。
+[執行結果與產物](docs/reports.md#composable-offline-reports)。
 
 ### 開啟 Dashboard
 
@@ -432,6 +432,8 @@ Binance API 與 Yahoo Finance 資料來源；可請助手列出來源，選擇�
 
 額外特徵的取得方式依類型而定：DVOL 缺少快取時會嘗試從 Deribit 下載；
 資金費率與自訂特徵則需要設定指定的本機 Parquet 檔案。
+額外特徵的開頭若缺資料，會保留缺值，不會用較晚的資料回填。
+策略須處理這些缺值，該期間可能無法產生有效訊號。
 目前行情快取名稱不區分來源或現貨／期貨市場。若要切換來源或市場，
 請使用分開的資料目錄；另開工作區時，也須確認沒有共用外部資料目錄。
 
