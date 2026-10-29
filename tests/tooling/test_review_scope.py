@@ -408,3 +408,94 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
         sections_for_scope("typo", "README.md", "")
     with pytest.raises(ValueError, match="Unknown documentation review scope"):
         selection_reason("typo", "README.md", "# TradingDev\n")
+
+
+@pytest.mark.parametrize(
+    ("path", "owner", "heading", "scopes", "evidence"),
+    [
+        (
+            "docs/ml_research.md",
+            "ml",
+            "Dataset and Model Inputs",
+            {"ml", "strategy", "interfaces"},
+            "in_sample_accuracy",
+        ),
+        (
+            "docs/ml_research.md",
+            "ml",
+            "Recorded Signal Evaluations",
+            {"ml", "results", "interfaces"},
+            "signal_fingerprint",
+        ),
+        (
+            "docs/execution_plans.md",
+            "execution",
+            "Execution Plans and Confirmation Documents",
+            {"execution", "results", "interfaces"},
+            "confirmation_adjustment_requested",
+        ),
+        (
+            "docs/performance_artifacts.md",
+            "results",
+            "Performance Scopes and Provenance",
+            {"results", "interfaces"},
+            "display_metrics",
+        ),
+        (
+            "docs/reports.md",
+            "results",
+            "Composable Offline Reports",
+            {"results", "interfaces"},
+            "navigation_instructions",
+        ),
+    ],
+)
+def test_relocated_contracts_retain_complete_evidence_for_responsible_scopes(
+    path: str, owner: str, heading: str, scopes: set[str], evidence: str
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    contract = next(
+        section
+        for section in markdown_sections(path, text)
+        if section.headings[-1] == heading
+    )
+    assert evidence in contract.text
+    assert scope_for_path(path) == owner
+    for scope in SCOPES:
+        selected = sections_for_scope(scope, path, text)
+        assert (contract in selected) == (scope in scopes or scope == "general")
+        if scope == "general":
+            assert "".join(section.text for section in selected) == text
+    # New contracts must not silently inherit an old section's narrow ownership.
+    expanded = text + "\n## New contract\nDo not hide new behavior.\n"
+    for scope in SCOPES:
+        assert "Do not hide new behavior." in "".join(
+            section.text for section in sections_for_scope(scope, path, expanded)
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "heading"),
+    [
+        ("ARCHITECTURE.md", "研究需求與有效設定"),
+        ("docs/strategy_contract.md", "Research Inputs and Simulation Policy"),
+        ("docs/run_artifacts.md", "Research Evidence Records"),
+        ("docs/run_artifacts.md", "Research Settings and Provenance"),
+        ("docs/run_artifacts.md", "Fixed Comparison Evidence"),
+    ],
+)
+def test_research_contracts_reach_all_product_reviewers_without_tooling_duplication(
+    path: str, heading: str
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    contract = next(
+        section
+        for section in markdown_sections(path, text)
+        if section.headings[-1] == heading
+    )
+    for scope in ("strategy", "execution", "results", "data", "ml", "interfaces"):
+        assert contract in sections_for_scope(scope, path, text)
+    for scope in ("tooling", "presentation"):
+        assert contract not in sections_for_scope(scope, path, text)
