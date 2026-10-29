@@ -129,6 +129,10 @@ metrics, candidate identities/settings and definitions, or download the entire
 ML block as JSON. Null scores remain in each scope regardless of visibility;
 HTML distinguishes unavailable scores, unrecorded keys and finite zero. The
 ordering is not a guarantee of significance or out-of-sample performance.
+ML tables retain saved numeric precision and unscaled fractional values; for
+example, a hit rate of `0.2` remains `0.2`, not `20%`. Interpret units and meanings
+using each metric's saved definition. The backtest tables' two-decimal and
+percentage formatting rules and precision controls do not apply to ML tables.
 ML JSON downloads use pre-encoded UTF-8 bytes, preserving numeric precision
 without a browser JSON parse/stringify round trip.
 
@@ -222,15 +226,15 @@ The unified ledger identifies before/change/after and closing balances explicitl
 These remain generic engine accounting, not exchange margin wallets.
 Prices are quote currency
 per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
-Numeric displays default to two decimal places; each overview, ledger and paired-trade
-table has one full-precision checkbox shared by its interactive and static views.
+Backtest numeric displays default to two decimal places; each overview, ledger and
+paired-trade table has one full-precision checkbox shared by its interactive and static views.
 The renderer supplies source decimal strings before browser number parsing; percent
 text shifts decimal places exactly rather than multiplying a browser float. The switch
 retains filters, sorting and column visibility, including lazy loading and printing.
 Notional value is visible by default and included in the cash/position preset.
 Readers must enable full precision before recalculating from quantities and prices.
-Fractional rates and returns display as percentages; identifiers and integer counts
-retain exact integer form. Columns containing integers outside the JavaScript safe
+Backtest fractional rates and returns display as percentages; identifiers and
+integer counts retain exact integer form. Columns containing integers outside the JavaScript safe
 range disable sorting to avoid ordering rounded values. Nullable numeric parameters
 keep numeric formatting; truly mixed-type parameter columns use backend text for
 all non-null values, preserving exact values in both interactive and static views. Fold statistics show
