@@ -109,7 +109,7 @@ class TestRollingWindow:
 
         With 6 bars and a window of 3 there are 4 coefficients but only 2
         independent stretches of time; dividing the coefficient count would
-        overstate the evidence.
+        understate the evidence.
         """
         prediction = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         forward = [1.0, 2.0, 3.0, 6.0, 5.0, 4.0]
