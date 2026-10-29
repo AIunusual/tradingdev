@@ -16,6 +16,11 @@ import pytest
 
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
+from tests.e2e.ml_report_evidence import (
+    ML_REPORT_REQUEST,
+    seed_ml_report_candidates,
+    verify_ml_report_outcome,
+)
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -302,3 +307,63 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
                 f"Incomplete {provider}/ML workflow: {error}\n"
                 + json.dumps(transcript, ensure_ascii=False)
             )
+
+
+@pytest.mark.live_llm
+def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) -> None:
+    provider = pytestconfig.getoption("llm_provider")
+    assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
+    with temporary_mcp_workspace() as workspace:
+        entries = seed_ml_report_candidates(WorkspacePaths(workspace.workspace))
+        turns: list[ModelTurn] = []
+
+        async def observe_final(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": observe_final,
+                "max_tool_calls": 18,
+            }
+            async with workspace.connect() as client:
+                names = list(client.output_schemas)
+                assert all(name not in ML_REPORT_REQUEST for name in names), (
+                    "Natural user request must not supply tool names"
+                )
+                print(
+                    f"[ml-report] Complete product tool set: {len(names)}",
+                    flush=True,
+                )
+                options["tool_names"] = names
+                if provider == "local":
+                    return await run_local_model(
+                        client,
+                        ML_REPORT_REQUEST,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(
+                await run_codex(workspace.root, ML_REPORT_REQUEST, **options)
+            )
+
+        calls = asyncio.run(run())
+        transcript = {
+            "calls": [asdict(call) for call in calls],
+            "turns": [asdict(turn) for turn in turns],
+        }
+        (workspace.root / "ml-report-transcript.json").write_text(
+            json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        try:
+            assert len(turns) == 1, "Saved research already provides report inputs"
+            verify_ml_report_outcome(workspace, calls, turns[0], entries)
+        except (AssertionError, KeyError, ValueError, IndexError) as error:
+            pytest.fail(
+                f"Incomplete {provider}/ML report discovery: {error}\n"
+                + json.dumps(transcript, ensure_ascii=False)
+            )
+    assert not workspace.root.exists()

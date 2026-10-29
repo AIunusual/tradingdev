@@ -58,6 +58,7 @@ from tradingdev.domain.ml.leaderboard import (
     rank_entries,
     rankable_metrics,
     signal_fingerprint,
+    surface_caveats,
 )
 from tradingdev.domain.ml.models.registry import (
     ModelKind,
@@ -77,6 +78,7 @@ from tradingdev.domain.ml.registry import (
     LeaderboardStore,
     ModelArtifactStore,
 )
+from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 from tradingdev.domain.ml.validation import (
     get_validation_scheme,
     validation_scheme_names,
@@ -89,13 +91,6 @@ if TYPE_CHECKING:
     from tradingdev.domain.ml.calendar import PanelAlignment
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
-
-
-def _describe_axes(axes: dict[str, list[int]]) -> str:
-    """Name only the axes a candidate set actually varies."""
-    return ", ".join(
-        f"{name}={values}" for name, values in axes.items() if len(values) > 1
-    )
 
 
 @dataclass(frozen=True)
@@ -195,6 +190,14 @@ _ML_GUIDANCE = {
         "grid keeps the point where it failed instead of joining its "
         "neighbours. Ranking and selection caveats cover all candidates, even "
         "when only one page is returned; a winner is not a profit guarantee."
+    ),
+    "reports": (
+        "After inspecting saved leaderboard candidates, discover report sections "
+        "with get_report_sections and select their entry IDs with generate_report. "
+        "ML reports snapshot the selected evidence without rerunning predictions "
+        "or training. Keep unavailable candidates and comparison caveats; "
+        "including runs does not prove a model-to-run relationship. "
+        f"{ML_SAMPLE_PROVENANCE_NOTE}"
     ),
 }
 
@@ -689,18 +692,7 @@ class MLService:
         ]
         contexts = sorted({entry.context.describe() for entry in entries})
         caveats = list(result.caveats)
-        if any(len(values) > 1 for values in axes.values()):
-            caveats.append(
-                "candidates span more than one evaluation setting "
-                f"({_describe_axes(axes)}); the ranking describes a parameter "
-                "surface, not one comparable measurement"
-            )
-        if len(axes["horizon"]) > 1:
-            caveats.append(
-                "cross-horizon source and raw-data equivalence is not verified; "
-                "check dataset manifests and source bars before treating the "
-                "surface as a controlled comparison"
-            )
+        caveats.extend(surface_caveats(axes))
         return {
             "success": True,
             "metric": result.metric,
