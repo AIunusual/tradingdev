@@ -97,11 +97,15 @@ Strategy development workflow
      unexecuted candidate with its reason; neither omit them nor infer zero returns.
 
 8. Generate and deliver the complete result report.
+   - Saved ML research also supports reports: discover the ML reporting path in
+     get_ml_contract and get_report_sections; select recorded candidates explicitly.
    - Performance/risk interpretation includes an offline HTML report by default;
      only an explicit summary/metrics-only or no-report request opts out.
      Read get_report_sections; generate_report after inspecting results, omitting
      sections for the standard complete report unless the user selects them.
-     Read get_run_diagnostics for the results being interpreted. These are heuristic
+     Read get_run_diagnostics for saved backtest scopes being interpreted.
+     For ML-only reports, use empty analysis references and name selected entry IDs;
+     backtest diagnostics do not evaluate ML evidence. These are heuristic
      review prompts, not proof of causes or successful improvements. Inspect original
      trades/equity for specific loss-period claims; market-regime sensitivity requires
      defined regimes and aligned data, otherwise mark it unverified.

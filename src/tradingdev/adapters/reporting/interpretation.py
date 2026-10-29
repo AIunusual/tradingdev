@@ -31,7 +31,7 @@ def render_interpretation(payload: dict[str, Any]) -> str:
                 "、".join(
                     f"{r['run_id']} / {r['scope']}" for r in analysis["references"]
                 )
-                or "無成功結果，僅解讀比較狀態"
+                or "無回測範圍引用：ML 研究或沒有成功回測"
             )
             + "</p>"
         )

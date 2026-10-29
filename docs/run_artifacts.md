@@ -507,6 +507,10 @@ database and workspace files.
 utilities; MCP confirmation preparation does not call them. Sampling uses the
 selected market-data pipeline and effective settings and searches bounded calendar
 windows within the requested dates, continuing past empty market-closure windows until it reaches the bar budget or end date.
+Market requests normalize their bounds to UTC before selecting yearly cache files
+or provider intervals. An offset timestamp near New Year can therefore select
+the preceding or following UTC year. Reversed intervals fail before data access;
+one inclusive instant remains valid for the data utilities.
 Cached Parquet data is read in batches, interpreting timezone-naive timestamps
 as UTC just like ordinary loading. Feature caches project only the timestamp
 and requested value column, retaining exact matches to selected market bars.

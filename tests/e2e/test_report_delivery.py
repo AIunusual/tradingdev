@@ -13,16 +13,55 @@ import pytest
 
 from tests.e2e.conversation import ModelTurn
 from tests.e2e.llm_client import ToolCall
-from tests.e2e.report_delivery import verify_report_delivery
+from tests.e2e.report_delivery import verify_archive_delivery, verify_report_delivery
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.contracts.research_notes import NoteExport
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.performance.artifacts import (
     PerformanceScope,
     ScopeObservations,
     build_artifacts,
 )
+
+
+@pytest.mark.parametrize(
+    "reading,accepted",
+    [
+        ("請完整解壓後開啟 `index.html`，保留 `reports/` 目錄。", True),
+        ("[閱讀](</saved/index.html>)", True),
+        ("Extract the ZIP and open index.html.", True),
+        ("", False),
+        ("檔案內含 index.html。", False),
+        ("請解壓後開啟報告。", False),
+        ("```text\n解壓後開啟 index.html\n```", False),
+    ],
+)
+def test_archive_delivery_accepts_readable_zip_instructions(
+    reading: str, accepted: bool
+) -> None:
+    report = NoteExport(
+        success=True,
+        archive_id="a" * 64,
+        note_id="b" * 32,
+        version=2,
+        artifact_id="research:" + "a" * 64 + ":zip",
+        path="/saved/research.zip",
+        html_path="/saved/index.html",
+        sha256="c" * 64,
+        instructions="Extract and open index.html.",
+    )
+    text = "[下載](</saved/research.zip>)\n\n" + reading
+    if accepted:
+        verify_archive_delivery(text, report)
+    else:
+        with pytest.raises(AssertionError, match="reading entry point"):
+            verify_archive_delivery(text, report)
+    with pytest.raises(AssertionError, match="actual ZIP"):
+        verify_archive_delivery(
+            text.replace("/saved/research.zip", "/wrong.zip"), report
+        )
 
 
 @dataclass

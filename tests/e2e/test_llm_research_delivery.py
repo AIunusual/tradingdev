@@ -15,6 +15,7 @@ from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import links_to_file
 from tests.e2e.llm_client import codex_calls, run_local_model
 from tests.e2e.report_delivery import (
+    verify_archive_delivery,
     verify_no_execution_attempts,
     verify_report_delivery,
 )
@@ -129,9 +130,8 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
         linked = [e for e in exports if links_to_file(turns[2].text, Path(e.path))]
         assert len(linked) == 1, "Final reply must link the actual ZIP"
         exported = linked[0]
-        assert exported.html_path is not None
-        assert links_to_file(turns[2].text, Path(exported.html_path))
-        assert links_to_file(turns[-1].text, Path(exported.path))
+        verify_archive_delivery(turns[2].text, exported)
+        verify_archive_delivery(turns[-1].text, exported)
         reopened = [
             c
             for c in turns[-1].calls

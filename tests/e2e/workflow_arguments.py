@@ -43,7 +43,12 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "min_train_bars": TypeAdapter(int | None),
     },
     "predict": _PAGE,
-    "leaderboard": _PAGE,
+    "leaderboard": {
+        **_PAGE,
+        "horizon": TypeAdapter(int | None),
+        "allow_mixed": TypeAdapter(bool),
+        "allow_parameter_axes": TypeAdapter(bool),
+    },
     "evaluate_signal": {
         "window": TypeAdapter(int),
         "n_quantiles": TypeAdapter(int),
@@ -65,6 +70,8 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
     "find_runs": {"parameters": TypeAdapter(dict[str, Any] | None)},
     "generate_report": {
         "run_ids": TypeAdapter(list[str] | None),
+        "ml_entry_ids": TypeAdapter(list[str] | None),
+        "ml_allow_parameter_axes": TypeAdapter(bool),
         "sections": TypeAdapter(list[str] | None),
         "commentary": TypeAdapter(list[ReportCommentary] | None),
         "analysis": TypeAdapter(ReportAnalysis | None),

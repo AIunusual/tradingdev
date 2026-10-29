@@ -263,6 +263,26 @@ shared `next_offset` until `null`, even if one list has no entries on a page.
 Mixed-context rejection reports the full context count, limited examples and
 filter guidance, not every context's text.
 
+After inspecting saved candidates, discover the `ml` section with
+`get_report_sections` and pass 1–50 distinct entry IDs to
+`generate_report(ml_entry_ids=[...])`. This can produce an independent ML report
+or attach independent evidence to selected runs/a fixed comparison. The report
+uses the recorded candidates and never reruns prediction or training. Its default
+ranking metric is `ic_mean`; `ml_ranking_metric` selects another directed metric,
+and `ml_allow_parameter_axes=True` explicitly enables the same surface rules.
+Missing or incompatible evidence fails instead of silently dropping candidates.
+Deliver the returned report link and navigation instructions. The artifact saves
+the selected content even if those leaderboard entries are later replaced; it
+does not prove a model-to-run relationship or persist missing time series. Full
+selection, visibility and retention semantics are in the
+[report contract](reports.md#composable-offline-reports).
+
+Leaderboard records do not retain the training/evaluation split or establish
+whether evaluated rows participated in fitting or selection. A report built only
+from those records therefore establishes neither in-sample nor out-of-sample
+status. Describe the saved evaluation sample and keep that provenance unknown;
+model IDs, dataset IDs and a `full` scope are not split evidence.
+
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
 proof of a trustworthy publisher. Do not load model files from an untrusted
@@ -274,6 +294,8 @@ ML datasets, feature matrices, trained models and signal evaluations use the
 workspace directories listed in [Run Artifacts](run_artifacts.md#workspace-layout). They do not create background jobs, backtest runs
 or SQLite artifact registrations. Dataset and model IDs refer to their own
 stores; they are not run IDs.
+Reports generated from these records are separate registered artifacts; their
+publication and retention are defined in [Reports](reports.md#composable-offline-reports).
 
 ### Immutable Datasets
 
@@ -482,6 +504,40 @@ the value: when a number is unavoidable, write `0` as a placeholder and mark the
 row invalid. `0` is never a substitute for a missing score, because zero is a
 perfectly plausible IC or Sharpe, so a slope, flatness or ranking computed over
 placeholder zeros is meaningless until the validity mask is applied.
+
+`domain/ml/report.py` provides the pure projection used by `ReportService` for
+explicitly selected saved ML candidates. `ml_signal_scope` produces a scope
+per recorded candidate: `kind` is `ml_signal` and `mode` is `signal`, so a reader
+cannot mistake it for a backtest; `values` keeps the same three-state `null`
+behaviour; `observations` is present and null, because a signal evaluation
+records no orders and no equity curve. The three tunable settings are reported
+in `metadata`, not merged into `parameters`: a fitted parameter dictionary may
+legitimately contain a key of the same name, and merging would silently
+overwrite one of them, so `parameters` means exactly what the model was fitted
+with. Non-finite scores become `null`, as in leaderboard storage, while absent
+metric keys remain absent. `ml_report_block` collects the whole candidate set,
+including candidates that failed to rank, with block-level definitions, the
+observed parameter axes, the skipped rows and their coordinates, and the ranking
+caveats. It accepts the complete candidate list and a ranking metric, computing
+the ranking and selection caveats together from those candidates rather than
+accepting an independent or truncated ranking. `alpha` sets the family-wise
+significance level. Duplicate entry IDs raise `ValueError`. Comparability uses
+the leaderboard rules: settings must match by default; pass
+`allow_parameter_axes=True` for a surface, which still requires one research
+identity and one dataset version per horizon. Cross-horizon source equivalence
+remains unverified and is disclosed in the caveats.
+
+Signal metric definitions now carry the two fields a portfolio metric definition
+already had, `modes` and `requires_annualization`, so one definition shape
+serves both. `modes` is always `signal`; only annualised return, Sharpe and alpha
+require annualisation. Newly built `SignalEvaluationBundle` definitions record
+both fields. Older definitions without the flag load with
+`requires_annualization=null` (unknown), not `false`; their original semantics
+are not inferred from today's catalog. Explicit saved values remain unchanged.
+The projection's definitions come from the current signal catalog because
+leaderboard rows do not store definition snapshots; they are not historical
+producer definitions recovered from those rows. Report selection, presentation
+and snapshot publication are defined in [Reports](reports.md#composable-offline-reports).
 
 `leaderboard(dataset_id=...)` verifies and selects one immutable dataset
 version, so models on it can be compared separately from rebuilt versions.

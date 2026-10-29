@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
     from tests.e2e.llm_client import ToolCall
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
+    from tradingdev.app.contracts.research_notes import NoteExport
+
+
+def verify_archive_delivery(text: str, report: NoteExport) -> None:
+    """Accept a local reading link or the documented ZIP extraction workflow."""
+    assert links_to_file(text, Path(report.path)), (
+        "Final reply must link the actual ZIP"
+    )
+    assert report.html_path is not None
+    prose = " ".join(
+        visible_text(block.content)
+        for block in MarkdownIt("commonmark").parse(text)
+        if block.type == "inline"
+    )
+    assert links_to_file(text, Path(report.html_path)) or (
+        "index.html" in prose
+        and re.search(r"解壓|extract|unzip", prose, flags=re.IGNORECASE)
+    ), "Final reply must explain the archive reading entry point"
 
 
 def verify_report_delivery(

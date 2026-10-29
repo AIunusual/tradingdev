@@ -466,6 +466,30 @@ def parameter_axes(entries: Sequence[LeaderboardEntry]) -> dict[str, list[int]]:
     return axes
 
 
+def surface_caveats(axes: dict[str, list[int]]) -> tuple[str, ...]:
+    """The warnings a ranking needs once it spans more than one setting.
+
+    Lives here rather than in a caller so every reader of the same axes gets
+    the same words: a ranking over a grid is not one comparable measurement,
+    and a sweep across horizons does not verify that the source bars match.
+    """
+    caveats: list[str] = []
+    spanned = {name: values for name, values in axes.items() if len(values) > 1}
+    if spanned:
+        described = ", ".join(f"{name}={values}" for name, values in spanned.items())
+        caveats.append(
+            f"candidates span more than one evaluation setting ({described}); "
+            "the ranking describes a parameter surface, not one comparable measurement"
+        )
+    if len(axes.get("horizon", ())) > 1:
+        caveats.append(
+            "cross-horizon source and raw-data equivalence is not verified; "
+            "check dataset manifests and source bars before treating the "
+            "surface as a controlled comparison"
+        )
+    return tuple(caveats)
+
+
 def _selection_caveat(
     metric: str, n_candidates: int, leader: RankedEntry, *, alpha: float
 ) -> str:

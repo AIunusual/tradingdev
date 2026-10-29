@@ -20,6 +20,7 @@ class ReportResponse(ContractModel):
     navigation_instructions: str
     scope_count: int
     comparison_job_id: str | None = None
+    ml_entry_ids: list[str] = Field(default_factory=list)
 
 
 class ReportSection(ContractModel):

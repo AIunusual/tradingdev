@@ -220,27 +220,37 @@ def register(
         commentary: list[ReportCommentary] | None = None,
         comparison_job_id: str | None = None,
         analysis: ReportAnalysis | None = None,
+        ml_entry_ids: list[str] | None = None,
+        ml_ranking_metric: str = "ic_mean",
+        ml_allow_parameter_axes: bool = False,
     ) -> ReportResponse | ErrorResponse:
-        """Render saved evidence: choose run_ids (1..8) OR comparison_job_id.
+        """Render saved evidence: run_ids (1..8), comparison_job_id, or ML entries.
 
+        run_ids and comparison_job_id are mutually exclusive. ML can stand alone or
+        accompany either: select 1..50 distinct ml_entry_ids from leaderboard or
+        recorded evaluate_signal results; never infer model/run associations.
+        ML is cost-free signal research, not a backtest; unsaved prediction/IC series
+        are not reconstructed. Parameter-axis ranking requires explicit opt-in.
         A comparison needs a terminal job and complete ledger; every candidate,
         including failed/cancelled/not_run reasons, remains visible with any sections.
         Use its parent job ID even when zero candidates succeeded.
 
         Discover section IDs with get_report_sections. Omit sections for the complete
-        standard report, select detail order, or use [] to omit optional sections.
+        standard report plus selected ML evidence (ML alone defaults to ['ml']),
+        select detail order, or use [] to omit optional sections.
         overview is first when selected. Result switching requires a detail section.
         Every report embeds all loaded scopes/config/trades/equity even with []; section
         selection does not redact data. Supply analysis with summary, evidence-based
-        observations, hypotheses_and_limits, next_steps and exact run/scope references.
+        observations, hypotheses_and_limits, next_steps and exact backtest run/scope
+        references. ML-only: empty references; name selected entry IDs in prose.
         Explain each candidate; identify unanalysed scopes. Specific loss/regime claims
         require inspected evidence. Missing analysis is visibly not provided.
         Commentary is optional supplementary plain text, labelled
         separately from calculations (at most 20 entries, 20,000 total characters).
         Returns an artifact and local path; no strategy or market download runs. Deliver
-        the link with run IDs/scopes and the returned navigation_instructions in the
-        final answer, not only
-        an intermediate message. Preserve report/source runs after server shutdown.
+        the link with selected IDs/scopes and the returned navigation_instructions
+        in the final answer, not only an intermediate message. Preserve reports and
+        source evidence after server shutdown.
         """
         result = reports.generate_report(
             run_ids,
@@ -250,6 +260,9 @@ def register(
             else None,
             comparison_job_id=comparison_job_id,
             analysis=analysis.model_dump() if analysis is not None else None,
+            ml_entry_ids=ml_entry_ids,
+            ml_ranking_metric=ml_ranking_metric,
+            ml_allow_parameter_axes=ml_allow_parameter_axes,
         )
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)

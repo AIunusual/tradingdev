@@ -86,6 +86,7 @@ class _Peer:
         rpc_failure: str | None = None,
         servers: dict[str, Any] | None = None,
         returned_model: str | None = "specified-model",
+        returned_reasoning_effort: str | None = "xhigh",
         turns: list[list[dict[str, Any]]] | None = None,
     ) -> None:
         self.reader = asyncio.StreamReader()
@@ -97,6 +98,7 @@ class _Peer:
         self.rpc_failure = rpc_failure
         self.servers = servers or {}
         self.returned_model = returned_model
+        self.returned_reasoning_effort = returned_reasoning_effort
         self.observations = 0
 
     def _feed(self, message: dict[str, Any]) -> None:
@@ -126,6 +128,7 @@ class _Peer:
                     "result": {
                         "thread": {"id": "thread-1"},
                         "model": self.returned_model,
+                        "reasoningEffort": self.returned_reasoning_effort,
                     },
                 }
             )
@@ -311,6 +314,35 @@ def test_explicit_model_must_match_thread_before_starting_turn(
                     "prompt", {"model": "gpt-5.6-luna"}, mcp_config=_MCP_CONFIG
                 )
             assert peer.sent[-1]["method"] == "thread/start"
+            assert not any(
+                message.get("method") == "turn/start" for message in peer.sent
+            )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("returned_effort", ["xhigh", "ultra", "high", None])
+def test_reasoning_effort_must_match_thread_before_starting_turn(
+    returned_effort: str | None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def run() -> None:
+        peer = _Peer([_completed()], returned_reasoning_effort=returned_effort)
+        if returned_effort == "xhigh":
+            assert await peer.client().run(
+                "prompt",
+                {},
+                mcp_config=_MCP_CONFIG,
+                expected_reasoning_effort="xhigh",
+            ) == [_completed()]
+            assert "reasoning effort xhigh" in capsys.readouterr().out
+        else:
+            with pytest.raises(AssertionError, match="expected 'xhigh'"):
+                await peer.client().run(
+                    "prompt",
+                    {},
+                    mcp_config=_MCP_CONFIG,
+                    expected_reasoning_effort="xhigh",
+                )
             assert not any(
                 message.get("method") == "turn/start" for message in peer.sent
             )
@@ -554,6 +586,7 @@ def test_eof_without_completed_turn_is_rejected() -> None:
     [
         ({"type": "commandExecution"}, "bypassed MCP"),
         ({"type": "fileChange"}, "bypassed MCP"),
+        ({"type": "subAgentActivity"}, "bypassed MCP"),
         ({"server": "foreign-server"}, "foreign-server"),
         ({"tool": "unapproved_tool"}, "unapproved_tool"),
         ({"status": "failed", "result": None}, "MCP call failed"),

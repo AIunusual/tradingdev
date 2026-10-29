@@ -93,3 +93,40 @@ def test_report_persists_bound_analysis_and_diagnostics(tmp_path: Path) -> None:
         assert rejected["code"] == "invalid_analysis_reference"
     absent = reports.generate_report(["run"], sections=[])
     assert "尚未提供 LLM 研究解讀" in Path(absent["path"]).read_text()
+
+
+@pytest.mark.parametrize("with_run", [False, True])
+def test_interpretation_coexists_with_saved_ml_evidence(
+    tmp_path: Path, with_run: bool
+) -> None:
+    from tests.app.test_ml_report_service import _seed
+    from tests.app.test_research_notes import draft
+
+    from tradingdev.app.contracts.research_notes import NoteExport, NoteSaved
+    from tradingdev.app.research_note_service import ResearchNoteService
+
+    workspace = WorkspacePaths(tmp_path)
+    store = SQLiteStore(workspace)
+    service = ReportService(workspace=workspace, store=store)
+    _seed(workspace)
+    if with_run:
+        _save((workspace, store, service))
+    interpretation = analysis()
+    if not with_run:
+        interpretation["references"] = []
+    result = service.generate_report(
+        ["run"] if with_run else None,
+        ml_entry_ids=["first"],
+        sections=[],
+        analysis=interpretation,
+    )
+    assert result["success"], result
+    payload = _payload(Path(result["path"]))
+    assert payload["analysis"] == interpretation and payload["ml"]
+    html = Path(result["path"]).read_text()
+    assert "下一步研究建議" in html and "僅解讀比較狀態" not in html
+    notes = ResearchNoteService(workspace, store)
+    saved = notes.save(draft(result["artifact_id"]))
+    assert isinstance(saved, NoteSaved)
+    exported = notes.export(saved.note_id, saved.version)
+    assert isinstance(exported, NoteExport)

@@ -365,10 +365,12 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
             "trades",
             "limitations",
             "provenance",
+            "ml",
         ]
         assert catalog.templates["standard"] == [
-            section.id for section in catalog.sections
+            section.id for section in catalog.sections if section.id != "ml"
         ]
+        assert catalog.templates["ml_research"] == ["ml"]
         assert catalog.templates["trades"] == [
             "overview",
             "research",

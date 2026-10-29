@@ -95,6 +95,26 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
         ),
         ("generate_report", {"run_ids": '["run"]', "sections": "null"}),
         ("generate_report", {"comparison_job_id": "parent", "run_ids": "null"}),
+        (
+            "generate_report",
+            {
+                "ml_entry_ids": '["candidate-a", "candidate-b"]',
+                "ml_ranking_metric": "ic_mean",
+                "ml_allow_parameter_axes": "true",
+                "sections": '["ml"]',
+            },
+        ),
+        (
+            "leaderboard",
+            {
+                "metric": "ic_mean",
+                "allow_parameter_axes": "true",
+                "allow_mixed": "false",
+                "horizon": "1",
+                "offset": "0",
+                "limit": "20",
+            },
+        ),
         *[
             (name, {"run_id": "run", "limit": "1", "offset": "1"})
             for name in (
@@ -150,7 +170,8 @@ def test_conversion_preserves_failed_calls_source_text_and_unknown_fields() -> N
 
 
 @pytest.mark.parametrize("value", ["{}", '"run"', "[", "[1]"])
-def test_conversion_rejects_invalid_report_list_shapes(value: str) -> None:
-    call = ToolCall("generate_report", {"run_ids": value}, {"success": True})
-    with pytest.raises(AssertionError, match="run_ids"):
+@pytest.mark.parametrize("field", ["run_ids", "ml_entry_ids"])
+def test_conversion_rejects_invalid_report_list_shapes(value: str, field: str) -> None:
+    call = ToolCall("generate_report", {field: value}, {"success": True})
+    with pytest.raises(AssertionError, match=field):
         effective_workflow_calls([call])

@@ -1,14 +1,22 @@
 # Reports
 
 Offline report composition, navigation, export and publication contracts.
-Reports read the saved [performance artifacts](performance_artifacts.md);
+Reports read saved [performance artifacts](performance_artifacts.md) and
+explicitly selected [ML evaluations](ml_research.md#recorded-signal-evaluations);
 [Run Artifacts](run_artifacts.md#mcp-lookup) describes source lookup.
 
 ## Composable Offline Reports
 
 `get_report_sections` returns built-in section IDs and optional `standard`,
-`comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
+`comparison`, `trades` and `ml_research` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs.
+Saved ML candidates can instead be selected with `ml_entry_ids`, either alone or
+alongside one of the run/comparison selectors. Select 1–50 distinct entry IDs from
+recorded evaluations or leaderboard results; never infer a model-to-run relationship.
+The ML block and its presentation are absent when no ML evidence is selected.
+Newly generated reports include interpretation and diagnostic fields under template
+version 23, so their identity differs from earlier templates even without ML.
+Previously saved reports are not rewritten.
 Alternatively, pass `comparison_job_id` with no `run_ids` (CLI:
 `--comparison-job-id`, exclusive with repeatable `--run-id`). The parent must be
 terminal with a complete ledger. This selector includes every approved candidate;
@@ -26,8 +34,25 @@ and child run IDs remain in the report and need not be repeated in conversation.
 The parent's binding and report completeness are mechanically checked; natural
 language completeness, parameter/metric correspondence and navigation wording
 also require semantic review. Single-run delivery still identifies its run ID.
-For either selector, omitted/null sections select standard;
-an explicit ordered list chooses visible sections and their order within the detail
+
+`app/report_ml.py` reads one complete leaderboard file generation; missing IDs,
+corrupt records and duplicate stored identities fail without publishing a partial
+report. It does not load model pickle, retrain, rerun predictions or download data.
+Leaderboard records do not save training/evaluation split evidence. Their model
+and dataset identities and `full` scope do not establish either in-sample or
+out-of-sample status. The ML view discloses this uncertainty; report commentary
+and final interpretation must retain it rather than infer a training relationship.
+The selected candidates must satisfy the
+[ML comparison rules](ml_research.md#recorded-signal-evaluations).
+The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and
+`ml_allow_parameter_axes` (default `false`) select ranking and the explicit surface
+opt-in. CLI uses `--ml-entry-id` repeatedly, `--ml-ranking-metric` and
+`--ml-allow-parameter-axes`. Without selected IDs, non-default ML options are
+invalid. Selecting the `ml` section without evidence is an error.
+
+For either run/comparison selector, omitted/null sections select standard
+(plus `ml` when ML candidates are also selected); ML-only requests default to `ml`.
+An explicit ordered list chooses visible sections and their order within the detail
 view. When selected, `overview` always belongs to the first navigation level.
 With `[]`, no optional sections
 are rendered; fixed report/source identity metadata and any supplied commentary
@@ -36,7 +61,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 22 uses two navigation levels within one offline HTML
+Report schema 2 / template 23 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.
@@ -52,7 +77,8 @@ MCP instructions request a standard report when completing an execution with
 performance/risk interpretation, unless the user asks for summary/metrics only
 or opts out. This is a client workflow requirement, not an automatic worker step.
 The final user-facing response must deliver the returned report link, identify
-the runs/scopes and explain the selected detail views. `generate_report` returns
+the selected runs/scopes or ML candidates and explain the selected views.
+`generate_report` returns
 `navigation_instructions` from the same section-aware definition used by the HTML
 introduction; this text is also saved in the payload and manifest. The client must
 include it with the final link. It does not advertise unselected detail sections or
@@ -70,6 +96,9 @@ The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
 `ledger`, `trades`, `limitations`, `provenance`; comparison is `overview`, `research`,
 `metrics`, `equity`, `provenance`; trades is `overview`, `research`, `ledger`,
 `trades`, `provenance`.
+The `ml_research` recipe contains `ml`. ML evidence stays in the main view and is
+independent of the run/scope detail switcher; its own template version lives in
+the optional block so future ML presentation changes affect only ML reports.
 The `research` section belongs to the main view. It displays saved trading formulas,
 plain-language rules, parameter origins and source claims, limitations and versioned
 execution assumptions. Scalar backtest scopes show their own parameter origins
@@ -87,10 +116,27 @@ unchanged. Existing reports retain their original versions and remain untouched.
 
 Section selection determines the visible presentation without pruning the loaded
 or embedded data. Every HTML report embeds the complete loaded payload as JSON,
-including all scopes of the requested runs, saved metrics, trades, equity and
-execution configuration, even for `sections=[]`.
+including all scopes of the requested runs, saved metrics, trades, equity,
+execution configuration and selected ML evidence, even for `sections=[]`.
 Omitting a section does not remove its underlying data from the HTML; recipients
 of the file can still read that embedded data.
+
+The HTML ML section uses one rule for default visibility: show a metric when
+it is a summary metric and it declares an optimisation direction. Anything else
+is stored in full but marked hidden by default. `beta` is the case
+worth naming: it is a summary metric with no direction, so it describes exposure
+rather than quality. A block reports `visible_metrics` and `hidden_metrics`
+alongside the data. The HTML shows default metrics and lets readers expand other
+metrics, candidate identities/settings and definitions, or download the entire
+ML block as JSON. Null scores remain in each scope regardless of visibility;
+HTML distinguishes unavailable scores, unrecorded keys and finite zero. The
+ordering is not a guarantee of significance or out-of-sample performance.
+ML tables retain saved numeric precision and unscaled fractional values; for
+example, a hit rate of `0.2` remains `0.2`, not `20%`. Interpret units and meanings
+using each metric's saved definition. The backtest tables' two-decimal and
+percentage formatting rules and precision controls do not apply to ML tables.
+ML JSON downloads use pre-encoded UTF-8 bytes, preserving numeric precision
+without a browser JSON parse/stringify round trip.
 
 Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
 eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
@@ -182,15 +228,15 @@ The unified ledger identifies before/change/after and closing balances explicitl
 These remain generic engine accounting, not exchange margin wallets.
 Prices are quote currency
 per asset unit; quantities are asset units, and PnL/fees are quote currency amounts.
-Numeric displays default to two decimal places; each overview, ledger and paired-trade
-table has one full-precision checkbox shared by its interactive and static views.
+Backtest numeric displays default to two decimal places; each overview, ledger and
+paired-trade table has one full-precision checkbox shared by its interactive and static views.
 The renderer supplies source decimal strings before browser number parsing; percent
 text shifts decimal places exactly rather than multiplying a browser float. The switch
 retains filters, sorting and column visibility, including lazy loading and printing.
 Notional value is visible by default and included in the cash/position preset.
 Readers must enable full precision before recalculating from quantities and prices.
-Fractional rates and returns display as percentages; identifiers and integer counts
-retain exact integer form. Columns containing integers outside the JavaScript safe
+Backtest fractional rates and returns display as percentages; identifiers and
+integer counts retain exact integer form. Columns containing integers outside the JavaScript safe
 range disable sorting to avoid ordering rounded values. Nullable numeric parameters
 keep numeric formatting; truly mixed-type parameter columns use backend text for
 all non-null values, preserving exact values in both interactive and static views. Fold statistics show
@@ -227,6 +273,15 @@ Expandable raw records and embedded observations retain original field names and
 values. Presentation changes create a new template version and report
 identity without modifying earlier reports or backtest results.
 
+The payload and manifest both preserve the full `ml` block, including `entry_ids`,
+the ML renderer's `template_version`, and `source_sha256` over the ordered selected
+`LeaderboardEntry.to_record()` list (canonical sorted-key UTF-8 JSON plus newline).
+That hash identifies the content read for this report, not proof of external data
+provenance. The block contains all candidate metrics, parameters and context;
+subsequent re-recording or deletion does not change an existing report. A new
+request selects the current stored version and obtains a new report ID when its
+evidence differs. The block does not persist prediction or IC time series.
+
 The content digest includes source snapshots, template version, section order and
 commentary. `reports/<report_id>/report.html` and `manifest.json` are registered as
 `research_report_html` and `research_report_manifest` with IDs
@@ -234,6 +289,9 @@ commentary. `reports/<report_id>/report.html` and `manifest.json` are registered
 successful run is registered to that run; reports with zero or multiple successful
 runs have no single `run_id` binding. Comparison report metadata also retains the
 parent job identity.
+ML report metadata and the response retain `ml_entry_ids`; the manifest embeds
+the complete selected ML block. `scope_count` includes both run scopes and ML
+candidates, while `available_scopes` remains the mapping of run scopes.
 The response gives path, artifact IDs
 and HTML SHA-256 without placing an unbounded document into the MCP response.
 `get_artifact` can retrieve the files; local paths are not public URLs.
@@ -286,6 +344,9 @@ with successful results needs at least one reference when analysis is supplied.
 References identify what was interpreted, not proof of the prose's truth or
 coverage of all scopes. The client must identify unanalysed scopes and explain
 every comparison candidate, including failures. CLI accepts `--analysis-json`.
+These references bind backtest scopes only. An ML-only report uses empty references
+and names the selected entry IDs in its prose; it retains complete ML identities in
+the ML evidence block. The backtest diagnostic provider is not an ML evaluator.
 
 The opening HTML section shows this interpretation, followed by inspectable
 provider evidence. Analysis and per-scope diagnostics are saved in the manifest
