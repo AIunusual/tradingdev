@@ -14,7 +14,13 @@ uv sync --locked --all-extras --python 3.14
 ./scripts/install-git-hooks.sh
 ```
 
-一般文件檢查不需要模型服務；簡報另需 Node.js 與 npm。安裝器調整的 Git 設定及
+一般文件檢查不需要模型服務。簡報建置與檢查（`scripts/presentations.sh`、
+`scripts/check-presentations.sh`）另需 Node.js 18 以上與 npm，且執行
+`scripts/presentations.sh setup` 前必須先裝好 Node.js 與 npm——
+`setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝 Node.js 或 npm 本身。
+離線 pytest 套件（`scripts/check-full.sh` 執行的完整測試）的簡報測試會
+stub `node` 查找，因此**不需要**機器上有 Node.js 即可通過；
+只有實際建置簡報才需要 Node.js。安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
 
 | 工具 | 負責範圍 | 修改時應維護的內容 |
@@ -73,13 +79,17 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 ### 簡報的編輯與輸出
 
 [簡報入口](talks/tradingdev-introduction/README.md)提供編輯、預覽與發布操作。
-編輯環境須有 Node.js 18 以上及 npm；初始化鎖定的 Marp 工具鏈：
+編輯環境須有 Node.js 18 以上及 npm，再初始化鎖定的 Marp 工具鏈：
 
 ```bash
 ./scripts/presentations.sh setup
 ```
 
 `setup` 會下載 npm 套件；一般 build／check 使用已安裝工具鏈，不自動安裝。
+執行 `setup` 前必須已安裝 Node.js 與 npm——它只安裝鎖定的 npm 工具鏈
+（Marp CLI），不會安裝 Node.js 或 npm 本身。若報錯提示
+`Node.js is unavailable` 或 `Node.js and npm are required`，
+請先安裝 Node.js 與 npm，而不是執行 `setup`。
 依賴更新須同步 `tooling/marp/package-lock.json` 並重新初始化。
 
 #### 在 VS Code 儲存時自動編譯

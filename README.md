@@ -32,6 +32,18 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
+啟動助手與執行離線測試只需上述工具。若要**建置或檢查簡報**
+（`scripts/presentations.sh`、`scripts/check-presentations.sh`），另需 Node.js 18
+以上與 npm，並確認 `node` 在 `PATH` 上：
+
+```bash
+command -v node
+```
+
+`scripts/presentations.sh setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝
+Node.js 或 npm 本身；執行 `setup` 前請先裝好 Node.js 與 npm。簡報相關操作詳見
+[開發指南的簡報章節](docs/development.md#簡報的編輯與輸出)。
+
 首次下載與安裝：
 
 ```bash
@@ -588,7 +600,37 @@ uv run --locked python -m tradingdev.adapters.cli.research_notes \
 | 回測完成，Dashboard 卻找不到結果 | 確認 `TRADINGDEV_WORKSPACE` 與 MCP 的 `--workspace` 相同。Dashboard 需要該次回測保存的圖表資料；最佳化結果請改在對話中查詢或生成 HTML 報告。 |
 | 舊策略顯示 `revision_required` | 可請助手讀取舊內容、另建新的策略身分並重新驗證；舊識別碼與檔案保留，不會直接覆寫或自動遷移。 |
 | 升級後舊策略或圖表無法使用 | 請助手依[策略契約](docs/strategy_contract.md)檢查舊設定，另存並驗證新版策略。舊結果可讀範圍取決於當時保存的資料，完整新版圖表可能需要重新回測。 |
-| macOS 出現 `libomp.dylib` 載入錯誤 | XGBoost／LightGBM 需要 OpenMP runtime；使用 Homebrew 的 macOS 可執行 `brew install libomp`，再重新啟動客戶端或命令。 |
+| macOS 出現 `libomp.dylib` 載入錯誤 | XGBoost／LightGBM 需要 OpenMP runtime。有 Homebrew 的 macOS 可執行 `brew install libomp`；沒有 Homebrew（例如只有 Anaconda）請見下方「沒有 Homebrew 時設定 OpenMP」。修改後請重新啟動客戶端或命令。 |
+
+### 沒有 Homebrew 時設定 OpenMP（macOS）
+
+若 macOS 沒有 Homebrew、但有 Anaconda／conda，可將 Anaconda 提供的
+`libomp.dylib` 連結到 XGBoost／LightGBM 預期的路徑：
+
+```bash
+sudo mkdir -p /opt/homebrew/opt/libomp/lib
+sudo ln -s /opt/anaconda3/lib/libomp.dylib /opt/homebrew/opt/libomp/lib/libomp.dylib
+```
+
+驗證（直接執行 Python 與透過倉庫腳本都要成功）：
+
+```bash
+.venv/bin/python -c "import xgboost, lightgbm; print('ok')"
+bash scripts/check-fast.sh
+```
+
+注意事項：
+
+- 這是**機器本地**的 workaround，不在 `uv sync` 之內，換機器需重做。
+- 若日後安裝了 Homebrew，請先移除上面這條 symlink，再執行 `brew install libomp`，
+  避免兩個來源的 libomp 衝突。
+- 只設定 `DYLD_FALLBACK_LIBRARY_PATH=/opt/anaconda3/lib` 對**直接執行的 Python**
+  有效，但 `scripts/check-*.sh` 與 `gate` 是透過 `/bin/bash` 啟動 Python；
+  macOS SIP 會從 `/bin/bash` 的子程序剝離 `DYLD_*`，因此該變數到不了 Python。
+  上面的 symlink 做法才能同時涵蓋直接命令與 `scripts/check-*.sh`。
+
+> 上方的 Anaconda symlink 與 SIP 說明是貢獻者實測的 workaround，
+> 並非經過驗證的通用安裝流程；優先仍以 `brew install libomp` 為準。
 
 技術指標套件 TA-Lib 隨安裝命令一併安裝。若平台有相容 wheel，不需另外安裝 C 函式庫；
 只有必須從原始碼編譯時，才需依[TA-Lib 安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)
