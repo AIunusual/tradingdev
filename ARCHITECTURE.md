@@ -234,6 +234,9 @@ DataService 的受限取樣與確認前檢查分開。Application 層協調日�
 adapter 分批讀 Parquet；crawler 的 `fetch_sample` 在請求與解析階段限制資料量，
 不能先完整載入再截斷。特徵只投影所需欄位，合併前檢查筆數膨脹，不改寫來源快取。
 
+一般載入與取樣均精確對齊時間戳，只沿用較早的有效特徵；開頭缺值保持未知，
+不能用較晚觀測回填。
+
 行數限制不等於網路流量等比例縮減；Binance Vision 仍需下載選中的壓縮檔。
 下載、解壓與列數各有獨立上限，超量失敗。完整取樣及來源限制見
 [Bounded Historical Sampling](docs/run_artifacts.md#bounded-historical-sampling)。

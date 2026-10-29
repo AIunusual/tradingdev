@@ -19,6 +19,32 @@ from tradingdev.domain.strategies.bundled.glft_ml_strategy.strategy import (
 from tradingdev.domain.strategies.signals import generate_checked_signals
 
 
+def test_missing_dvol_blocks_entries_even_with_an_ml_direction(
+    sample_ohlcv_with_dvol_df: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strategy = GLFTMLStrategy(
+        GLFTMLStrategyConfig(gamma=0.0, kappa=1000.0, ema_window=2, vol_type="implied")
+    )
+    strategy._ml_trained = True
+    monkeypatch.setattr(
+        strategy, "_predict_ml_directions", lambda frame, _: np.ones(len(frame))
+    )
+    complete = generate_checked_signals(strategy, sample_ohlcv_with_dvol_df)
+    assert complete["signal"].iloc[:50].ne(0).any()
+
+    frame = sample_ohlcv_with_dvol_df.copy()
+    frame.loc[frame.index[:50], "dvol"] = np.nan
+    before = frame.copy(deep=True)
+    result = generate_checked_signals(strategy, frame)
+
+    assert result["signal"].iloc[:50].eq(0).all()
+    assert result["signal"].iloc[50:].ne(0).any()
+    assert not result["signal"].isna().any()
+    pd.testing.assert_frame_equal(result[frame.columns], before)
+    pd.testing.assert_frame_equal(frame, before)
+
+
 @pytest.mark.parametrize("include_target", [False, True])
 def test_direction_features_keep_original_row_identity_after_dropna(
     sample_ohlcv_df: pd.DataFrame, include_target: bool
