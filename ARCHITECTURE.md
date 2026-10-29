@@ -309,8 +309,9 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 保存目前版本，以 expected_version 防止覆寫其他編輯。筆記不替代不可變的
 ResearchEvidence、execution manifest 或執行確認；追加需求不會改動已執行設定。
 
-`ResearchArchiveStore` 核對所選版本與指定報告的登錄、路徑及 SHA-256，產生
-固定 HTML／JSON／報告 ZIP。只帶入引用的報告，不遍歷打包整個工作區。
+`ResearchArchiveStore` 核對所選版本與指定 HTML 附件的登錄、路徑及 SHA-256，產生
+固定 HTML／JSON／報告 ZIP。附件限所引用的研究報告與執行確認 HTML，
+不遍歷打包整個工作區。
 `adapters/reporting/notebook.py` 負責閱讀頁，儲存層負責原子發佈與失敗清理。
 HTTP 的自訂下載 route 使用每個 server instance 的短期簽章能力網址，
 驗證後才交付同一份 ZIP bytes；重新取得舊封存的網址只讀保存 ZIP，不依賴目前筆記或來源報告。
