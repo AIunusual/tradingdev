@@ -101,3 +101,112 @@ def test_report_cli_invalid_commentary_is_structured_error(
         )
     result = json.loads(capsys.readouterr().out)
     assert result["success"] is False and result["code"] == "invalid_report_commentary"
+
+
+@pytest.mark.parametrize(
+    ("selection", "run_ids", "extra_options"),
+    [
+        ([], None, {}),
+        (["--run-id", "run"], ["run"], {}),
+        (
+            ["--comparison-job-id", "comparison"],
+            None,
+            {"comparison_job_id": "comparison"},
+        ),
+    ],
+)
+def test_report_cli_selects_ml_alone_or_with_existing_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    selection: list[str],
+    run_ids: list[str] | None,
+    extra_options: dict[str, Any],
+) -> None:
+    def generate(
+        _: ReportService, selected_runs: list[str] | None, **options: Any
+    ) -> dict[str, Any]:
+        assert selected_runs == run_ids
+        assert options == {
+            "sections": ["ml"],
+            "commentary": None,
+            "ml_entry_ids": ["candidate-a", "candidate-b"],
+            "ml_ranking_metric": "rank_ic_mean",
+            "ml_allow_parameter_axes": True,
+            **extra_options,
+        }
+        return {"success": True, "ml_entry_ids": options["ml_entry_ids"]}
+
+    monkeypatch.setattr(ReportService, "generate_report", generate)
+    main(
+        [
+            "--workspace",
+            str(tmp_path),
+            *selection,
+            "--ml-entry-id",
+            "candidate-a",
+            "--ml-entry-id",
+            "candidate-b",
+            "--ml-ranking-metric",
+            "rank_ic_mean",
+            "--ml-allow-parameter-axes",
+            "--sections",
+            "ml",
+        ]
+    )
+    assert json.loads(capsys.readouterr().out)["ml_entry_ids"] == [
+        "candidate-a",
+        "candidate-b",
+    ]
+
+
+def test_report_cli_uses_service_ml_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def generate(
+        _: ReportService, run_ids: list[str] | None, **options: Any
+    ) -> dict[str, Any]:
+        assert run_ids is None
+        assert options == {
+            "sections": None,
+            "commentary": None,
+            "ml_entry_ids": ["candidate"],
+        }
+        return {"success": True}
+
+    monkeypatch.setattr(ReportService, "generate_report", generate)
+    main(["--workspace", str(tmp_path), "--ml-entry-id", "candidate"])
+    assert json.loads(capsys.readouterr().out)["success"]
+
+
+def test_report_cli_missing_selection_returns_service_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit, match="1"):
+        main(["--workspace", str(tmp_path)])
+    result = json.loads(capsys.readouterr().out)
+    assert result["success"] is False
+    assert result["code"] == "invalid_report_selection"
+
+
+def test_report_cli_keeps_runs_and_comparison_mutually_exclusive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        main(
+            [
+                "--workspace",
+                str(tmp_path),
+                "--run-id",
+                "run",
+                "--comparison-job-id",
+                "comparison",
+                "--ml-entry-id",
+                "candidate",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "not allowed with argument" in captured.err

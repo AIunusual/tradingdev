@@ -80,15 +80,26 @@ REPORT_SECTIONS = MappingProxyType(
                 "版本、資料與來源證據",
                 "Strategy/run versions, data IDs and registered source hashes.",
             ),
+            ReportSectionDefinition(
+                "ml",
+                "ML 訊號研究",
+                "Selected saved leaderboard candidates, full metrics/definitions, "
+                "evaluation coordinates, unavailable scores and ranking caveats. "
+                "Select their entry IDs with generate_report(ml_entry_ids=...). "
+                "Supports standalone ML reports or independent evidence alongside "
+                "runs; this is cost-free signal research, not executed backtests. "
+                "Series and cross-horizon source equivalence remain unavailable.",
+            ),
         )
     }
 )
 
 REPORT_RECIPES = MappingProxyType(
     {
-        "standard": tuple(REPORT_SECTIONS),
+        "standard": tuple(key for key in REPORT_SECTIONS if key != "ml"),
         "comparison": ("overview", "research", "metrics", "equity", "provenance"),
         "trades": ("overview", "research", "ledger", "trades", "provenance"),
+        "ml_research": ("ml",),
     }
 )
 

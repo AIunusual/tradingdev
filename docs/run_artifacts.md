@@ -458,10 +458,13 @@ row invalid. `0` is never a substitute for a missing score, because zero is a
 perfectly plausible IC or Sharpe, so a slope, flatness or ranking computed over
 placeholder zeros is meaningless until the validity mask is applied.
 
-`domain/ml/report.py` provides a pure projection for future report integration.
-It is not called by `ReportService`, `generate_report` or the HTML renderer;
-there is currently no report option for selecting ML evidence. Existing report
-payloads and `report_id` values are unchanged. `ml_signal_scope` produces a scope
+`domain/ml/report.py` provides the pure projection used by `ReportService` for
+explicitly selected saved ML candidates. `generate_report(ml_entry_ids=[...])`
+accepts 1–50 distinct leaderboard entry IDs, independently or alongside run IDs
+or a fixed comparison. `app/report_ml.py` reads one complete leaderboard file
+generation; missing IDs, corrupt records and duplicate stored identities fail
+without publishing a partial report. It does not load model pickle, retrain,
+rerun predictions or download data. `ml_signal_scope` produces a scope
 per recorded candidate: `kind` is `ml_signal` and `mode` is `signal`, so a reader
 cannot mistake it for a backtest; `values` keeps the same three-state `null`
 behaviour; `observations` is present and null, because a signal evaluation
@@ -493,14 +496,34 @@ The projection's definitions come from the current signal catalog because
 leaderboard rows do not store definition snapshots; they are not historical
 producer definitions recovered from those rows.
 
-The projection recommends default visibility using one rule: show a metric when
+The HTML ML section uses one rule for default visibility: show a metric when
 it is a summary metric and it declares an optimisation direction. Anything else
 is stored in full but marked hidden by default. `beta` is the case
 worth naming: it is a summary metric with no direction, so it describes exposure
 rather than quality. A block reports `visible_metrics` and `hidden_metrics`
-alongside the data; these are hints for future consumers, not implemented HTML
-controls. Null scores remain in each scope regardless of visibility, so a
-consumer can preserve failed candidates as gaps at their original coordinates.
+alongside the data. The HTML shows default metrics and lets readers expand other
+metrics, candidate identities/settings and definitions, or download the entire
+ML block as JSON. Null scores remain in each scope regardless of visibility;
+HTML distinguishes unavailable scores, unrecorded keys and finite zero. The
+ordering is not a guarantee of significance or out-of-sample performance.
+
+The payload and manifest both preserve the full `ml` block, including `entry_ids`,
+the ML renderer's `template_version`, and `source_sha256` over the ordered selected
+`LeaderboardEntry.to_record()` list (canonical sorted-key UTF-8 JSON plus newline).
+That hash identifies the content read for this report, not proof of external data
+provenance. The block contains all candidate metrics, parameters and context;
+subsequent re-recording or deletion does not change an existing report. A new
+request selects the current stored version and obtains a new report ID when its
+evidence differs. The block does not persist prediction or IC time series.
+
+The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and
+`ml_allow_parameter_axes` (default `false`) select ranking and the explicit surface
+opt-in. CLI uses `--ml-entry-id` repeatedly, `--ml-ranking-metric` and
+`--ml-allow-parameter-axes`. Without selected IDs, non-default ML options are
+invalid. The section catalog exposes `ml` and the `ml_research` recipe; omitted
+`sections` selects only `ml` for ML-only reports, or appends it to the standard
+run/comparison report. Selecting `ml` without evidence is an error. Explicitly
+omitting the section hides presentation but retains all selected evidence.
 
 `leaderboard(dataset_id=...)` verifies and selects one immutable dataset
 version, so models on it can be compared separately from rebuilt versions.
@@ -1360,8 +1383,14 @@ aligned to their original bar indices after filtering and paging.
 ## Composable Offline Reports
 
 `get_report_sections` returns built-in section IDs and optional `standard`,
-`comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
+`comparison`, `trades` and `ml_research` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs.
+Saved ML candidates can instead be selected with `ml_entry_ids`, either alone or
+alongside one of the run/comparison selectors; see the
+[ML report contract](#recorded-signal-evaluations). The report never infers a
+model-to-run relationship. The ML block and its presentation are absent when no
+ML evidence is selected, preserving existing run-only payload, HTML, manifest
+and report identity.
 Alternatively, pass `comparison_job_id` with no `run_ids` (CLI:
 `--comparison-job-id`, exclusive with repeatable `--run-id`). The parent must be
 terminal with a complete ledger. This selector includes every approved candidate;
@@ -1379,7 +1408,8 @@ and child run IDs remain in the report and need not be repeated in conversation.
 The parent's binding and report completeness are mechanically checked; natural
 language completeness, parameter/metric correspondence and navigation wording
 also require semantic review. Single-run delivery still identifies its run ID.
-For either selector, omitted/null sections select standard;
+For either run/comparison selector, omitted/null sections select standard
+(plus `ml` when ML candidates are also selected); ML-only requests default to `ml`.
 an explicit ordered list chooses visible sections and their order within the detail
 view. When selected, `overview` always belongs to the first navigation level.
 With `[]`, no optional sections
@@ -1423,6 +1453,9 @@ The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
 `ledger`, `trades`, `limitations`, `provenance`; comparison is `overview`, `research`,
 `metrics`, `equity`, `provenance`; trades is `overview`, `research`, `ledger`,
 `trades`, `provenance`.
+The `ml_research` recipe contains `ml`. ML evidence stays in the main view and is
+independent of the run/scope detail switcher; its own template version lives in
+the optional block so future ML presentation changes affect only ML reports.
 The `research` section belongs to the main view. It displays saved trading formulas,
 plain-language rules, parameter origins and source claims, limitations and versioned
 execution assumptions. Scalar backtest scopes show their own parameter origins
@@ -1587,6 +1620,9 @@ commentary. `reports/<report_id>/report.html` and `manifest.json` are registered
 successful run is registered to that run; reports with zero or multiple successful
 runs have no single `run_id` binding. Comparison report metadata also retains the
 parent job identity.
+ML report metadata and the response retain `ml_entry_ids`; the manifest embeds
+the complete selected ML block. `scope_count` includes both run scopes and ML
+candidates, while `available_scopes` remains the mapping of run scopes.
 The response gives path, artifact IDs
 and HTML SHA-256 without placing an unbounded document into the MCP response.
 `get_artifact` can retrieve the files; local paths are not public URLs.

@@ -97,6 +97,8 @@ Strategy development workflow
      unexecuted candidate with its reason; neither omit them nor infer zero returns.
 
 8. Generate and deliver the complete result report.
+   - Saved ML research also supports reports: discover the ML reporting path in
+     get_ml_contract and get_report_sections; select recorded candidates explicitly.
    - Performance/risk interpretation includes an offline HTML report by default;
      only an explicit summary/metrics-only or no-report request opts out.
      Read get_report_sections; generate_report after inspecting results, omitting

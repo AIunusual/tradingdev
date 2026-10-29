@@ -859,6 +859,20 @@ shared `next_offset` until `null`, even if one list has no entries on a page.
 Mixed-context rejection reports the full context count, limited examples and
 filter guidance, not every context's text.
 
+After inspecting saved candidates, discover the `ml` section with
+`get_report_sections` and pass 1–50 distinct entry IDs to
+`generate_report(ml_entry_ids=[...])`. This can produce an independent ML report
+or attach independent evidence to selected runs/a fixed comparison. The report
+uses the recorded candidates and never reruns prediction or training. Its default
+ranking metric is `ic_mean`; `ml_ranking_metric` selects another directed metric,
+and `ml_allow_parameter_axes=True` explicitly enables the same surface rules.
+Missing or incompatible evidence fails instead of silently dropping candidates.
+Deliver the returned report link and navigation instructions. The artifact saves
+the selected content even if those leaderboard entries are later replaced; it
+does not prove a model-to-run relationship or persist missing time series. Full
+selection, visibility and retention semantics are in the
+[report artifact contract](run_artifacts.md#recorded-signal-evaluations).
+
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
 proof of a trustworthy publisher. Do not load model files from an untrusted

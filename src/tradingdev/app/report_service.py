@@ -28,6 +28,11 @@ from tradingdev.adapters.reporting.tables import (
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.report_comparison import load_report_comparison
+from tradingdev.app.report_ml import (
+    MLReportError,
+    load_ml_report,
+    validate_ml_selection,
+)
 from tradingdev.app.run_service import RunService
 from tradingdev.app.trade_history_service import (
     HistoryReadError,
@@ -105,23 +110,34 @@ class ReportService:
         commentary: list[dict[str, str]] | None = None,
         *,
         comparison_job_id: str | None = None,
+        ml_entry_ids: list[str] | None = None,
+        ml_ranking_metric: str = "ic_mean",
+        ml_allow_parameter_axes: bool = False,
     ) -> dict[str, Any]:
-        """Publish saved runs or one finalized fixed comparison as offline HTML.
+        """Publish runs, a finalized comparison and/or selected saved ML evidence.
 
         Identical inputs reuse the same report, provided existing report files and
         registrations are intact. Missing/corrupt history is an error, never a request
         to reconstruct it from pickle, current configuration, or a fresh simulation.
         """
-        if (run_ids is None) == (comparison_job_id is None):
+        try:
+            validate_ml_selection(
+                ml_entry_ids, ml_ranking_metric, ml_allow_parameter_axes
+            )
+        except MLReportError as exc:
+            return _error(exc.code, str(exc))
+        if (run_ids is not None and comparison_job_id is not None) or (
+            run_ids is None and comparison_job_id is None and ml_entry_ids is None
+        ):
             return _error(
                 "invalid_report_selection",
-                "Provide either run_ids or comparison_job_id, exclusively",
+                "Select run_ids OR comparison_job_id, and/or saved ml_entry_ids",
             )
         if comparison_job_id is not None and (
             not isinstance(comparison_job_id, str) or not comparison_job_id.strip()
         ):
             return _error("invalid_report_selection", "Provide a comparison job ID")
-        if comparison_job_id is None and (
+        if run_ids is not None and (
             not isinstance(run_ids, list)
             or not 1 <= len(run_ids) <= 8
             or any(not isinstance(run_id, str) for run_id in run_ids)
@@ -130,7 +146,16 @@ class ReportService:
             return _error(
                 "invalid_report_runs", "Provide one to eight distinct run IDs"
             )
-        selected = list(REPORT_RECIPES["standard"]) if sections is None else sections
+        if sections is None:
+            selected = (
+                list(REPORT_RECIPES["standard"])
+                if run_ids is not None or comparison_job_id is not None
+                else []
+            )
+            if ml_entry_ids is not None:
+                selected.append("ml")
+        else:
+            selected = sections
         if (
             not isinstance(selected, list)
             or any(not isinstance(key, str) for key in selected)
@@ -139,6 +164,11 @@ class ReportService:
         ):
             return _error(
                 "invalid_report_sections", "Select unique built-in section IDs"
+            )
+        if "ml" in selected and ml_entry_ids is None:
+            return _error(
+                "invalid_report_ml_selection",
+                "The ML section requires explicitly selected saved ml_entry_ids",
             )
         notes = [] if commentary is None else commentary
         if (
@@ -176,14 +206,34 @@ class ReportService:
                         snapshot.content_hash
                     )
             else:
-                assert run_ids is not None
+                run_ids = [] if run_ids is None else run_ids
                 payload = self._load(run_ids)
+            if ml_entry_ids is not None:
+                payload["ml"] = load_ml_report(
+                    self._workspace,
+                    ml_entry_ids,
+                    metric=ml_ranking_metric,
+                    allow_parameter_axes=ml_allow_parameter_axes,
+                )
             payload["sections"] = list(selected)
             payload["navigation_instructions"] = report_navigation_instructions(
                 selected,
                 has_results=bool(payload["runs"]),
                 comparison=comparison_job_id is not None,
             )
+            if ml_entry_ids is not None:
+                ml_navigation = (
+                    "在「ML 訊號研究」查看候選排序與缺分數原因，"
+                    "展開候選證據及其他指標；"
+                    "ML 證據與回測各自獨立，不代表模型已用於該回測。"
+                    if "ml" in selected
+                    else "未選取 ML 顯示章節；所選 ML 候選的完整證據仍保存在離線 HTML。"
+                )
+                payload["navigation_instructions"] = (
+                    payload["navigation_instructions"] + " " + ml_navigation
+                    if payload["runs"] or comparison_job_id is not None
+                    else ml_navigation
+                )
             payload["commentary"] = [dict(note) for note in notes]
             payload["comparison_table"] = comparison_table(
                 payload,
@@ -207,6 +257,8 @@ class ReportService:
             report_id = hashlib.sha256(encoded).hexdigest()
             report_html = render_report(payload, report_id).encode("utf-8")
             scope_count = sum(len(run["scopes"]) for run in payload["runs"])
+            if "ml" in payload:
+                scope_count += len(payload["ml"]["scopes"])
             manifest = {
                 "schema_version": REPORT_SCHEMA_VERSION,
                 "template_version": REPORT_TEMPLATE_VERSION,
@@ -245,7 +297,9 @@ class ReportService:
                 "renderers": payload.get("renderers", {}),
                 "sections": list(selected),
                 "omitted_sections": [
-                    key for key in REPORT_SECTIONS if key not in selected
+                    key
+                    for key in REPORT_SECTIONS
+                    if key not in selected and (key != "ml" or "ml" in payload)
                 ],
                 "available_data": {
                     run["identity"]["run_id"]: {
@@ -281,6 +335,9 @@ class ReportService:
             if comparison_job_id is not None:
                 manifest["comparison_job_id"] = comparison_job_id
                 manifest["fixed_comparison"] = payload["fixed_comparison"]
+            if ml_entry_ids is not None:
+                manifest["ml_entry_ids"] = list(ml_entry_ids)
+                manifest["ml"] = payload["ml"]
             published = publish_report(
                 self._workspace,
                 self._store,
@@ -290,6 +347,7 @@ class ReportService:
                 run_ids=run_ids,
                 scope_count=scope_count,
                 comparison_job_id=comparison_job_id,
+                ml_entry_ids=ml_entry_ids,
             )
             return {
                 **published,
@@ -298,6 +356,7 @@ class ReportService:
         except (
             HistoryReadError,
             ReportPublicationError,
+            MLReportError,
         ) as exc:
             return _error(exc.code, str(exc))
         except ManifestError as exc:

@@ -467,11 +467,12 @@ n_quantiles，參數平原不會把倖存的點誤讀成相鄰設定。舊紀錄
 MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
-`domain/ml/report.py` 提供訊號證據的純資料投影，供後續報告整合使用；目前未接入
-`ReportService`、`generate_report` 或 HTML renderer，既有報告 payload 與 `report_id`
-不受影響。投影保留候選身分、未取得分數、評估座標及排名警語，由同批候選即時計算
-完整排名，避免外部排名與資料失去同步。它不讀寫儲存資料，也不改變 ML 工具的回覆契約。
-投影格式、顯示建議及歷史定義的未知欄位見
+`domain/ml/report.py` 保留候選身分、未取得分數、評估座標及排名警語，由同批候選即時計算
+完整排名。`app/report_ml.py` 依明示的候選 ID 從排行榜讀取當前內容，交給純投影後固定於
+報告；不重新預測或訓練。`ReportService` 接受獨立 ML 選取，也可附加在 run 或固定比較
+報告中，MCP 與 CLI 共用這條路徑；HTML 的 ML 章節呈現訊號研究及完整證據，不推定模型與
+run 的來源關聯。排行榜後續替換不改變已發布報告；未選取 ML 時保留既有 payload、HTML、
+manifest 與報告身分。投影格式、顯示規則及歷史定義的未知欄位見
 [執行產物契約](docs/run_artifacts.md#ml-research-artifacts)。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的

@@ -190,6 +190,13 @@ _ML_GUIDANCE = {
         "neighbours. Ranking and selection caveats cover all candidates, even "
         "when only one page is returned; a winner is not a profit guarantee."
     ),
+    "reports": (
+        "After inspecting saved leaderboard candidates, discover report sections "
+        "with get_report_sections and select their entry IDs with generate_report. "
+        "ML reports snapshot the selected evidence without rerunning predictions "
+        "or training. Keep unavailable candidates and comparison caveats; "
+        "including runs does not prove a model-to-run relationship."
+    ),
 }
 
 
