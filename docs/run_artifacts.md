@@ -758,7 +758,9 @@ Cached Parquet data is read in batches, interpreting timezone-naive timestamps
 as UTC just like ordinary loading. Feature caches project only the timestamp
 and requested value column, retaining exact matches to selected market bars.
 Join cardinality is checked before materializing duplicate-key expansions;
-exact left joins and forward/backward fill keep the ordinary loading semantics.
+Both sampling and ordinary loading use exact left joins followed by forward fill
+from earlier matched values. Leading gaps remain missing; later observations
+never fill earlier bars. Unmatched feature timestamps do not seed the fill.
 Sampling does not rewrite source market or feature caches.
 
 Each crawler implements `fetch_sample(..., max_rows=...)` independently of full
