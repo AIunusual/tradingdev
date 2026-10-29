@@ -518,7 +518,8 @@ class DataService:
             if expected_rows > sample_max_rows:
                 raise ValueError("Feature joins exceeded the sample row budget")
         result = frame.merge(merged, on="timestamp", how="left")
-        result[feature.column] = result[feature.column].ffill().bfill()
+        # Leading gaps are unknown; later observations cannot fill earlier bars.
+        result[feature.column] = result[feature.column].ffill()
         return result
 
     def _load_or_fetch_dvol(

@@ -453,12 +453,8 @@ class GLFTStrategy(BaseStrategy):
             log_ret = np.concatenate([[0.0], log_ret])
             sigma = pd.Series(log_ret).rolling(window, min_periods=1).std().values
 
-        # Replace NaN/zero with a tiny positive value
-        sigma = np.where(
-            np.isnan(sigma) | (sigma <= 0),
-            1e-10,
-            sigma,
-        )
+        # Keep unknown volatility missing; only floor nonpositive observations.
+        sigma = np.where(sigma <= 0, 1e-10, sigma)
         return np.asarray(sigma, dtype=np.float64)
 
     # ------------------------------------------------------------------
