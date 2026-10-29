@@ -286,6 +286,22 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 或載入 pickle。Walk-forward 摘要是分折分布，最佳化區分 trial 與樣本外結果。
 完整取樣、年化、數值及比較限制見[績效產物契約](docs/performance_artifacts.md)。
 
+### 診斷擴充與替換
+
+`domain/diagnostics.py` 定義 `DiagnosticProvider.diagnose(DiagnosticContext)`。
+`DiagnosticContext` 保留原生 `PerformanceScope` 與 `ScopeObservations`（可缺少），
+包含保存的交易、權益與帳戶觀察值；不把資料壓成 Maverick 專用輸入。
+`DiagnosticService` 的預設 providers 是共同組裝點，MCP 查詢與 ReportService
+都經此服務。要替換初期 adapter，可實作相同 Protocol 並在此更換預設組合；
+測試也可直接注入 provider tuple。不是把 Maverick 套件當成 domain 基類。
+
+深度診斷應保留 provider／版本、證據、不可用原因與限制，先加入可重現的離線測試。
+目前 evidence 是具單位的數值指標；若需時間區段、交易索引或情境分類，應擴充正式
+證據模型並同步更新 HTML、工具 schema 與測試，而非把新事實藏在 LLM 文字中。
+行情型態／波動診斷若需要 OHLCV，須另以固定資料身分載入並驗證對齊後加入 context；
+目前 context 沒有承諾原始行情。資料不足回報 unavailable，不由 provider 隱式抓取行情或回測。
+規則或契約改變須更新 provider／報告版本；既有報告及封存保持原樣。
+
 ### 研究筆記與可攜封存
 
 對話端 LLM 負責 `ResearchNoteDraft`：目前需求、階段摘要、報告引用與後續研究。
