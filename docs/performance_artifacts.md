@@ -7,11 +7,11 @@ and [Reports](reports.md) for derived HTML presentation.
 ## Performance Scopes and Provenance
 
 `performance.json` schema version 1 records `run_id`, `manifest_hash`,
-`default_scope`, `scopes`, and `definitions`. Each scope contains `values` and
-`metadata`, its engine `mode`, `kind`, `split`, optional fold/trial index, and
-parameter values. Definition snapshots describe unit, provider, meaning,
-applicability, summary selection and optimization direction. They are saved with
-the result; queries do not substitute the current catalog.
+`default_scope`, `scopes`, `definitions`, and optionally `benchmarks`. Each scope
+contains `values` and `metadata`, its engine `mode`, `kind`, `split`, optional
+fold/trial index, and parameter values. Definition snapshots describe unit,
+provider, meaning, applicability, summary selection and optimization direction.
+They are saved with the result; queries do not substitute the current catalog.
 
 | Run type | Scopes | Default |
 | --- | --- | --- |
@@ -73,6 +73,38 @@ settings are `unavailable`, and converted per-period rates are `null`. Frequency
 validation does not infer bar duration from missing dates or synthesize daily
 equity. Existing saved results remain snapshots; this correction does not
 recalculate previously published artifacts.
+
+## Benchmarks
+
+New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the
+same scalar scope IDs. The baseline is chosen from the saved market requirement,
+never from a request parameter: `binance_vision` and `binance_api` markets use
+`BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. A market with no
+defined asset class, another venue suffix, a future or an FX pair is recorded as
+`undefined` instead of borrowing a foreign index.
+
+Each entry records `status` (`available`, `unavailable`, `undefined`), the
+snapshot of the fixed definition, `source`, `market_type`, `dataset_id`,
+`reused_run_frame`, the entry `fees`/`slippage`, `capital_basis`, `coverage`,
+aligned `timestamps`, `equity_curve`, `returns`, `values` and `metadata`.
+`capital_basis` is `run_init_cash` when the scope had initial capital, and
+`normalized_unit` (capital `1.0`) when it did not.
+
+The baseline buys once at the first aligned close, paying the run's own
+per-side commission and slippage, and is marked to market afterwards. It is not
+liquidated on the final bar, matching how the strategy's open positions are
+valued, so no exit cost is charged. `values` uses the same metric catalog and
+annualization settings as the strategy; closed-trade metrics are unavailable
+because a baseline has no trades. Bars align on shared UTC timestamps only:
+`coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
+and a missing bar is never back-filled. An unavailable baseline carries a
+reason and no values, so it is never read as a zero return. A baseline is
+captured when the run executes; when the benchmark symbol equals the traded
+symbol, the already loaded frame is reused instead of reading the cache again.
+
+Optimization scopes and the walk-forward `test_summary` have no baseline because
+neither has a single equity path. Artifacts saved before this field existed load
+unchanged and simply have no `benchmarks` mapping; reads do not recompute them.
 
 `observations.json` has the same run and manifest identity. Backtest scopes retain
 initial capital, equity, per-bar returns, UTC ISO timestamps and normalized trade

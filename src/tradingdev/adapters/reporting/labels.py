@@ -66,6 +66,11 @@ _REASON_LABELS = {
     "unknown_bar_frequency": "無法識別 K 棒週期",
     "unsupported_volume_accounting": "名目金額回測模式未提供此帳戶資料流",
     "not_recorded": "此保存結果未記錄資料",
+    "undefined_asset_class": "此資產類別未定義 benchmark",
+    "benchmark_data_unavailable": "基準行情無法取得",
+    "invalid_benchmark_prices": "基準收盤價不是有限正數",
+    "no_shared_observations": "基準與回測 K 線沒有共同的時間戳",
+    "invalid_benchmark_cost_settings": "回測的成本設定無法套用到基準",
 }
 
 _ENUM_LABELS = {
@@ -119,6 +124,15 @@ _ENUM_LABELS = {
         "volume": "名目金額回測模式",
     },
     "split": {"full": "完整區間", "train": "訓練區間", "test": "測試區間"},
+    "benchmark_status": {
+        "available": "已保存基準",
+        "unavailable": "基準無法建立",
+        "undefined": "此資產類別未定義基準",
+    },
+    "capital_basis": {
+        "run_init_cash": "使用本次回測的初始本金",
+        "normalized_unit": "以 1 個報價貨幣單位計算（回測未設定初始本金）",
+    },
     "parameter_provenance": {
         "scope_snapshot": "保存範圍的參數快照",
         "execution_manifest": "固定執行清單的建構參數",

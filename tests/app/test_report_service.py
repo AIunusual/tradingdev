@@ -27,6 +27,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
+    BenchmarkScope,
     FoldStats,
     MetricDefinitionSnapshot,
     ObservationsBundle,
@@ -86,6 +87,7 @@ def _save(
     ),
     trades: list[dict[str, Any]] | None = None,
     definitions: dict[str, MetricDefinitionSnapshot] | None = None,
+    benchmarks: dict[str, BenchmarkScope] | None = None,
 ) -> None:
     workspace, store, _ = context
     scopes = scopes or {"full": _scope()}
@@ -132,6 +134,12 @@ def _save(
         for scope in scopes.values()
         for key in scope.values
     }
+    for benchmark in (benchmarks or {}).values():
+        for key in benchmark.values:
+            definitions.setdefault(
+                key,
+                MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key])),
+            )
     observations = ScopeObservations(
         init_cash=None if volume else 100.0,
         equity_curve=[100.0, 90.0, 125.0],
@@ -161,6 +169,7 @@ def _save(
                 scopes=scopes,
                 definitions=definitions,
                 selected_train_scope=selected_train,
+                benchmarks=benchmarks or {},
             ),
             observations=ObservationsBundle(
                 run_id=run_id,
@@ -1652,3 +1661,106 @@ def test_report_delivery_guide_matches_html_and_selected_details(
     assert ("配對交易損益" in guide) is ("trades" in sections)
     assert ("設定與資料覆蓋" in guide) is ("settings" in sections)
     assert "委託、成交與帳戶核對" not in guide
+
+
+def _benchmark(**changes: Any) -> BenchmarkScope:
+    return BenchmarkScope.model_validate(
+        {
+            "status": "available",
+            "asset_class": "crypto",
+            "definition": {
+                "id": "crypto_btc_buy_and_hold",
+                "asset_class": "crypto",
+                "symbol": "BTC/USDT",
+                "label": "BTC/USDT 買進持有",
+                "weighting": "buy_and_hold",
+                "rationale": "加密貨幣策略的機會成本基準是持有比特幣。",
+            },
+            "source": "binance_vision",
+            "market_type": "futures/um",
+            "dataset_id": "BTC/USDT:1d:2024-01-01:2024-01-31",
+            "reused_run_frame": True,
+            "init_cash": 100.0,
+            "capital_basis": "run_init_cash",
+            "fees": 0.0004,
+            "slippage": 0.0,
+            "coverage": {
+                "scope_bars": 3,
+                "aligned_bars": 3,
+                "missing_bars": 0,
+                "complete": True,
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-01-03T00:00:00Z",
+            },
+            "timestamps": [
+                "2024-01-01T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+                "2024-01-03T00:00:00Z",
+            ],
+            "equity_curve": [100.0, 101.0, 110.0],
+            "returns": [0.0, 0.01, 0.0891089108910891],
+            "values": {"total_return": 0.1, "max_drawdown": 0.02},
+            "metadata": {"unavailable": {}, "settings": {"initial_cash": 100.0}},
+            **changes,
+        }
+    )
+
+
+def test_benchmark_section_compares_the_saved_baseline_with_the_strategy(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, _, service = context
+    _save(context, benchmarks={"full": _benchmark()})
+    response = service.generate_report(["run"], sections=["overview", "benchmark"])
+    assert response["success"], response
+    path = Path(response["path"])
+    payload = _payload(path)
+    scope = payload["runs"][0]["scopes"][0]
+    assert scope["benchmark"]["status"] == "available"
+    assert scope["benchmark"]["definition"]["symbol"] == "BTC/USDT"
+    text = path.read_text()
+    assert "基準：BTC/USDT 買進持有" in text
+    assert "策略與基準對照" in text
+    # Overview columns carry the baseline return and the strategy's excess.
+    assert "基準報酬（買進持有）" in text
+    assert "超額報酬（策略−基準）" in text
+    assert "15.00%" in text
+    manifest = json.loads(path.with_name("manifest.json").read_text())
+    assert manifest["benchmarks"]["run"]["full"]["symbol"] == "BTC/USDT"
+    assert manifest["benchmarks"]["run"]["full"]["status"] == "available"
+    assert manifest["sections"] == ["overview", "benchmark"]
+
+
+def test_report_states_when_a_result_has_no_saved_benchmark(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(context)
+    response = service.generate_report(["run"], sections=["benchmark"])
+    assert response["success"], response
+    text = Path(response["path"]).read_text()
+    assert "此結果沒有保存 benchmark 證據" in text
+    assert "策略與基準對照" not in text
+
+
+def test_undefined_asset_class_is_reported_instead_of_a_zero_baseline(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    _, _, service = context
+    _save(
+        context,
+        benchmarks={
+            "full": BenchmarkScope.model_validate(
+                {
+                    "status": "undefined",
+                    "asset_class": "us_equity",
+                    "reason": "undefined_asset_class",
+                }
+            )
+        },
+    )
+    response = service.generate_report(["run"], sections=["benchmark"])
+    assert response["success"], response
+    text = Path(response["path"]).read_text()
+    assert "沒有定義 benchmark" in text
+    assert "不以其他市場的指數代替" in text

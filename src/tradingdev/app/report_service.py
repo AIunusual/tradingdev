@@ -319,6 +319,14 @@ class ReportService:
                     ]
                     for run in payload["runs"]
                 },
+                "benchmarks": {
+                    run["identity"]["run_id"]: {
+                        scope["scope_id"]: _benchmark_summary(scope.get("benchmark"))
+                        for scope in run["scopes"]
+                        if scope.get("benchmark") is not None
+                    }
+                    for run in payload["runs"]
+                },
             }
             if comparison_job_id is not None:
                 manifest["comparison_job_id"] = comparison_job_id
@@ -378,9 +386,18 @@ class ReportService:
             config = loaded.manifest.config_copy() if loaded.manifest else None
             for scope_id, scope in bundle.scopes.items():
                 entry = {"scope_id": scope_id, **scope.model_dump(mode="json")}
+                benchmark = bundle.benchmarks.get(scope_id)
+                entry["benchmark"] = (
+                    None if benchmark is None else benchmark.model_dump(mode="json")
+                )
+                definition_keys = list(scope.values) + [
+                    name
+                    for name in (() if benchmark is None else benchmark.values)
+                    if name not in scope.values
+                ]
                 entry["definitions"] = {
                     name: bundle.definitions[name].model_dump(mode="json")
-                    for name in scope.values
+                    for name in definition_keys
                 }
                 if scope.kind == "backtest":
                     history = self._history.select_scope(loaded, scope_id)
@@ -507,3 +524,19 @@ def _record_count(observations: dict[str, Any] | None, field: str) -> int | None
     if observations is None or observations.get(field) is None:
         return None
     return len(observations[field])
+
+
+def _benchmark_summary(benchmark: dict[str, Any]) -> dict[str, Any]:
+    """Keep baseline identity and its absence reason auditable from the manifest."""
+    definition = benchmark.get("definition")
+    definition = definition if isinstance(definition, dict) else {}
+    return {
+        "status": benchmark.get("status"),
+        "id": definition.get("id"),
+        "symbol": definition.get("symbol"),
+        "asset_class": benchmark.get("asset_class"),
+        "source": benchmark.get("source"),
+        "dataset_id": benchmark.get("dataset_id"),
+        "reason": benchmark.get("reason"),
+        "coverage": benchmark.get("coverage"),
+    }
