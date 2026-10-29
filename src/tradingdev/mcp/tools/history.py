@@ -16,10 +16,12 @@ from tradingdev.app.contracts.history import (
     RunTradesResponse,
 )
 from tradingdev.app.contracts.reports import (
+    ReportAnalysis,
     ReportCommentary,
     ReportResponse,
     ReportSectionCatalog,
 )
+from tradingdev.app.diagnostic_service import DiagnosticService, RunDiagnostics
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
@@ -38,6 +40,19 @@ def register(
         idempotent_hint=True,
         open_world_hint=False,
     )
+
+    @mcp.tool(annotations=read_only)
+    def get_run_diagnostics(
+        run_id: str, scope: str | None = None
+    ) -> RunDiagnostics | ErrorResponse:
+        """Inspect bounded heuristic findings with saved metric evidence and limits.
+
+        Omitted scope selects the saved default; aggregate scopes are explicitly
+        unavailable. Suggestions are untested experiments, not causes or approval.
+        Market regimes/volatility sensitivity are not measured by this provider.
+        Read relevant trades/equity before making more specific claims.
+        """
+        return DiagnosticService(history).get(run_id, scope)
 
     @mcp.tool(annotations=read_only)
     def find_runs(
@@ -204,6 +219,7 @@ def register(
         sections: list[str] | None = None,
         commentary: list[ReportCommentary] | None = None,
         comparison_job_id: str | None = None,
+        analysis: ReportAnalysis | None = None,
     ) -> ReportResponse | ErrorResponse:
         """Render saved evidence: choose run_ids (1..8) OR comparison_job_id.
 
@@ -215,7 +231,11 @@ def register(
         standard report, select detail order, or use [] to omit optional sections.
         overview is first when selected. Result switching requires a detail section.
         Every report embeds all loaded scopes/config/trades/equity even with []; section
-        selection does not redact data. Commentary is escaped plain text, labelled
+        selection does not redact data. Supply analysis with summary, evidence-based
+        observations, hypotheses_and_limits, next_steps and exact run/scope references.
+        Explain each candidate; identify unanalysed scopes. Specific loss/regime claims
+        require inspected evidence. Missing analysis is visibly not provided.
+        Commentary is optional supplementary plain text, labelled
         separately from calculations (at most 20 entries, 20,000 total characters).
         Returns an artifact and local path; no strategy or market download runs. Deliver
         the link with run IDs/scopes and the returned navigation_instructions in the
@@ -229,6 +249,7 @@ def register(
             if commentary is not None
             else None,
             comparison_job_id=comparison_job_id,
+            analysis=analysis.model_dump() if analysis is not None else None,
         )
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)

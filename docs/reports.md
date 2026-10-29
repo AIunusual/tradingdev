@@ -6,6 +6,45 @@ Reports read the saved [performance artifacts](performance_artifacts.md);
 
 ## Composable Offline Reports
 
+### Research interpretation and diagnostic providers
+
+`get_run_diagnostics(run_id, scope)` reads verified saved results without fetching
+market data or rerunning a strategy. Omitted scope selects the saved default.
+The initial provider adapts six recommendation checks from MaverickMCP commit
+`da70d074dcdac5fb21e3b2e6383cfebf391f28b5` (MIT). This is a limited source
+adaptation, not an installed Maverick server or its complete analysis engine.
+The adapter and distributed license identify the source and changes. Native
+TradingDev data remains authoritative; providers receive the original scope and
+observations so later diagnostics can use more than these aggregate metrics.
+
+Each response retains provider/version, findings, metric evidence, suggested
+checks, evaluated rules, unavailable rules and limitations. The inherited
+thresholds are heuristic review prompts, not user risk limits or causal evidence.
+Missing metrics are not zero; aggregate folds are unavailable; portfolio-return
+rules do not apply to volume mode. Trade counts mean closed trades and are not
+normalized by research duration. Kelly/risk-reward checks lack a corresponding
+saved metric and are explicitly unavailable. No finding is not a suitability
+verdict. The provider does not diagnose market regimes or volatility sensitivity.
+
+The normal MCP delivery supplies `analysis` to `generate_report`: `summary`,
+`observations`, `hypotheses_and_limits`, `next_steps`, and `references` containing
+exact `run_id`/`scope` pairs. Each text is nonblank and at most 4000 characters;
+there are at most 32 distinct references, all belonging to the report. A report
+with successful results needs at least one reference when analysis is supplied.
+References identify what was interpreted, not proof of the prose's truth or
+coverage of all scopes. The client must identify unanalysed scopes and explain
+every comparison candidate, including failures. CLI accepts `--analysis-json`.
+
+The opening HTML section shows this interpretation, followed by inspectable
+provider evidence. Analysis and per-scope diagnostics are saved in the manifest
+and content identity. Clients providing no interpretation receive an explicit
+not-provided notice; the server never invents LLM prose. Supplementary commentary
+remains separate. Specific loss-period claims require original evidence; market
+condition claims need defined regimes and aligned data. Hypotheses and proposed
+experiments remain distinct from observations and do not approve execution.
+
+### Composition
+
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs.
@@ -36,7 +75,7 @@ remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/te
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 21 uses two navigation levels within one offline HTML
+Report schema 2 / template 22 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
 or `trades`) is selected. The overview compares every loaded run/scope, including
 effective parameters, date coverage, train/test role and principal saved metrics.

@@ -84,6 +84,7 @@ def report(tmp_path: Path) -> DeliveredReport:
         "run_ids": ["run"],
         "sections": ["overview", "ledger", "trades"],
         "commentary": [{"title": "研究評語", "text": "僅為歷史模擬。"}],
+        "analysis": None,
     }
     result = ReportService(workspace=workspace, store=store).generate_report(
         **arguments
@@ -126,6 +127,7 @@ def test_freely_worded_commentary_still_matches_the_delivered_manifest(
         "report_id": report.result["report_id"],
         "sections": ["overview", "ledger", "trades"],
         "commentary": [{"title": "研究評語", "text": "僅為歷史模擬。"}],
+        "analysis": None,
     }
     report.turn.calls[0].arguments["commentary"] = [
         {"title": "Changed", "text": "Not the saved interpretation"}
@@ -160,7 +162,7 @@ def test_freely_worded_delivery_requires_interpretation_and_visible_prose(
         text += "\n\n<span hidden>可在總覽選擇參數並查看交易。</span>"
     elif damage == "fenced_prose":
         text += "\n```text\n可在總覽選擇參數並查看交易。\n```"
-    with pytest.raises(AssertionError, match="commentary|delivery prose"):
+    with pytest.raises(AssertionError, match="interpretation|delivery prose"):
         verify_report_delivery(
             report.workspace,
             ModelTurn(2, text, [ToolCall("generate_report", arguments, result)]),
@@ -420,3 +422,63 @@ def test_report_delivery_rejects_manifest_identity_and_requirement_mismatches(
         )
     with pytest.raises(AssertionError, match=f"manifest {field}"):
         report.verify()
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_structured_analysis_verifies_the_actually_linked_report(
+    report: DeliveredReport,
+    encoded: bool,
+) -> None:
+    analysis = {
+        "summary": "  limited sample  ",
+        "observations": "saved results",
+        "hypotheses_and_limits": "unverified",
+        "next_steps": "study more data",
+        "references": [{"run_id": "run", "scope": "full"}],
+    }
+    arguments = dict(report.turn.calls[0].arguments, analysis=analysis)
+    result = ReportService(
+        workspace=report.workspace, store=report.store
+    ).generate_report(**arguments)
+    assert result["success"]
+    if encoded:
+        arguments["analysis"] = json.dumps(analysis)
+    calls = [
+        ToolCall(
+            "get_run_diagnostics",
+            {"run_id": "run"},
+            {"success": True, "run_id": "run", "scope": "full"},
+        ),
+        *report.turn.calls,
+        ToolCall("generate_report", arguments, result),
+    ]
+
+    def verify(text: str) -> str:
+        return verify_report_delivery(
+            report.workspace,
+            replace(report.turn, calls=calls, text=text),
+            "run",
+            expected_sections=["overview", "ledger", "trades"],
+            expected_commentary=None,
+            required_analysis_refs={("run", "full")},
+        )
+
+    with pytest.raises(ValueError):
+        verify(report.turn.text)
+    text = f"完成 run 研究解讀。[報告](<{result['path']}>)"
+    assert verify(text)
+    # Reusing identical report bytes after reading diagnostics is valid.
+    calls.insert(0, calls[-1])
+    assert verify(text)
+    calls.pop(0)
+    calls.pop(0)
+    with pytest.raises(AssertionError, match="follow diagnostics"):
+        verify(text)
+
+
+@pytest.mark.parametrize("name", ["prepare_backtest", "submit_execution_decision"])
+def test_read_only_research_rejects_failed_execution_attempts(name: str) -> None:
+    from tests.e2e.report_delivery import verify_no_execution_attempts
+
+    with pytest.raises(AssertionError, match="must not attempt"):
+        verify_no_execution_attempts([ToolCall(name, {}, {"success": False})])

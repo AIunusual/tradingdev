@@ -32,7 +32,7 @@ def test_report_cli_preserves_service_result_and_exit_status(
         _: ReportService, run_ids: list[str], **options: Any
     ) -> dict[str, Any]:
         received.append(run_ids)
-        assert options == {"sections": None, "commentary": None}
+        assert options == {"sections": None, "commentary": None, "analysis": None}
         return response
 
     monkeypatch.setattr(ReportService, "generate_report", generate)
@@ -64,7 +64,7 @@ def test_report_cli_custom_sections_and_commentary(
         _: ReportService, run_ids: list[str], **options: Any
     ) -> dict[str, Any]:
         assert run_ids == ["a"]
-        assert options == {"sections": sections, "commentary": notes}
+        assert options == {"sections": sections, "commentary": notes, "analysis": None}
         return {"success": True}
 
     monkeypatch.setattr(ReportService, "generate_report", generate)
@@ -83,8 +83,9 @@ def test_report_cli_custom_sections_and_commentary(
     assert json.loads(capsys.readouterr().out)["success"]
 
 
+@pytest.mark.parametrize("field", ["commentary", "analysis"])
 def test_report_cli_invalid_commentary_is_structured_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], field: str
 ) -> None:
     path = tmp_path / "notes.json"
     path.write_text("{", encoding="utf-8")
@@ -95,9 +96,9 @@ def test_report_cli_invalid_commentary_is_structured_error(
                 str(tmp_path),
                 "--run-id",
                 "a",
-                "--commentary-json",
+                f"--{field}-json",
                 str(path),
             ]
         )
     result = json.loads(capsys.readouterr().out)
-    assert result["success"] is False and result["code"] == "invalid_report_commentary"
+    assert result["success"] is False and result["code"] == f"invalid_report_{field}"

@@ -259,6 +259,12 @@ Leaderboard 保存候選參數、訊號指紋與評估條件，依 domain 指標
 
 ## 績效計算與對話摘要
 
+`DiagnosticService` 透過 domain 的 `DiagnosticProvider` 介面讀取已驗證的 scope 與
+原始觀察值。初期 `MaverickDiagnostics` 僅移植適用的規則式建議，不引入上游 server、
+行情與資料庫服務；來源版本與 MIT 授權隨 adapter 保存。後端提供指標證據與限制，
+外部 LLM 提供結論、觀察、假說與下一步，報告核對結果引用並保存兩者。這個介面
+保留後續分析完整交易與行情的空間，不以初期彙總指標限制自研診斷輸入。
+
 | 元件 | 責任 |
 | ---- | ---- |
 | `domain/backtest/metrics.py` | 對齊引擎觀察值、整合統計套件、記錄不可用原因 |

@@ -82,6 +82,15 @@ def _samples() -> list[tuple[str, dict[str, Any]]]:
                 "run_ids": '["run"]',
                 "sections": '["metrics", "trades"]',
                 "commentary": '[{"title":"研究評語","text":"模擬結果"}]',
+                "analysis": json.dumps(
+                    {
+                        "summary": "  summary  ",
+                        "observations": "observed",
+                        "hypotheses_and_limits": "unknown",
+                        "next_steps": "proposed",
+                        "references": [{"run_id": "run", "scope": "full"}],
+                    }
+                ),
             },
         ),
         ("generate_report", {"run_ids": '["run"]', "sections": "null"}),

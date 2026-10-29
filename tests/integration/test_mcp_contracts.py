@@ -39,6 +39,7 @@ _READ_ONLY_TOOLS = {
     "get_run_executions",
     "get_run_account_history",
     "get_report_sections",
+    "get_run_diagnostics",
     "compare_runs",
     "list_artifacts",
     "get_artifact",

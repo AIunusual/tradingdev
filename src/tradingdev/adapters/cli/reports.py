@@ -27,8 +27,18 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument("--commentary-json", type=Path)
+    parser.add_argument(
+        "--analysis-json", type=Path, help="Structured LLM research interpretation"
+    )
     args = parser.parse_args(argv)
+    input_field = "analysis"
     try:
+        analysis = (
+            json.loads(args.analysis_json.read_text(encoding="utf-8"))
+            if args.analysis_json
+            else None
+        )
+        input_field = "commentary"
         commentary = (
             json.loads(args.commentary_json.read_text(encoding="utf-8"))
             if args.commentary_json
@@ -39,7 +49,7 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(
                 {
                     "success": False,
-                    "code": "invalid_report_commentary",
+                    "code": f"invalid_report_{input_field}",
                     "error": str(exc),
                 }
             )
@@ -49,6 +59,7 @@ def main(argv: list[str] | None = None) -> None:
         args.run_ids,
         sections=args.sections,
         commentary=commentary,
+        analysis=analysis,
         **(
             {"comparison_job_id": args.comparison_job_id}
             if args.comparison_job_id is not None

@@ -101,7 +101,16 @@ Strategy development workflow
      only an explicit summary/metrics-only or no-report request opts out.
      Read get_report_sections; generate_report after inspecting results, omitting
      sections for the standard complete report unless the user selects them.
-     Supply plain-text commentary in the user's language, distinct from calculations.
+     Read get_run_diagnostics for the results being interpreted. These are heuristic
+     review prompts, not proof of causes or successful improvements. Inspect original
+     trades/equity for specific loss-period claims; market-regime sensitivity requires
+     defined regimes and aligned data, otherwise mark it unverified.
+     Supply analysis in the user's language: summary, observations with evidence,
+     hypotheses_and_limits, and a few concrete next_steps explaining what to test.
+     Bind exact run/scope references, distinguish training from test, and identify
+     scopes not analysed. For a failed comparison explain failures without metrics.
+     Retain these explanations in HTML, not just chat. Supplementary commentary is
+     optional. Recommendations do not authorize another run or parameter search.
    - Fixed comparisons require comparison_job_id, preserving the entire set even
      when no run succeeds. Do not substitute a handpicked run_ids list.
    - The FINAL answer must identify results/scopes, link the readable result report

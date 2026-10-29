@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from tradingdev.app.contracts.execution_requests import ParameterCandidateInput
-from tradingdev.app.contracts.reports import ReportCommentary
+from tradingdev.app.contracts.reports import ReportAnalysis, ReportCommentary
 from tradingdev.domain.research import ResearchSpec, research_payload
 from tradingdev.domain.research_evidence import EvidenceId, ResearchEvidenceDraft
 from tradingdev.domain.validation.config import WalkForwardConfig
@@ -67,6 +67,7 @@ _FIELDS: dict[str, dict[str, TypeAdapter[Any]]] = {
         "run_ids": TypeAdapter(list[str] | None),
         "sections": TypeAdapter(list[str] | None),
         "commentary": TypeAdapter(list[ReportCommentary] | None),
+        "analysis": TypeAdapter(ReportAnalysis | None),
     },
     "get_run_trades": _PAGE,
     "get_run_executions": _PAGE,
