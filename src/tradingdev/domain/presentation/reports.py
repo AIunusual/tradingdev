@@ -80,23 +80,54 @@ REPORT_SECTIONS = MappingProxyType(
                 "版本、資料與來源證據",
                 "Strategy/run versions, data IDs and registered source hashes.",
             ),
+            ReportSectionDefinition(
+                "ml",
+                "ML 訊號研究",
+                "Selected saved leaderboard candidates, full metrics/definitions, "
+                "evaluation coordinates, unavailable scores and ranking caveats. "
+                "Select their entry IDs with generate_report(ml_entry_ids=...). "
+                "Supports standalone ML reports or independent evidence alongside "
+                "runs; this is cost-free signal research, not executed backtests. "
+                "Series and cross-horizon source equivalence remain unavailable.",
+            ),
         )
     }
 )
 
 REPORT_RECIPES = MappingProxyType(
     {
-        "standard": tuple(REPORT_SECTIONS),
+        "standard": tuple(key for key in REPORT_SECTIONS if key != "ml"),
         "comparison": ("overview", "research", "metrics", "equity", "provenance"),
         "trades": ("overview", "research", "ledger", "trades", "provenance"),
+        "ml_research": ("ml",),
     }
 )
 
 
 def report_navigation_instructions(
-    sections: list[str], *, has_results: bool, comparison: bool
+    sections: list[str], *, has_results: bool, comparison: bool, has_ml: bool = False
 ) -> str:
     """Describe only navigation and detail sections present in this report."""
+    run_navigation = _run_navigation_instructions(
+        sections, has_results=has_results, comparison=comparison
+    )
+    if not has_ml:
+        return run_navigation
+    ml_navigation = (
+        "在「ML 訊號研究」查看候選排序與缺分數原因，"
+        "展開候選身分、其他指標及保存定義，或下載完整 ML 證據 JSON。"
+        "ML 證據與回測各自獨立，不代表模型已用於該回測。"
+        if "ml" in sections
+        else "未選取 ML 顯示章節；所選 ML 候選的完整證據仍保存在離線 HTML。"
+    )
+    if has_results or comparison:
+        return ml_navigation + " " + run_navigation
+    return ml_navigation + " 所有內容保存在同一份離線 HTML。"
+
+
+def _run_navigation_instructions(
+    sections: list[str], *, has_results: bool, comparison: bool
+) -> str:
     details = [
         REPORT_SECTIONS[key].title for key in sections if key in SCOPED_REPORT_SECTIONS
     ]

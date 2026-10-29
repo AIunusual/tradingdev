@@ -1,8 +1,9 @@
 """Domain schemas for market data."""
 
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Self
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class DVOLBar(BaseModel):
@@ -60,3 +61,18 @@ class MarketDataRequest(BaseModel):
     timeframe: str
     start_date: datetime
     end_date: datetime
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def utc_instant(cls, value: datetime) -> datetime:
+        """Select cache years and provider bounds using the same UTC instants."""
+        return (
+            value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        )
+
+    @model_validator(mode="after")
+    def ordered_interval(self) -> Self:
+        """Allow one inclusive instant, but reject reversed requests before I/O."""
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must not precede start_date")
+        return self

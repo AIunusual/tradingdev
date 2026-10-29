@@ -23,6 +23,11 @@ from tradingdev.adapters.reporting.labels import (
 from tradingdev.adapters.reporting.labels import (
     scope_name as _scope_name,
 )
+from tradingdev.adapters.reporting.ml import (
+    ML_REPORT_SCRIPT,
+    ML_REPORT_STYLE,
+    render_ml_report,
+)
 from tradingdev.adapters.reporting.research import (
     execution_assumptions_html,
     parameter_sources_html,
@@ -821,6 +826,8 @@ def _fixed_comparison(payload: dict[str, Any]) -> str:
 
 def render_report(payload: dict[str, Any], report_id: str) -> str:
     """Two navigable reading levels in one portable, fully inspectable artifact."""
+    has_ml = isinstance(payload.get("ml"), dict)
+    show_ml = has_ml and "ml" in payload["sections"]
     has_details = bool(
         payload["runs"] and SCOPED_REPORT_SECTIONS.intersection(payload["sections"])
     )
@@ -844,6 +851,12 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
     for key in payload["sections"]:
         if key == "overview":
             content = _overview(payload)
+        elif key == "ml":
+            content = (
+                render_ml_report(payload["ml"], has_runs=bool(payload["runs"]))
+                if has_ml
+                else "<p>沒有選取 ML 訊號證據；未提供不代表零值。</p>"
+            )
         elif key == "research":
             content = render_research_documents(payload)
         elif key == "provenance":
@@ -853,12 +866,12 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         else:
             content = _scoped_section(payload, key)
         rendered = (
-            f"<section data-section='{key}'>"
+            f"<section data-section='{key}'{" id='ml'" if key == 'ml' else ''}>"
             f"<h2>{escape(REPORT_SECTIONS[key].title)}</h2>" + content + "</section>"
         )
         if key == "overview":
             overview.insert(0, rendered)
-        elif key == "research":
+        elif key in {"research", "ml"}:
             overview.append(rendered)
         else:
             (sections if has_details else overview).append(rendered)
@@ -895,10 +908,19 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         payload["sections"],
         has_results=bool(payload["runs"]),
         comparison="fixed_comparison" in payload,
+        has_ml=has_ml,
+    )
+    heading = (
+        "ML 訊號研究與回測結果"
+        if has_ml and payload["runs"]
+        else "ML 訊號研究與候選比較"
+        if has_ml
+        else "回測結果與交易核帳"
     )
     body = (
-        "<header><span class='badge'>TRADINGDEV · 回測研究</span>"
-        "<h1>回測結果與交易核帳</h1>"
+        "<header><span class='badge'>TRADINGDEV · "
+        + ("訊號研究" if has_ml else "回測研究")
+        + f"</span><h1>{heading}</h1>"
         f"<p>{introduction}</p>"
         "<details><summary>報告內容與來源</summary>"
         "<p>資料取自已驗證 JSON 產物；不重跑策略、不載入 pickle，"
@@ -912,7 +934,7 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
                 "未選取章節": [
                     section.title
                     for key, section in REPORT_SECTIONS.items()
-                    if key not in payload["sections"]
+                    if key not in payload["sections"] and (key != "ml" or has_ml)
                 ],
             }
         )
@@ -945,17 +967,22 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
             else ""
         )
         + "<footer><p class='muted'>JSON manifest 保存 HTML SHA-256、章節與評語；"
-        "原回測產物不改寫。原始資料與表格資料保留於內嵌 JSON。</p></footer>"
+        + ("來源產物不改寫。" if has_ml else "原回測產物不改寫。")
+        + "原始資料與表格資料保留於內嵌 JSON。</p></footer>"
     )
     has_tables = "fixed_comparison" in payload or bool(
         set(payload["sections"]) & {"overview", "ledger", "trades"}
     )
     resources = bokeh_resources_html() if has_tables else ""
     return render_html_document(
-        title="TradingDev · 回測比較與交易核帳",
+        title="TradingDev · " + heading
+        if has_ml
+        else "TradingDev · 回測比較與交易核帳",
         body=body + resources,
-        style=_STYLE,
-        script=(BOKEH_TABLE_SCRIPT if has_tables else "") + _SCRIPT,
+        style=_STYLE + (ML_REPORT_STYLE if show_ml else ""),
+        script=(BOKEH_TABLE_SCRIPT if has_tables else "")
+        + _SCRIPT
+        + (ML_REPORT_SCRIPT if show_ml else ""),
         data=payload,
         data_id="report-data",
         allow_embedded_frames=True,

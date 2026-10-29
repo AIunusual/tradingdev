@@ -245,7 +245,8 @@ adapter 分批讀 Parquet；crawler 的 `fetch_sample` 在請求與解析階段�
 
 `mcp/tools/ml.py` 透過 MLService 與 MLTrainingService 協調已登錄特徵、資料集、
 模型與評估，`app/contracts/ml.py` 驗證回覆。這是同步研究介面，沒有 execution plan、
-背景 backtest run，亦未接入回測 CLI／Dashboard；stores 不使用 SQLite 的 run／artifact 索引。
+背景 backtest run，亦未接入回測 CLI／Dashboard；資料集、模型與排行榜 stores 不使用
+SQLite 的 run／artifact 索引。
 
 Dataset 建置只讀既有行情，feature cache 重用特徵計算，MLDatasetStore 發布不可變
 內容版本。訓練保存全部列擬合的最終模型；分折驗證另建模型，不能把其分數當成最終模型的
@@ -256,6 +257,13 @@ Leaderboard 保存候選參數、訊號指紋與評估條件，依 domain 指標
 `null` 與座標。跨參數軸比較是明確 opt-in，跨 horizon 的原始行情一致性仍未受保證。
 特徵快取可淘汰，資料版本與模型有自己的保存規則。輸入、驗證解讀、身分、鎖與保存限制
 集中於[ML 研究契約](docs/ml_research.md)，避免在此重列欄位與演算法。
+
+`app/report_ml.py` 依明示候選 ID 讀取當前排行榜，交 `domain/ml/report.py` 投影並計算
+完整排名；保留缺值、評估座標及警語，不重新預測或訓練。`ReportService` 將選取內容固定
+於獨立 ML 報告，或附加到 run／固定比較報告；MCP 與 report CLI 共用此路徑。
+HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源關聯。排行榜後續替換不改變
+已發布報告；未選取 ML 時保留既有 payload、HTML、manifest 與報告身分。
+這些報告另行登錄為 SQLite artifacts；選取、呈現與保存契約見[報告文件](docs/reports.md)。
 
 ## 績效計算與對話摘要
 
@@ -286,7 +294,7 @@ MCP、report CLI 及 Dashboard 共用此服務。模型只供應評語與選擇�
 QuantStats 原生報告是可追溯衍生分析，不能覆寫歷史指標。
 
 報告以總覽連到各結果明細，固定比較保留所有候選與失敗原因。可選章節只控制畫面，
-不裁減 HTML 內嵌資料；分享時須考慮完整設定與交易紀錄。最終回覆須交付報告連結、
+不裁減 HTML 內嵌資料；分享時須考慮完整設定、交易紀錄及選取的 ML 證據。最終回覆須交付報告連結、
 所選結果與明細操作方式，失敗時沿用保存結果重試報告。互動、完整精度、匯出、
 版本與發佈完整性集中於[報告契約](docs/reports.md)。
 
