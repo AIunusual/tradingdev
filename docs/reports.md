@@ -54,9 +54,11 @@ For either run/comparison selector, omitted/null sections select standard
 (plus `ml` when ML candidates are also selected); ML-only requests default to `ml`.
 An explicit ordered list chooses visible sections and their order within the detail
 view. When selected, `overview` always belongs to the first navigation level.
-With `[]`, no optional sections
-are rendered; fixed report/source identity metadata and any supplied commentary
-remain visible. Unknown or duplicate sections fail. Up to 20 plain-text title/text notes
+With `[]`, no optional sections are rendered. Fixed report/source identity metadata,
+research interpretation (or its missing-analysis notice), diagnostics for every
+loaded backtest scope and any supplied commentary remain visible. Section selection
+cannot hide interpretation or diagnostics. Unknown or duplicate sections fail.
+Up to 20 plain-text title/text notes
 (20000 characters total) are escaped and labelled LLM commentary. They cannot
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
@@ -114,7 +116,7 @@ The old `executions` and `account_history` section IDs are invalid, with no alia
 or compatibility shim. Their MCP history query tools and saved observations are
 unchanged. Existing reports retain their original versions and remain untouched.
 
-Section selection determines the visible presentation without pruning the loaded
+Section selection determines the optional presentation without pruning the loaded
 or embedded data. Every HTML report embeds the complete loaded payload as JSON,
 including all scopes of the requested runs, saved metrics, trades, equity,
 execution configuration and selected ML evidence, even for `sections=[]`.
