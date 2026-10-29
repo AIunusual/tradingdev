@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +51,42 @@ def _seed(workspace: WorkspacePaths) -> tuple[LeaderboardStore, LeaderboardEntry
 def _read(result: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     assert result["success"], result
     path = Path(result["path"])
-    return _payload(path), json.loads(
-        (path.parent / "manifest.json").read_text(encoding="utf-8")
+    payload, manifest = (
+        _payload(path),
+        json.loads((path.parent / "manifest.json").read_text(encoding="utf-8")),
     )
+    introduction = re.search(
+        r"<header>.*?</h1><p>(.*?)</p>", path.read_text(encoding="utf-8"), re.DOTALL
+    )
+    assert introduction is not None
+    assert unescape(introduction[1]) == result["navigation_instructions"]
+    assert payload["navigation_instructions"] == manifest["navigation_instructions"]
+    assert payload["navigation_instructions"] == result["navigation_instructions"]
+    return payload, manifest
+
+
+@pytest.mark.parametrize("has_run", [False, True])
+@pytest.mark.parametrize("show_ml", [False, True])
+def test_navigation_matches_selected_ml_and_run_views(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    has_run: bool,
+    show_ml: bool,
+) -> None:
+    workspace, _, service = context
+    _seed(workspace)
+    sections = ["ml"] if show_ml else []
+    if has_run:
+        _save(context)
+        sections.append("settings")
+    result = service.generate_report(
+        ["run"] if has_run else None, ml_entry_ids=["first"], sections=sections
+    )
+    _read(result)
+    navigation = result["navigation_instructions"]
+    assert ("下載完整 ML 證據 JSON" in navigation) == show_ml
+    assert ("未選取 ML 顯示章節" in navigation) != show_ml
+    assert ("切換結果" in navigation) == has_run
+    assert "離線 HTML" in navigation
 
 
 def test_ml_only_report_saves_complete_selected_evidence_and_reuses_it(

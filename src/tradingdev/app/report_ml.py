@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
 ML_REPORT_MAX_CANDIDATES = 50
-ML_REPORT_TEMPLATE_VERSION = "2"
+ML_REPORT_TEMPLATE_VERSION = "3"
 
 
 class MLReportError(ValueError):

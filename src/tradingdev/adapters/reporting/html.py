@@ -908,14 +908,8 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         payload["sections"],
         has_results=bool(payload["runs"]),
         comparison="fixed_comparison" in payload,
+        has_ml=has_ml,
     )
-    if show_ml:
-        introduction = (
-            "以下保留 ML 候選排名、指標、參數座標與完整證據。"
-            "展開候選身分、其他指標或保存定義查看細節；可下載完整 ML JSON。"
-            + ("回測結果另列，兩類證據各自獨立。" if payload["runs"] else "")
-            + (introduction if payload["runs"] else "所有內容保存在同一份離線 HTML。")
-        )
     heading = (
         "ML 訊號研究與回測結果"
         if has_ml and payload["runs"]

@@ -220,20 +220,8 @@ class ReportService:
                 selected,
                 has_results=bool(payload["runs"]),
                 comparison=comparison_job_id is not None,
+                has_ml=ml_entry_ids is not None,
             )
-            if ml_entry_ids is not None:
-                ml_navigation = (
-                    "在「ML 訊號研究」查看候選排序與缺分數原因，"
-                    "展開候選證據及其他指標；"
-                    "ML 證據與回測各自獨立，不代表模型已用於該回測。"
-                    if "ml" in selected
-                    else "未選取 ML 顯示章節；所選 ML 候選的完整證據仍保存在離線 HTML。"
-                )
-                payload["navigation_instructions"] = (
-                    payload["navigation_instructions"] + " " + ml_navigation
-                    if payload["runs"] or comparison_job_id is not None
-                    else ml_navigation
-                )
             payload["commentary"] = [dict(note) for note in notes]
             payload["comparison_table"] = comparison_table(
                 payload,
