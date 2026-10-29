@@ -115,6 +115,9 @@ class ComparisonService:
                 source_dataset_id=dataset.source_dataset_id,
                 data_binding_json=dataset.data_binding_json,
             )
+            # Every candidate trades the same market, so one baseline is captured
+            # once and reused instead of being reloaded per candidate.
+            benchmark = self.backtest.prepare_benchmark(dataset.frame_for(first), first)
             for candidate, row in zip(
                 manifest.candidates, ledger.candidates, strict=True
             ):
@@ -128,7 +131,9 @@ class ComparisonService:
                 )
                 try:
                     run = self.backtest.run_manifest(
-                        candidate.manifest, loaded_dataset=dataset
+                        candidate.manifest,
+                        loaded_dataset=dataset,
+                        benchmark=benchmark,
                     )
                 except ManifestError, StrategyNotExecutableError:
                     raise
