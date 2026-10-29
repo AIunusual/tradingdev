@@ -122,7 +122,20 @@ Strategy development workflow
      must include the link and guide in its own final answer. Do not claim omitted
      sections are included.
 
-9. Preserve evidence and deliverables.
+9. Preserve research summaries and deliverables.
+   - When saving/sharing research is requested, use save_research_note at meaningful
+     stage boundaries. Summarize current needs, decisions, observations, limitations
+     and proposed next steps in the user's language; include report artifact IDs.
+     Append later requirement changes as pending, without rewriting executed facts.
+     Notes are editable client summaries, not transcripts or execution evidence.
+   - Discover/read with get_research_notes before replacing a note; retain relevant
+     earlier entries and bind expected_version. On conflict read again and reconcile.
+     export_research_note works at any stage, including before a run. Its ZIP contains
+     HTML/JSON and referenced reports. Final delivery explains selected version and
+     full extraction/opening index.html. For HTTP link download_url; it expires in
+     15 minutes. get_research_archive refreshes saved ZIP links without source files.
+     Link local ZIP/HTML paths only when the client can access the server filesystem.
+     Missing/corrupt sources require repair or explicit note correction, never rerun.
    - Completion or server shutdown never authorizes deleting reports or research
      workspaces; deletion requires explicit user authorization. Do not deliver a
      temporary path then delete it during cleanup.

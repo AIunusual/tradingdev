@@ -72,6 +72,13 @@ workspace/
       confirmation.txt
       confirmation.html
       .approval.lock
+  research_archives/
+    <archive_id>/
+      index.html
+      research.json
+      manifest.json
+      reports/
+      research.zip
   reports/
     <report_id>/
       report.html
@@ -749,6 +756,13 @@ date rules, returning availability, accounting and valuation/time semantics.
 `not_recorded` and volume `unsupported_volume_accounting` return explicit
 unavailable status with zero rows, never reconstructed history. Records remain
 aligned to their original bar indices after filtering and paging.
+
+## Research Notes and Archives
+
+Editable research summaries live in the SQLite `research_notes` table. Versioned
+exports live under `research_archives/`; they do not modify runs or execution
+evidence. See the [notebook contract](reports.md#research-notebooks-and-archives)
+for schemas, capacity, publication integrity and HTTP/stdio download behavior.
 
 ## Composable Offline Reports
 

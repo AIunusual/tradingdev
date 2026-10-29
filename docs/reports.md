@@ -6,45 +6,6 @@ Reports read the saved [performance artifacts](performance_artifacts.md);
 
 ## Composable Offline Reports
 
-### Research interpretation and diagnostic providers
-
-`get_run_diagnostics(run_id, scope)` reads verified saved results without fetching
-market data or rerunning a strategy. Omitted scope selects the saved default.
-The initial provider adapts six recommendation checks from MaverickMCP commit
-`da70d074dcdac5fb21e3b2e6383cfebf391f28b5` (MIT). This is a limited source
-adaptation, not an installed Maverick server or its complete analysis engine.
-The adapter and distributed license identify the source and changes. Native
-TradingDev data remains authoritative; providers receive the original scope and
-observations so later diagnostics can use more than these aggregate metrics.
-
-Each response retains provider/version, findings, metric evidence, suggested
-checks, evaluated rules, unavailable rules and limitations. The inherited
-thresholds are heuristic review prompts, not user risk limits or causal evidence.
-Missing metrics are not zero; aggregate folds are unavailable; portfolio-return
-rules do not apply to volume mode. Trade counts mean closed trades and are not
-normalized by research duration. Kelly/risk-reward checks lack a corresponding
-saved metric and are explicitly unavailable. No finding is not a suitability
-verdict. The provider does not diagnose market regimes or volatility sensitivity.
-
-The normal MCP delivery supplies `analysis` to `generate_report`: `summary`,
-`observations`, `hypotheses_and_limits`, `next_steps`, and `references` containing
-exact `run_id`/`scope` pairs. Each text is nonblank and at most 4000 characters;
-there are at most 32 distinct references, all belonging to the report. A report
-with successful results needs at least one reference when analysis is supplied.
-References identify what was interpreted, not proof of the prose's truth or
-coverage of all scopes. The client must identify unanalysed scopes and explain
-every comparison candidate, including failures. CLI accepts `--analysis-json`.
-
-The opening HTML section shows this interpretation, followed by inspectable
-provider evidence. Analysis and per-scope diagnostics are saved in the manifest
-and content identity. Clients providing no interpretation receive an explicit
-not-provided notice; the server never invents LLM prose. Supplementary commentary
-remains separate. Specific loss-period claims require original evidence; market
-condition claims need defined regimes and aligned data. Hypotheses and proposed
-experiments remain distinct from observations and do not approve execution.
-
-### Composition
-
 `get_report_sections` returns built-in section IDs and optional `standard`,
 `comparison` and `trades` recipes. `generate_report(run_ids, sections, commentary)`
 accepts one to eight distinct runs.
@@ -296,3 +257,129 @@ add document bytes to MCP responses. Missing, modified or unreadable files remov
 the download from the dashboard and display an error. A failed generation also
 clears the previous download, so an integrity error cannot fall back to a stale
 file. Reads do not repair or regenerate the report.
+
+## Research interpretation and diagnostic providers
+
+`get_run_diagnostics(run_id, scope)` reads verified saved results without fetching
+market data or rerunning a strategy. Omitted scope selects the saved default.
+The initial provider adapts six recommendation checks from MaverickMCP commit
+`da70d074dcdac5fb21e3b2e6383cfebf391f28b5` (MIT). This is a limited source
+adaptation, not an installed Maverick server or its complete analysis engine.
+The adapter and distributed license identify the source and changes. Native
+TradingDev data remains authoritative; providers receive the original scope and
+observations so later diagnostics can use more than these aggregate metrics.
+
+Each response retains provider/version, findings, metric evidence, suggested
+checks, evaluated rules, unavailable rules and limitations. The inherited
+thresholds are heuristic review prompts, not user risk limits or causal evidence.
+Missing metrics are not zero; aggregate folds are unavailable; portfolio-return
+rules do not apply to volume mode. Trade counts mean closed trades and are not
+normalized by research duration. Kelly/risk-reward checks lack a corresponding
+saved metric and are explicitly unavailable. No finding is not a suitability
+verdict. The provider does not diagnose market regimes or volatility sensitivity.
+
+The normal MCP delivery supplies `analysis` to `generate_report`: `summary`,
+`observations`, `hypotheses_and_limits`, `next_steps`, and `references` containing
+exact `run_id`/`scope` pairs. Each text is nonblank and at most 4000 characters;
+there are at most 32 distinct references, all belonging to the report. A report
+with successful results needs at least one reference when analysis is supplied.
+References identify what was interpreted, not proof of the prose's truth or
+coverage of all scopes. The client must identify unanalysed scopes and explain
+every comparison candidate, including failures. CLI accepts `--analysis-json`.
+
+The opening HTML section shows this interpretation, followed by inspectable
+provider evidence. Analysis and per-scope diagnostics are saved in the manifest
+and content identity. Clients providing no interpretation receive an explicit
+not-provided notice; the server never invents LLM prose. Supplementary commentary
+remains separate. Specific loss-period claims require original evidence; market
+condition claims need defined regimes and aligned data. Hypotheses and proposed
+experiments remain distinct from observations and do not approve execution.
+
+## Research notebooks and archives
+
+A notebook is a client-authored research summary, not an audit transcript or
+execution authorization. The server does not observe messages outside MCP calls.
+It keeps one editable current record; exported snapshots preserve chosen versions.
+No per-stage export APIs or automatic chat hooks are required.
+
+`save_research_note(draft, note_id?, expected_version?)` creates with both optional
+fields absent. An update requires both and replaces the complete draft, with an
+atomic version check. Read and reconcile after `research_note_conflict`; never
+blindly retry with a guessed version. `get_research_notes()` lists metadata with
+`offset`/`limit` (default 20, maximum 100); `note_id` reads a complete bounded record
+and does not accept nondefault paging. `export_research_note(note_id,
+expected_version)` snapshots that selected version without modifying the note or
+executing a strategy. A concurrent later edit does not alter the selected snapshot.
+
+The canonical schema is in `domain/research_notes.py`. Draft example:
+
+```json
+{
+  "title": "BTC strategy research",
+  "current_brief": "Compare saved results; a later 4h experiment is pending.",
+  "entries": [
+    {
+      "title": "Backtest review",
+      "summary": "Limited sample; volatility sensitivity remains untested.",
+      "artifact_ids": []
+    }
+  ],
+  "next_steps": "Agree on an independent period before executing another run."
+}
+```
+
+Titles allow 120 characters, summary/brief/next-step text 2000 each, at most
+24 entries and 10 references per entry. The complete persisted record is capped
+at 16384 UTF-8 bytes, including backend ID/version/timestamps; condense long notes.
+References are registered `research_report_html` or `execution_confirmation`
+artifact IDs, verified on export. A note may be saved before reports exist, but
+unknown, missing, changed or unsupported referenced artifacts prevent export.
+
+`research_notes` in SQLite stores current note ID, version, title, update time and
+JSON document. This additive table does not change existing runs. Export storage:
+
+```text
+research_archives/<archive_id>/
+  index.html
+  research.json
+  manifest.json
+  reports/1.html
+  research.zip
+```
+
+The ZIP contains all these files except itself; zero reports is valid. Its reading
+page escapes client text and uses relative report links. The manifest records
+attachment IDs/types/SHA-256 and every content file hash; its SHA-256 is archive_id.
+ZIP metadata is deterministic. At most 20 distinct reports and 64 MiB of content
+(including notebook/manifest) or ZIP bytes are accepted. Only the explicit allowlist
+is copied: no arbitrary paths, symlinks, credentials, raw datasets or whole-workspace
+backup. Embedded report contents remain complete, so sharing includes all data
+already embedded in those reports, not only initially visible sections.
+
+Publication stages in a temporary directory, serializes identical archive IDs with
+a file lock, then registers `research:<archive_id>:zip` as `research_archive_zip`.
+An identical retry verifies existing bytes and registration; conflicting files are
+never repaired or replaced. Failed publication removes only newly created files.
+Lock files remain for concurrency coordination. No saved notes or archives expire
+automatically. Downloads verify registered identity and the exact returned bytes;
+they remain readable if original reports later disappear.
+
+HTTP exports return a 15-minute capability URL from the request's base URL. Custom
+routes do not inherit MCP authentication, so the URL signature binds archive ID,
+ZIP hash and expiry to a per-process secret. Anyone holding the URL can download
+that ZIP until expiry; a restart invalidates URLs, not stored artifacts. Deployment
+must provide the correct public base URL/proxy configuration and transport security.
+Use `get_research_archive(archive_id)` to refresh a saved ZIP without reading its
+original note or reports. Discover IDs through
+`list_artifacts(artifact_type="research_archive_zip")`. CLI uses
+`archive ARCHIVE_ID`. Responses use attachment/no-store headers; missing or
+changed files fail rather than regenerate. Stdio and CLI return server-local
+`path`/`html_path`, with no fabricated remote URL; reading a saved archive returns
+null `html_path` if any separately extracted reading file is missing, changed or
+symlinked. The verified ZIP remains independently usable. Clients need file access or their
+own transfer mechanism. Extract the entire ZIP and open index.html for offline use.
+
+This archive is a reading package, not a restorable research workspace. Preserve
+the original database/files for subsequent result queries. Client summary quality,
+correct pending/completed distinctions and relevance need semantic review; hashes
+and optimistic versions cannot prove that a user said or approved a statement.

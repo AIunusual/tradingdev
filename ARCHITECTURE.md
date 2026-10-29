@@ -277,6 +277,23 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 或載入 pickle。Walk-forward 摘要是分折分布，最佳化區分 trial 與樣本外結果。
 完整取樣、年化、數值及比較限制見[績效產物契約](docs/performance_artifacts.md)。
 
+### 研究筆記與可攜封存
+
+對話端 LLM 負責 `ResearchNoteDraft`：目前需求、階段摘要、報告引用與後續研究。
+後端 `ResearchNoteService` 供 MCP 與 CLI 共用，`ResearchNoteStore` 在 SQLite
+保存目前版本，以 expected_version 防止覆寫其他編輯。筆記不替代不可變的
+ResearchEvidence、execution manifest 或執行確認；追加需求不會改動已執行設定。
+
+`ResearchArchiveStore` 核對所選版本與指定報告的登錄、路徑及 SHA-256，產生
+固定 HTML／JSON／報告 ZIP。只帶入引用的報告，不遍歷打包整個工作區。
+`adapters/reporting/notebook.py` 負責閱讀頁，儲存層負責原子發佈與失敗清理。
+HTTP 的自訂下載 route 使用每個 server instance 的短期簽章能力網址，
+驗證後才交付同一份 ZIP bytes；重新取得舊封存的網址只讀保存 ZIP，不依賴目前筆記或來源報告。
+stdio 回傳本機路徑，不假設客戶端能下載。
+未來可替換 storage／delivery adapter，但應保留版本衝突、來源完整性、容量限制及
+獨立閱讀的契約；不需把聊天供應商或逐字紀錄依賴加進 domain。
+欄位與限制見[報告與筆記契約](docs/reports.md#research-notebooks-and-archives)。
+
 ## 一致性、程序管理與保證範圍
 
 ### 歷史查詢與報告組裝
