@@ -282,10 +282,11 @@ def test_invalid_saved_evidence_is_not_silently_skipped(
     assert not list((workspace.root / "reports").glob("**/*"))
 
 
-def test_no_ml_request_preserves_preintegration_report_bytes(
+def test_no_ml_request_report_bytes_are_pinned(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:
-    # Measured from pre-integration commit 5b27dd1 with this same fixed fixture.
+    # Re-pinned at template 22 when the benchmark section was added; the ML
+    # renderer must still be absent from a request that never asks for it.
     _, store, service = context
     _save(context)
     with store.connect() as connection:
@@ -294,13 +295,14 @@ def test_no_ml_request_preserves_preintegration_report_bytes(
     payload, manifest = _read(result)
     assert "ml" not in payload and "ml" not in manifest
     assert "ml" not in manifest["omitted_sections"]
-    assert result["report_id"] == (
-        "f47e34fc3583462c56e5e150c7a4863724789dfc6ee9ea89c964490c63c4b0b8"
-    )
-    assert result["sha256"] == (
-        "68084b6ef8401c43ea3e0afb9f62595c924ec6eeacd5604d18f63d95da4be5bf"
-    )
     path = Path(result["path"]).parent / "manifest.json"
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
-        "317b84c22711d76ad580a2cfbb32a927275308b593b115cc3c4267d3b897b0b0"
+    # One comparison so a deliberate re-baseline shows every digest at once.
+    assert (
+        result["report_id"],
+        result["sha256"],
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    ) == (
+        "d0c0e82cc7befcf7269baf447075e0088ec4964d60633be50556e0d5c4dd67aa",
+        "9b812f0367b58a4e82d519330b3c4143e1dfbb6052f8f5dfff2f0eb125c97d63",
+        "27acbae601d7410b37390a0013bde4148e72ce551ddada0c8c9d5b5584174011",
     )
