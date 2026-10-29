@@ -359,6 +359,7 @@ def test_report_catalogue_and_composition_are_real_reusable_artifacts(
             "research",
             "settings",
             "metrics",
+            "benchmark",
             "equity",
             "ledger",
             "trades",

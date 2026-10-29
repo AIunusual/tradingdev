@@ -277,14 +277,14 @@ def test_untrusted_ml_fields_are_escaped_in_html_and_embedded_json() -> None:
     assert attack in unescape(_body(document))
 
 
-def test_report_without_ml_keeps_template_21_html_bytes_unchanged() -> None:
-    # Captured from template 21 before adding the optional ML renderer. This
-    # also protects the unselected-sections list when the catalogue grows.
+def test_report_without_ml_keeps_template_22_html_bytes_unchanged() -> None:
+    # Captured from template 22 after adding the benchmark section. This also
+    # protects the unselected-sections list when the catalogue grows.
     payload = {"runs": [], "sections": ["limitations"], "commentary": []}
     document = render_report(payload, "legacy-report")
-    assert REPORT_TEMPLATE_VERSION == "21"
+    assert REPORT_TEMPLATE_VERSION == "22"
     assert hashlib.sha256(document.encode()).hexdigest() == (
-        "3cd5b7b489f67e875fb5348e14302387ad056033b6c3be6174f8592c610d3834"
+        "fa3387bec34ad62d66675114670d404a79d5e42386af9e679990e9b330ea430e"
     )
     assert "data-ml-download" not in document
     assert "#ml .ml-candidate" not in document

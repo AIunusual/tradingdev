@@ -72,7 +72,7 @@ def _verify_reports(
         manifest = json.loads(
             Path(pair["research_report_manifest"]["path"]).read_bytes()
         )
-        assert manifest["schema_version"] == 2, "Report manifest schema differs"
+        assert manifest["schema_version"] == 3, "Report manifest schema differs"
         assert manifest["report_id"] == manifest["content_sha256"] == report_id, (
             "Report digest differs"
         )
