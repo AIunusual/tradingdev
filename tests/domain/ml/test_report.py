@@ -13,6 +13,10 @@ from typing import Any
 
 import pytest
 
+from tradingdev.domain.ml.evaluation.artifacts import (
+    SignalEvaluationBundle,
+    build_signal_evaluation,
+)
 from tradingdev.domain.ml.evaluation.catalog import (
     SIGNAL_METRIC_CATALOG,
     definition_snapshot,
@@ -21,7 +25,6 @@ from tradingdev.domain.ml.evaluation.catalog import (
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
-    rank_entries,
 )
 from tradingdev.domain.ml.report import (
     ML_REPORT_SCHEMA_VERSION,
@@ -86,13 +89,48 @@ def _entry(
         metrics=metrics,
         n_observations=200,
         model_id=entry_id,
-        dataset_id="ds_" + entry_id,
+        dataset_id=f"ds_h{horizon}",
         parameters=parameters or {},
         signal_fingerprint="0123456789abcdef",
     )
 
 
 class TestDefinitions:
+    @pytest.mark.parametrize("metric_id", ["annual_return", "sharpe", "alpha", "beta"])
+    def test_legacy_annualization_is_unknown_not_false(self, metric_id: str) -> None:
+        bundle = build_signal_evaluation(
+            "legacy",
+            values={metric_id: 0.1},
+            strata=[],
+            horizon=1,
+            window=20,
+            n_bins=5,
+            method="spearman",
+        )
+        payload = bundle.model_dump(mode="json")
+        definition = payload["definitions"][metric_id]
+        del definition["modes"]
+        del definition["requires_annualization"]
+        restored = SignalEvaluationBundle.model_validate_json(json.dumps(payload))
+        assert restored.definitions[metric_id].requires_annualization is None
+        assert restored.definitions[metric_id].modes == ("signal",)
+
+    @pytest.mark.parametrize("metric_id", ["annual_return", "sharpe", "alpha", "beta"])
+    def test_new_bundle_preserves_explicit_annualization(self, metric_id: str) -> None:
+        bundle = build_signal_evaluation(
+            "current",
+            values={metric_id: 0.1},
+            strata=[],
+            horizon=1,
+            window=20,
+            n_bins=5,
+            method="spearman",
+        )
+        restored = SignalEvaluationBundle.model_validate_json(bundle.model_dump_json())
+        assert restored.definitions[metric_id].requires_annualization is (
+            metric_id in _ANNUALISED
+        )
+
     def test_every_signal_metric_declares_the_signal_mode(self) -> None:
         assert {
             mode for item in SIGNAL_METRIC_CATALOG.values() for mode in item.modes
@@ -196,12 +234,102 @@ class TestScope:
         assert scope["metadata"]["model_id"] == "aaa"
         assert scope["metadata"]["signal_fingerprint"] == "0123456789abcdef"
         assert scope["metadata"]["n_observations"] == 200
-        assert scope["metadata"]["dataset_id"] == "ds_aaa"
+        assert scope["metadata"]["dataset_id"] == "ds_h1"
 
 
 class TestReportBlock:
     def _block(self, *entries: LeaderboardEntry) -> dict[str, Any]:
-        return ml_report_block(entries, rank_entries(entries, "ic_mean"))
+        return ml_report_block(entries, "ic_mean", allow_parameter_axes=True)
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+    def test_nonfinite_metrics_remain_json_null(self, value: float) -> None:
+        block = self._block(
+            _entry("failed", window=20, ic_mean=value, sharpe=value),
+            _entry("valid", window=30, ic_mean=0.0),
+        )
+        encoded = json.loads(json.dumps(block, allow_nan=False))
+        assert encoded["scopes"][0]["values"] == {"ic_mean": None, "sharpe": None}
+        assert encoded["scopes"][1]["values"] == {"ic_mean": 0.0}
+        assert encoded["parameter_axes"]["window"] == [20, 30]
+        assert encoded["ranking"]["skipped"][0]["scope_id"] == "failed"
+
+    def test_the_ranking_covers_every_candidate(self) -> None:
+        entries = [_entry("a", ic_mean=0.1), _entry("b", ic_mean=0.2)]
+        block = ml_report_block(entries, "ic_mean")
+        assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
+
+    @pytest.mark.parametrize("updated", [0.9, None])
+    def test_mutated_scores_are_ranked_with_current_evidence(
+        self, updated: float | None
+    ) -> None:
+        metrics: dict[str, float | None] = {"ic_mean": 0.1}
+        a = replace(_entry("a"), metrics=metrics)
+        b = _entry("b", ic_mean=0.2)
+        first = ml_report_block([a, b], "ic_mean")
+        metrics["ic_mean"] = updated
+        block = ml_report_block([a, b], "ic_mean")
+        assert first["ranking"]["ranked_scope_ids"] == ["b", "a"]
+        assert first["scopes"][0]["values"]["ic_mean"] == 0.1
+        assert block["ranking"]["ranked_scope_ids"] == (
+            ["b"] if updated is None else ["a", "b"]
+        )
+        if updated is None:
+            assert block["ranking"]["skipped"][0]["scope_id"] == "a"
+
+    def test_mutated_significance_rebuilds_the_caveat(self) -> None:
+        metrics: dict[str, float | None] = {"ic_mean": 0.9, "ic_t_stat": 0.1}
+        a = replace(_entry("a"), metrics=metrics)
+        b = _entry("b", ic_mean=0.2)
+        first = ml_report_block([a, b], "ic_mean")
+        metrics["ic_t_stat"] = 10.0
+        block = ml_report_block([a, b], "ic_mean")
+        assert any("is below" in text for text in first["caveats"])
+        assert any("clears" in text for text in block["caveats"])
+
+    def test_ranking_uses_the_requested_metric_and_alpha(self) -> None:
+        entries = [
+            _entry("a", ic_mean=0.9, ic_t_stat=2.4, max_drawdown=0.2),
+            _entry("b", ic_mean=0.2, max_drawdown=0.1),
+        ]
+        block = ml_report_block(entries, "max_drawdown")
+        assert block["ranking"]["direction"] == "minimize"
+        assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
+        assert any(
+            "is below" in text
+            for text in ml_report_block(entries, "ic_mean", alpha=0.01)["caveats"]
+        )
+
+    def test_parameter_surfaces_require_opt_in(self) -> None:
+        entries = [_entry("a", window=10, ic_mean=0.1), _entry("b", ic_mean=0.2)]
+        with pytest.raises(ValueError, match="same conditions"):
+            ml_report_block(entries, "ic_mean")
+
+    def test_parameter_surfaces_reject_incompatible_dataset_versions(self) -> None:
+        entries = [
+            _entry("a", window=10, ic_mean=0.1),
+            replace(_entry("b", ic_mean=0.2), dataset_id="rebuilt"),
+        ]
+        with pytest.raises(ValueError, match="different dataset versions"):
+            ml_report_block(entries, "ic_mean", allow_parameter_axes=True)
+
+    def test_duplicate_candidate_ids_are_rejected(self) -> None:
+        entries = [_entry("a", ic_mean=0.1), _entry("a", ic_mean=0.2)]
+        with pytest.raises(ValueError, match="unique"):
+            self._block(*entries)
+
+    def test_round_tripped_entries_keep_the_same_evidence(self) -> None:
+        entries = [_entry("a", ic_mean=float("nan")), _entry("b", ic_mean=0.1)]
+        restored = [LeaderboardEntry.from_record(item.to_record()) for item in entries]
+        block = ml_report_block(restored, "ic_mean")
+        assert block == ml_report_block(entries, "ic_mean")
+        assert block["ranking"]["ranked_scope_ids"] == ["b"]
+        assert block["ranking"]["skipped"][0]["scope_id"] == "a"
+
+    def test_an_empty_candidate_set_can_be_projected(self) -> None:
+        block = self._block()
+        assert block["scopes"] == []
+        assert block["ranking"]["ranked_scope_ids"] == []
+        assert block["ranking"]["skipped"] == []
 
     def test_the_block_keeps_every_candidate_including_failures(self) -> None:
         block = self._block(
@@ -321,4 +449,4 @@ class TestReportBlock:
     def test_a_metric_without_a_definition_cannot_be_projected(self) -> None:
         entries = [_entry("a", ic_mean=0.05, invented_metric=1.0)]
         with pytest.raises(KeyError, match="unknown signal metric"):
-            ml_report_block(entries, rank_entries(entries, "ic_mean"))
+            ml_report_block(entries, "ic_mean")

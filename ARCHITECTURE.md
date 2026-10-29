@@ -467,15 +467,12 @@ n_quantiles，參數平原不會把倖存的點誤讀成相鄰設定。舊紀錄
 MCP 在完整候選集合完成比較與排序後分頁，拒絕時
 只回傳有限 context 示例及修復指引。這些排名不提供獲利、樣本外來源或執行安全的證明。
 
-報告由 JSON payload 產生並由其渲染，HTML 只是投影，因此訊號證據要進入報告只需能被
-投影成同一種 scope 形狀。`ml_signal_scope` 以 `kind=ml_signal`、`mode=signal` 標明
-來源，`values` 沿用 `null` 三態，`observations` 明確為 null；三個可調參數放在
-`metadata` 而不併入 `parameters`，避免覆蓋同名的擬合參數。`ml_report_block` 收整批
-候選（含排序失敗者）、區塊層級定義、參數軸、skipped 座標與排名警語。指標定義補上
-`modes` 與 `requires_annualization`，與組合績效指標共用同一種定義形狀。預設是否顯示
-採單一機械規則：是摘要指標且宣告優化方向才顯示，其餘完整保存但不預設勾選（`beta`
-即為此例），失敗分數不受此規則隱藏。沒有訊號證據的報告不加入該區塊，payload 與
-`report_id` 因此維持不變。
+`domain/ml/report.py` 提供訊號證據的純資料投影，供後續報告整合使用；目前未接入
+`ReportService`、`generate_report` 或 HTML renderer，既有報告 payload 與 `report_id`
+不受影響。投影保留候選身分、未取得分數、評估座標及排名警語，由同批候選即時計算
+完整排名，避免外部排名與資料失去同步。它不讀寫儲存資料，也不改變 ML 工具的回覆契約。
+投影格式、顯示建議及歷史定義的未知欄位見
+[執行產物契約](docs/run_artifacts.md#ml-research-artifacts)。
 
 特徵快取可淘汰，dataset 版本則不隨快取清理而消失。Leaderboard 僅在 `record` 的
 讀取、更新與原子發佈期間持跨程序鎖；`entries` 不加鎖，讀取完整的新檔或舊檔。

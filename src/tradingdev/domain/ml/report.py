@@ -23,12 +23,17 @@ from tradingdev.domain.ml.evaluation.catalog import (
     definition_snapshot,
     report_visibility,
 )
-from tradingdev.domain.ml.leaderboard import parameter_axes, surface_caveats
+from tradingdev.domain.ml.leaderboard import (
+    comparability_error,
+    parameter_axes,
+    rank_entries,
+    surface_caveats,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tradingdev.domain.ml.leaderboard import LeaderboardEntry, LeaderboardResult
+    from tradingdev.domain.ml.leaderboard import LeaderboardEntry
 
 ML_REPORT_SCHEMA_VERSION = 1
 ML_SIGNAL_KIND = "ml_signal"
@@ -51,10 +56,7 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
         "split": "full",
         "fold_index": None,
         "trial_index": None,
-        "values": {
-            key: None if value is None else float(value)
-            for key, value in entry.metrics.items()
-        },
+        "values": {key: entry.metric(key) for key in entry.metrics},
         "parameters": dict(entry.parameters),
         "metadata": {
             "label": entry.label,
@@ -81,14 +83,26 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
 
 def ml_report_block(
     entries: Sequence[LeaderboardEntry],
-    result: LeaderboardResult,
+    metric: str,
+    *,
+    alpha: float = 0.05,
+    allow_parameter_axes: bool = False,
 ) -> dict[str, Any]:
     """The whole signal-evidence block: every candidate, ranked or failed.
 
-    ``entries`` must be the full candidate set, not the ranked subset: the
-    skipped candidates are the ones a surface must not lose.
+    Compute a complete ranking from these candidates, so an independent stale
+    or truncated result cannot be paired with different evidence. Parameter
+    surfaces require an explicit opt-in, with the same comparability rules as
+    the leaderboard.
     """
     ordered = tuple(entries)
+    if len({entry.entry_id for entry in ordered}) != len(ordered):
+        raise ValueError("Report candidates must have unique entry IDs")
+    if mismatch := comparability_error(
+        ordered, allow_parameter_axes=allow_parameter_axes
+    ):
+        raise ValueError(mismatch)
+    result = rank_entries(ordered, metric, alpha=alpha)
     metric_ids = sorted({key for entry in ordered for key in entry.metrics})
     axes = parameter_axes(ordered)
     caveats = list(result.caveats)
