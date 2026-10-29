@@ -14,6 +14,7 @@ from tradingdev.adapters.reporting.bokeh_tables import (
     BOKEH_TABLE_SCRIPT,
     bokeh_resources_html,
 )
+from tradingdev.adapters.reporting.interpretation import render_interpretation
 from tradingdev.adapters.reporting.labels import (
     enum_label,
     metric_label,
@@ -1206,6 +1207,7 @@ def render_report(payload: dict[str, Any], report_id: str) -> str:
         "</style><p>未啟用 JavaScript：以下展開全部結果範圍，"
         "可直接閱讀完整文字表格與績效詳表；數值亦保存在內嵌 JSON。</p></noscript>"
         + "<div id='overview-view'><span id='overview'></span>"
+        + render_interpretation(payload)
         + "".join(overview)
         + (
             "<section><h2>選擇結果</h2><ul>" + "".join(links) + "</ul></section>"

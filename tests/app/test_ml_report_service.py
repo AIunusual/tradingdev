@@ -302,7 +302,7 @@ def test_no_ml_request_report_bytes_are_pinned(
         result["sha256"],
         hashlib.sha256(path.read_bytes()).hexdigest(),
     ) == (
-        "d0c0e82cc7befcf7269baf447075e0088ec4964d60633be50556e0d5c4dd67aa",
-        "9b812f0367b58a4e82d519330b3c4143e1dfbb6052f8f5dfff2f0eb125c97d63",
-        "27acbae601d7410b37390a0013bde4148e72ce551ddada0c8c9d5b5584174011",
+        "84bc42bb2f77fe38a1d12f3bf54e5cbb33f47ee2e6e3587518989b732791807a",
+        "824f0e6d83e164416cd36b866611e694b9bedcc34817200d396bd888ee2ab2c4",
+        "4af5f0ebe8e1e299be531a9d40cdfba3d5b888bd9ccb489966dfcea163224327",
     )

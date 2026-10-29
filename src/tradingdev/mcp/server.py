@@ -17,6 +17,7 @@ from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
+from tradingdev.app.research_note_service import ResearchNoteService
 from tradingdev.app.run_service import RunService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
@@ -31,6 +32,7 @@ from tradingdev.mcp.tools import (
     history,
     jobs,
     ml,
+    research_notes,
     runs,
     strategy,
     strategy_cleanup,
@@ -74,6 +76,7 @@ def create_server(workspace: WorkspacePaths | None = None) -> StrictMCPServer:
         TradeHistoryService(workspace=workspace, store=store),
         ReportService(workspace=workspace, store=store),
     )
+    research_notes.register(mcp, ResearchNoteService(workspace, store))
     artifacts.register(mcp, artifact_service)
     feature_requests.register(mcp, feature_request_service)
     ml.register(mcp, MLService(workspace=workspace, data_service=data_service))

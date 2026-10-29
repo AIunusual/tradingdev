@@ -27,6 +27,8 @@ from tradingdev.adapters.reporting.tables import (
 )
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
+from tradingdev.app.contracts.reports import ReportAnalysis
+from tradingdev.app.diagnostic_service import DiagnosticService
 from tradingdev.app.report_comparison import load_report_comparison
 from tradingdev.app.report_ml import (
     MLReportError,
@@ -39,6 +41,7 @@ from tradingdev.app.trade_history_service import (
     LoadedHistoryRun,
     TradeHistoryService,
 )
+from tradingdev.domain.diagnostics import DiagnosticContext
 from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.presentation.ledger import build_ledger
 from tradingdev.domain.presentation.reports import (
@@ -65,6 +68,7 @@ class ReportService:
         self._history = TradeHistoryService(
             workspace=self._workspace, store=self._store
         )
+        self._diagnostics = DiagnosticService(self._history)
 
     def get_report_sections(self) -> dict[str, Any]:
         """Offer recipes without requiring their use or accepting raw HTML."""
@@ -110,6 +114,7 @@ class ReportService:
         commentary: list[dict[str, str]] | None = None,
         *,
         comparison_job_id: str | None = None,
+        analysis: dict[str, Any] | None = None,
         ml_entry_ids: list[str] | None = None,
         ml_ranking_metric: str = "ic_mean",
         ml_allow_parameter_axes: bool = False,
@@ -190,6 +195,11 @@ class ReportService:
                 "Provide up to 20 plain-text title/text notes, 20000 characters total",
             )
         try:
+            interpretation = (
+                ReportAnalysis.model_validate(analysis)
+                if analysis is not None
+                else None
+            )
             if comparison_job_id is not None:
                 comparison = load_report_comparison(
                     self._workspace, self._store, self._history, comparison_job_id
@@ -216,6 +226,28 @@ class ReportService:
                     allow_parameter_axes=ml_allow_parameter_axes,
                 )
             payload["sections"] = list(selected)
+            if interpretation is not None:
+                allowed = {
+                    (run["identity"]["run_id"], scope["scope_id"])
+                    for run in payload["runs"]
+                    for scope in run["scopes"]
+                }
+                references = [
+                    (ref.run_id, ref.scope) for ref in interpretation.references
+                ]
+                if (
+                    (allowed and not references)
+                    or len(set(references)) != len(references)
+                    or set(references) - allowed
+                ):
+                    return _error(
+                        "invalid_analysis_reference",
+                        "Analysis must reference distinct existing report run/scopes; "
+                        "successful reports need at least one reference",
+                    )
+            payload["analysis"] = (
+                interpretation.model_dump(mode="json") if interpretation else None
+            )
             payload["navigation_instructions"] = report_navigation_instructions(
                 selected,
                 has_results=bool(payload["runs"]),
@@ -313,6 +345,14 @@ class ReportService:
                     for run in payload["runs"]
                 },
                 "commentary": [dict(note) for note in notes],
+                "analysis": payload["analysis"],
+                "diagnostics": {
+                    run["identity"]["run_id"]: {
+                        scope["scope_id"]: scope["diagnostics"]
+                        for scope in run["scopes"]
+                    }
+                    for run in payload["runs"]
+                },
                 "available_scopes": {
                     run["identity"]["run_id"]: [
                         scope["scope_id"] for scope in run["scopes"]
@@ -394,6 +434,14 @@ class ReportService:
                     name
                     for name in (() if benchmark is None else benchmark.values)
                     if name not in scope.values
+                ]
+                entry["diagnostics"] = [
+                    result.model_dump(mode="json")
+                    for result in self._diagnostics.diagnose(
+                        DiagnosticContext(
+                            scope, loaded.observations.scopes.get(scope_id)
+                        )
+                    )
                 ]
                 entry["definitions"] = {
                     name: bundle.definitions[name].model_dump(mode="json")

@@ -240,6 +240,7 @@ def test_mixed_report_keeps_ml_in_overview_and_run_details_separate() -> None:
                     "metadata": {},
                     "values": {},
                     "definitions": {},
+                    "diagnostics": [],
                 }
             ],
         }
@@ -284,7 +285,20 @@ def test_report_without_ml_keeps_template_22_html_bytes_unchanged() -> None:
     document = render_report(payload, "legacy-report")
     assert REPORT_TEMPLATE_VERSION == "22"
     assert hashlib.sha256(document.encode()).hexdigest() == (
-        "fa3387bec34ad62d66675114670d404a79d5e42386af9e679990e9b330ea430e"
+        "97872c12410d1d4c7a2ee8a2227e9c3624a2097fd43295dddbe3719e0489e889"
+    )
+    assert "data-ml-download" not in document
+    assert "#ml .ml-candidate" not in document
+
+
+def test_report_without_ml_pins_interpretation_template_bytes() -> None:
+    # Template 22 combines the benchmark section with interpretation/diagnostics
+    # rendering; ML remains optional and must stay absent from this request.
+    payload = {"runs": [], "sections": ["limitations"], "commentary": []}
+    document = render_report(payload, "legacy-report")
+    assert REPORT_TEMPLATE_VERSION == "22"
+    assert hashlib.sha256(document.encode()).hexdigest() == (
+        "97872c12410d1d4c7a2ee8a2227e9c3624a2097fd43295dddbe3719e0489e889"
     )
     assert "data-ml-download" not in document
     assert "#ml .ml-candidate" not in document

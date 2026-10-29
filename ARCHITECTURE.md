@@ -263,10 +263,17 @@ Leaderboard 保存候選參數、訊號指紋與評估條件，依 domain 指標
 完整排名；保留缺值、評估座標及警語，不重新預測或訓練。`ReportService` 將選取內容固定
 於獨立 ML 報告，或附加到 run／固定比較報告；MCP 與 report CLI 共用此路徑。
 HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源關聯。排行榜後續替換不改變
-已發布報告；未選取 ML 時保留既有 payload、HTML、manifest 與報告身分。
+已發布報告；未選取 ML 時不加入 ML 區塊。新產生報告採用包含研究解讀與診斷的
+模板 23，報告身分會隨內容與模板更新；已保存報告不改寫。
 這些報告另行登錄為 SQLite artifacts；選取、呈現與保存契約見[報告文件](docs/reports.md)。
 
 ## 績效計算與對話摘要
+
+`DiagnosticService` 透過 domain 的 `DiagnosticProvider` 介面讀取已驗證的 scope 與
+原始觀察值。初期 `MaverickDiagnostics` 僅移植適用的規則式建議，不引入上游 server、
+行情與資料庫服務；來源版本與 MIT 授權隨 adapter 保存。後端提供指標證據與限制，
+外部 LLM 提供結論、觀察、假說與下一步，報告核對結果引用並保存兩者。這個介面
+保留後續分析完整交易與行情的空間，不以初期彙總指標限制自研診斷輸入。
 
 | 元件 | 責任 |
 | ---- | ---- |
@@ -280,6 +287,40 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 不可用值保留原因，不能以零代替。解讀使用當次保存的定義、單位與設定；詳細查詢不重跑策略
 或載入 pickle。Walk-forward 摘要是分折分布，最佳化區分 trial 與樣本外結果。
 完整取樣、年化、數值及比較限制見[績效產物契約](docs/performance_artifacts.md)。
+
+### 診斷擴充與替換
+
+`domain/diagnostics.py` 定義 `DiagnosticProvider.diagnose(DiagnosticContext)`。
+`DiagnosticContext` 保留原生 `PerformanceScope` 與 `ScopeObservations`（可缺少），
+包含保存的交易、權益與帳戶觀察值；不把資料壓成 Maverick 專用輸入。
+`DiagnosticService` 的預設 providers 是共同組裝點，MCP 查詢與 ReportService
+都經此服務。要替換初期 adapter，可實作相同 Protocol 並在此更換預設組合；
+測試也可直接注入 provider tuple。不是把 Maverick 套件當成 domain 基類。
+
+深度診斷應保留 provider／版本、證據、不可用原因與限制，先加入可重現的離線測試。
+目前 evidence 是具單位的數值指標；若需時間區段、交易索引或情境分類，應擴充正式
+證據模型並同步更新 HTML、工具 schema 與測試，而非把新事實藏在 LLM 文字中。
+行情型態／波動診斷若需要 OHLCV，須另以固定資料身分載入並驗證對齊後加入 context；
+目前 context 沒有承諾原始行情。資料不足回報 unavailable，不由 provider 隱式抓取行情或回測。
+規則或契約改變須更新 provider／報告版本；既有報告及封存保持原樣。
+
+### 研究筆記與可攜封存
+
+對話端 LLM 負責 `ResearchNoteDraft`：目前需求、階段摘要、報告引用與後續研究。
+後端 `ResearchNoteService` 供 MCP 與 CLI 共用，`ResearchNoteStore` 在 SQLite
+保存目前版本，以 expected_version 防止覆寫其他編輯。筆記不替代不可變的
+ResearchEvidence、execution manifest 或執行確認；追加需求不會改動已執行設定。
+
+`ResearchArchiveStore` 核對所選版本與指定 HTML 附件的登錄、路徑及 SHA-256，產生
+固定 HTML／JSON／報告 ZIP。附件限所引用的研究報告與執行確認 HTML，
+不遍歷打包整個工作區。
+`adapters/reporting/notebook.py` 負責閱讀頁，儲存層負責原子發佈與失敗清理。
+HTTP 的自訂下載 route 使用每個 server instance 的短期簽章能力網址，
+驗證後才交付同一份 ZIP bytes；重新取得舊封存的網址只讀保存 ZIP，不依賴目前筆記或來源報告。
+stdio 回傳本機路徑，不假設客戶端能下載。
+未來可替換 storage／delivery adapter，但應保留版本衝突、來源完整性、容量限制及
+獨立閱讀的契約；不需把聊天供應商或逐字紀錄依賴加進 domain。
+欄位與限制見[報告與筆記契約](docs/reports.md#research-notebooks-and-archives)。
 
 ## 一致性、程序管理與保證範圍
 

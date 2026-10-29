@@ -313,6 +313,12 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
 
 ### 在對話中查詢
 
+回測解讀會提供重要績效、觀察依據、尚未確認的原因與下一步研究建議，並保存於
+HTML 報告，方便交給同仁閱讀。初期診斷使用 Maverick 衍生的規則式提示；門檻不是
+你的風險容忍度，也不代表修改一定有效。目前尚未提供市場情境或波動敏感性診斷。
+缺少資料的檢查會標示未評估，未提供 LLM 解讀的報告也會明確標示。
+建議不會自動啟動新實驗。資料與格式見[報告契約](docs/reports.md)。
+
 不需要記住所有工具名稱，可以直接請助手處理：
 
 | 想做的事 | 可以這樣說 |
@@ -406,6 +412,25 @@ uv run tradingdev-report --workspace /path/to/workspace \
 報告格式、指標口徑與程式查詢介面見
 [執行結果與產物](docs/reports.md#composable-offline-reports)。
 
+### 保存研究筆記與打包分享
+
+可直接請助手「把目前需求、各階段結論與報告存成研究筆記，打包給同事閱讀」。
+尚未回測也能保存；後續追加需求時，請它更新同一本筆記，將尚未執行的想法標明。
+助手整理的是階段摘要，不會自動取得或保存聊天客戶端的完整對話。
+
+匯出的 ZIP 包含 `index.html`、筆記 JSON 與指定的報告。請完整解壓後開啟
+`index.html`，由各階段連到報告；報告中的觀察、限制與建議也會保留。
+同一本筆記可隨時重新匯出，已匯出的版本不隨後續編輯改變。
+
+HTTP 連線會提供 15 分鐘有效的 ZIP 下載網址；持有網址者可下載，請只交給預期收件者。
+網址過期或 server 重啟後，請助手依封存代號重新取得下載網址；筆記更新或來源報告移除也不影響舊封存。stdio 提供 server 本機路徑，
+需客戶端支援檔案存取／傳輸；遠端 server 路徑不能直接當成你電腦上的檔案。
+筆記最多 16 KiB，單次封存最多 20 份指定 HTML 報告、64 MiB；過大時需精簡摘要或報告選擇。
+來源報告遺失或被更改時會拒絕打包，不會偷偷重跑策略。
+
+封存用於閱讀與討論，不包含整個工作區、完整行情或執行環境；若要繼續查詢研究，
+仍須保留原工作區。儲存與介面契約見[研究筆記與封存](docs/reports.md#research-notebooks-and-archives)。
+
 ### 開啟 Dashboard
 
 Dashboard 可顯示具有可載入圖表產物的一般回測與 walk-forward 結果。先安裝圖表依賴，
@@ -458,6 +483,7 @@ Binance API 與 Yahoo Finance 資料來源；可請助手列出來源，選擇�
 | `ml_leaderboard/` | 已記錄的訊號評估與比較條件 |
 | `runs/` | 每次執行的設定、結果與相關產物 |
 | `reports/` | 可離線閱讀與分享的 HTML 報告 |
+| `research_archives/` | 研究筆記的獨立閱讀版本與 ZIP；可編輯筆記存於資料庫 |
 | `tradingdev.sqlite` | 工作、結果與產物的查詢索引 |
 
 MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
@@ -543,6 +569,20 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 包括失敗、取消與未執行的原因；即使沒有任何成功結果，仍可產生報告，並說明缺少可用績效。
 `--comparison-job-id` 與 `--run-id` 不能同時使用。兩種命令都會輸出報告的本機路徑；
 自選章節與評語參數可用 `uv run --locked tradingdev-report --help` 查看。
+
+### 從終端機操作研究筆記
+
+與 MCP 共用相同工作區。先用 `read` 找到筆記代號與版本，再匯出指定版本：
+
+```bash
+uv run --locked python -m tradingdev.adapters.cli.research_notes \
+  --workspace /absolute/path/to/tradingdev-workspace read
+uv run --locked python -m tradingdev.adapters.cli.research_notes \
+  --workspace /absolute/path/to/tradingdev-workspace export NOTE_ID VERSION
+```
+
+`save draft.json` 可新建筆記；更新時加上 `--note-id` 與 `--expected-version`。
+輸入格式與完整替換語意見[筆記契約](docs/reports.md#research-notebooks-and-archives)。
 
 ## 常見問題
 
