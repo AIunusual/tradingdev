@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from tests.e2e.conversation import UserReply
     from tests.e2e.llm_client import ToolCall
 
+CODEX_REASONING_EFFORT = "xhigh"
+
 LIFECYCLE_TOOLS = [
     "list_strategies",
     "get_strategy_contract",
@@ -78,8 +80,9 @@ def _command(root: Path, model: str | None = None) -> list[str]:
         "features.multi_agent": False,
         "features.code_mode": False,
         "features.js_repl": False,
+        "features.skip_host_skill_discovery": True,
+        "model_reasoning_effort": CODEX_REASONING_EFFORT,
         "web_search": "disabled",
-        "skip_host_skill_discovery": True,
         "notify": [],
         "developer_instructions": "",
         "project_doc_max_bytes": 0,
@@ -216,6 +219,7 @@ async def run_codex(
                         ),
                     },
                     mcp_config=_mcp_config(root, enabled_tools),
+                    expected_reasoning_effort=CODEX_REASONING_EFFORT,
                     user_reply=respond_to_turn if user_reply is not None else None,
                     max_turns=max_turns,
                 )
