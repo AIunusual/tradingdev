@@ -319,10 +319,12 @@ cannot describe one geometry while running another. `window_size` is accepted
 only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
 
 `min_train_bars` and `predict_lookback` are optional as well; they follow
-`lookback + 10` labelled rows and `2 x lookback` bars of scoring context. Those
-defaults are derived from the strategy's own lookback on purpose: a fixed
-window shorter than the feature warm-up would leave no labelled rows and stop
-retraining without saying so.
+`lookback + 10` labelled rows and `2 x lookback` prior bars of scoring context.
+`predict_lookback` counts bars *before* the scored one, which is then added on
+top, so the default context is `2 x lookback + 1` rows. Those defaults are
+derived from the strategy's own lookback on purpose: a fixed window shorter than
+the feature warm-up would leave no labelled rows and stop retraining without
+saying so.
 
 A refit is skipped, and the previous model kept, when the window holds fewer than
 `min_train_bars` labelled rows or fewer than two bars at all. The trace records

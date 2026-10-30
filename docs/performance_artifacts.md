@@ -33,9 +33,11 @@ folds cannot overwrite earlier snapshots. The summary retains those values in
 A bundled ML strategy that enables its rolling switch also reports
 `metadata.rolling_trace`: the rolls it actually ran, each with its training
 window, labelled rows, whether a model was fitted, and how many bars it scored.
-It is saved beside `strategy_parameters` for a backtest, each fold, and each
+It is saved beside `strategy_parameters` for a full backtest and for each
 optimization trial, and it is absent when the switch is off, so other
-strategies' metadata is unchanged.
+strategies' metadata is unchanged. Walk-forward folds record
+`metadata.strategy_parameters` but not the trace: fold capture is not
+implemented.
 
 | Field | Meaning |
 | --- | --- |
