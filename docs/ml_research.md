@@ -17,9 +17,10 @@ strategy lifecycle. User workflow is documented in the
 
 `get_ml_contract` returns schema version 1 discovery information: named feature
 sets with ordered columns, model kinds with default parameters, validation
-schemes, processor types, IC methods, quantile limits, calendar modes, missing
-policies and rankable metrics. Use these returned names rather than constructing
-arbitrary model classes. `processor_types` advertises domain building blocks
+schemes, rolling schemes with their window type and default cadence, processor
+types, IC methods, quantile limits, calendar modes, missing policies and rankable
+metrics. Use these returned names rather than constructing arbitrary model
+classes. `processor_types` advertises domain building blocks
 only: `build_dataset`, `build_panel` and `train_model` do not accept or execute a
 processor pipeline. In particular, training does not implicitly fit a scaler
 because its name appears in discovery.
@@ -290,13 +291,15 @@ workspace.
 
 ### Rolling Retraining Schemes
 
-Bundled ML strategies retrain while they score: the model is refitted every
-`retrain_interval` bars and then predicts the next bar. A `rolling_gen` block
-declares that window geometry instead of leaving it inside the strategy loop.
-It is **off by default**; with `enabled: false` the strategy runs its classic
-retrainer, untouched. `get_ml_contract` advertises the names under
-`rolling_schemes`, and execution resolves them from the same registry, so the
-menu and the geometry that actually runs cannot drift apart.
+Bundled ML strategies retrain while they score: every `retrain_interval` bars the
+engine attempts a refit, and each bar is predicted with whichever model is
+current. A `rolling_gen` block declares that window geometry instead of leaving
+it inside the strategy loop. It is **off by default**; with `enabled: false` the
+strategy runs its classic retrainer, untouched. `get_ml_contract` advertises the
+schemes under `rolling_schemes` — each entry carries `name`, `description`,
+`rtype` and `default_step`, where a null `default_step` means the cadence follows
+the strategy's own interval — and execution resolves them from the same registry,
+so the menu and the geometry that actually runs cannot drift apart.
 
 ```yaml
 strategy:
@@ -311,27 +314,44 @@ strategy:
 - `roll_sd` slides a fixed-length training window forward with each retrain.
 - `roll_ex` keeps the first bar and expands the window with each retrain.
 
+The scheme name fixes the window shape; there is no separate override, so a name
+cannot describe one geometry while running another. `window_size` is accepted
+only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
+
 `min_train_bars` and `predict_lookback` are optional as well; they follow
 `lookback + 10` labelled rows and `2 x lookback` bars of scoring context. Those
 defaults are derived from the strategy's own lookback on purpose: a fixed
 window shorter than the feature warm-up would leave no labelled rows and stop
 retraining without saying so.
 
+A refit is skipped, and the previous model kept, when the window holds fewer than
+`min_train_bars` labelled rows or fewer than two bars at all. The trace records
+`trained: false` for that roll, so a carried-over model is never mistaken for one
+that saw the data.
+
 Whichever scheme is declared, a training window ends strictly before the bar it
-scores, the scored frame is never concatenated in front of itself, a bar whose
-features are unavailable emits no signal instead of reusing the previous bar's,
-and a training row whose label reads past the bar being scored is dropped before
-fitting — whatever the feature engineer returned. That last rule is the engine's
-own, not a courtesy of `dropna`: an engineer that fills its unlabelled tail
-cannot smuggle an unrealised outcome into training. These are the rules the
-classic retrainer already follows; the scheme only changes the window shape. A
-run that cannot score any bar at all fails rather than returning all-zero
-signals.
+scores, the scored frame is never concatenated in front of itself, and a bar
+whose features are unavailable is not scored rather than reusing the previous
+bar's value. Those are the same rules the classic retrainer follows in its own
+loop. The engine adds one rule of its own: a training row whose label reads past
+the bar being scored is dropped before fitting, whatever the feature engineer
+returned. The classic retrainer has no such filter — it relies on the engineer
+leaving that tail unlabelled for `dropna` to remove — which is why the engine
+takes `label_horizon` explicitly and why an engineer that fills its unlabelled
+tail cannot smuggle an unrealised outcome into an enabled run. A run that cannot
+score any bar at all fails rather than returning all-zero signals.
+
+What an unscored bar becomes differs by consumer: the direction strategy emits
+`0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
+neighbouring bar's value, and a neutral score does not force an existing position
+to close — the entry threshold and the holding rules still decide.
 
 The schedule can be printed before anything runs. `enumerate_rolls` returns one
 window per retrain — the training bounds, the bar that triggered it, and the
-bars that model scores — built from the same geometry the engine executes, so
-it previews the run rather than describing a second one.
+interval that model is assigned to score — built from the same geometry the
+engine executes, so it previews the run rather than describing a second one. The
+intervals are planned, not observed: bars whose features are missing are not
+scored, and the trace reports the actual count per roll.
 
 A run that enables the switch also records what actually happened. Each scored
 bar is attributed to the roll that produced it, and each roll reports its window,

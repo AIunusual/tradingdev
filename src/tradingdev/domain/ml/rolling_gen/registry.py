@@ -73,17 +73,15 @@ def resolve_rolling_scheme(cfg: RollingSchemeConfig) -> RollingScheme:
             window and would otherwise be ignored without a word.
     """
     base = get_rolling_scheme(cfg.scheme)
-    rtype = base.rtype if cfg.rtype is None else cfg.rtype
     window_size = base.window_size if cfg.window_size is None else cfg.window_size
-    if rtype is RollType.ROLL_EX and window_size is not None:
+    if base.rtype is RollType.ROLL_EX and window_size is not None:
         msg = (
-            f"rolling scheme {cfg.scheme!r} declares rtype ROLL_EX, whose window "
+            f"rolling scheme {cfg.scheme!r} is an expanding window whose size "
             "grows from the first bar; window_size only applies to ROLL_SD"
         )
         raise ValueError(msg)
     return replace(
         base,
-        rtype=rtype,
         step=base.step if cfg.step is None else cfg.step,
         window_size=window_size,
         min_train_bars=(

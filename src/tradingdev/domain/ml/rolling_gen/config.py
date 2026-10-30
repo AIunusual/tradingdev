@@ -7,10 +7,14 @@ unchanged; the configuration block is the only thing that decides that.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from tradingdev.domain.ml.rolling_gen.registry import resolve_rolling_scheme
-from tradingdev.domain.ml.rolling_gen.scheme import RollingScheme, RollType
+
+if TYPE_CHECKING:
+    from tradingdev.domain.ml.rolling_gen.scheme import RollingScheme
 
 
 class RollingSchemeConfig(BaseModel):
@@ -31,10 +35,6 @@ class RollingSchemeConfig(BaseModel):
         default=None,
         ge=1,
         description="Bars between retrains; unset follows the strategy interval",
-    )
-    rtype: RollType | None = Field(
-        default=None,
-        description="Window shape override: ROLL_SD slides, ROLL_EX expands",
     )
     window_size: int | None = Field(
         default=None,

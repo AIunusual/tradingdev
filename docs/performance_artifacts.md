@@ -30,6 +30,36 @@ Walk-forward captures each fold's values independently after fitting; later
 folds cannot overwrite earlier snapshots. The summary retains those values in
 `metadata.fold_metadata`.
 
+A bundled ML strategy that enables its rolling switch also reports
+`metadata.rolling_trace`: the rolls it actually ran, each with its training
+window, labelled rows, whether a model was fitted, and how many bars it scored.
+It is saved beside `strategy_parameters` for a backtest, each fold, and each
+optimization trial, and it is absent when the switch is off, so other
+strategies' metadata is unchanged.
+
+| Field | Meaning |
+| --- | --- |
+| `scheme` | The declared scheme name. |
+| `rtype` | Effective window shape: `ROLL_SD` slides, `ROLL_EX` expands. |
+| `step` | Effective bars between retrains, after defaults were resolved. |
+| `window_size` | Effective sliding length, or null for an expanding window. |
+| `min_train_bars` | Labelled rows a window must offer before a refit is attempted. |
+| `predict_lookback` | Bars of context given to each scored bar. |
+| `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
+| `bars` | Bars the run was asked to score. |
+| `bars_scored` | Bars it actually scored; missing features leave the remainder. |
+| `rolls` | One entry per roll, in order. |
+
+Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
+frame where the model was fitted; `train_start` and `train_end`, half-open
+positions in the concatenated history-plus-scored frame, ending at the bar being
+scored; `test_start` and `test_end`, the interval that model was assigned to
+score; `n_train_rows`, the labelled rows the window offered; `trained`, false when
+the window was too small and the previous model was kept; and `bars_scored`, the
+subset of its interval that was actually scored. Positions are indices in the
+concatenated frame rather than timestamps, so a bar's model is found by the roll
+whose interval contains it.
+
 Optimization keeps its existing meaning: `parameters` contains the trial's
 searched values (or the selected values for `test`), while
 `metadata.strategy_parameters` contains the strategy's complete reported values.

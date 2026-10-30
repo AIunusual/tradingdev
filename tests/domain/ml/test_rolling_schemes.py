@@ -82,6 +82,16 @@ def test_date_anchoring_is_not_accepted_yet() -> None:
         )
 
 
+def test_the_window_shape_is_not_overridable() -> None:
+    """The name decides the shape, so a contradicting ``rtype`` is refused.
+
+    Allowing it would let ``scheme: roll_sd`` run an expanding window, which is
+    exactly the confusion the scheme name exists to prevent.
+    """
+    with pytest.raises(ValidationError):
+        RollingSchemeConfig.model_validate({"scheme": "roll_sd", "rtype": "ROLL_EX"})
+
+
 def test_the_switch_defaults_to_off() -> None:
     assert RollingGenConfig().enabled is False
 
