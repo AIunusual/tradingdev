@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -13,6 +13,9 @@ from tradingdev.domain.data.crawlers.registry import describe_sources
 
 if TYPE_CHECKING:
     from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
+
+# A reuse boundary, not a guarantee about exchange corrections or missing bars.
+SETTLEMENT_DELAY = timedelta(days=7)
 
 
 class DataIdentity(BaseModel):
@@ -85,4 +88,4 @@ class CacheReceipt(BaseModel):
         return self.query_start <= start <= end <= self.query_end
 
     def reusable(self, start: datetime, end: datetime) -> bool:
-        return self.covers(start, end)
+        return self.covers(start, end) and end <= self.fetched_at - SETTLEMENT_DELAY

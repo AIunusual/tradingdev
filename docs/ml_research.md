@@ -32,11 +32,13 @@ because its name appears in discovery.
 and also accepts `spot`; providers that ignore market type store it as `null`.
 The effective source/market is returned in the build summary, saved in dataset
 metadata and participates in its identity.
-Each requested year slice requires a covering successful query. Missing coverage
-or an empty selected period fails; success does not establish complete bar
-coverage or freshness. Use `ensure_data` with the same source/market when a download
-is needed. Legacy unidentified flat files are preserved but excluded. Builds
-never download, refresh or remove market data.
+Each requested year slice requires a covering successful query acquired at least
+seven days after that slice ended. Missing coverage, unsettled acquisition or an
+empty selected period fails; success does not establish complete bar coverage.
+Use `ensure_data` with the same source/market when a download is needed. For recent
+intervals, wait until the seven-day boundary before querying again: an immediate
+retry cannot make recent observations reusable. Legacy unidentified flat files
+are preserved but excluded. Builds never download, refresh or remove market data.
 See [Market Data Cache](run_artifacts.md#market-data-cache).
 The feature builder preserves rows and emits unavailable values
 during warm-up. The service computes `forward_return = close[t+horizon] /

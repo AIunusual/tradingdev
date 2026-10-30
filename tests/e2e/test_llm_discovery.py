@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +13,11 @@ import yaml
 from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.conversation_user import ObservedPlanUser
-from tests.e2e.discovery_workflow import NATURAL_REQUEST, verify_discovery_outcome
+from tests.e2e.discovery_workflow import (
+    NATURAL_REQUEST,
+    verify_discovery_outcome,
+    verify_market_cache_reply,
+)
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, market_frame
 from tests.e2e.workflow_diagnostics import workflow_diagnostics
@@ -164,17 +169,29 @@ def test_natural_request_reads_historical_job_duration(
         print("[historical-duration] Final model reply:\n" + turns[-1].text, flush=True)
 
 
+@pytest.mark.parametrize("settled", [True, False], ids=["settled", "early-query"])
 def test_natural_request_inspects_separate_market_caches(
     pytestconfig: pytest.Config,
+    settled: bool,
 ) -> None:
     with temporary_mcp_workspace() as workspace:
         paths = []
         for market, count in (("spot", 3), ("futures/um", 5)):
-            seed_market_cache(
+            cached = seed_market_cache(
                 workspace.data_root / "processed",
                 market_frame().head(count),
                 market_type=market,
             )
+            if not settled:
+                # A query acquired before settlement does not become reusable
+                # merely because time passes. Keep real files and the same bars.
+                receipt_path = cached.with_name("2024.json")
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt.update(
+                    query_end="2024-01-02T00:00:00Z",
+                    fetched_at="2024-01-03T00:00:00Z",
+                )
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
             path = workspace.root / f"{market.replace('/', '-')}.yaml"
             path.write_text(
                 yaml.safe_dump(
@@ -195,7 +212,10 @@ def test_natural_request_inspects_separate_market_caches(
         request = (
             f"我有兩份研究設定：{paths[0]} 與 {paths[1]}。"
             "請只查本機行情，分別說明來源、市場、實際保存幾筆，以及要求期間的查詢紀錄。"
-            "請每個市場各用一行回答，並說明查詢成功是否足以證明行情完整。"
+            "也請分別判斷現有快取是否能直接重用，並說明判斷理由。"
+            "請每個市場各用一行，明確標示『可直接重用：是或否』與"
+            "『須重新取得才符合重用政策：是或否』，筆數以『N筆』表示，再給理由。"
+            "並說明查詢成功是否足以證明行情完整。"
             "不要下載、改資料或執行研究。"
         )
         turns: list[ModelTurn] = []
@@ -227,25 +247,23 @@ def test_natural_request_inspects_separate_market_caches(
             return codex_calls(await run_codex(workspace.root, request, **options))
 
         calls = asyncio.run(run())
+        assert turns
+        reply = turns[-1].text
+        print("[market-cache-inspection] Final model reply:\n" + reply, flush=True)
         observed = {}
         for call in calls:
             assert call.name in {
                 "inspect_dataset",
                 "list_available_data",
                 "list_data_sources",
+                "get_strategy_contract",
+                "get_ml_contract",
             }
             if call.name == "inspect_dataset" and call.result.get("market"):
                 market = call.result["market"]
                 assert market["source"] == "binance_vision"
-                assert market["queries"] and call.result["market_available"] is True
+                assert market["queries"]
+                assert call.result["market_available"] is settled
                 observed[market["market_type"]] = market["rows"]
         assert observed == {"spot": 3, "futures/um": 5}
-        assert turns
-        reply = turns[-1].text
-        for label, count in (("現貨|spot", 3), ("期貨|futures/um", 5)):
-            lines = " ".join(
-                line for line in reply.splitlines() if re.search(label, line)
-            )
-            assert re.search(rf"(?<!\d){count}(?!\d)", lines)
-        assert re.search("不保證|不代表|不能|不足以|無法保證", reply)
-        print("[market-cache-inspection] Final model reply:\n" + reply, flush=True)
+        verify_market_cache_reply(reply, settled=settled)

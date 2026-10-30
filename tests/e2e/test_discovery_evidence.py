@@ -8,7 +8,11 @@ import pytest
 
 from tests.e2e.codex_harness import LIFECYCLE_TOOLS
 from tests.e2e.conversation import ModelTurn
-from tests.e2e.discovery_workflow import NATURAL_REQUEST, verify_discovery_outcome
+from tests.e2e.discovery_workflow import (
+    NATURAL_REQUEST,
+    verify_discovery_outcome,
+    verify_market_cache_reply,
+)
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -111,3 +115,64 @@ def test_discovery_requires_saved_execution_identity_before_report_verification(
         with pytest.raises(AssertionError):
             verify_discovery_outcome(workspace, calls, turn)
         assert verified == []
+
+
+EARLY_CACHE_REPLY = (
+    "現貨 spot：3筆；可直接重用：否；須重新取得才符合重用政策：是；取得時不足7天。\n"
+    "期貨 futures/um：5筆；可直接重用：否；須重新取得才符合重用政策：是；"
+    "取得時不足7天。\n"
+    "查詢成功不保證行情完整。"
+)
+
+
+@pytest.mark.parametrize("settled", [True, False])
+@pytest.mark.parametrize("separator", ["；", "｜"])
+def test_cache_reply_accepts_evidence_bound_decisions(
+    settled: bool, separator: str
+) -> None:
+    reply = EARLY_CACHE_REPLY.replace("；", separator)
+    if settled:
+        reply = (
+            reply.replace("可直接重用：否", "可直接重用：是")
+            .replace("須重新取得才符合重用政策：是", "須重新取得才符合重用政策：否")
+            .replace("取得時不足7天", "取得時已超過7天")
+        )
+    verify_market_cache_reply(reply, settled=settled)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "現貨 spot：3 筆，可直接重用。\n期貨 futures/um：5 筆，可直接重用。\n"
+        "查詢當時未滿7天，但現在早已超過7天，因此不需重抓。成功查詢不保證行情完整。",
+        EARLY_CACHE_REPLY.replace("可直接重用：否", "可直接重用：是", 1),
+        EARLY_CACHE_REPLY.replace(
+            "須重新取得才符合重用政策：是", "須重新取得才符合重用政策：否", 1
+        )
+        + "\n只需等待即可使用原本快取。",
+        EARLY_CACHE_REPLY.replace("3筆", "4筆"),
+        EARLY_CACHE_REPLY.splitlines()[0],
+        EARLY_CACHE_REPLY + "\n" + EARLY_CACHE_REPLY.splitlines()[1],
+        EARLY_CACHE_REPLY.replace("可直接重用：否", "不可直接重用：否", 1),
+        EARLY_CACHE_REPLY.replace("須重新取得", "不須重新取得", 1),
+        EARLY_CACHE_REPLY.replace("可直接重用：否", "可直接重用：否或是").replace(
+            "須重新取得才符合重用政策：是", "須重新取得才符合重用政策：是或否"
+        ),
+        EARLY_CACHE_REPLY.replace("可直接重用：否", "可直接重用：否 或是"),
+    ],
+    ids=[
+        "unstructured-waiting",
+        "wrong-reuse",
+        "wait-without-reacquiring",
+        "wrong-rows",
+        "missing-market",
+        "duplicate-market",
+        "negated-reuse-label",
+        "negated-reacquire-label",
+        "unselected-decisions",
+        "unselected-spaced-decision",
+    ],
+)
+def test_cache_reply_rejects_wrong_or_ambiguous_market_decisions(reply: str) -> None:
+    with pytest.raises(AssertionError):
+        verify_market_cache_reply(reply, settled=False)
