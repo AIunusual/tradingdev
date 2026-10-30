@@ -80,6 +80,10 @@ def test_volume_sizing_and_signal_flags_are_resolved(size: float | None) -> None
     assert "帳戶報酬及其年化指標不適用" in items["annualization"]
     assert "365" in items["annualization"]
     assert "強制平倉" in items["end_of_data"]
+    assert "UTC 月份" in items["monthly_loss"]
+    assert "上個有行情月份最後收盤權益" in items["monthly_loss"]
+    assert "首月基準為零" in items["monthly_loss"]
+    assert "不重計前月損益" in items["monthly_loss"]
 
 
 def test_alternative_volume_flags_do_not_reuse_default_explanations() -> None:

@@ -168,6 +168,17 @@ def _document(manifest: ExecutionManifest) -> ConfirmationDocument:
     )
 
 
+def test_volume_month_baseline_is_visible_in_all_confirmation_formats() -> None:
+    document = _document(_manifest(backtest={"mode": "volume", "init_cash": None}))
+    for rendered in (
+        render_confirmation_summary(document, mode="volume"),
+        render_confirmation_text(document),
+        unescape(render_confirmation_html(document)),
+    ):
+        assert "上個有行情月份最後收盤權益" in rendered
+        assert "不重計前月損益" in rendered
+
+
 @pytest.mark.parametrize("kind", ["backtest", "walk_forward", "optimization"])
 def test_chat_summary_preserves_major_rules_and_html_retains_full_review(
     kind: Any,

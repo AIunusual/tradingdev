@@ -157,6 +157,19 @@ signal changes during a monthly pause can clear the wait, while the monthly
 pause still prevents entry. Fees and separate notional slippage charges apply
 on each entry and exit, including a final close at the last bar's close.
 
+Volume's `monthly_max_loss` measures the change in cumulative P&L equity during
+each UTC calendar month, including costs already charged and unrealised P&L
+changes. The baseline is zero for the first observed month, then the last close
+equity of the previous observed month. Missing months are not filled; price gaps
+and changes in carried positions belong to the next observed month. Closing or
+reversing a carried position does not charge its prior-month P&L or entry costs
+again, while trade records still retain the entire trade's P&L and costs.
+The breaker checks after a stop exit before re-entry, and after ordinary trading
+at the bar's close. A loss reaching the threshold closes any remaining position
+at that close and pauses trading until the next observed month. Exit costs can
+increase the final loss beyond the threshold; this is not a guaranteed loss cap.
+Without timestamps, the monthly breaker is unavailable.
+
 The confirmation text, chat summary and HTML show the same backend-resolved
 execution assumptions. They describe simulator policy, not proof that strategy
 code or an ML model implements the requested idea, avoids look-ahead, or passed

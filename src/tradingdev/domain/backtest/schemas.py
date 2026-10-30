@@ -49,7 +49,20 @@ class BacktestConfig(BaseModel):
     )
     re_entry_after_sl: bool = True
     mode: Literal["signal", "volume"] = "signal"
-    monthly_max_loss: float = 1500.0
+    monthly_max_loss: float = Field(
+        default=1500.0,
+        description=(
+            "Volume mode only; requires timestamps. Quote-currency loss limit for "
+            "each UTC calendar month. Compare cumulative P&L equity with the "
+            "previous observed month's last close equity (zero in the first month). "
+            "Missing months are not filled; gaps belong to the next observed month. "
+            "Count current-month costs and unrealised P&L changes, not prior-month "
+            "P&L or entry costs again. Trade records retain whole-trade P&L and costs. "
+            "Check after stop exits before re-entry and after ordinary trading at "
+            "close. Reaching the loss limit closes any remaining position at close "
+            "and pauses until the next observed month; exit costs may exceed the limit."
+        ),
+    )
     periods_per_year: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     risk_free_rate: float = Field(default=0.0, gt=-1, allow_inf_nan=False)
     required_return: float = Field(default=0.0, gt=-1, allow_inf_nan=False)

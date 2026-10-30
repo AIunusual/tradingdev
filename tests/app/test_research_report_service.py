@@ -66,7 +66,7 @@ def test_comparison_deduplicates_research_and_keeps_exact_scope_sources(
         scope = run["scopes"][0]
         assert scope["parameter_sources"][0]["target_id"] == f"candidate_{index}"
         assert scope["parameter_sources"][0]["value"] == index
-        assert scope["execution_assumptions"]["policy_version"] == "execution-v1"
+        assert scope["execution_assumptions"]["policy_version"] == "execution-v2"
         assert any(
             source["artifact_id"].endswith(":research_evidence")
             for source in run["provenance"]["artifacts"]
