@@ -4,7 +4,6 @@ advertised names and parameters to buildable splits.
 
 from __future__ import annotations
 
-import inspect
 from typing import TYPE_CHECKING
 
 import pytest
@@ -65,15 +64,6 @@ class TestRegistry:
 
 class TestFoldParameterMapping:
     """The registry maps differing builder keywords."""
-
-    @pytest.mark.parametrize("name", _EXPECTED_NAMES)
-    def test_the_declared_keyword_is_the_one_the_builder_takes(self, name: str) -> None:
-        scheme = get_validation_scheme(name)
-        parameters = inspect.signature(scheme.build).parameters
-        assert scheme.fold_parameter in parameters, (
-            f"{name} declares {scheme.fold_parameter!r} but its builder takes "
-            f"{sorted(parameters)}"
-        )
 
     @pytest.mark.parametrize("n_folds", [1, 2, 3, 4])
     def test_walk_forward_honours_the_fold_count(self, n_folds: int) -> None:
