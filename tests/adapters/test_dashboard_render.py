@@ -205,8 +205,8 @@ def _check_charts_serialize_recorded_data_and_survive_filter_reruns(
     np.testing.assert_array_equal(charts[3]["data"][0]["x"], ["2024-01", "2024-02"])
     np.testing.assert_allclose(_numbers(charts[3]["data"][0]["y"]), [785, 620])
     mdd = _numbers(charts[4]["data"][0]["y"])
-    assert np.isnan(mdd[:29]).all()
-    np.testing.assert_allclose(mdd[29:], 0)
+    assert np.isnan(mdd[:30]).all()
+    np.testing.assert_allclose(mdd[30:], 0)
     if mode == "volume":
         assert charts[3]["layout"]["shapes"][0]["y0"] == 750.0
 
@@ -263,6 +263,31 @@ def test_empty_trade_ledger_renders_equity_and_explicit_empty_states() -> None:
 
 def test_missing_backtest_result_stops_before_chart_rendering() -> None:
     _run_dashboard_checks("_check_missing_backtest_result_stops_before_chart_rendering")
+
+
+def _check_drawdown_evicts_expired_peak_for_sparse_weekly_data(tmp_path: Path) -> None:
+    pipeline = _pipeline("signal")
+    assert pipeline.backtest_result is not None
+    result = pipeline.backtest_result
+    result.trades.clear()
+    result.timestamps = np.arange(
+        np.datetime64("2024-01-01"),
+        np.datetime64("2024-03-01"),
+        np.timedelta64(7, "D"),
+    )
+    result.equity_curve = np.array(
+        [100.0, 50.0, 60.0, 70.0, 80.0, 90.0, 70.0, 80.0, 85.0]
+    )
+    pipeline.config_snapshot["backtest"]["timeframe"] = "1w"
+    charts = _charts(_app(tmp_path, pipeline))
+    mdd = _numbers(charts[-1]["data"][0]["y"])
+    np.testing.assert_allclose(
+        mdd, [np.nan] * 5 + [0.0, 20.0, 20.0, 20.0], equal_nan=True
+    )
+
+
+def test_drawdown_evicts_expired_peak_for_sparse_weekly_data() -> None:
+    _run_dashboard_checks("_check_drawdown_evicts_expired_peak_for_sparse_weekly_data")
 
 
 @contextmanager
