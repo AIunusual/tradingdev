@@ -136,6 +136,8 @@ def test_an_unscored_bar_belongs_to_no_roll() -> None:
 
     assert outcome.bar_roll[5] == -1
     assert [trace.bars_scored for trace in outcome.rolls] == [6, 7, 6]
+    # The payload cannot store one entry per bar, so it records the holes.
+    assert trace_payload(outcome)["unscored_bars"] == [5]
 
 
 def test_a_starved_window_is_recorded_as_untrained() -> None:
@@ -181,6 +183,7 @@ def test_the_payload_records_the_effective_geometry() -> None:
     assert payload["window_size"] == _WINDOW
     assert payload["bars"] == _SCORED
     assert payload["bars_scored"] == _SCORED
+    assert payload["unscored_bars"] == []
     rolls = payload["rolls"]
     assert isinstance(rolls, list)
     assert [entry["retrain_bar"] for entry in rolls] == [0, 7, 14]

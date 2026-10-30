@@ -112,6 +112,11 @@ def trace_payload(outcome: RollingOutcome) -> dict[str, object]:
         "label_horizon": outcome.label_horizon,
         "bars": len(outcome.bar_roll),
         "bars_scored": scored,
+        # Positions that could not be scored at all. With the roll intervals,
+        # this is what makes a bar's model recoverable without storing one
+        # entry per bar: a bar is scored by the roll whose interval holds it
+        # unless it appears here.
+        "unscored_bars": [bar for bar, roll in enumerate(outcome.bar_roll) if roll < 0],
         "rolls": [
             {
                 "index": trace.window.index,

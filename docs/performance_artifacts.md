@@ -33,11 +33,11 @@ folds cannot overwrite earlier snapshots. The summary retains those values in
 A bundled ML strategy that enables its rolling switch also reports
 `metadata.rolling_trace`: the rolls it actually ran, each with its training
 window, labelled rows, whether a model was fitted, and how many bars it scored.
-It is saved beside `strategy_parameters` for a full backtest and for each
-optimization trial, and it is absent when the switch is off, so other
-strategies' metadata is unchanged. Walk-forward folds record
-`metadata.strategy_parameters` but not the trace: fold capture is not
-implemented.
+It is saved beside `strategy_parameters` for a full backtest, for each
+optimization training trial, and for the optimization's selected `test`
+evaluation; it is absent when the switch is off, so other strategies' metadata is
+unchanged. Walk-forward folds record `metadata.strategy_parameters` but not the
+trace: fold capture is not implemented.
 
 | Field | Meaning |
 | --- | --- |
@@ -48,8 +48,9 @@ implemented.
 | `min_train_bars` | Labelled rows a window must offer before a refit is attempted. |
 | `predict_lookback` | Bars of context given to each scored bar. |
 | `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
-| `bars` | Bars the run was asked to score. |
+| `bars` | Bars to score after rows overlapping the training history are removed. |
 | `bars_scored` | Bars it actually scored; missing features leave the remainder. |
+| `unscored_bars` | Positions that could not be scored; empty when every bar was. |
 | `rolls` | One entry per roll, in order. |
 
 Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
@@ -60,7 +61,7 @@ score; `n_train_rows`, the labelled rows the window offered; `trained`, false wh
 the window was too small and the previous model was kept; and `bars_scored`, the
 subset of its interval that was actually scored. Positions are indices in the
 concatenated frame rather than timestamps, so a bar's model is found by the roll
-whose interval contains it.
+whose interval contains it, unless the bar appears in `unscored_bars`.
 
 Optimization keeps its existing meaning: `parameters` contains the trial's
 searched values (or the selected values for `test`), while

@@ -340,8 +340,9 @@ the bar being scored is dropped before fitting, whatever the feature engineer
 returned. The classic retrainer has no such filter — it relies on the engineer
 leaving that tail unlabelled for `dropna` to remove — which is why the engine
 takes `label_horizon` explicitly and why an engineer that fills its unlabelled
-tail cannot smuggle an unrealised outcome into an enabled run. A run that cannot
-score any bar at all fails rather than returning all-zero signals.
+tail cannot smuggle an unrealised outcome into an enabled run. A nonempty scored
+frame in which no bar can be scored fails rather than returning all-zero signals;
+an empty scored frame simply has nothing to score.
 
 What an unscored bar becomes differs by consumer: the direction strategy emits
 `0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
@@ -355,12 +356,13 @@ engine executes, so it previews the run rather than describing a second one. The
 intervals are planned, not observed: bars whose features are missing are not
 scored, and the trace reports the actual count per roll.
 
-A run that enables the switch also records what actually happened. Each scored
-bar is attributed to the roll that produced it, and each roll reports its window,
-how many labelled rows it offered, and whether a model was fitted or the previous
-one kept. The record lands in the run's metric metadata as `rolling_trace`,
-beside `strategy_parameters`; it is provenance, not a parameter, and it is absent
-whenever the switch is off.
+A run that enables the switch also records what actually happened. Each roll
+reports its window, how many labelled rows it offered, whether a model was fitted
+or the previous one kept, and how many of its bars were actually scored; the bars
+that could not be scored at all are listed separately, so a bar's model can be
+recovered from the trace without storing an entry per bar. The record lands in
+the run's metric metadata as `rolling_trace`, beside `strategy_parameters`; it is
+provenance, not a parameter, and it is absent whenever the switch is off.
 
 This is not fold validation. `validation_schemes` cut one dataset into
 train/test folds to estimate the training procedure; `rolling_gen` decides how
