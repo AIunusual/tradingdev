@@ -324,7 +324,8 @@ only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
 `min_train_bars` and `predict_lookback` are optional as well; they follow
 `lookback + 10` labelled rows and `2 x lookback` prior bars of scoring context.
 `predict_lookback` counts bars *before* the scored one, which is then added on
-top, so the default context is `2 x lookback + 1` rows. It must also be at least
+top, so the default context is up to `2 x lookback + 1` rows, clipped to the
+available history. It must also be at least
 `lookback + 1`, otherwise the context could not cover the feature lookback and
 geometry resolution raises before scoring. Resolution happens during signal
 generation, so `fit()`'s

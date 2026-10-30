@@ -58,9 +58,11 @@ class RollingScheme:
     """
 
     predict_lookback: int | None = None
-    """Bars of context fed to the feature engineer when scoring one bar.
+    """Maximum preceding bars fed to the feature engineer when scoring one bar.
 
-    Unset follows ``2 x lookback``.  A value below ``lookback + 1`` cannot
+    The scored bar is added, giving up to ``predict_lookback + 1`` context rows;
+    the slice is clipped to available history. Unset follows ``2 x lookback``.
+    A value below ``lookback + 1`` cannot
     produce features for the scored bar at all, so it is rejected.
     """
 

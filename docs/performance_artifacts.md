@@ -53,7 +53,7 @@ frame separately, because the training replay and the evaluation frame call
 | `step` | Effective bars between retrains, after defaults were resolved. |
 | `window_size` | Effective sliding length, or null for an expanding window. |
 | `min_train_bars` | Labelled rows a window must offer before a refit is attempted. |
-| `predict_lookback` | Bars of context given to each scored bar. |
+| `predict_lookback` | Maximum preceding context bars, excluding the scored bar; the scored bar is also supplied, for up to `predict_lookback + 1` rows. |
 | `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
 | `initial_model_available` | Whether the complete initial training frame precedes scoring; otherwise scoring waits for a successful refit. |
 | `bars` | All bars in the scored frame, including unscored bars; overlap is removed from training history, not this frame. |
