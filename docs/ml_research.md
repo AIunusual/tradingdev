@@ -311,7 +311,10 @@ strategy:
       window_size: 7200  # roll_sd only; follows 10 x lookback
 ```
 
-- `roll_sd` slides a fixed-length training window forward with each retrain.
+- `roll_sd` slides a training window of `window_size` bars forward with each
+  retrain. Early windows are clipped at the first bar, so they can be shorter
+  than that length; a clipped window below `min_train_bars` skips the refit and
+  keeps a previous model only when one is available.
 - `roll_ex` keeps the first bar and expands the window with each retrain.
 
 The scheme name fixes the window shape; there is no separate override, so a name
@@ -323,9 +326,14 @@ only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
 `predict_lookback` counts bars *before* the scored one, which is then added on
 top, so the default context is `2 x lookback + 1` rows. It must also be at least
 `lookback + 1`, otherwise the context could not cover the feature lookback and
-geometry resolution raises before scoring. Those defaults are derived from
-the strategy's own lookback on purpose: a fixed window shorter than the feature
-warm-up would leave no labelled rows and stop retraining without saying so.
+geometry resolution raises before scoring. Resolution happens during signal
+generation, so `fit()`'s
+initial model already exists at that point; it is the rolling refits that never
+start. Those defaults are derived from the strategy's own lookback on purpose: a
+fixed window shorter than the feature warm-up would leave no labelled rows and
+skip every refit, which the trace records as `trained: false` with the row count
+the window offered. An enabled unknown scheme or a conflicting expanding
+`window_size` is rejected earlier, when strategy configuration is validated.
 
 A refit is skipped, and an available previous model kept, when the window holds fewer than
 `min_train_bars` labelled rows or fewer than two bars at all. The trace records
@@ -343,7 +351,7 @@ scores, the scored frame is never concatenated in front of itself, and a bar
 whose features are unavailable is not scored rather than reusing the previous
 bar's value. Those are the same rules the classic retrainer follows in its own
 loop. The engine adds one rule of its own: a training row whose label reads past
-last bar of the training window is dropped before fitting, whatever the feature engineer
+the last bar of the training window is dropped before fitting, whatever the feature engineer
 returned. The classic retrainer has no such filter — it relies on the engineer
 leaving that tail unlabelled for `dropna` to remove — which is why the engine
 takes `label_horizon` explicitly and why an engineer that fills its unlabelled
@@ -354,9 +362,10 @@ an empty scored frame simply has nothing to score.
 What an unscored bar becomes differs by consumer: the direction strategy emits
 `0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
 neighbouring bar's value. The neutral score is an input, not a decision: it is
-still compared against `risk_threshold`, so with a threshold above `0.5` it
-blocks a new entry and, once the minimum holding period has passed, triggers the
-configured risk exit for an open position.
+still compared against the strategy's effective threshold — `risk_threshold`, or
+the value chosen from `risk_threshold_candidates` during `fit()` — so with a
+threshold above `0.5` it blocks a new entry and, once the minimum holding period
+has passed, triggers the configured risk exit for an open position.
 
 The schedule can be printed before anything runs. `enumerate_rolls` returns one
 window per retrain — the training bounds, the bar that triggered it, and the

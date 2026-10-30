@@ -33,12 +33,15 @@ folds cannot overwrite earlier snapshots. The summary retains those values in
 A strategy can report
 `metadata.rolling_trace`: the rolls it actually ran, each with its training
 window, labelled rows, whether a model was fitted, and how many bars it scored.
-The optional trace hook is saved beside `strategy_parameters` for a full backtest, for each
-walk-forward fold frame, for each optimization training trial, and for the
-optimization's selected `test` evaluation; it is absent when the switch is off,
-for the bundled ML strategies, so other strategies' metadata is unchanged. These
+The optional trace hook is saved beside `strategy_parameters` for a full backtest,
+each walk-forward fold frame, each fixed-comparison candidate, each optimization
+training trial and the optimization's selected `test` evaluation. For bundled
+ML strategies it is absent when the switch is off; other strategies that do not
+implement the hook retain their existing metadata. These
 bundled strategies require training and support walk-forward execution only;
-the hook on the other paths does not expand their supported modes.
+the hook on the other paths does not expand their supported modes. A supported
+comparison candidate is a backtest in its own right, so its `full` scope can
+carry the trace.
 A fold captures an independent deep snapshot of the trace of each
 frame separately, because the training replay and the evaluation frame call
 `generate_signals` in turn and each produces its own schedule.
