@@ -268,11 +268,9 @@ class BinanceVisionCrawler(BaseCrawler):
 
     def _download_and_parse(self, url: str) -> pd.DataFrame | None:
         logger.info("Downloading %s", url)
-        try:
-            resp = self._client.get(url)
-        except httpx.RequestError as exc:
-            logger.warning("Request error for %s: %s", url, exc)
-            return None
+        # Only an explicit 404 means no archive. Transport failures must abort
+        # the fetch so a partial result cannot become a trusted yearly cache.
+        resp = self._client.get(url)
         if resp.status_code == 404:
             logger.warning("Not found: %s", url)
             return None
