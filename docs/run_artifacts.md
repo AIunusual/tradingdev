@@ -127,6 +127,13 @@ saved policy with the simulator's current policy before acquiring data or runnin
 the strategy. Historical reads validate the saved content and identity without
 replacing its wording with today's policy.
 
+Execution policy `execution-v2` uses the observed month-boundary equity baseline
+for Volume's monthly loss limit, as defined in the
+[signal and execution contract](strategy_contract.md#python-contract).
+Plans prepared under an older execution policy must be prepared and confirmed
+again before submission; already saved results and their disclosures are not
+rewritten or recalculated.
+
 `submitted_research/<job_id>.json` retains the complete target and approved snapshot
 before worker launch; the job stores its expected `research_evidence_hash`. The
 canonical envelope is limited to 4 MiB, with its size checked before confirmation.

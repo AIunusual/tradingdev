@@ -124,6 +124,17 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     assert position_flag["default"] is False
     assert "Volume mode only" in position_flag["description"]
     assert "Signal mode always uses position states" in position_flag["description"]
+    monthly_limit = schema["$defs"]["BacktestConfig"]["properties"]["monthly_max_loss"]
+    assert monthly_limit["default"] == 1500.0
+    for rule in (
+        "UTC calendar month",
+        "previous observed month's last close equity",
+        "zero in the first month",
+        "Missing months are not filled",
+        "not prior-month P&L or entry costs again",
+        "Trade records retain whole-trade P&L and costs",
+    ):
+        assert rule in monthly_limit["description"]
     assert set(sections["configuration"]) == {"config_schema", "notes"}
     example = sections["example"]
     assert set(example) == {"example_strategy_code", "example_yaml_config"}

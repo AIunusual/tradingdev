@@ -235,7 +235,9 @@ def resolve_execution_assumptions(manifest: ExecutionManifest) -> ExecutionAssum
             "monthly_loss",
             "每月虧損限制",
             f"門檻 {config.monthly_max_loss:g} 報價貨幣；須有時間戳，"
-            "計入交易成本及未實現損益，觸發時平倉並暫停本月，跨月解除月暫停。"
+            "按 UTC 月份計算相對上個有行情月份最後收盤權益的變動（首月基準為零），"
+            "計入本月交易成本及未實現損益變動，不重計前月損益。"
+            "虧損達門檻時平倉並暫停本月，下個有行情月份解除月暫停。"
             if volume
             else "此模式不使用每月虧損限制。",
         ),

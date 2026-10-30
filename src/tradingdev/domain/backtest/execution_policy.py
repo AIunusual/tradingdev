@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import inf, nan
 
-EXECUTION_POLICY_VERSION = "execution-v1"
+EXECUTION_POLICY_VERSION = "execution-v2"
 DEFAULT_VOLUME_POSITION_SIZE = 200.0
 
 

@@ -27,8 +27,10 @@ class VolumeBacktestEngine(BaseBacktestEngine):
 
     An optional **monthly circuit breaker** (``monthly_max_loss``)
     force-closes any open position and halts trading for the remainder
-    of the calendar month once the monthly cumulative loss exceeds the
-    threshold.  Trading resumes at the start of the next month.
+    of the UTC calendar month once the monthly cumulative loss reaches the
+    threshold. Monthly P&L is equity minus the previous observed month's last
+    close equity (zero for the first month), including costs and unrealised P&L.
+    Trading resumes on the first available bar of a new month.
 
     Behaviour flags (inherited from ``BaseBacktestEngine``):
 
@@ -128,7 +130,7 @@ class VolumeBacktestEngine(BaseBacktestEngine):
         blocked_signal: int | None = None
 
         # Monthly circuit breaker state
-        monthly_pnl = 0.0
+        month_start_equity = 0.0
         current_month: tuple[int, int] | None = None
         circuit_breaker_active = False
 
@@ -164,7 +166,10 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 ts = pd.Timestamp(timestamps_arr[i])  # type: ignore[index]
                 bar_month = (ts.year, ts.month)
                 if current_month is not None and bar_month != current_month:
-                    monthly_pnl = 0.0
+                    # Carry forward the last observed close, even across missing
+                    # months. This assigns the gap and only this month's change
+                    # in a carried position to the new month.
+                    month_start_equity = float(equity[i - 1])
                     circuit_breaker_active = False
                 current_month = bar_month
 
@@ -198,14 +203,14 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     cash += (
                         trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
                     )
-                    monthly_pnl += (
-                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                    )
                     pos_dir = 0
                     pos_qty = 0.0
 
                     # Check circuit breaker before re-entry
-                    if has_timestamps and monthly_pnl <= -self._monthly_max_loss:
+                    if (
+                        has_timestamps
+                        and cash - month_start_equity <= -self._monthly_max_loss
+                    ):
                         circuit_breaker_active = True
                     elif re_entry and sig != 0 and size_quote != 0:
                         # Re-entry after SL happens intra-bar; use
@@ -215,7 +220,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                         pos_qty = eff / c
                         entry_idx = i
                         cash -= eff * fee_rate
-                        monthly_pnl -= eff * fee_rate
                         pos_dir = sig
 
                     if not re_entry:
@@ -243,9 +247,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                monthly_pnl += (
-                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                )
                 pos_dir = 0
                 pos_qty = 0.0
 
@@ -263,15 +264,11 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 )
                 trades.append(trade)
                 cash += trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                monthly_pnl += (
-                    trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                )
                 eff = size_quote * weights[i]
                 entry_price = o
                 pos_qty = eff / o
                 entry_idx = i
                 cash -= eff * fee_rate
-                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- new entry from flat at open ---
@@ -283,7 +280,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 pos_qty = eff / o
                 entry_idx = i
                 cash -= eff * fee_rate
-                monthly_pnl -= eff * fee_rate
                 pos_dir = sig
 
             # --- mark-to-market at close ---
@@ -294,11 +290,9 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                 equity[i] = cash
 
             # --- Circuit breaker check after trading ---
-            # Include unrealised P&L so open losing positions
-            # also trigger the breaker.
-            effective_monthly = monthly_pnl
-            if pos_dir != 0:
-                effective_monthly += pos_dir * pos_qty * (c - entry_price)
+            # Use the same equity ledger for realised and unrealised changes;
+            # closing a carried position must not count its prior-month P&L again.
+            effective_monthly = equity[i] - month_start_equity
             if (
                 has_timestamps
                 and not circuit_breaker_active
@@ -318,9 +312,6 @@ class VolumeBacktestEngine(BaseBacktestEngine):
                     )
                     trades.append(trade)
                     cash += (
-                        trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
-                    )
-                    monthly_pnl += (
                         trade["net_pnl"] + trade["entry_fees"] + trade["entry_slippage"]
                     )
                     pos_dir = 0
