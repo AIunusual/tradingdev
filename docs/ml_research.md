@@ -380,6 +380,10 @@ Saved traces are independent snapshots even if a strategy reuses its mutable hoo
 payload. The bundled strategies require training and therefore support this path
 through walk-forward execution; the generic trace hook does not add simple
 backtest or optimization support to them.
+Metric queries return compact trace summaries and a reference to the full saved
+artifact, so long histories do not expand every roll into the model context.
+See [performance artifacts](performance_artifacts.md#performance-scopes-and-provenance)
+for the summary fields and paged evidence retrieval.
 
 This is not fold validation. `validation_schemes` cut one dataset into
 train/test folds to estimate the training procedure; `rolling_gen` decides how

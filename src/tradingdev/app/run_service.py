@@ -13,6 +13,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.research import RunSummary
 from tradingdev.app.pagination import paginate
+from tradingdev.app.rolling_trace_summary import query_metadata
 from tradingdev.domain.performance.catalog import metric_catalog
 from tradingdev.domain.presentation.metrics import display_metrics
 
@@ -135,6 +136,9 @@ class RunService:
         }
         payload.update(
             success=True,
+            metadata=query_metadata(
+                selected.metadata, run_id=run_id, scope_id=scope_id
+            ),
             run_id=run_id,
             manifest_hash=bundle.manifest_hash,
             scope=scope_id,

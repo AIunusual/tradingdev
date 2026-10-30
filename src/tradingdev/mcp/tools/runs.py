@@ -92,6 +92,8 @@ def register(mcp: MCPServer, service: RunService) -> None:
         omission selects summaries. Fold statistics retain valid_count.
         Incompatible definitions, modes, or settings are explicitly reported.
         Use display_metrics for presentation; raw metrics retain saved units.
+        Rolling traces are summaries with artifact_id and json_pointer;
+        get_artifact(include_content=true) pages the complete saved evidence.
         """
         payload = service.compare_runs(run_ids, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:
@@ -142,6 +144,8 @@ def register(mcp: MCPServer, service: RunService) -> None:
         Use display_metrics for presentation; percent signs are already included.
         Unknown IDs/scopes return available choices. No strategy is rerun.
         Fold summaries are distributions across folds, not whole-period returns.
+        Rolling traces are summaries with artifact_id and json_pointer;
+        get_artifact(include_content=true) pages the complete saved evidence.
         """
         payload = service.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:

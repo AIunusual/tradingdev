@@ -67,6 +67,19 @@ when the raw window was shorter than two bars, because nothing was transformed;
 `trained`, false when the window was too small and the previous model was kept;
 and `bars_scored`, the subset of its interval that was actually scored.
 
+`get_run_metrics` and `compare_runs` return a compact projection of every
+`rolling_trace`, including nested `test_summary.metadata.fold_metadata` traces.
+It retains scalar geometry and scored counts, plus `roll_count`,
+`trained_roll_count` and `unscored_bar_count` (null when the corresponding list
+was not recorded; trained count is also null if any training flag is missing or
+not a boolean). `representation: "summary"` and `content_included: false`
+make the omission explicit. `rolls` and `unscored_bars` remain complete in
+`performance.json`; they are not copied into normal query responses.
+Use the returned `artifact_id` with `get_artifact(include_content=true)` and
+its bounded text pagination; `json_pointer` identifies the trace in the saved
+JSON document, with JSON Pointer escaping for slash/tilde path components.
+Queries do not rewrite the artifact or replace report evidence with this summary.
+
 Coordinates are positions rather than timestamps, and they use two frames.
 `train_start` and `train_end` are positions in the concatenated
 history-plus-scored frame. `retrain_bar`, `test_start`, `test_end` and every entry

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import pickle
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tests.app.test_run_metrics import _publish, _scope
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.ml_report_evidence import (
@@ -25,6 +27,8 @@ from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.run_service import RunService
 from tradingdev.domain.ml.leaderboard import signal_fingerprint
 from tradingdev.domain.ml.registry.artifact_store import ModelArtifactStore
 from tradingdev.domain.ml.registry.leaderboard_store import LeaderboardStore
@@ -366,4 +370,122 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                 f"Incomplete {provider}/ML report discovery: {error}\n"
                 + json.dumps(transcript, ensure_ascii=False)
             )
+    assert not workspace.root.exists()
+
+
+@pytest.mark.live_llm
+def test_natural_request_discovers_rolling_evidence(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Discover both the scheme menu and saved per-roll evidence without a script."""
+    request = (
+        "請說明這套系統的滾動重訓有哪些視窗方案，固定長度與持續擴大有何差別。"
+        "另外請查已保存的結果 rolling_saved，解釋實際嘗試與成功重訓幾次、"
+        "第 2 次嘗試用了多少筆已標記樣本，並說明完整證據保存在哪裡。"
+        "只查已有資料，不要重新訓練、回測或修改策略。"
+    )
+    with temporary_mcp_workspace() as workspace:
+        paths = WorkspacePaths(workspace.workspace)
+        store = SQLiteStore(paths)
+        trace = {
+            "scheme": "roll_ex",
+            "rtype": "ROLL_EX",
+            "step": 5,
+            "window_size": None,
+            "min_train_bars": 55,
+            "predict_lookback": 24,
+            "label_horizon": 1,
+            "bars": 17,
+            "bars_scored": 12,
+            "initial_model_available": False,
+            "unscored_bars": list(range(5)),
+            "rolls": [
+                {
+                    "index": i,
+                    "retrain_bar": 5 * i,
+                    "train_start": 0,
+                    "train_end": 53 + 5 * i,
+                    "test_start": 5 * i,
+                    "test_end": min(17, 5 * (i + 1)),
+                    "n_train_rows": 52 + 5 * i,
+                    "trained": i > 0,
+                    "bars_scored": 0 if i == 0 else min(5, 17 - 5 * i),
+                }
+                for i in range(4)
+            ],
+        }
+        _publish(
+            (paths, store, RunService(workspace=paths, store=store)),
+            "rolling_saved",
+            scopes={
+                "fold/0/test": _scope(split="test", metadata={"rolling_trace": trace})
+            },
+            default_scope="fold/0/test",
+        )
+        turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
+
+        async def observe_final(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": observe_final,
+            }
+            async with workspace.connect() as client:
+                tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations is not None
+                    and tool.annotations.read_only_hint is True
+                )
+                assert all(name not in request for name in names)
+                options["tool_names"] = names
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        attempted = asyncio.run(run())
+        assert all(call.name in readonly_tools for call in attempted), attempted
+        calls = effective_workflow_calls(attempted)
+        assert any(
+            c.name == "get_ml_contract" and c.result.get("success") for c in calls
+        )
+        summaries = [
+            c.result
+            for c in calls
+            if c.name == "get_run_metrics" and c.result.get("success")
+        ]
+        assert (
+            summaries and summaries[-1]["metadata"]["rolling_trace"]["roll_count"] == 4
+        )
+        evidence = [
+            c.result
+            for c in calls
+            if c.name == "get_artifact"
+            and c.result.get("success")
+            and c.arguments.get("artifact_id") == "rolling_saved:performance_json"
+            and "content" in c.result
+            and "content_page" in c.result
+        ]
+        assert evidence and any(
+            re.search(r'"n_train_rows"\s*:\s*57\b', page["content"])
+            for page in evidence
+        )
+        assert turns and "57" in turns[-1].text
+        print(
+            "[rolling-evidence] Final reply for semantic review:\n" + turns[-1].text,
+            flush=True,
+        )
     assert not workspace.root.exists()
