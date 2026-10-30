@@ -155,19 +155,59 @@ def rolling_mdd_absolute(
     equity: pd.Series[float],
     window_bars: int,
 ) -> pd.Series[float]:
-    """Compute rolling maximum drawdown in absolute dollar amount.
+    """Maximum ordered peak-to-trough loss within each trailing window.
 
-    For each bar *i*, look back ``window_bars`` and compute::
-
-        MDD_i = max(cummax[i-w:i] - equity[i-w:i])
-
-    Returns a Series of the same length as *equity*, with NaN where
-    the window is not yet full.
+    Require ``window_bars`` observations; missing/nonfinite values make their
+    window unavailable. Two aggregate stacks evict expired peaks in amortized
+    O(n), including dense minute data.
     """
-    roll_max = equity.rolling(window=window_bars, min_periods=1).max()
-    drawdown = roll_max - equity
-    rolling_mdd = drawdown.rolling(window=window_bars, min_periods=window_bars).max()
-    return rolling_mdd
+    if (
+        isinstance(window_bars, bool)
+        or not isinstance(window_bars, int)
+        or window_bars < 1
+    ):
+        raise ValueError("Window bars must be a positive integer")
+
+    # Each summary is (maximum, minimum, ordered drawdown, invalid count).
+    type Summary = tuple[float, float, float, int]
+
+    def combine(left: Summary, right: Summary) -> Summary:
+        return (
+            max(left[0], right[0]),
+            min(left[1], right[1]),
+            max(left[2], right[2], left[0] - right[1]),
+            left[3] + right[3],
+        )
+
+    identity: Summary = (-math.inf, math.inf, 0.0, 0)
+    front: list[tuple[Summary, Summary]] = []
+    back: list[tuple[Summary, Summary]] = []
+    output = np.full(len(equity), np.nan)
+    start = 0
+    for i, value in enumerate(equity.to_numpy(dtype=float)):
+        item: Summary = (
+            (float(value), float(value), 0.0, 0)
+            if math.isfinite(value)
+            else (*identity[:3], 1)
+        )
+        back.append((item, combine(back[-1][1] if back else identity, item)))
+        target = max(0, i - window_bars + 1)
+        ready = i + 1 >= window_bars
+        while start < target:
+            if not front:
+                while back:
+                    item, _ = back.pop()
+                    front.append(
+                        (item, combine(item, front[-1][1] if front else identity))
+                    )
+            front.pop()
+            start += 1
+        summary = combine(
+            front[-1][1] if front else identity, back[-1][1] if back else identity
+        )
+        if ready and not summary[3]:
+            output[i] = summary[2]
+    return pd.Series(output, index=equity.index, name=equity.name)
 
 
 def monthly_volume(
