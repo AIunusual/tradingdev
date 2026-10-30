@@ -119,15 +119,16 @@ def test_discovery_requires_saved_execution_identity_before_report_verification(
 
 
 EARLY_CACHE_REPLY = (
-    "現貨 spot：3筆；可直接重用：否；須重新取得才符合重用政策：是；取得時不足7天。\n"
+    "現貨 spot：3筆；可直接重用：否；須重新取得才符合重用政策：是；"
+    "理由：取得時不足7天。\n"
     "期貨 futures/um：5筆；可直接重用：否；須重新取得才符合重用政策：是；"
-    "取得時不足7天。\n"
+    "理由：取得時不足7天。\n"
     "查詢成功不保證行情完整。"
 )
 
 
 @pytest.mark.parametrize("settled", [True, False])
-@pytest.mark.parametrize("separator", ["；", "｜"])
+@pytest.mark.parametrize("separator", ["；", "｜", "，", "。"])
 def test_cache_reply_accepts_evidence_bound_decisions(
     settled: bool, separator: str
 ) -> None:
@@ -160,6 +161,7 @@ def test_cache_reply_accepts_evidence_bound_decisions(
             "須重新取得才符合重用政策：是", "須重新取得才符合重用政策：是或否"
         ),
         EARLY_CACHE_REPLY.replace("可直接重用：否", "可直接重用：否 或是"),
+        EARLY_CACHE_REPLY.replace("理由：", ""),
     ],
     ids=[
         "unstructured-waiting",
@@ -172,9 +174,23 @@ def test_cache_reply_accepts_evidence_bound_decisions(
         "negated-reacquire-label",
         "unselected-decisions",
         "unselected-spaced-decision",
+        "unlabeled-inline-reason",
     ],
 )
 def test_cache_reply_rejects_wrong_or_ambiguous_market_decisions(reply: str) -> None:
+    with pytest.raises(AssertionError):
+        verify_market_cache_reply(reply, settled=False)
+
+
+@pytest.mark.parametrize("punctuation", ["，", ", ", "。", ". "])
+@pytest.mark.parametrize(
+    ("field", "opposite"),
+    [("可直接重用：否", "是"), ("須重新取得才符合重用政策：是", "否")],
+)
+def test_cache_reply_rejects_punctuated_ambiguous_decisions(
+    punctuation: str, field: str, opposite: str
+) -> None:
+    reply = EARLY_CACHE_REPLY.replace(field, field + punctuation + "或" + opposite)
     with pytest.raises(AssertionError):
         verify_market_cache_reply(reply, settled=False)
 
