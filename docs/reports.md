@@ -15,7 +15,7 @@ alongside one of the run/comparison selectors. Select 1–50 distinct entry IDs 
 recorded evaluations or leaderboard results; never infer a model-to-run relationship.
 The ML block and its presentation are absent when no ML evidence is selected.
 Newly generated reports include interpretation and diagnostic fields under template
-version 23, so their identity differs from earlier templates even without ML.
+version 24, so their identity differs from earlier templates even without ML.
 Previously saved reports are not rewritten.
 Alternatively, pass `comparison_job_id` with no `run_ids` (CLI:
 `--comparison-job-id`, exclusive with repeatable `--run-id`). The parent must be
@@ -189,7 +189,10 @@ When the baseline was normalized to one quote currency unit because the run had
 no initial capital, its `amount` values are withheld instead of sitting beside
 the strategy's realized amounts, and no `amount` difference is computed. A normalized equity chart
 plots both paths as growth multiples of the same initial capital, positioned by
-bar index, so a shorter baseline never stretches across unobserved bars. The
+bar index, so a shorter baseline never stretches across unobserved bars. This
+overlay requires positive recorded strategy initial capital; when it is missing
+or nonpositive, including volume results, the comparison table remains but the
+overlay is omitted. The
 baseline is not selected by the client: there is no request parameter for it,
 and the same market always yields the same reference. An undefined asset class
 or an unusable baseline is reported with its reason and never as a zero return.

@@ -158,10 +158,12 @@ New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the
 same scalar scope IDs. The baseline is chosen from the saved market requirement,
 never from a request parameter: `binance_vision` and `binance_api` USDT-quoted markets use
 `BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. A market with no
-defined asset class, another venue suffix, a future or an FX pair is recorded as
+defined asset class, another venue suffix, a Yahoo future or an FX pair is recorded as
 `undefined` instead of borrowing a foreign index. Yahoo crypto pairs are not US
 equities; Binance pairs quoted in another currency have no baseline until a
 same-currency comparison is defined.
+Supported Binance USDT markets include spot and futures; the baseline follows
+the provider's effective market setting rather than excluding all futures.
 
 Each entry records `status` (`available`, `unavailable`, `undefined`), the
 snapshot of the fixed definition, `source`, `market_type`, `dataset_id`,
