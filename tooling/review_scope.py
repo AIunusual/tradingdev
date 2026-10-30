@@ -138,6 +138,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             {"tooling", "presentation"},
             "環境與常用命令",
             "依賴相容性限制",
+            "測試設計與精簡",
             "開發階段的程式碼審查",
             "從開發到合併",
             "1. 分階段提交並推送",
