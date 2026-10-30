@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -45,11 +46,13 @@ def test_get_contract_enumerates_the_full_vocabulary(service: MLService) -> None
 
 def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
     contract = service.get_contract()
+    assert contract["model_kinds"]
     for kind in contract["model_kinds"]:
         params = kind["default_parameters"]
         assert isinstance(params, dict)
         assert "n_estimators" in params
         assert "learning_rate" in params
+        assert json.loads(json.dumps(params, allow_nan=False)) == params
 
 
 def test_report_guidance_retains_unknown_sample_provenance(service: MLService) -> None:
