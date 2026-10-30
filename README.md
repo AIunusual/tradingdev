@@ -32,7 +32,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
-啟動助手與執行離線測試只需上述工具。若要**建置或檢查簡報**
+Node.js 不是啟動 MCP 助手或執行離線 pytest 的先決條件。若要**建置或檢查簡報**
 （`scripts/presentations.sh`、`scripts/check-presentations.sh`），另需 Node.js 18
 以上與 npm，並確認 `node` 在 `PATH` 上：
 
@@ -604,8 +604,21 @@ uv run --locked python -m tradingdev.adapters.cli.research_notes \
 
 ### 沒有 Homebrew 時設定 OpenMP（macOS）
 
-若 macOS 沒有 Homebrew、但有 Anaconda／conda，可將 Anaconda 提供的
-`libomp.dylib` 連結到 XGBoost／LightGBM 預期的路徑：
+以下是貢獻者在 Apple Silicon Mac 上使用 Anaconda 的處理方式，尚未驗證為
+所有 conda 安裝皆適用的流程。僅在錯誤訊息列出的搜尋路徑包含
+`/opt/homebrew/opt/libomp/lib/libomp.dylib`，且本機已有與 Python 相同架構的
+`/opt/anaconda3/lib/libomp.dylib` 時使用。其他 conda 安裝位置須先確認實際路徑；
+來源不存在時不要建立連結。
+
+先檢查來源與架構，確認輸出包含 Python 所用的架構（Apple Silicon 為 `arm64`）：
+
+```bash
+uv run --locked python -c "import platform; print(platform.machine())"
+test -f /opt/anaconda3/lib/libomp.dylib
+file /opt/anaconda3/lib/libomp.dylib
+```
+
+確認來源有效、目的地尚未存在，再建立連結；`ln -s` 不會覆寫既有檔案：
 
 ```bash
 sudo mkdir -p /opt/homebrew/opt/libomp/lib
@@ -615,22 +628,24 @@ sudo ln -s /opt/anaconda3/lib/libomp.dylib /opt/homebrew/opt/libomp/lib/libomp.d
 驗證（直接執行 Python 與透過倉庫腳本都要成功）：
 
 ```bash
-.venv/bin/python -c "import xgboost, lightgbm; print('ok')"
-bash scripts/check-fast.sh
+uv run --locked python -c "import xgboost, lightgbm; print('ok')"
+/bin/bash -c 'uv run --locked python -c "import xgboost, lightgbm; print(\"ok\")"'
 ```
 
 注意事項：
 
-- 這是**機器本地**的 workaround，不在 `uv sync` 之內，換機器需重做。
-- 若日後安裝了 Homebrew，請先移除上面這條 symlink，再執行 `brew install libomp`，
-  避免兩個來源的 libomp 衝突。
-- 只設定 `DYLD_FALLBACK_LIBRARY_PATH=/opt/anaconda3/lib` 對**直接執行的 Python**
-  有效，但 `scripts/check-*.sh` 與 `gate` 是透過 `/bin/bash` 啟動 Python；
-  macOS SIP 會從 `/bin/bash` 的子程序剝離 `DYLD_*`，因此該變數到不了 Python。
-  上面的 symlink 做法才能同時涵蓋直接命令與 `scripts/check-*.sh`。
+- 這是機器本地設定，不由 `uv sync` 管理。移除或升級 conda 後，須重新檢查
+  連結是否仍可讀、架構相符，以及上方兩種啟動方式是否成功。
+- 若日後改用 Homebrew，先確認目的地確實是自己建立、指向上述來源的 symlink，
+  再移除該連結並執行 `brew install libomp`；不要刪除其他來源管理的檔案。
+- 貢獻者曾以 `DYLD_FALLBACK_LIBRARY_PATH` 讓直接啟動的 Python 成功，
+  但經過 `/bin/bash` 啟動的檢查仍失敗。macOS SIP 會在啟動受保護程序時清除
+  動態連結器環境變數，因此不能假定該設定會傳到 shell 的子程序；見
+  [Apple 的執行期保護說明](https://developer.apple.com/library/archive/documentation/Security/Conceptual/System_Integrity_Protection_Guide/RuntimeProtections/RuntimeProtections.html)。
+  成功載入仍取決於本機套件的搜尋路徑與函式庫，須以上述命令確認。
 
-> 上方的 Anaconda symlink 與 SIP 說明是貢獻者實測的 workaround，
-> 並非經過驗證的通用安裝流程；優先仍以 `brew install libomp` 為準。
+開發者還須依[開發指南](docs/development.md#環境與常用命令)執行
+`bash scripts/check-fast.sh`，確認 repository 的完整 shell 檢查入口也能使用。
 
 技術指標套件 TA-Lib 隨安裝命令一併安裝。若平台有相容 wheel，不需另外安裝 C 函式庫；
 只有必須從原始碼編譯時，才需依[TA-Lib 安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)

@@ -18,9 +18,9 @@ uv sync --locked --all-extras --python 3.14
 `scripts/check-presentations.sh`）另需 Node.js 18 以上與 npm，且執行
 `scripts/presentations.sh setup` 前必須先裝好 Node.js 與 npm——
 `setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝 Node.js 或 npm 本身。
-離線 pytest 套件（`scripts/check-full.sh` 執行的完整測試）的簡報測試會
-stub `node` 查找，因此**不需要**機器上有 Node.js 即可通過；
-只有實際建置簡報才需要 Node.js。安裝器調整的 Git 設定及
+離線 pytest 的簡報單元測試使用替代物隔離 Node.js 查找與編譯程序，
+不以安裝 Node.js 為測試前提；實際簡報建置與一致性檢查仍需要 Node.js。
+安裝器調整的 Git 設定及
 執行環境限制見[注意事項](#注意事項)。
 
 | 工具 | 負責範圍 | 修改時應維護的內容 |
