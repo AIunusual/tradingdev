@@ -153,15 +153,28 @@ def consecutive_loss_counts(
 
 def rolling_mdd_absolute(
     equity: pd.Series[float],
-    window_bars: int,
+    window_bars: int | pd.Timedelta,
 ) -> pd.Series[float]:
     """Maximum ordered peak-to-trough loss within each trailing window.
 
-    Require ``window_bars`` observations; missing/nonfinite values make their
-    window unavailable. Two aggregate stacks evict expired peaks in amortized
-    O(n), including dense minute data.
+    Integer windows require that many observations. Timedelta windows use
+    (t - duration, t] and require duration elapsed since the first observation.
+    Missing/nonfinite observations make their window unavailable. Two aggregate
+    stacks evict expired peaks in amortized O(n), including dense minute data.
     """
-    if (
+    times: pd.DatetimeIndex | None = None
+    if isinstance(window_bars, pd.Timedelta):
+        if window_bars <= pd.Timedelta(0) or pd.isna(window_bars):
+            raise ValueError("Window duration must be positive")
+        if (
+            not isinstance(equity.index, pd.DatetimeIndex)
+            or equity.index.hasnans
+            or not equity.index.is_monotonic_increasing
+            or not equity.index.is_unique
+        ):
+            raise ValueError("Calendar windows require a sorted unique DatetimeIndex")
+        times = equity.index
+    elif (
         isinstance(window_bars, bool)
         or not isinstance(window_bars, int)
         or window_bars < 1
@@ -191,8 +204,16 @@ def rolling_mdd_absolute(
             else (*identity[:3], 1)
         )
         back.append((item, combine(back[-1][1] if back else identity, item)))
-        target = max(0, i - window_bars + 1)
-        ready = i + 1 >= window_bars
+        if times is not None and isinstance(window_bars, pd.Timedelta):
+            cutoff = times[i] - window_bars
+            target = start
+            while times[target] <= cutoff:
+                target += 1
+            ready = times[i] - times[0] >= window_bars
+        else:
+            assert isinstance(window_bars, int)
+            target = max(0, i - window_bars + 1)
+            ready = i + 1 >= window_bars
         while start < target:
             if not front:
                 while back:

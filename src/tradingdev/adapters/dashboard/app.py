@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 from typing import TYPE_CHECKING, Any, cast
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -39,7 +40,6 @@ from tradingdev.adapters.dashboard.analysis import (
 from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.run_service import RunService
-from tradingdev.domain.backtest.schemas import BacktestConfig
 
 # ---------------------------------------------------------------------------
 # Streamlit page config
@@ -52,24 +52,9 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-TIMEFRAME_MINUTES: dict[str, int] = {
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
-
 _PIPELINE_KEY = "_pipeline_result"
 _RUN_ID_KEY = "_run_id"
 _REPORT_KEY = "_report_download"
-
-
-def _bars_in_30_days(timeframe: str) -> int:
-    mins = TIMEFRAME_MINUTES.get(timeframe, 60)
-    return 30 * 24 * 60 // mins
 
 
 def _parse_args() -> str | None:
@@ -131,7 +116,6 @@ def _render_charts(  # noqa: PLR0915
     result: BacktestResult,
     unit: str,
     month: str,
-    timeframe: str,
     raw_config: dict[str, Any],
 ) -> None:
     """Render KPI row and 5 chart tabs for a single BacktestResult."""
@@ -290,8 +274,15 @@ def _render_charts(  # noqa: PLR0915
 
     # -- Tab 5: Rolling 30-day MDD (absolute)
     with tab_mdd:
-        window = _bars_in_30_days(timeframe)
-        mdd_series = rolling_mdd_absolute(eq_view, window)
+        st.caption(
+            "Trailing 30 calendar days (t − 30 days, t]; observed equity only. "
+            "Unavailable until 30 days of history; gaps are not interpolated."
+        )
+        try:
+            mdd_series = rolling_mdd_absolute(eq_view, pd.Timedelta(days=30))
+        except ValueError as error:
+            st.info(f"Rolling drawdown unavailable: {error}")
+            return
 
         fig = go.Figure()
         fig.add_trace(
@@ -329,7 +320,6 @@ def _render_simple(
         st.stop()
         return
 
-    bt_cfg = BacktestConfig(**raw_config["backtest"])
     strategy_name = raw_config["strategy"].get("id") or run["strategy_id"]
     is_volume_mode = result.mode == "volume"
 
@@ -354,7 +344,6 @@ def _render_simple(
         result,
         unit,
         selected_month,
-        bt_cfg.timeframe,
         raw_config,
     )
 
@@ -366,7 +355,6 @@ def _render_walk_forward(
     """Render dashboard for walk-forward validation results."""
     raw_config = pipeline.config_snapshot
     folds = pipeline.fold_results
-    bt_cfg = BacktestConfig(**raw_config["backtest"])
     strategy_name = raw_config["strategy"].get("id") or run["strategy_id"]
 
     # --- Header
@@ -421,7 +409,6 @@ def _render_walk_forward(
         result,
         unit,
         selected_month,
-        bt_cfg.timeframe,
         raw_config,
     )
 

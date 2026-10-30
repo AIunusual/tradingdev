@@ -473,6 +473,10 @@ uv run --locked --extra dashboard streamlit run src/tradingdev/adapters/dashboar
 請將 `YOUR_RUN_ID` 換成助手查到的實際值。最佳化結果請透過對話查詢或生成 HTML 報告，
 目前不產生 Dashboard 所需的圖表產物。結束圖表服務時，在終端機按 `Ctrl+C`。
 
+「Rolling 30d MDD」只計算目前時間往前 30 個日曆日（不含左端點）的已觀測權益，
+以報價幣別顯示最大回撤金額；高點必須早於低點。所選期間不足 30 天時顯示缺值，
+休市或缺 K 棒不補值，週／月 K 也使用實際時間戳；沒有有效時間戳時顯示不可用。
+
 ## 資料與工作區
 
 行情依策略設定從資料來源取得。除預設的 Binance Vision，專案也提供
