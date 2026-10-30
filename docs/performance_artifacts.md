@@ -248,8 +248,10 @@ The closed-trade count is zero; statistics requiring closed trades are unavailab
 because the baseline has no closed trades. Bars align on shared UTC timestamps only:
 `coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
 and a missing bar is never back-filled. An unavailable baseline carries a
-reason and no values, so it is never read as a zero return. A baseline is
-captured when the run executes. When the benchmark symbol equals the traded
+reason and no values, so it is never read as a zero return. Baseline
+acquisition and metric-calculation failures do not fail the strategy run: the
+run still completes and saves, and the baseline is recorded as `unavailable`
+with its reason. A baseline is captured when the run executes. When the benchmark symbol equals the traded
 symbol, the already loaded frame is reused. Its `source` records the requested
 provider, not independent verification of an existing cache's provenance.
 `market_type` records the effective provider setting and is null for adapters
