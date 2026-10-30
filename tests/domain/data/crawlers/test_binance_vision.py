@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pandas as pd
 import pytest
 
@@ -17,6 +19,8 @@ from tradingdev.domain.data.crawlers.binance_vision import (
     _parse_zip_csv,
     _to_vision_symbol,
 )
+from tradingdev.domain.data.data_manager import DataManager
+from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,6 +73,71 @@ def _make_mock_response(content: bytes, status_code: int = 200) -> MagicMock:
     resp.content = content
     resp.raise_for_status = MagicMock()
     return resp
+
+
+def test_monthly_transport_failure_is_not_published_as_complete_cache(
+    tmp_path: Path,
+) -> None:
+    outage = True
+    months: list[int] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        match = re.search(r"2024-(\d{2})\.zip$", request.url.path)
+        assert match is not None
+        month = int(match[1])
+        months.append(month)
+        if month == 2 and outage:
+            raise httpx.ReadTimeout("February unavailable", request=request)
+        timestamp = int(datetime(2024, month, 1, tzinfo=UTC).timestamp() * 1000)
+        return httpx.Response(200, content=_make_zip_csv([_candle_row(timestamp)]))
+
+    crawler = BinanceVisionCrawler()
+    crawler._client.close()
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        crawler._client = client
+        manager = DataManager(
+            DataConfig(
+                raw_dir=str(tmp_path / "raw"), processed_dir=str(tmp_path / "processed")
+            ),
+            MarketDataRequest(
+                symbol="BTC/USDT",
+                timeframe="1d",
+                start_date="2024-01-01",
+                end_date="2024-12-31",
+            ),
+            crawler=crawler,
+            now_fn=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        with pytest.raises(httpx.ReadTimeout, match="February unavailable"):
+            manager.load()
+        assert not list(tmp_path.rglob("*.parquet"))
+        outage = False
+        months.clear()
+        frame, path = manager.load()
+        assert frame.timestamp.dt.month.tolist() == list(range(1, 13))
+        assert months == list(range(1, 13))
+        assert path.is_file()
+
+
+def test_daily_transport_failure_propagates_but_404_remains_no_data() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("-01.zip"):
+            return httpx.Response(404)
+        raise httpx.ConnectTimeout("daily outage", request=request)
+
+    crawler = BinanceVisionCrawler()
+    crawler._client.close()
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        crawler._client = client
+        with patch("tradingdev.domain.data.crawlers.binance_vision.datetime") as clock:
+            clock.now.return_value = datetime(2026, 1, 3, tzinfo=UTC)
+            with pytest.raises(httpx.ConnectTimeout, match="daily outage"):
+                crawler.fetch(
+                    "BTC/USDT",
+                    "1d",
+                    datetime(2026, 1, 1, tzinfo=UTC),
+                    datetime(2026, 1, 2, tzinfo=UTC),
+                )
 
 
 # ------------------------------------------------------------------ #
