@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -42,6 +43,8 @@ from tooling.review_scope import SCOPES
 # Codex transport ceiling; context policy imposes smaller independent byte budgets.
 MAX_PROMPT_CHARS = 1_024_000
 MAX_PARALLEL_REVIEWS = 8
+# Per-channel output limits in Unicode characters, not model token budgets.
+MAX_DIAGNOSTIC_CHARS = 4000
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -66,6 +69,85 @@ SCHEMA = {
 
 class _ReviewCancelledError(ReviewError):
     """A batch stopped normally after cancellation by the review coordinator."""
+
+
+def _clip_diagnostic(value: str) -> str:
+    marker = " [truncated]"
+    if len(value) <= MAX_DIAGNOSTIC_CHARS:
+        return value
+    return value[: MAX_DIAGNOSTIC_CHARS - len(marker)] + marker
+
+
+@dataclass
+class _EventDiagnostics:
+    failures: str = ""
+    invalid: bool = False
+    tool_attempt: bool = False
+
+
+def _inspect_events(path: Path) -> _EventDiagnostics:
+    """Inspect all events, retaining only bounded, recognized error fields."""
+    result = _EventDiagnostics()
+    with path.open("rb") as stream:
+        for line in stream:
+            try:
+                event = json.loads(line.decode("utf-8"))
+            except ValueError, RecursionError:
+                result.invalid = True
+                continue
+            if not isinstance(event, dict):
+                result.invalid = True
+                continue
+            kind = event.get("type")
+            if not isinstance(kind, str) or not kind:
+                result.invalid = True
+                continue
+            if kind in ("error", "turn.failed"):
+                details = [str(kind)]
+                error = event.get("error")
+                if isinstance(error, str):
+                    details.append(
+                        json.dumps(_clip_diagnostic(error), ensure_ascii=False)
+                    )
+                for source in (event, error):
+                    if isinstance(source, dict):
+                        for field in ("code", "message"):
+                            value = source.get(field)
+                            if isinstance(value, str) and value:
+                                details.append(
+                                    f"{field}="
+                                    + json.dumps(
+                                        _clip_diagnostic(value), ensure_ascii=False
+                                    )
+                                )
+                result.failures = _clip_diagnostic(
+                    "; ".join(filter(None, (result.failures, " ".join(details))))
+                )
+            item = event.get("item")
+            if isinstance(item, dict):
+                item_kind = item.get("type")
+                if not isinstance(item_kind, str) or not item_kind:
+                    result.invalid = True
+                elif item_kind in (
+                    "command_execution",
+                    "file_change",
+                    "mcp_tool_call",
+                    "web_search",
+                ):
+                    result.tool_attempt = True
+    return result
+
+
+def _stderr_diagnostic(path: Path) -> str:
+    """Read a bounded tail; a UTF-8 character occupies at most four bytes."""
+    with path.open("rb") as stream:
+        size = stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, size - 4 * MAX_DIAGNOSTIC_CHARS))
+        tail = stream.read().decode("utf-8", errors="replace").strip()
+    if size > 4 * MAX_DIAGNOSTIC_CHARS or len(tail) > MAX_DIAGNOSTIC_CHARS:
+        marker = "[truncated] "
+        return marker + tail[-(MAX_DIAGNOSTIC_CHARS - len(marker)) :]
+    return tail
 
 
 def _command(root: Path) -> list[str]:
@@ -156,29 +238,30 @@ def _run(
                 terminate_tree(identity, descendants)
             finally:
                 process.communicate(timeout=5)
+    diagnostics = _inspect_events(root / "events.jsonl")
     if process.returncode:
-        diagnostic = (root / "stderr.log").read_text(encoding="utf-8")[-4000:]
+        parts = []
+        if stderr_text := _stderr_diagnostic(root / "stderr.log"):
+            parts.append(f"stderr: {stderr_text}")
+        if diagnostics.failures:
+            parts.append(f"events: {diagnostics.failures}")
+        if not parts:
+            parts.append("No stderr or recognizable error event was provided.")
+        if diagnostics.invalid:
+            parts.append("Codex emitted an invalid JSON event.")
         raise ReviewError(
             f"Codex documentation review exited {process.returncode}: "
-            f"{diagnostic.strip()}"
+            + "; ".join(parts)
         )
-    for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines():
-        event = json.loads(line)
-        if not isinstance(event, dict):
-            raise ReviewError("Codex emitted an invalid JSON event.")
-        if event.get("type") in {"error", "turn.failed"}:
-            raise ReviewError(f"Codex reported a failed review: {event}")
-        item = event.get("item", {})
-        if isinstance(item, dict) and item.get("type") in {
-            "command_execution",
-            "file_change",
-            "mcp_tool_call",
-            "web_search",
-        }:
-            raise ReviewError(
-                "Documentation reviewer attempted a tool call; "
-                "evidence-only review required."
-            )
+    if diagnostics.failures:
+        raise ReviewError(f"Codex reported a failed review: {diagnostics.failures}")
+    if diagnostics.invalid:
+        raise ReviewError("Codex emitted an invalid JSON event.")
+    if diagnostics.tool_attempt:
+        raise ReviewError(
+            "Documentation reviewer attempted a tool call; "
+            "evidence-only review required."
+        )
 
 
 def _validate_verdict(raw: str) -> None:

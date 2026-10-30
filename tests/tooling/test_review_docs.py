@@ -84,6 +84,12 @@ def fake_codex(monkeypatch: MonkeyPatch) -> Iterator[Path]:
             "if mode == 'exit':\n"
             "    print('authentication failed', file=sys.stderr)\n"
             "    sys.exit(9)\n"
+            "if mode == 'diagnostic':\n"
+            "    print(os.environ['REVIEW_FAKE_EVENTS'], end='')\n"
+            "    print(os.environ['REVIEW_FAKE_STDERR'], end='', file=sys.stderr)\n"
+            "    pathlib.Path('verdict.json').write_text(\n"
+            "        json.dumps({'passed': True, 'findings': []}))\n"
+            "    sys.exit(int(os.environ['REVIEW_FAKE_EXIT']))\n"
             "verdict = {'passed': True, 'findings': []}\n"
             "if mode == 'outdated':\n"
             "    verdict = {'passed': False, 'findings': [{'file': 'README.md', "
@@ -466,7 +472,7 @@ def test_evidence_includes_deleted_codex_hook(
         ("malformed", "could not complete"),
         ("inconsistent", "inconsistent documentation verdict"),
         ("missing", "could not complete"),
-        ("exit", "exited 9: authentication failed"),
+        ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
         ("tool", "attempted a tool call"),
     ],
@@ -499,6 +505,116 @@ def test_timeout_terminates_process_and_cleans_files(
     assert not Path(record["root"]).exists()
     with pytest.raises(ProcessLookupError):
         os.kill(record["pid"], 0)
+
+
+@pytest.mark.parametrize(
+    ("events", "stderr", "exit_code", "expected"),
+    [
+        (
+            '{"type":"turn.failed","error":{"message":"provider unavailable"}}\n',
+            "",
+            1,
+            ["exited 1", "turn.failed", "provider unavailable"],
+        ),
+        ("", "authentication failed", 9, ["exited 9", "authentication failed"]),
+        (
+            '{"type":"error","message":"capacity exhausted","code":"quota"}\n',
+            "transport closed",
+            2,
+            ["exited 2", "capacity exhausted", "quota", "transport closed"],
+        ),
+        ("", "", 1, ["exited 1", "No stderr or recognizable error event"]),
+        (
+            "not json\n[]\n",
+            "",
+            3,
+            ["exited 3", "No stderr or recognizable error event", "invalid JSON event"],
+        ),
+        (
+            'not json\n{"type":"turn.failed","error":"service disconnected"}\n',
+            "",
+            1,
+            ["exited 1", "service disconnected", "invalid JSON event"],
+        ),
+        (
+            '{"type":"turn.failed","error":{"message":"request failed"}}\n',
+            "",
+            0,
+            ["failed review", "request failed"],
+        ),
+        ('{"type":"error","payload":"SOURCE_SECRET"}\n', "", 1, ["exited 1", "error"]),
+        ("not json\n", "", 0, ["invalid JSON event"]),
+        ('{"type":[]}\n', "", 0, ["invalid JSON event"]),
+        ('{"type":{}}\n', "", 0, ["invalid JSON event"]),
+        (
+            '{"type":"item.completed","item":{"type":[]}}\n',
+            "",
+            0,
+            ["invalid JSON event"],
+        ),
+        (
+            '{"type":"item.completed","item":{"type":{}}}\n',
+            "",
+            0,
+            ["invalid JSON event"],
+        ),
+        (
+            '{"type":[]}\n{"type":"error","message":"later failure"}\n',
+            "",
+            1,
+            ["exited 1", "invalid JSON event", "later failure"],
+        ),
+        (
+            '{"type":"item.completed","item":{"type":"command_execution"}}\n',
+            "",
+            0,
+            ["attempted a tool call"],
+        ),
+    ],
+)
+def test_review_failure_reports_bounded_diagnostics_and_cleans_up(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+    events: str,
+    stderr: str,
+    exit_code: int,
+    expected: list[str],
+) -> None:
+    repo, base, tree = repository
+    monkeypatch.setenv("REVIEW_FAKE_MODE", "diagnostic")
+    monkeypatch.setenv("REVIEW_FAKE_EVENTS", events)
+    monkeypatch.setenv("REVIEW_FAKE_STDERR", stderr)
+    monkeypatch.setenv("REVIEW_FAKE_EXIT", str(exit_code))
+    with pytest.raises(review_docs.ReviewError) as error:
+        review_docs.review(base, tree, repo=repo)
+    message = str(error.value)
+    assert "Batch 1/1:" in message
+    assert all(part in message for part in expected)
+    assert "SOURCE_SECRET" not in message
+    _assert_reviewer_cleanup(_records(fake_codex))
+
+
+def test_large_error_events_and_stderr_are_explicitly_bounded(
+    repository: tuple[Path, str, str], fake_codex: Path, monkeypatch: MonkeyPatch
+) -> None:
+    repo, base, tree = repository
+    event = json.dumps(
+        {"type": "error", "message": "診斷" * 3000, "payload": "SOURCE_SECRET"}
+    )
+    monkeypatch.setenv("REVIEW_FAKE_MODE", "diagnostic")
+    monkeypatch.setenv("REVIEW_FAKE_EVENTS", (event + "\n") * 3)
+    monkeypatch.setenv("REVIEW_FAKE_STDERR", "old log" * 1000 + "\nlast stderr reason")
+    monkeypatch.setenv("REVIEW_FAKE_EXIT", "1")
+    with pytest.raises(review_docs.ReviewError) as error:
+        review_docs.review(base, tree, repo=repo)
+    message = str(error.value)
+    assert "last stderr reason" in message
+    assert "診斷" in message
+    assert "[truncated]" in message
+    assert "SOURCE_SECRET" not in message
+    assert len(message) < 8300
+    _assert_reviewer_cleanup(_records(fake_codex))
 
 
 def test_excessive_evidence_fails_before_model_call(
@@ -960,7 +1076,7 @@ def test_findings_from_separate_batches_are_all_reported(
         ("malformed", "could not complete"),
         ("inconsistent", "inconsistent documentation verdict"),
         ("missing", "could not complete"),
-        ("exit", "exited 9: authentication failed"),
+        ("exit", "exited 9: stderr: authentication failed"),
         ("failed_event", "failed review"),
         ("tool", "attempted a tool call"),
     ],
