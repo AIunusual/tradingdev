@@ -79,14 +79,16 @@ Generated code must:
   `exec`.
 
 `BaseStrategy` also offers an optional `rolling_trace()` hook whose default
-returns `None`. After `generate_signals`, a simple backtest and each optimization
-run call it and, when it returns a mapping, store that mapping as run metadata
-beside `strategy_parameters`. Walk-forward folds do not call it, so a strategy
-scored only through walk-forward records no trace. Returning `None` — the
-default, and what every strategy without a declared retraining schedule should
-do — means there is no rolling provenance to record. The payload and where it is
-stored are described in the [ML research contract](ml_research.md#rolling-retraining-schemes)
-and [performance artifacts](performance_artifacts.md); implementing the hook is
+returns `None`. After `generate_signals`, a simple backtest, each walk-forward
+fold frame and each optimization run call it and, when it returns a mapping,
+store that mapping as run metadata beside `strategy_parameters`. A fold calls
+`generate_signals` for its training replay and its evaluation frame in turn, so
+each frame's result carries the trace of the signals it actually scored.
+Returning `None` — the default, and what every strategy without a declared
+retraining schedule should do — means there is no rolling provenance to record.
+The payload and where it is stored are described in the
+[ML research contract](ml_research.md#rolling-retraining-schemes) and
+[performance artifacts](performance_artifacts.md); implementing the hook is
 optional.
 
 The shared frame checker enforces these structural rules on synthetic fixtures

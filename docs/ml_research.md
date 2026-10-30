@@ -321,10 +321,11 @@ only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
 `min_train_bars` and `predict_lookback` are optional as well; they follow
 `lookback + 10` labelled rows and `2 x lookback` prior bars of scoring context.
 `predict_lookback` counts bars *before* the scored one, which is then added on
-top, so the default context is `2 x lookback + 1` rows. Those defaults are
-derived from the strategy's own lookback on purpose: a fixed window shorter than
-the feature warm-up would leave no labelled rows and stop retraining without
-saying so.
+top, so the default context is `2 x lookback + 1` rows. It must also be at least
+`lookback + 1`, otherwise the context could not cover the feature lookback and
+resolution raises before any model is trained. Those defaults are derived from
+the strategy's own lookback on purpose: a fixed window shorter than the feature
+warm-up would leave no labelled rows and stop retraining without saying so.
 
 A refit is skipped, and the previous model kept, when the window holds fewer than
 `min_train_bars` labelled rows or fewer than two bars at all. The trace records
@@ -346,8 +347,10 @@ an empty scored frame simply has nothing to score.
 
 What an unscored bar becomes differs by consumer: the direction strategy emits
 `0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
-neighbouring bar's value, and a neutral score does not force an existing position
-to close — the entry threshold and the holding rules still decide.
+neighbouring bar's value. The neutral score is an input, not a decision: it is
+still compared against `risk_threshold`, so with a threshold above `0.5` it
+blocks a new entry and, once the minimum holding period has passed, triggers the
+configured risk exit for an open position.
 
 The schedule can be printed before anything runs. `enumerate_rolls` returns one
 window per retrain — the training bounds, the bar that triggered it, and the
