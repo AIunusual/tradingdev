@@ -318,11 +318,15 @@ window shorter than the feature warm-up would leave no labelled rows and stop
 retraining without saying so.
 
 Whichever scheme is declared, a training window ends strictly before the bar it
-scores, the scored frame is never concatenated in front of itself, and a bar
-whose features are unavailable emits no signal instead of reusing the previous
-bar's. These are the rules the classic retrainer already follows; the scheme
-only changes the window shape. A run that cannot score any bar at all fails
-rather than returning all-zero signals.
+scores, the scored frame is never concatenated in front of itself, a bar whose
+features are unavailable emits no signal instead of reusing the previous bar's,
+and a training row whose label reads past the bar being scored is dropped before
+fitting — whatever the feature engineer returned. That last rule is the engine's
+own, not a courtesy of `dropna`: an engineer that fills its unlabelled tail
+cannot smuggle an unrealised outcome into training. These are the rules the
+classic retrainer already follows; the scheme only changes the window shape. A
+run that cannot score any bar at all fails rather than returning all-zero
+signals.
 
 The schedule can be printed before anything runs. `enumerate_rolls` returns one
 window per retrain — the training bounds, the bar that triggered it, and the

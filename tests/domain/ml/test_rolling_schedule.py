@@ -235,6 +235,7 @@ def test_the_schedule_is_what_the_engine_runs() -> None:
         fe=recorder,
         lookback=_LOOKBACK,
         retrain_interval=_INTERVAL,
+        label_horizon=1,
         model_factory=_StubModel,
     )
 

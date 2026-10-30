@@ -436,6 +436,7 @@ class SafetyVolumeStrategy(BaseStrategy):
             fe=self._risk_fe,
             lookback=lookback,
             retrain_interval=self._config.retrain_interval,
+            label_horizon=self._config.target_holding_bars,
         )
         self._rolling_trace = trace_payload(outcome)
         return outcome.probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)

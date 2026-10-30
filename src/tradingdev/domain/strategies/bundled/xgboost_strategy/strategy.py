@@ -171,6 +171,7 @@ class XGBoostStrategy(BaseStrategy):
                 fe=self._feature_engineer,
                 lookback=self._best_lookback,
                 retrain_interval=self._config.retrain_interval,
+                label_horizon=self._config.target_horizon,
             )
             self._rolling_trace = trace_payload(outcome)
             signals = signals_from_probabilities(

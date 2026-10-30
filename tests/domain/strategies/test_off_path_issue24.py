@@ -21,6 +21,7 @@ import pytest
 from tradingdev.domain.ml.features.features import FeatureEngineer
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.retrainer import RollingRetrainer
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
     SafetyVolumeStrategyConfig,
@@ -195,6 +196,36 @@ def test_mixed_time_representations_keep_every_prediction(scored_time: str) -> N
     assert len(recorder.contexts) == len(scored) == 50
     assert int((result["signal"] != 0).sum()) == len(scored)
     assert _context_complaints(recorder.contexts) == []
+
+
+def test_the_off_path_is_the_classic_retrainer() -> None:
+    """Switching the feature off must run the original loop, not a lookalike.
+
+    ``RollingRetrainer`` is byte-identical to the base branch, so matching its
+    output proves the disabled path is the code that was already reviewed and
+    tested, rather than a re-implementation that merely looks similar.
+    """
+    frame = _market_frame(200)
+    history = frame.iloc[:150].copy()
+    scored = frame.iloc[150:].copy()
+    strategy = _fitted_xgboost(history, _RecordingFeatureEngineer())
+
+    result = strategy.generate_signals(scored)
+
+    lookback = strategy._best_lookback
+    model = strategy._model
+    fe = strategy._feature_engineer
+    assert lookback is not None
+    assert model is not None
+    assert fe is not None
+    classic = RollingRetrainer(
+        model_config=strategy._config.model,
+        retrain_interval=strategy._config.retrain_interval,
+        threshold=strategy._best_threshold,
+        cooldown=strategy._config.min_bars_between_trades,
+        lookback=lookback,
+    ).run(scored, history, model, fe)
+    assert result["signal"].tolist() == classic.tolist()
 
 
 class _LabelEchoModel(XGBoostDirectionModel):

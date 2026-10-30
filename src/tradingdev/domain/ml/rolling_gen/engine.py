@@ -80,6 +80,9 @@ class RollingOutcome:
     geometry: RollingGeometry
     """The effective geometry: unset scheme fields already resolved."""
 
+    label_horizon: int
+    """Bars a label looks ahead; the engine refuses to train past it."""
+
 
 @dataclass(frozen=True)
 class _RetrainOutcome:
@@ -106,6 +109,7 @@ def trace_payload(outcome: RollingOutcome) -> dict[str, object]:
         "window_size": outcome.geometry.window_size,
         "min_train_bars": outcome.geometry.min_train_bars,
         "predict_lookback": outcome.geometry.predict_lookback,
+        "label_horizon": outcome.label_horizon,
         "bars": len(outcome.bar_roll),
         "bars_scored": scored,
         "rolls": [
@@ -149,6 +153,31 @@ class _Retrainer:
     model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel]
     total_retrains: int
     total_bars: int
+    label_horizon: int
+
+    def matured(self, labelled: pd.DataFrame, combined_idx: int) -> pd.DataFrame:
+        """Keep only rows whose label was realised by the bar being scored.
+
+        A label at row ``r`` reads the close ``label_horizon`` bars later, so it
+        is realised once ``r + label_horizon <= combined_idx``. Rows past that
+        point are dropped here rather than trusted to the feature engineer: an
+        engineer that fills its tail would otherwise train the model on outcomes
+        that had not happened yet, which is the shape of issue #24's tail-label
+        defect. Filtering the output instead of shortening the input keeps this a
+        no-op for an engineer that already leaves those rows unlabelled.
+        """
+        last_realisable = combined_idx - self.label_horizon
+        if last_realisable < 0:
+            return labelled.iloc[:0]
+        if "timestamp" not in labelled.columns:
+            msg = (
+                "training rows lost their time identity, so label maturity "
+                "cannot be checked; keep the timestamp column in transform()"
+            )
+            raise ValueError(msg)
+        cutoff = self.combined["timestamp"].iloc[last_realisable]
+        kept: pd.DataFrame = labelled.loc[labelled["timestamp"] <= cutoff]
+        return kept
 
     def retrain(
         self,
@@ -176,7 +205,10 @@ class _Retrainer:
         window = self.combined.iloc[start:stop].copy()
         if len(window) < 2:
             return _RetrainOutcome(fallback, 0, trained=False)
-        labelled = self.fe.transform(window, include_target=True)
+        labelled = self.matured(
+            self.fe.transform(window, include_target=True),
+            combined_idx,
+        )
         if len(labelled) < self.geometry.min_train_bars:
             logger.info(
                 "[rolling_gen:%s] %d labelled bars at bar %d is below "
@@ -227,6 +259,7 @@ def rolling_outcome(
     fe: FeatureTransformer,
     lookback: int,
     retrain_interval: int,
+    label_horizon: int,
     model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
         XGBoostDirectionModel
     ),
@@ -243,6 +276,8 @@ def rolling_outcome(
         fe: Feature engineer producing training features and scoring context.
         lookback: The strategy's feature lookback, used for unset scheme fields.
         retrain_interval: The strategy's classic cadence, used for an unset step.
+        label_horizon: Bars a label looks ahead. A training row whose label reads
+            past the bar being scored is dropped before fitting.
         model_factory: Builds a fresh untrained model; overridable for tests.
 
     Returns:
@@ -251,9 +286,12 @@ def rolling_outcome(
         per roll describing what it actually trained on.
 
     Raises:
-        ValueError: If either frame lacks a usable time identity, or the scheme
-            cannot form a usable window.
+        ValueError: If either frame lacks a usable time identity, the scheme
+            cannot form a usable window, or ``label_horizon`` is not positive.
     """
+    if label_horizon < 1:
+        msg = f"label_horizon must be at least 1 bar, got {label_horizon}"
+        raise ValueError(msg)
     history, scored = align_scoring_history(train_data, test_df)
     geometry = resolve_geometry(
         scheme,
@@ -289,6 +327,7 @@ def rolling_outcome(
         model_factory=model_factory,
         total_retrains=total_retrains,
         total_bars=total_bars,
+        label_horizon=label_horizon,
     )
 
     t_start = time.monotonic()
@@ -369,6 +408,7 @@ def rolling_outcome(
         rolls=tuple(traces),
         scheme_name=scheme.name,
         geometry=geometry,
+        label_horizon=label_horizon,
     )
 
 
@@ -382,6 +422,7 @@ def rolling_probabilities(
     fe: FeatureTransformer,
     lookback: int,
     retrain_interval: int,
+    label_horizon: int,
     model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
         XGBoostDirectionModel
     ),
@@ -396,6 +437,7 @@ def rolling_probabilities(
         fe=fe,
         lookback=lookback,
         retrain_interval=retrain_interval,
+        label_horizon=label_horizon,
         model_factory=model_factory,
     ).probabilities
 
@@ -442,6 +484,7 @@ def run_rolling(
     cooldown: int,
     lookback: int,
     retrain_interval: int,
+    label_horizon: int,
     model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
         XGBoostDirectionModel
     ),
@@ -461,6 +504,7 @@ def run_rolling(
             fe=fe,
             lookback=lookback,
             retrain_interval=retrain_interval,
+            label_horizon=label_horizon,
             model_factory=model_factory,
         ),
         threshold=threshold,

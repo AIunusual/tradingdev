@@ -98,6 +98,7 @@ def _outcome(
         fe=recorder,
         lookback=_LOOKBACK,
         retrain_interval=_INTERVAL,
+        label_horizon=1,
         model_factory=_StubModel,
     )
     return outcome, recorder.windows
@@ -206,6 +207,7 @@ def test_an_empty_run_has_no_rolls() -> None:
         fe=_StubFeatureEngineer(),
         lookback=_LOOKBACK,
         retrain_interval=_INTERVAL,
+        label_horizon=1,
         model_factory=_StubModel,
     )
 

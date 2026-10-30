@@ -170,6 +170,7 @@ def _probabilities(
         fe=fe,
         lookback=10,
         retrain_interval=1,
+        label_horizon=1,
         model_factory=type(model) if factory is None else factory,
     )
 
@@ -195,6 +196,7 @@ def _signals(
         cooldown=cooldown,
         lookback=10,
         retrain_interval=1,
+        label_horizon=1,
         model_factory=type(model),
     )
 
@@ -447,6 +449,7 @@ def test_the_engine_never_trains_on_an_unrealised_label() -> None:
         fe=FeatureEngineer(lookback=24, target_horizon=horizon),
         lookback=24,
         retrain_interval=1,
+        label_horizon=horizon,
         model_factory=factory,
     )
 
@@ -461,3 +464,77 @@ def test_the_engine_never_trains_on_an_unrealised_label() -> None:
     # Every roll's labels are realised: none was filled in to keep the row.
     for trained in sink:
         assert trained["target"].notna().all(), "an unrealised label was filled in"
+
+
+class _FillingFeatureEngineer(FeatureEngineer):
+    """Fill unknown tail labels with 0, the way issue #24's defect did.
+
+    A feature engineer that does this hands the engine rows whose label reads
+    past the bar being scored. The engine has to refuse them on its own.
+    """
+
+    def __init__(self, horizon: int) -> None:
+        super().__init__(lookback=1, target_horizon=horizon)
+        self._horizon = horizon
+
+    def transform(
+        self, df: pd.DataFrame, *, include_target: bool = True
+    ) -> pd.DataFrame:
+        result = df.copy()
+        result["stub_feature"] = np.arange(len(result), dtype=float)
+        if include_target:
+            forward = result["close"].shift(-self._horizon) / result["close"] - 1
+            result["target"] = np.sign(forward).fillna(0).astype(int)
+        return result
+
+
+def test_the_engine_drops_labels_the_engineer_filled_in() -> None:
+    """Issue #24: label maturity is the engine's rule, not the engineer's.
+
+    The engineer here fills every tail label, so nothing is missing for
+    ``dropna`` to remove. The engine still refuses to fit past the last
+    realisable label: with the window ending at bar 99 and a horizon of 5, that
+    is bar 95.
+    """
+    horizon = 5
+    history_bars = 100
+    frame = _market_frame(history_bars + 10)
+    sink: list[pd.DataFrame] = []
+    factory = _training_recorder(sink)
+
+    rolling_outcome(
+        frame.iloc[:history_bars].copy(),
+        frame.iloc[history_bars:].copy(),
+        _scheme(RollType.ROLL_EX),
+        model=factory(_MODEL_CONFIG),
+        model_config=_MODEL_CONFIG,
+        fe=_FillingFeatureEngineer(horizon),
+        lookback=1,
+        retrain_interval=1000,
+        label_horizon=horizon,
+        model_factory=factory,
+    )
+
+    assert sink, "the run must have trained at least one model"
+    first = sink[0]
+    assert pd.Timestamp(first["timestamp"].max()) == pd.Timestamp(
+        frame["timestamp"].iloc[history_bars - horizon]
+    ), "the engine trained on a label the engineer had filled in"
+
+
+@pytest.mark.parametrize("horizon", [0, -1])
+def test_a_non_positive_label_horizon_is_rejected(horizon: int) -> None:
+    frame = _market_frame(40)
+
+    with pytest.raises(ValueError, match="label_horizon must be at least 1"):
+        rolling_outcome(
+            frame.iloc[:30].copy(),
+            frame.iloc[30:].copy(),
+            _scheme(RollType.ROLL_EX),
+            model=_AlwaysLong(),
+            model_config=_MODEL_CONFIG,
+            fe=_RecordingFeatureEngineer(),
+            lookback=10,
+            retrain_interval=1,
+            label_horizon=horizon,
+        )
