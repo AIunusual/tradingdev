@@ -196,6 +196,15 @@ overlay is omitted. The
 baseline is not selected by the client: there is no request parameter for it,
 and the same market always yields the same reference. An undefined asset class
 or an unusable baseline is reported with its reason and never as a zero return.
+The schema 3 manifest has a `benchmarks` mapping keyed first by run ID and then
+by scope ID. Each entry summarizes `status`, baseline `id` and `symbol`,
+`asset_class`, `source`, `dataset_id`, `reason` and `coverage`. Scopes without
+saved benchmark evidence are omitted, so a run can have an empty mapping.
+These manifest entries contain discovery and coverage summaries; the HTML's
+embedded scope payload retains the complete benchmark evidence, including
+costs, metric values, timestamps, returns and equity series, even when the
+benchmark section is not selected.
+
 Reports generated from results saved before benchmark evidence existed say so
 explicitly; they are not recomputed from current market data. Walk-forward
 `test_summary` scopes have no single equity path and therefore no baseline;
