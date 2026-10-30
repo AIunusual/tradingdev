@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 
-REPORT_SCHEMA_VERSION = 2
-REPORT_TEMPLATE_VERSION = "23"
+REPORT_SCHEMA_VERSION = 3
+REPORT_TEMPLATE_VERSION = "24"
 SCOPED_REPORT_SECTIONS = frozenset(
-    {"settings", "metrics", "equity", "ledger", "trades"}
+    {"settings", "metrics", "benchmark", "equity", "ledger", "trades"}
 )
 
 
@@ -48,6 +48,14 @@ REPORT_SECTIONS = MappingProxyType(
                 "績效分析與保存指標",
                 "QuantStats HTML analysis derived from saved returns, plus original "
                 "values, definitions and explicit unavailable reasons.",
+            ),
+            ReportSectionDefinition(
+                "benchmark",
+                "基準比較（Benchmark）",
+                "The asset class's fixed buy-and-hold baseline over the same bars "
+                "and costs, shown beside the strategy's saved values and equity. "
+                "An undefined or unusable baseline states its reason instead of "
+                "implying a zero return.",
             ),
             ReportSectionDefinition(
                 "equity",
@@ -97,7 +105,14 @@ REPORT_SECTIONS = MappingProxyType(
 REPORT_RECIPES = MappingProxyType(
     {
         "standard": tuple(key for key in REPORT_SECTIONS if key != "ml"),
-        "comparison": ("overview", "research", "metrics", "equity", "provenance"),
+        "comparison": (
+            "overview",
+            "research",
+            "metrics",
+            "benchmark",
+            "equity",
+            "provenance",
+        ),
         "trades": ("overview", "research", "ledger", "trades", "provenance"),
         "ml_research": ("ml",),
     }

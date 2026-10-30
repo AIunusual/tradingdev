@@ -259,6 +259,12 @@ _DOC_HEADINGS.update(
     }
 )
 
+# The baseline contract sits in its own section of the same results-owned
+# document, so it is reviewed by the same scopes as the scope/provenance section.
+_DOC_HEADINGS["docs/performance_artifacts.md"].update(
+    _headings({"results", "interfaces"}, "Benchmarks")
+)
+
 
 # These narrowly focused documents are selected as complete files. New paths
 # are deliberately not matched by a wildcard: an unfamiliar document widens

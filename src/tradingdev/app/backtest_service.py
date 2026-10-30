@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from tradingdev.app.benchmark_service import BenchmarkService
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.execution_dataset import ExecutionDataset
 from tradingdev.app.job_config import bind_strategy_revision
@@ -50,7 +51,10 @@ from tradingdev.shared.utils.json_values import normalize_json_object
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pandas as pd
+
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
+    from tradingdev.domain.benchmark import BenchmarkEvidence
     from tradingdev.domain.strategies.execution import StrategyExecution
     from tradingdev.domain.strategies.schemas import StrategySpec
 
@@ -93,10 +97,14 @@ class BacktestService:
         data_service: DataService | None = None,
         strategy_loader: StrategyLoader | None = None,
         strategy_gate: StrategyExecutionGate | None = None,
+        benchmark_service: BenchmarkService | None = None,
     ) -> None:
         self._data_service = data_service or DataService()
         self._strategy_loader = strategy_loader or StrategyLoader()
         self._strategy_gate = strategy_gate or StrategyService()
+        self._benchmark_service = benchmark_service or BenchmarkService(
+            self._data_service
+        )
 
     def run_config(
         self, config_path: Path, *, walk_forward: bool = False
@@ -275,17 +283,28 @@ class BacktestService:
         manifest: ExecutionManifest,
         *,
         loaded_dataset: ExecutionDataset | None = None,
+        benchmark: BenchmarkEvidence | None = None,
     ) -> BacktestRun:
         """Execute with fresh state and optionally reuse immutable captured inputs."""
         raw_config = self._execution_config(manifest)
         with execution_randomness(raw_config["random_seed"]):
-            return self._execute(manifest, raw_config, loaded_dataset)
+            return self._execute(manifest, raw_config, loaded_dataset, benchmark)
+
+    def prepare_benchmark(
+        self, frame: pd.DataFrame, manifest: ExecutionManifest
+    ) -> BenchmarkEvidence:
+        """Capture the asset class's baseline once for runs sharing one dataset."""
+        raw_config = self._execution_config(manifest)
+        return self._benchmark_service.evidence(
+            frame, raw_config, BacktestConfig(**raw_config["backtest"])
+        )
 
     def _execute(
         self,
         manifest: ExecutionManifest,
         raw_config: dict[str, Any],
         loaded_dataset: ExecutionDataset | None,
+        benchmark: BenchmarkEvidence | None = None,
     ) -> BacktestRun:
         """Construct and execute the strategy within its run's random context."""
         self._check_manifest_strategy(manifest, raw_config)
@@ -314,6 +333,7 @@ class BacktestService:
                 fold_results=folds,
                 config_snapshot=raw_config,
                 execution_manifest=manifest,
+                benchmark=self._benchmark(dataset.frame, raw_config, bt_cfg, benchmark),
             )
             return BacktestRun(
                 mode="walk_forward",
@@ -333,6 +353,7 @@ class BacktestService:
             backtest_result=result,
             config_snapshot=raw_config,
             execution_manifest=manifest,
+            benchmark=self._benchmark(dataset.frame, raw_config, bt_cfg, benchmark),
         )
         return BacktestRun(
             mode="simple",
@@ -341,6 +362,18 @@ class BacktestService:
             processed_path=dataset.processed_path,
             dataset_id=dataset.dataset_id,
         )
+
+    def _benchmark(
+        self,
+        frame: pd.DataFrame,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+        captured: BenchmarkEvidence | None,
+    ) -> BenchmarkEvidence:
+        """Reuse a baseline captured for a shared dataset instead of reloading it."""
+        if captured is not None:
+            return captured
+        return self._benchmark_service.evidence(frame, raw_config, backtest_config)
 
     def prepare_strategy(
         self,

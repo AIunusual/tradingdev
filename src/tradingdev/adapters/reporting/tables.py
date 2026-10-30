@@ -169,6 +169,48 @@ def render_table(spec: dict[str, Any], *, identifier: str, key: str) -> str:
     )
 
 
+def _benchmark_row(scope: dict[str, Any]) -> dict[str, Any]:
+    """Summarize a saved baseline; absent evidence stays empty, not zero."""
+    benchmark = scope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return {
+            "benchmark_symbol": None,
+            "benchmark_return": None,
+            "excess_return": None,
+            "benchmark_coverage": None,
+        }
+    definition = benchmark.get("definition")
+    definition = definition if isinstance(definition, dict) else {}
+    values = benchmark.get("values")
+    values = values if isinstance(values, dict) else {}
+    reference = values.get("total_return")
+    reference = (
+        reference
+        if isinstance(reference, int | float) and not isinstance(reference, bool)
+        else None
+    )
+    strategy = scope["values"].get("total_return")
+    strategy = (
+        strategy
+        if isinstance(strategy, int | float) and not isinstance(strategy, bool)
+        else None
+    )
+    coverage = benchmark.get("coverage")
+    coverage = coverage if isinstance(coverage, dict) else {}
+    return {
+        "benchmark_symbol": definition.get("symbol"),
+        "benchmark_return": reference,
+        "excess_return": None
+        if strategy is None or reference is None or coverage.get("complete") is not True
+        else float(strategy) - float(reference),
+        "benchmark_coverage": (
+            f"{coverage['aligned_bars']}/{coverage['scope_bars']}"
+            if "aligned_bars" in coverage and "scope_bars" in coverage
+            else None
+        ),
+    }
+
+
 def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, Any]:
     """Compare every saved result without combining train/test or fold equity."""
     columns = [
@@ -254,6 +296,28 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                     width=165,
                 )
             )
+    columns.append(column("benchmark_symbol", "基準標的", group="基準", width=110))
+    columns.append(
+        column("benchmark_coverage", "基準覆蓋 K 線", group="基準", width=130)
+    )
+    columns.append(
+        column(
+            "benchmark_return",
+            "基準報酬（買進持有）",
+            "percent",
+            group="基準",
+            width=165,
+        )
+    )
+    columns.append(
+        column(
+            "excess_return",
+            "超額報酬（策略−基準）",
+            "percent",
+            group="基準",
+            width=165,
+        )
+    )
     rows: list[dict[str, Any]] = []
     text_parameters = {
         item["field"].removeprefix("parameter:")
@@ -306,6 +370,7 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                     row[f"metric:{metric}:{unit}"] = (
                         value if not isinstance(value, dict) else None
                     )
+            row.update(_benchmark_row(scope))
             rows.append(row)
     if fixed := payload.get("fixed_comparison"):
         by_run = {row["run_id"]: row for row in rows}

@@ -282,10 +282,11 @@ def test_invalid_saved_evidence_is_not_silently_skipped(
     assert not list((workspace.root / "reports").glob("**/*"))
 
 
-def test_no_ml_request_pins_interpretation_report_bytes(
+def test_no_ml_request_report_bytes_are_pinned(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:
-    # Template 23 adds analysis/diagnostic evidence while ML remains absent.
+    # Re-pinned at template 24 when the benchmark section was added; the ML
+    # renderer must still be absent from a request that never asks for it.
     _, store, service = context
     _save(context)
     with store.connect() as connection:
@@ -294,13 +295,14 @@ def test_no_ml_request_pins_interpretation_report_bytes(
     payload, manifest = _read(result)
     assert "ml" not in payload and "ml" not in manifest
     assert "ml" not in manifest["omitted_sections"]
-    assert result["report_id"] == (
-        "d60c2ca5109832c07f04ffabc77de8a49f94371e77e841f5d9be35c5fd985440"
-    )
-    assert result["sha256"] == (
-        "6dbd2adaea0dcea97b03e240d7f990813f4a4d4b55e4e252ab626b250cfd1c68"
-    )
     path = Path(result["path"]).parent / "manifest.json"
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
-        "6d3cfc68064928d0697db826e80aff6424766ae21ac8219ac31230dbef7e97b4"
+    # One comparison so a deliberate re-baseline shows every digest at once.
+    assert (
+        result["report_id"],
+        result["sha256"],
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    ) == (
+        "4ff6c967ef3cf6b9cdbbb9c61a0dccd5dc8def8bb42948cb61a971ef3820a44d",
+        "b768b19434280d02a7657d2142de50dadc289aae70926fd7a75dbb13471677f9",
+        "8727f7b052fa975f2588e7e13d0aa8bbbaa4bd4d68119e07a83003b2a5951ce4",
     )

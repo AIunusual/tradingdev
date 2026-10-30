@@ -15,7 +15,7 @@ alongside one of the run/comparison selectors. Select 1–50 distinct entry IDs 
 recorded evaluations or leaderboard results; never infer a model-to-run relationship.
 The ML block and its presentation are absent when no ML evidence is selected.
 Newly generated reports include interpretation and diagnostic fields under template
-version 23, so their identity differs from earlier templates even without ML.
+version 24, so their identity differs from earlier templates even without ML.
 Previously saved reports are not rewritten.
 Alternatively, pass `comparison_job_id` with no `run_ids` (CLI:
 `--comparison-job-id`, exclusive with repeatable `--run-id`). The parent must be
@@ -63,10 +63,12 @@ Up to 20 plain-text title/text notes
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 2 / template 23 uses two navigation levels within one offline HTML
-file when at least one detail section (`settings`, `metrics`, `equity`, `ledger`,
-or `trades`) is selected. The overview compares every loaded run/scope, including
-effective parameters, date coverage, train/test role and principal saved metrics.
+Report schema 3 / template 24 uses two navigation levels within one offline HTML
+file when at least one detail section (`settings`, `metrics`, `benchmark`,
+`equity`, `ledger`, or `trades`) is selected. The overview compares every loaded
+run/scope, including effective parameters, date coverage, train/test role,
+principal saved metrics, and the baseline symbol, its buy-and-hold return and the
+strategy's excess return over it.
 Interactive and static overview tables show explicit `查看明細 →` links in the
 result-sequence column, with a separate navigation hint beside the table.
 The interactive table also supports plain row clicks; keyboard focus alone does
@@ -94,10 +96,10 @@ Without any detail sections, result links and result switching are absent;
 selected `provenance` and `limitations` sections appear directly in the main view.
 The overview, if selected, stays first; other sections keep their requested order.
 Unknown result hashes leave the main view visible rather than opening empty details.
-The standard recipe is `overview`, `research`, `settings`, `metrics`, `equity`,
-`ledger`, `trades`, `limitations`, `provenance`; comparison is `overview`, `research`,
-`metrics`, `equity`, `provenance`; trades is `overview`, `research`, `ledger`,
-`trades`, `provenance`.
+The standard recipe is `overview`, `research`, `settings`, `metrics`,
+`benchmark`, `equity`, `ledger`, `trades`, `limitations`, `provenance`;
+comparison is `overview`, `research`, `metrics`, `benchmark`, `equity`,
+`provenance`; trades is `overview`, `research`, `ledger`, `trades`, `provenance`.
 The `ml_research` recipe contains `ml`. ML evidence stays in the main view and is
 independent of the run/scope detail switcher; its own template version lives in
 the optional block so future ML presentation changes affect only ML reports.
@@ -173,6 +175,41 @@ The renderer
 fixes SVG identifiers, removes generation dates and the external favicon, restores
 plot state, and removes temporary output/new figures on success or failure. It
 does not close pre-existing figures or silently substitute another HTML provider.
+
+The `benchmark` section presents the baseline saved with each scalar scope: its
+fixed identity (asset class, symbol, weighting and rationale), the requested provider and
+effective market setting, whether the run's own frame was reused, the costs
+applied, and how many of the scope's bars the baseline observed. A comparison
+table puts the strategy's saved values beside the baseline's under the same
+units, with a difference only where coverage is complete, both sides are finite
+and the units match. The overview includes aligned/total bar counts and withholds
+excess returns for incomplete or unknown coverage. Reused frames explicitly retain
+the run's unverified cache provenance; they do not independently prove the provider.
+When the baseline was normalized to one quote currency unit because the run had
+no initial capital, its `amount` values are withheld instead of sitting beside
+the strategy's realized amounts, and no `amount` difference is computed. A normalized equity chart
+plots both paths as growth multiples of the same initial capital, positioned by
+bar index, so a shorter baseline never stretches across unobserved bars. This
+overlay requires positive recorded strategy initial capital; when it is missing
+or nonpositive, including volume results, the comparison table remains but the
+overlay is omitted. The
+baseline is not selected by the client: there is no request parameter for it,
+and the same market always yields the same reference. An undefined asset class
+or an unusable baseline is reported with its reason and never as a zero return.
+The schema 3 manifest has a `benchmarks` mapping keyed first by run ID and then
+by scope ID. Each entry summarizes `status`, baseline `id` and `symbol`,
+`asset_class`, `source`, `dataset_id`, `reason` and `coverage`. Scopes without
+saved benchmark evidence are omitted, so a run can have an empty mapping.
+These manifest entries contain discovery and coverage summaries; the HTML's
+embedded scope payload retains the complete benchmark evidence, including
+costs, metric values, timestamps, returns and equity series, even when the
+benchmark section is not selected.
+
+Reports generated from results saved before benchmark evidence existed say so
+explicitly; they are not recomputed from current market data. Walk-forward
+`test_summary` scopes have no single equity path and therefore no baseline;
+optimization trials currently have none because the optimization worker does not
+capture one. Fold summaries say so instead of suggesting a re-run.
 
 The `ledger` section combines saved order attempts and end-of-bar account states
 into one chronological event table. Within a bar, original execution order comes

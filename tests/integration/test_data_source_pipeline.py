@@ -7,8 +7,11 @@ strategy loader, and backtest engine end to end.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
@@ -118,16 +121,23 @@ class _FakeYahooResponse:
 class _FakeYahooClient:
     """httpx.Client stand-in serving deterministic daily candles."""
 
-    get_calls = 0
+    requested_symbols: list[str] = []
+    fail_benchmark = False
 
     def __init__(self, **_kwargs: Any) -> None:
         pass
 
     def get(self, _url: str, params: dict[str, Any]) -> _FakeYahooResponse:
-        type(self).get_calls += 1
+        symbol = _url.rsplit("/", 1)[-1]
+        type(self).requested_symbols.append(symbol)
+        if symbol == "^GSPC" and self.fail_benchmark:
+            return _FakeYahooResponse(
+                {"chart": {"result": None, "error": {"code": "Not Found"}}}
+            )
         period1 = int(params["period1"])
         period2 = int(params["period2"])
-        timestamps = list(range(period1, period2 + 1, _DAY_S))
+        # Yahoo's transport interval is half-open, unlike the crawler contract.
+        timestamps = list(range(period1, period2, _DAY_S))
         closes = [
             _daily_close((ts - _YEAR_2024_START_S) // _DAY_S) for ts in timestamps
         ]
@@ -183,16 +193,19 @@ def test_ccxt_crypto_source_flows_into_backtest_pipeline(
     assert sum(inst.calls for inst in _FakeBinance.instances) == calls_before
 
 
+@pytest.mark.parametrize("benchmark_available", [True, False])
 def test_yahoo_finance_equity_source_flows_into_backtest_pipeline(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    benchmark_available: bool,
 ) -> None:
     monkeypatch.delenv("TRADINGDEV_DATA_ROOT", raising=False)
     monkeypatch.setattr(
         "tradingdev.domain.data.crawlers.yahoo_finance.httpx.Client",
         _FakeYahooClient,
     )
-    _FakeYahooClient.get_calls = 0
+    _FakeYahooClient.requested_symbols = []
+    monkeypatch.setattr(_FakeYahooClient, "fail_benchmark", not benchmark_available)
     service, workspace = _service(tmp_path)
 
     run = service.run_raw_config(_raw_config("yahoo_finance", "AAPL"))
@@ -202,9 +215,27 @@ def test_yahoo_finance_equity_source_flows_into_backtest_pipeline(
     assert run.dataset_id.startswith("AAPL:1d:2024-01-01:2024-02-29")
     cached = workspace.processed_data / "aapl_1d_2024.parquet"
     assert cached.exists()
-    assert _FakeYahooClient.get_calls >= 1
+    assert Counter(_FakeYahooClient.requested_symbols) == {"AAPL": 1, "^GSPC": 1}
+    original_cache = cached.read_bytes()
 
-    # Second run must reuse the yearly cache without hitting Yahoo.
-    calls_before = _FakeYahooClient.get_calls
-    service.run_raw_config(_raw_config("yahoo_finance", "AAPL"))
-    assert _FakeYahooClient.get_calls == calls_before
+    # Trade data reuse and supplementary benchmark acquisition are independent.
+    rerun = service.run_raw_config(_raw_config("yahoo_finance", "AAPL"))
+    assert Counter(_FakeYahooClient.requested_symbols) == {"AAPL": 1, "^GSPC": 2}
+    assert cached.read_bytes() == original_cache
+    assert sorted(path.name for path in workspace.processed_data.glob("*.parquet")) == [
+        "aapl_1d_2024.parquet"
+    ]
+    assert rerun.metrics == run.metrics
+    for result in (run, rerun):
+        benchmark = result.pipeline.benchmark
+        assert benchmark is not None
+        assert benchmark.reused_run_frame is False
+        if benchmark_available:
+            assert benchmark.status == "available"
+            assert benchmark.timestamps is not None
+            assert len(benchmark.timestamps) == 60
+            assert benchmark.timestamps[0] == datetime(2024, 1, 1, tzinfo=UTC)
+            assert benchmark.timestamps[-1] == datetime(2024, 2, 29, tzinfo=UTC)
+        else:
+            assert benchmark.status == "unavailable"
+            assert benchmark.reason == "benchmark_data_unavailable"

@@ -264,7 +264,7 @@ async def test_generated_strategy_full_mcp_workflow(
             "ledger",
             "trades",
         ]
-        assert json.loads(report_manifest)["schema_version"] == 2
+        assert json.loads(report_manifest)["schema_version"] == 3
         source = await client.read_artifact_text(
             by_type["strategy_source"]["artifact_id"]
         )

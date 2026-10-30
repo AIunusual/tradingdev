@@ -171,7 +171,8 @@ class YahooFinanceCrawler(BaseCrawler):
             f"{_BASE_URL}/{symbol}",
             params={
                 "period1": int(start_utc.timestamp()),
-                "period2": int(end_utc.timestamp()),
+                # Yahoo's period2 is exclusive; our requested end is inclusive.
+                "period2": int(end_utc.timestamp()) + 1,
                 "interval": interval,
                 "events": "history",
             },

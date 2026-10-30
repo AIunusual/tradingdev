@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.app.test_report_service import _save, _scope
+from tests.app.test_report_service import _benchmark, _payload, _save, _scope
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import links_to_file
 from tests.e2e.llm_client import codex_calls, run_local_model
@@ -37,18 +37,21 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
     with temporary_mcp_workspace() as workspace:
         paths = WorkspacePaths(workspace.workspace)
         store = SQLiteStore(paths)
+        scope = _scope(
+            values={
+                "total_return": 0.25,
+                "max_drawdown": 0.1,
+                "total_trades": 1,
+                "win_rate": 1.0,
+            }
+        )
+        execution_context = scope.metadata["execution_context"]
+        assert isinstance(execution_context, dict)
+        execution_context["fees"] = 0.0
         _save(
             (paths, store, ReportService(workspace=paths, store=store)),
-            scopes={
-                "full": _scope(
-                    values={
-                        "total_return": 0.25,
-                        "max_drawdown": 0.1,
-                        "total_trades": 1,
-                        "win_rate": 1.0,
-                    }
-                )
-            },
+            benchmarks={"full": _benchmark(fees=0.0, values={"total_return": 0.1})},
+            scopes={"full": scope},
             trades=[
                 {
                     "entry_idx": 0,
@@ -66,7 +69,7 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
         async def user(turn: ModelTurn) -> str | None:
             turns.append(turn)
             if len(turns) == 1:
-                verify_report_delivery(
+                html = verify_report_delivery(
                     paths,
                     turn,
                     "run",
@@ -74,6 +77,19 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
                     expected_commentary=None,
                     required_analysis_refs={("run", "full")},
                 )
+                assert "BTC/USDT 買進持有" in html
+                delivered = next(
+                    Path(c.result["path"])
+                    for c in turn.calls
+                    if c.name == "generate_report"
+                    and c.result.get("success")
+                    and links_to_file(turn.text, Path(c.result["path"]))
+                )
+                baseline = _payload(delivered)["runs"][0]["scopes"][0]["benchmark"]
+                assert baseline["values"]["total_return"] == 0.1
+                assert baseline["coverage"]["complete"] is True
+                assert baseline["coverage"]["aligned_bars"] == 3
+                assert baseline["coverage"]["scope_bars"] == 3
                 return (
                     "請把這份研究目前的需求、討論摘要與這份報告存成研究筆記，"
                     "方便之後追加想法。不要重新回測。"
@@ -94,6 +110,7 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
         request = (
             "請幫我解讀已保存的 BTC 策略回測，結果代號是 run。"
             "我要拿給同事討論：這次有哪些觀察、哪些事情還不能確定，"
+            "也請和已保存的買進持有基準比較，交代基準資料覆蓋。"
             "下一步值得研究什麼？請給我能獨立閱讀的完整報告。不要重新回測。"
         )
 

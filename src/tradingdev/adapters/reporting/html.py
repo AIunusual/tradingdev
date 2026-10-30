@@ -232,7 +232,7 @@ def _enum(field: str, value: Any) -> Any:
     return enum_label(field, value) if isinstance(value, str) else value
 
 
-def _saved_metrics(scope: dict[str, Any]) -> str:
+def _saved_metrics(scope: dict[str, Any], *, title: str = "保存績效指標") -> str:
     unavailable = _object(scope["metadata"].get("unavailable"))
     rows = []
     for key, value in scope["values"].items():
@@ -259,7 +259,7 @@ def _saved_metrics(scope: dict[str, Any]) -> str:
         else "以下值與定義取自保存結果；比例顯示為百分比，原始值保留於報告資料。"
     )
     return (
-        f"<h3>保存績效指標</h3><p>{note}</p><div class='scroll'><table>"
+        f"<h3>{escape(title)}</h3><p>{note}</p><div class='scroll'><table>"
         "<thead><tr><th>指標</th><th>值</th><th>顯示單位</th>"
         "<th>不可用原因</th><th>保存定義</th></tr></thead><tbody>"
         + "".join(rows)
@@ -318,14 +318,264 @@ def _metrics(scope: dict[str, Any], run_index: int, scope_index: int) -> str:
     )
 
 
+_BENCHMARK_METRICS = (
+    "total_return",
+    "annual_return",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "max_drawdown",
+    "annual_volatility",
+    "calmar_ratio",
+    "total_pnl",
+)
+
+# Full-length series are already embedded once for the chart. Repeating them in
+# an inspectable <pre> would multiply the report size by the number of bars.
+_BENCHMARK_SERIES_KEYS = ("timestamps", "equity_curve", "returns")
+
+
+def _benchmark_evidence(benchmark: dict[str, Any]) -> dict[str, Any]:
+    """Return the scalar benchmark fields; the chart carries the series."""
+    return {
+        key: value
+        for key, value in benchmark.items()
+        if key not in _BENCHMARK_SERIES_KEYS
+    }
+
+
+def _number(value: Any) -> float | None:
+    """Return a finite scalar as a float; booleans and null are not numbers."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _benchmark_table(scope: dict[str, Any], benchmark: dict[str, Any]) -> str:
+    """Put the strategy's own saved values beside the baseline, same units."""
+    definitions = _object(scope.get("definitions"))
+    values = _object(scope.get("values"))
+    baseline = _object(benchmark.get("values"))
+    comparable_amounts = benchmark.get("capital_basis") == "run_init_cash"
+    comparable_period = _object(benchmark.get("coverage")).get("complete") is True
+    rows = []
+    for key in _BENCHMARK_METRICS:
+        if key not in values and key not in baseline:
+            continue
+        unit = str(_object(definitions.get(key)).get("unit", ""))
+        strategy = values.get(key)
+        reference = baseline.get(key)
+        strategy_number = _number(strategy)
+        reference_number = _number(reference)
+        difference = None
+        comparable_unit = comparable_period and (
+            unit in {"fraction", "ratio"} or (unit == "amount" and comparable_amounts)
+        )
+        if (
+            strategy_number is not None
+            and reference_number is not None
+            and comparable_unit
+        ):
+            difference = strategy_number - reference_number
+        # A normalized baseline is priced on one quote-currency unit, so its
+        # amounts are not the same quantity as the strategy's realized amounts.
+        show_reference = unit != "amount" or comparable_amounts
+        reference_cell = _format_metric(reference, unit) if show_reference else "—"
+        # "—" means the two columns are not comparable; a missing saved value
+        # stays visibly unknown instead of masquerading as a withheld number.
+        difference_cell = _format_metric(difference, unit) if comparable_unit else "—"
+        rows.append(
+            f"<tr><th>{escape(metric_label(key))}</th>"
+            f"<td class='metric'>{_format_metric(strategy, unit)}</td>"
+            f"<td class='metric'>{reference_cell}</td>"
+            f"<td class='metric'>{difference_cell}</td>"
+            f"<td>{escape(unit_label(unit))}</td></tr>"
+        )
+    if not rows:
+        return "<p>策略與基準都沒有可比較的報酬或風險指標。</p>"
+    note = (
+        "差異為策略減基準；只有基準涵蓋全部策略 K 線、"
+        "兩側都是有限數值且單位相同時才計算，"
+        "期間或單位不同時顯示「—」，缺少數值時顯示「未知／未記錄」。"
+        + (
+            ""
+            if comparable_amounts
+            else "此結果沒有初始本金，基準以 1 個報價貨幣單位計算，"
+            "因此金額類指標不與策略並列（策略金額仍為實際成交金額），"
+            "也不計算差異。"
+        )
+    )
+    return (
+        "<h3>策略與基準對照</h3>"
+        f"<p class='muted'>{note}</p><div class='scroll'><table>"
+        "<thead><tr><th>指標</th><th>策略</th><th>基準</th>"
+        "<th>差異（策略−基準）</th><th>顯示單位</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+    )
+
+
+def _benchmark_chart(
+    scope: dict[str, Any], benchmark: dict[str, Any], label: str
+) -> str:
+    """Overlay both equity paths as growth multiples of the same initial capital."""
+    observations = scope["observations"]
+    if observations is None:
+        return (
+            "<p class='muted'>此結果範圍是各折摘要，沒有單一權益曲線，"
+            "因此不繪製基準疊圖；請查看原始訓練／測試折。</p>"
+        )
+    init_cash = _number(observations.get("init_cash"))
+    stamps = observations.get("timestamps")
+    if init_cash is None or init_cash <= 0 or not stamps:
+        return (
+            "<p class='muted'>此結果沒有初始本金或時間戳，無法把策略與基準換算成"
+            "相同的成長倍數；對照表仍為保存值。</p>"
+        )
+    baseline = dict(
+        zip(
+            benchmark.get("timestamps") or [],
+            benchmark.get("equity_curve") or [],
+            strict=True,
+        )
+    )
+    capital = init_cash
+    strategy = [
+        None if value is None else value / capital
+        for value in observations["equity_curve"]
+    ]
+    reference = [
+        None if baseline.get(stamp) is None else baseline[stamp] / capital
+        for stamp in stamps
+    ]
+    return _chart(
+        strategy,
+        stamps,
+        "策略與基準的權益成長倍數",
+        "初始資本＝1",
+        "#2367cc",
+        overlay=(reference, label, "#d9822b"),
+    )
+
+
+def _benchmark(scope: dict[str, Any]) -> str:
+    """Show the fixed baseline, or exactly why this result has none."""
+    benchmark = scope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        if scope.get("kind") == "fold_summary":
+            return (
+                "<p class='notice'>此範圍是各折彙總，沒有單一權益曲線，"
+                "依設計不提供基準；請查看各折的訓練／測試結果。</p>"
+            )
+        return (
+            "<p class='notice'>此結果沒有保存 benchmark 證據。既有結果不會被重新計算，"
+            "也不會借用其他市場的指數。一般回測重新執行後會依固定定義計算基準；"
+            "參數搜尋的試驗範圍目前不產生基準。</p>"
+        )
+    definition = _object(benchmark.get("definition"))
+    status = str(benchmark.get("status"))
+    label = str(definition.get("label") or benchmark.get("asset_class") or "未定義基準")
+    if status == "undefined":
+        return (
+            "<p class='notice'>此資產類別（"
+            + escape(str(benchmark.get("asset_class") or "未分類"))
+            + "）沒有定義 benchmark，因此沒有基準數值；不以其他市場的指數代替，"
+            "也不把缺少基準視為零報酬。</p>"
+            + details_html("基準狀態（原始欄位）", benchmark)
+        )
+    header = f"<h3>基準：{escape(label)}</h3>" + _pairs_html(
+        {
+            "基準識別碼": definition.get("id"),
+            "基準標的": definition.get("symbol"),
+            "資產類別": benchmark.get("asset_class"),
+            "加權方式": "買進持有（單次全額買進，持有至期末）"
+            if definition.get("weighting") == "buy_and_hold"
+            else definition.get("weighting"),
+            "基準狀態": _enum("benchmark_status", status),
+            "請求資料源": benchmark.get("source"),
+            "有效市場設定（未適用時為空）": benchmark.get("market_type"),
+            "行情區間識別": benchmark.get("dataset_id"),
+            "沿用本次回測行情": "是（基準標的即交易標的）"
+            if benchmark.get("reused_run_frame")
+            else "否（另行載入基準標的行情）",
+            "本金基準": _enum("capital_basis", benchmark.get("capital_basis")),
+        }
+    )
+    rationale = definition.get("rationale")
+    if isinstance(rationale, str) and rationale:
+        header += f"<p>{escape(rationale)}</p>"
+    if benchmark.get("reused_run_frame"):
+        header += (
+            "<p class='notice'>此基準沿用策略的同一份行情；"
+            "資料源與市場欄位描述請求設定，"
+            "不代表已獨立核驗既有快取的實際來源。來源不明的行情亦會影響策略本身。</p>"
+        )
+    if status != "available":
+        return (
+            header
+            + "<p class='notice'>基準無法建立："
+            + escape(reason_label(str(benchmark.get("reason"))))
+            + "。"
+            + (escape(str(benchmark["detail"])) if benchmark.get("detail") else "")
+            + " 沒有基準數值，也不以零報酬代替。</p>"
+            + details_html("基準狀態（原始欄位）", benchmark)
+        )
+    coverage = _object(benchmark.get("coverage"))
+    costs = (
+        "<p>基準套用本次回測的手續費 "
+        + _format_metric(benchmark.get("fees"), "fraction")
+        + " 與滑價 "
+        + _format_metric(benchmark.get("slippage"), "fraction")
+        + "，在首根 K 線收盤一次買進；期末不強制平倉，以最後一根收盤估值，"
+        "因此不計出場成本，與策略未平倉部位的估值方式一致。</p>"
+    )
+    missing = coverage.get("missing_bars")
+    coverage_note = (
+        f"<p class='notice'>基準行情缺少 {missing} 根回測 K 線（對齊 "
+        f"{coverage.get('aligned_bars')}／{coverage.get('scope_bars')} 根），"
+        "比較期間不完全相同，保留各自數值但不計算差異或超額報酬。</p>"
+        if isinstance(missing, int) and missing > 0
+        else ""
+    )
+    return (
+        header
+        + costs
+        + coverage_note
+        + _benchmark_table(scope, benchmark)
+        + _benchmark_chart(scope, benchmark, label)
+        + "<details><summary>基準全部保存指標、定義與不可用原因</summary>"
+        + _saved_metrics(
+            {
+                "values": _object(benchmark.get("values")),
+                "definitions": _object(scope.get("definitions")),
+                "metadata": _object(benchmark.get("metadata")),
+                "kind": "backtest",
+            },
+            title="基準全部保存指標",
+        )
+        + "</details>"
+        + details_html(
+            "基準來源、覆蓋與成本（原始欄位；權益序列見上圖）",
+            _benchmark_evidence(benchmark),
+        )
+    )
+
+
 def _chart(
     values: list[float | None],
     timestamps: list[str] | None,
     title: str,
     unit: str,
     color: str,
+    *,
+    overlay: tuple[list[float | None], str, str] | None = None,
 ) -> str:
-    valid = [float(value) for value in values if value is not None]
+    """Draw saved values, optionally beside a second index-aligned series."""
+    series: list[tuple[list[float | None], str]] = [(values, color)]
+    if overlay is not None:
+        series.append((overlay[0], overlay[2]))
+    valid = [
+        float(value) for group, _ in series for value in group if value is not None
+    ]
     if not valid:
         return f"<p>{escape(title)}：沒有可繪製的有限數值。</p>"
     low, high = min(valid), max(valid)
@@ -342,24 +592,38 @@ def _chart(
             f'y2="{y}" stroke="#e3eaf2"/><text x="{left - 9}" '
             f'y="{y + 4}" text-anchor="end">{tick:z,.2f}</text>'
         )
-    segments: list[str] = []
-    current: list[str] = []
-    for index, value in enumerate(values):
-        if value is None:
-            if current:
-                segments.append(" ".join(current))
-                current = []
-            continue
-        x = left + index / max(len(values) - 1, 1) * plot_width
-        y = top + (high - value) / (high - low) * plot_height
-        current.append(f"{x:.3f},{y:.3f}")
-    if current:
-        segments.append(" ".join(current))
-    paths = "".join(
-        f'<polyline points="{segment}" fill="none" '
-        f'stroke="{color}" stroke-width="1.6"/>'
-        for segment in segments
-    )
+    paths = ""
+    for group, stroke in series:
+        segments: list[str] = []
+        current: list[str] = []
+        for index, value in enumerate(group):
+            if value is None:
+                if current:
+                    segments.append(" ".join(current))
+                    current = []
+                continue
+            # Both series are positioned by bar index, so a shorter baseline
+            # never stretches across bars it did not observe.
+            x = left + index / max(len(values) - 1, 1) * plot_width
+            y = top + (high - value) / (high - low) * plot_height
+            current.append(f"{x:.3f},{y:.3f}")
+        if current:
+            segments.append(" ".join(current))
+        paths += "".join(
+            f'<polyline points="{segment}" fill="none" '
+            f'stroke="{stroke}" stroke-width="1.6"/>'
+            for segment in segments
+        )
+    legend = ""
+    if overlay is not None:
+        legend = (
+            "<p class='muted'>"
+            + "".join(
+                f"<span style='color:{escape(stroke)}'>■</span> {escape(name)}　"
+                for name, stroke in (("策略權益", color), (overlay[1], overlay[2]))
+            )
+            + "</p>"
+        )
     first = (
         _utc(timestamps[0]).strftime("%Y-%m-%d %H:%M UTC")
         if timestamps
@@ -380,6 +644,7 @@ def _chart(
         + f'<text x="{width - right}" y="{height - 12}" text-anchor="end">'
         + escape(last)
         + "</text></svg>"
+        + legend
     )
 
 
@@ -742,6 +1007,8 @@ def _scoped_section(payload: dict[str, Any], section: str) -> str:
                 )
             elif section == "metrics":
                 result += _metrics(scope, ri, si)
+            elif section == "benchmark":
+                result += _benchmark(scope)
             elif scope["observations"] is None:
                 result += (
                     "<p>折疊摘要沒有單一交易帳本或權益曲線；"

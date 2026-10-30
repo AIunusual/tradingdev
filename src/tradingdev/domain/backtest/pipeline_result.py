@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tradingdev.domain.backtest.result import BacktestResult
+    from tradingdev.domain.benchmark import BenchmarkEvidence
     from tradingdev.domain.execution import ExecutionManifest
     from tradingdev.domain.validation.walk_forward import (
         WalkForwardResult,
@@ -32,6 +33,9 @@ class PipelineResult:
         config_snapshot: Copy of the resolved execution config so the
             dashboard can access strategy name, timeframe, etc.
         execution_manifest: Verified specification used for this execution.
+        benchmark: Baseline closes for the requested period, or explicit
+            evidence that none was defined or usable. Scopes derive their own
+            aligned series from it.
     """
 
     mode: str  # "simple" | "walk_forward"
@@ -39,3 +43,4 @@ class PipelineResult:
     fold_results: list[WalkForwardResult] = field(default_factory=list)
     config_snapshot: dict[str, Any] = field(default_factory=dict)
     execution_manifest: ExecutionManifest | None = None
+    benchmark: BenchmarkEvidence | None = None

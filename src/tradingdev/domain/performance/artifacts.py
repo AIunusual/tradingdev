@@ -14,7 +14,14 @@ from tradingdev.domain.backtest.execution_records import (  # noqa: TC001
     AccountState,
     ExecutionRecord,
 )
+from tradingdev.domain.backtest.metrics import calculate_passive_metrics
+from tradingdev.domain.benchmark import (
+    BenchmarkEvidence,
+    aligned_closes,
+    buy_and_hold,
+)
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
+from tradingdev.domain.research_policy import DEFAULT_FEES, DEFAULT_SLIPPAGE
 from tradingdev.shared.utils.json_values import (
     normalize_json_object,
     normalize_json_value,
@@ -60,6 +67,85 @@ class MetricDefinitionSnapshot(ArtifactModel):
     requires_annualization: bool
 
 
+class BenchmarkDefinitionSnapshot(ArtifactModel):
+    """The fixed baseline identity recorded by the result producer."""
+
+    id: str
+    asset_class: str
+    symbol: str
+    label: str
+    weighting: str
+    rationale: str
+
+
+class BenchmarkCoverage(ArtifactModel):
+    """How much of one result scope the baseline actually observed."""
+
+    scope_bars: int = Field(ge=0)
+    aligned_bars: int = Field(ge=0)
+    missing_bars: int = Field(ge=0)
+    complete: bool
+    start: str | None = None
+    end: str | None = None
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> Self:
+        if self.aligned_bars + self.missing_bars != self.scope_bars:
+            raise ValueError("Benchmark coverage counts must add up to the scope bars")
+        if self.complete != (self.missing_bars == 0):
+            raise ValueError("Benchmark coverage flag must match its missing bars")
+        return self
+
+
+class BenchmarkScope(ArtifactModel):
+    """One result scope's baseline values, series and acquisition evidence.
+
+    A scope without a defined baseline or without usable observations keeps an
+    explicit status and reason. It never becomes an empty equity curve or a
+    zero return, and the strategy's own values are unaffected.
+    """
+
+    status: Literal["available", "unavailable", "undefined"]
+    asset_class: str | None = None
+    definition: BenchmarkDefinitionSnapshot | None = None
+    reason: str | None = None
+    detail: str | None = None
+    source: str | None = None
+    market_type: str | None = None
+    dataset_id: str | None = None
+    reused_run_frame: bool | None = None
+    init_cash: float | None = None
+    capital_basis: Literal["run_init_cash", "normalized_unit"] | None = None
+    fees: float | None = None
+    slippage: float | None = None
+    coverage: BenchmarkCoverage | None = None
+    timestamps: list[str] | None = None
+    equity_curve: list[float | None] | None = None
+    returns: list[float | None] | None = None
+    values: dict[str, MetricScalar] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def status_matches_evidence(self) -> Self:
+        """An available baseline needs a series; an absent one must not fake it."""
+        if self.status == "available":
+            if self.definition is None or self.timestamps is None:
+                raise ValueError("Available benchmark requires a definition and series")
+            if self.equity_curve is None or len(self.equity_curve) != len(
+                self.timestamps
+            ):
+                raise ValueError("Benchmark equity must align with its timestamps")
+            if self.returns is not None and len(self.returns) != len(self.timestamps):
+                raise ValueError("Benchmark returns must align with its timestamps")
+            if self.reason is not None or self.capital_basis is None:
+                raise ValueError("Available benchmark cannot carry an absent reason")
+        elif self.values or self.equity_curve is not None:
+            raise ValueError("An absent benchmark cannot record values or a series")
+        if self.status != "available" and not self.reason:
+            raise ValueError("An absent benchmark requires an explicit reason")
+        return self
+
+
 class PerformanceScope(ArtifactModel):
     """Complete values and provenance for one split or fold summary."""
 
@@ -96,6 +182,7 @@ class PerformanceBundle(ArtifactModel):
     scopes: dict[str, PerformanceScope]
     definitions: dict[str, MetricDefinitionSnapshot]
     selected_train_scope: str | None = None
+    benchmarks: dict[str, BenchmarkScope] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def consistent_scopes(self) -> Self:
@@ -113,6 +200,20 @@ class PerformanceBundle(ArtifactModel):
             if missing := scope.values.keys() - self.definitions.keys():
                 raise ValueError(
                     f"Missing metric definitions: {', '.join(sorted(missing))}"
+                )
+        scalar_scopes = {
+            key for key, scope in self.scopes.items() if scope.kind == "backtest"
+        }
+        if unknown := self.benchmarks.keys() - scalar_scopes:
+            raise ValueError(
+                "Benchmarks must reference scalar result scopes: "
+                + ", ".join(sorted(unknown))
+            )
+        for benchmark in self.benchmarks.values():
+            if missing := benchmark.values.keys() - self.definitions.keys():
+                unknown_metrics = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"Missing benchmark metric definitions: {unknown_metrics}"
                 )
         return self
 
@@ -312,9 +413,14 @@ def build_artifacts(
     observations: dict[str, ScopeObservations],
     *,
     selected_train_scope: str | None = None,
+    benchmarks: dict[str, BenchmarkScope] | None = None,
 ) -> PerformanceArtifacts:
     """Freeze the producer's definitions and complete scope/observation mapping."""
+    frozen_benchmarks = {} if benchmarks is None else benchmarks
     keys = {key for scope in scopes.values() for key in scope.values}
+    keys |= {
+        key for benchmark in frozen_benchmarks.values() for key in benchmark.values
+    }
     definitions = {
         key: MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key]))
         for key in sorted(keys)
@@ -328,6 +434,7 @@ def build_artifacts(
             scopes=scopes,
             definitions=definitions,
             selected_train_scope=selected_train_scope,
+            benchmarks=frozen_benchmarks,
         ),
         observations=ObservationsBundle(
             run_id=run_id, manifest_hash=manifest_hash, scopes=observations
@@ -412,6 +519,165 @@ def _pipeline_parameters(pipeline: PipelineResult) -> dict[str, Any]:
     if not isinstance(parameters, dict):
         raise ValueError("Recorded strategy parameters must be an object")
     return normalize_json_object(parameters)
+
+
+def _benchmark_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Read the cost and annualization settings the strategy itself executed with."""
+    raw = config.get("backtest")
+    values = raw if isinstance(raw, dict) else {}
+    return {
+        "fees": float(values.get("fees", DEFAULT_FEES)),
+        "slippage": float(values.get("slippage", DEFAULT_SLIPPAGE)),
+        "periods_per_year": values.get("periods_per_year"),
+        "risk_free_rate": float(values.get("risk_free_rate", 0.0)),
+        "required_return": float(values.get("required_return", 0.0)),
+        "frequency": str(values.get("timeframe", "1h")),
+    }
+
+
+def _benchmark_identity(evidence: BenchmarkEvidence) -> dict[str, Any]:
+    """Fields shared by every baseline status, carrying no values or series."""
+    definition = evidence.definition
+    return {
+        "asset_class": evidence.asset_class,
+        "definition": None
+        if definition is None
+        else {
+            "id": definition.id,
+            "asset_class": definition.asset_class,
+            "symbol": definition.symbol,
+            "label": definition.label,
+            "weighting": definition.weighting,
+            "rationale": definition.rationale,
+        },
+        "source": evidence.source,
+        "market_type": evidence.market_type,
+        "dataset_id": evidence.dataset_id,
+        "reused_run_frame": evidence.reused_run_frame,
+    }
+
+
+def _absent_benchmark(
+    evidence: BenchmarkEvidence,
+    status: Literal["unavailable", "undefined"],
+    reason: str,
+    *,
+    detail: str | None = None,
+    coverage: dict[str, Any] | None = None,
+) -> BenchmarkScope:
+    """Record why a scope has no baseline instead of inventing a flat series."""
+    return BenchmarkScope.model_validate(
+        {
+            "status": status,
+            **_benchmark_identity(evidence),
+            "reason": reason,
+            "detail": evidence.detail if detail is None else detail,
+            "coverage": coverage,
+        }
+    )
+
+
+def _benchmark_scope(
+    evidence: BenchmarkEvidence,
+    *,
+    timestamps: list[str] | None,
+    init_cash: float | None,
+    settings: dict[str, Any],
+) -> BenchmarkScope:
+    """Align one scope's bars to the baseline and price it with the run's costs."""
+    if evidence.status == "undefined":
+        return _absent_benchmark(
+            evidence, "undefined", evidence.reason or "undefined_asset_class"
+        )
+    if evidence.status == "unavailable":
+        return _absent_benchmark(
+            evidence, "unavailable", evidence.reason or "benchmark_data_unavailable"
+        )
+    if timestamps is None:
+        return _absent_benchmark(evidence, "unavailable", "missing_timestamps")
+    index = pd.DatetimeIndex(pd.to_datetime(timestamps, utc=True))
+    aligned_index, closes, missing = aligned_closes(evidence, index)
+    coverage = {
+        "scope_bars": len(index),
+        "aligned_bars": len(aligned_index),
+        "missing_bars": missing,
+        "complete": missing == 0,
+        "start": aligned_index[0].isoformat() if len(aligned_index) else None,
+        "end": aligned_index[-1].isoformat() if len(aligned_index) else None,
+    }
+    if not len(closes):
+        return _absent_benchmark(
+            evidence,
+            "unavailable",
+            "no_shared_observations",
+            coverage=coverage,
+        )
+    capital = 1.0 if init_cash is None else init_cash
+    basis = "normalized_unit" if init_cash is None else "run_init_cash"
+    try:
+        hold = buy_and_hold(
+            closes, capital, fees=settings["fees"], slippage=settings["slippage"]
+        )
+    except ValueError as exc:
+        return _absent_benchmark(
+            evidence,
+            "unavailable",
+            "invalid_benchmark_cost_settings",
+            detail=str(exc),
+            coverage=coverage,
+        )
+    try:
+        analysis = calculate_passive_metrics(
+            hold.equity,
+            init_cash=capital,
+            total_fees=hold.entry_fee,
+            total_volume=hold.entry_notional,
+            timestamps=aligned_index,
+            periods_per_year=settings["periods_per_year"],
+            risk_free_rate=settings["risk_free_rate"],
+            required_return=settings["required_return"],
+            frequency=settings["frequency"],
+        )
+    except ValueError as exc:
+        # Supplementary evidence must never abort publishing the run itself.
+        return _absent_benchmark(
+            evidence,
+            "unavailable",
+            "benchmark_metrics_failed",
+            detail=str(exc),
+            coverage=coverage,
+        )
+    metadata = normalize_json_object(analysis.metadata)
+    metadata["benchmark"] = normalize_json_object(
+        {
+            "weighting": "buy_and_hold",
+            "capital_basis": basis,
+            "entry_price": hold.entry_price,
+            "quantity": hold.quantity,
+            "entry_fee": hold.entry_fee,
+            "entry_notional": hold.entry_notional,
+            "exit": "not_liquidated_marked_at_last_close",
+            "bar_alignment": "shared_timestamps_only",
+        }
+    )
+    return BenchmarkScope.model_validate(
+        {
+            "status": "available",
+            **_benchmark_identity(evidence),
+            "init_cash": capital,
+            "capital_basis": basis,
+            "fees": settings["fees"],
+            "slippage": settings["slippage"],
+            "coverage": coverage,
+            "timestamps": [stamp.isoformat() for stamp in aligned_index],
+            "equity_curve": normalize_json_value(hold.equity.tolist()),
+            "returns": normalize_json_value(analysis.returns.tolist())
+            if analysis.returns is not None
+            else None,
+            "values": normalize_json_object(analysis.metrics),
+            "metadata": metadata,
+        }
+    )
 
 
 def bundles_from_pipeline(
@@ -502,4 +768,25 @@ def bundles_from_pipeline(
         default_scope = "test_summary"
     else:
         raise ValueError(f"Unsupported pipeline mode: {pipeline.mode}")
-    return build_artifacts(run_id, manifest_hash, default_scope, scopes, observations)
+    benchmarks: dict[str, BenchmarkScope] = {}
+    evidence = pipeline.benchmark
+    if evidence is not None:
+        settings = _benchmark_settings(pipeline.config_snapshot)
+        for scope_id, scope in scopes.items():
+            if scope.kind != "backtest":
+                continue
+            observation = observations[scope_id]
+            benchmarks[scope_id] = _benchmark_scope(
+                evidence,
+                timestamps=observation.timestamps,
+                init_cash=observation.init_cash,
+                settings=settings,
+            )
+    return build_artifacts(
+        run_id,
+        manifest_hash,
+        default_scope,
+        scopes,
+        observations,
+        benchmarks=benchmarks,
+    )

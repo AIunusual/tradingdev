@@ -53,6 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
+| `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
 | `adapters/cli/`、`adapters/dashboard/` | 終端機與視覺化入口 |
@@ -263,7 +264,7 @@ Leaderboard 保存候選參數、訊號指紋與評估條件，依 domain 指標
 於獨立 ML 報告，或附加到 run／固定比較報告；MCP 與 report CLI 共用此路徑。
 HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源關聯。排行榜後續替換不改變
 已發布報告；未選取 ML 時不加入 ML 區塊。新產生報告採用包含研究解讀與診斷的
-模板 23，報告身分會隨內容與模板更新；已保存報告不改寫。
+模板 24，報告身分會隨內容與模板更新；已保存報告不改寫。
 這些報告另行登錄為 SQLite artifacts；選取、呈現與保存契約見[報告文件](docs/reports.md)。
 
 ## 績效計算與對話摘要
@@ -279,6 +280,7 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/backtest/metrics.py` | 對齊引擎觀察值、整合統計套件、記錄不可用原因 |
 | `domain/performance/catalog.py`、`sampling.py` | 指標定義、單位、最佳化方向與取樣適用性 |
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
+| `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
