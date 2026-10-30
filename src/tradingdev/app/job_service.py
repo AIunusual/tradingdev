@@ -324,8 +324,6 @@ class JobService:
         # Preserve that state while still reporting the cleanup diagnostic.
         job = self._job_store.get_job(job_id) or job
         status = str(job["status"])
-        created_at = datetime.fromisoformat(str(job["created_at"]))
-        elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
         response: dict[str, Any] = {
             "status": status,
             "job_type": job.get("job_type", "backtest"),
@@ -336,11 +334,11 @@ class JobService:
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
             "end_date": job.get("end_date"),
-            "elapsed_seconds": elapsed,
+            **_elapsed_fields(job, datetime.now(UTC)),
+            "ended_at": job.get("ended_at"),
         }
 
         if job.get("job_type") == "comparison":
-            response["ended_at"] = job.get("ended_at")
             response["data_downloaded"] = job.get("data_downloaded", False)
             if job.get("error"):
                 response["error"] = job["error"]
@@ -359,7 +357,6 @@ class JobService:
             return response
 
         if status == "done":
-            response["ended_at"] = job.get("ended_at")
             run_response = self._runs.get_run(job_id)
             run = run_response.get("run")
             if run is not None:
@@ -455,7 +452,7 @@ class JobService:
             and (strategy_name is None or job.get("strategy_name") == strategy_name)
         ]
         rows.sort(key=lambda row: str(row["job_id"]))
-        rows.sort(key=lambda row: str(row["created_at"]), reverse=True)
+        rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
         now = datetime.now(UTC)
         return paginate(
             rows,
@@ -468,7 +465,6 @@ class JobService:
 
     @staticmethod
     def _summarize_job(job: dict[str, Any], now: datetime) -> dict[str, Any]:
-        created_at = datetime.fromisoformat(str(job["created_at"]))
         summary: dict[str, Any] = {
             "job_id": job["job_id"],
             "job_type": job.get("job_type", "backtest"),
@@ -480,7 +476,7 @@ class JobService:
             "timeframe": job.get("timeframe"),
             "start_date": job.get("start_date"),
             "end_date": job.get("end_date"),
-            "elapsed_seconds": round((now - created_at).total_seconds(), 1),
+            **_elapsed_fields(job, now),
             "data_downloaded": job.get("data_downloaded", False),
         }
         if job.get("job_type") == "optimization":
@@ -739,3 +735,25 @@ def _saved_metric_summary(detail: dict[str, Any]) -> dict[str, Any]:
         if detail["definitions"][key]["summary"]
         and detail["mode"] in detail["definitions"][key]["modes"]
     }
+
+
+def _elapsed_fields(job: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Duration from creation to the saved terminal time, or current active age."""
+    try:
+        created = datetime.fromisoformat(str(job["created_at"]))
+        end = (
+            datetime.fromisoformat(str(job.get("ended_at")))
+            if job["status"] in TERMINAL_JOB_STATUSES
+            else now
+        )
+        if created.utcoffset() is None or end.utcoffset() is None or end < created:
+            raise ValueError("Invalid lifecycle timestamps")
+        return {
+            "elapsed_seconds": round((end - created).total_seconds(), 1),
+            "elapsed_unavailable_reason": None,
+        }
+    except KeyError, TypeError, ValueError, OverflowError:
+        return {
+            "elapsed_seconds": None,
+            "elapsed_unavailable_reason": "missing_or_invalid_timestamps",
+        }

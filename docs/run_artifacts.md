@@ -173,6 +173,11 @@ fold checks do not reconstruct the original dataset or prove its split geometry.
   attached without restoring an earlier lifecycle snapshot. Polling and
   cancellation condition their writes on an active state and report the state
   actually saved; completion during cancellation is not reported as cancellation.
+  Status and list responses compute `elapsed_seconds` from creation to the saved
+  terminal `ended_at`; only active jobs use the query time. Missing, invalid,
+  timezone-less or reversed timestamps return `elapsed_seconds: null` with
+  `elapsed_unavailable_reason: missing_or_invalid_timestamps`, without inventing
+  a duration or rewriting legacy records.
 - `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
