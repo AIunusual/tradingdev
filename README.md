@@ -32,6 +32,18 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
 原生 Windows 目前不支援背景回測與最佳化。
 
+Node.js 不是啟動 MCP 助手或執行離線 pytest 的先決條件。若要**建置或檢查簡報**
+（`scripts/presentations.sh`、`scripts/check-presentations.sh`），另需 Node.js 18
+以上與 npm，並確認 `node` 在 `PATH` 上：
+
+```bash
+command -v node
+```
+
+`scripts/presentations.sh setup` 只安裝鎖定的 npm 工具鏈（Marp CLI），不會安裝
+Node.js 或 npm 本身；執行 `setup` 前請先裝好 Node.js 與 npm。簡報相關操作詳見
+[開發指南的簡報章節](docs/development.md#簡報的編輯與輸出)。
+
 首次下載與安裝：
 
 ```bash
@@ -588,7 +600,52 @@ uv run --locked python -m tradingdev.adapters.cli.research_notes \
 | 回測完成，Dashboard 卻找不到結果 | 確認 `TRADINGDEV_WORKSPACE` 與 MCP 的 `--workspace` 相同。Dashboard 需要該次回測保存的圖表資料；最佳化結果請改在對話中查詢或生成 HTML 報告。 |
 | 舊策略顯示 `revision_required` | 可請助手讀取舊內容、另建新的策略身分並重新驗證；舊識別碼與檔案保留，不會直接覆寫或自動遷移。 |
 | 升級後舊策略或圖表無法使用 | 請助手依[策略契約](docs/strategy_contract.md)檢查舊設定，另存並驗證新版策略。舊結果可讀範圍取決於當時保存的資料，完整新版圖表可能需要重新回測。 |
-| macOS 出現 `libomp.dylib` 載入錯誤 | XGBoost／LightGBM 需要 OpenMP runtime；使用 Homebrew 的 macOS 可執行 `brew install libomp`，再重新啟動客戶端或命令。 |
+| macOS 出現 `libomp.dylib` 載入錯誤 | XGBoost／LightGBM 需要 OpenMP runtime。有 Homebrew 的 macOS 可執行 `brew install libomp`；沒有 Homebrew（例如只有 Anaconda）請見下方「沒有 Homebrew 時設定 OpenMP」。修改後請重新啟動客戶端或命令。 |
+
+### 沒有 Homebrew 時設定 OpenMP（macOS）
+
+以下是貢獻者在 Apple Silicon Mac 上使用 Anaconda 的處理方式，尚未驗證為
+所有 conda 安裝皆適用的流程。僅在錯誤訊息列出的搜尋路徑包含
+`/opt/homebrew/opt/libomp/lib/libomp.dylib`，且本機已有與 Python 相同架構的
+`/opt/anaconda3/lib/libomp.dylib` 時使用。其他 conda 安裝位置須先確認實際路徑；
+來源不存在時不要建立連結。
+
+先檢查來源與架構，確認輸出包含 Python 所用的架構（Apple Silicon 為 `arm64`）：
+
+```bash
+uv run --locked python -c "import platform; print(platform.machine())"
+test -f /opt/anaconda3/lib/libomp.dylib
+file /opt/anaconda3/lib/libomp.dylib
+```
+
+確認來源有效、目的地尚未存在，再建立連結；`ln -s` 不會覆寫既有檔案：
+
+```bash
+sudo mkdir -p /opt/homebrew/opt/libomp/lib
+sudo ln -s /opt/anaconda3/lib/libomp.dylib /opt/homebrew/opt/libomp/lib/libomp.dylib
+```
+
+驗證（直接執行 Python 與透過倉庫腳本都要成功）：
+
+```bash
+uv run --locked python -c "import xgboost, lightgbm; print('ok')"
+/bin/bash -c 'uv run --locked python -c "import xgboost, lightgbm; print(\"ok\")"'
+```
+
+注意事項：
+
+- 這是機器本地設定，不由 `uv sync` 管理。移除或升級 conda 後，須重新檢查
+  連結是否仍可讀、架構相符，以及上方兩種啟動方式是否成功。
+- 若日後改用 Homebrew，先確認目的地確實是自己建立、指向上述來源的 symlink，
+  再移除該連結並執行 `brew install libomp`；不要刪除其他來源管理的檔案。
+- 貢獻者曾以 `DYLD_FALLBACK_LIBRARY_PATH` 讓直接啟動的 Python 成功，
+  但經過 `/bin/bash` 啟動的檢查仍失敗。macOS SIP 會在啟動受保護程序時清除
+  動態連結器環境變數，因此不能假定該設定會傳到 shell 的子程序；見
+  [Apple 的執行期保護說明](https://developer.apple.com/library/archive/documentation/Security/Conceptual/System_Integrity_Protection_Guide/RuntimeProtections/RuntimeProtections.html)。
+  成功載入仍取決於本機套件的搜尋路徑與函式庫，須以上述命令確認。
+
+開發者還須依[開發指南](docs/development.md#環境與常用命令)執行
+`bash scripts/check-fast.sh`，確認 repository 的完整 shell 檢查入口也能使用。
 
 技術指標套件 TA-Lib 隨安裝命令一併安裝。若平台有相容 wheel，不需另外安裝 C 函式庫；
 只有必須從原始碼編譯時，才需依[TA-Lib 安裝說明](https://github.com/TA-Lib/ta-lib-python#installation-)
