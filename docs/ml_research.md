@@ -372,7 +372,11 @@ window per retrain — the training bounds, the bar that triggered it, and the
 interval that model is assigned to score — built from the same geometry the
 engine executes, so it previews the run rather than describing a second one. The
 intervals are planned, not observed: bars whose features are missing are not
-scored, and the trace reports the actual count per roll.
+scored, and the trace reports the actual count per roll. Training bounds and
+`combined_idx` use the concatenated history-plus-scored frame; `retrain_bar`
+and `test_start`/`test_end` use positions within the scored frame. Both window
+intervals are half-open. The schedule and saved trace use the same coordinates;
+`retrain_bar` identifies an attempt, while `trained` records whether fitting ran.
 
 A run that enables the switch also records what actually happened. Each roll
 reports its window, how many labelled rows it offered, whether a model was fitted

@@ -56,13 +56,13 @@ frame separately, because the training replay and the evaluation frame call
 | `predict_lookback` | Bars of context given to each scored bar. |
 | `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
 | `initial_model_available` | Whether the complete initial training frame precedes scoring; otherwise scoring waits for a successful refit. |
-| `bars` | Bars to score after rows overlapping the training history are removed. |
+| `bars` | All bars in the scored frame, including unscored bars; overlap is removed from training history, not this frame. |
 | `bars_scored` | Bars it actually scored; missing features or no available model leave the remainder. |
 | `unscored_bars` | Positions that could not be scored; empty when every bar was. |
 | `rolls` | One entry per roll, in order. |
 
 Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
-frame where the model was fitted; `train_start` and `train_end`, half-open
+frame of the scheduled retrain attempt (fitting can be skipped); `train_start` and `train_end`, half-open
 positions in the concatenated history-plus-scored frame, ending at the bar being
 scored; `test_start` and `test_end`, the scored-frame interval that model was
 assigned to score; `n_train_rows`, the labelled rows the window offered — zero

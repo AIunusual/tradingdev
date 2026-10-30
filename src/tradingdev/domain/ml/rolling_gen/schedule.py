@@ -29,16 +29,17 @@ from tradingdev.domain.ml.rolling_gen.scheme import (
 class RollWindow:
     """One retrain and the bars that model scores.
 
-    All bounds are half-open positions in the concatenated frame (history
-    followed by the scored frame).  ``train_end`` is the bar being scored at the
-    moment of the retrain, so the training window excludes it by construction.
+    Training bounds and ``combined_idx`` use the concatenated history/scoring
+    frame. ``retrain_bar`` and test bounds use the scored frame's positions.
+    Both intervals are half-open. ``train_end`` is the bar at the scheduled
+    retrain attempt, so the training window excludes it by construction.
     """
 
     index: int
     """Roll number, counted from zero."""
 
     retrain_bar: int
-    """Position in the scored frame where this roll's model is fitted."""
+    """Scheduled retrain attempt in the scored frame; fitting can be skipped."""
 
     combined_idx: int
     """The same bar, as a position in the concatenated frame."""
@@ -50,12 +51,12 @@ class RollWindow:
 
     @property
     def train_bars(self) -> int:
-        """Labelled-window length before feature warm-up is removed."""
+        """Raw window length before feature warm-up and label maturity checks."""
         return self.train_end - self.train_start
 
     @property
     def test_bars(self) -> int:
-        """Bars this roll's model scores."""
+        """Planned bars for this roll, including any that cannot be scored."""
         return self.test_end - self.test_start
 
 
