@@ -13,21 +13,13 @@ class TestLightGBMDirectionModel:
         fe = FeatureEngineer(lookback=6)
         return fe.transform(df, include_target=True)
 
-    def test_train_and_predict_shape(self, large_ohlcv_df: pd.DataFrame) -> None:
-        feat = self._make_feature_df(large_ohlcv_df)
-        config = LightGBMModelConfig(n_estimators=10, max_depth=3)
-        model = LightGBMDirectionModel(config=config)
-        model.train(feat)
-        preds = model.predict(feat)
-        assert len(preds) == len(feat)
-
     def test_predict_before_train_raises(self, large_ohlcv_df: pd.DataFrame) -> None:
         feat = self._make_feature_df(large_ohlcv_df)
         model = LightGBMDirectionModel(config=LightGBMModelConfig())
         with pytest.raises(RuntimeError, match="not been trained"):
             model.predict(feat)
 
-    def test_predict_proba_columns(self, large_ohlcv_df: pd.DataFrame) -> None:
+    def test_prediction_contract(self, large_ohlcv_df: pd.DataFrame) -> None:
         feat = self._make_feature_df(large_ohlcv_df)
         feat.index = pd.Index(range(100, 100 + len(feat)), name="sample")
         config = LightGBMModelConfig(n_estimators=10, max_depth=3)
@@ -44,18 +36,23 @@ class TestLightGBMDirectionModel:
         row_sums = proba.sum(axis=1)
         assert (abs(row_sums - 1.0) < 0.01).all()
 
-    def test_early_stopping_with_eval(self, large_ohlcv_df: pd.DataFrame) -> None:
-        feat = self._make_feature_df(large_ohlcv_df)
-        split = int(len(feat) * 0.8)
-        train_feat = feat.iloc[:split]
-        val_feat = feat.iloc[split:]
+    def test_early_stopping_with_eval(self) -> None:
+        train_feat = pd.DataFrame({"feature": [-1.0, 1.0] * 50, "target": [-1, 1] * 50})
+        # Each tree can improve training, but worsens the inverted validation
+        # labels. Validation must select the first round and stop after patience.
+        val_feat = train_feat.assign(target=-train_feat["target"])
 
         config = LightGBMModelConfig(
             n_estimators=50,
             max_depth=3,
             early_stopping_rounds=5,
+            n_jobs=1,
         )
         model = LightGBMDirectionModel(config=config)
         model.train(train_feat, eval_df=val_feat)
-        preds = model.predict(val_feat)
-        assert len(preds) == len(val_feat)
+        classifier = model._model
+        assert classifier is not None
+        assert classifier.best_iteration_ == 1
+        assert classifier.n_estimators_ == classifier.best_iteration_
+        history = classifier.evals_result_["valid_0"]["binary_logloss"]
+        assert len(history) == 1 + config.early_stopping_rounds

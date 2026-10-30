@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
+import pandas as pd
 import pytest
 
 from tradingdev.domain.backtest.signal_engine import (
@@ -19,8 +20,6 @@ from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pandas as pd
-
     from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
 
 
@@ -28,10 +27,6 @@ class TestKDStrategy:
     def setup_method(self) -> None:
         self.config = KDStrategyConfig()
         self.strategy = KDStrategy(config=self.config)
-
-    def test_signal_column_exists(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
-        result = self.strategy.generate_signals(sample_ohlcv_with_kd)
-        assert "signal" in result.columns
 
     def test_signal_values_valid(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
         result = self.strategy.generate_signals(sample_ohlcv_with_kd)
@@ -51,11 +46,49 @@ class TestKDStrategy:
         assert params["overbought"] == 80.0
         assert params["oversold"] == 20.0
 
-    def test_custom_config(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
-        config = KDStrategyConfig(overbought=90.0, oversold=10.0)
+    @pytest.mark.parametrize(
+        ("overbought", "oversold", "expected"),
+        [
+            (80.0, 20.0, [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1]),
+            (90.0, 10.0, [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, -1]),
+        ],
+        ids=["default-thresholds", "custom-thresholds"],
+    )
+    def test_custom_thresholds_change_signals(
+        self, overbought: float, oversold: float, expected: list[int]
+    ) -> None:
+        # With this price range and unsmoothed one-bar K, K equals close and
+        # D is the mean of two closes. Crossovers occur at K=15, 5, 85 and 95.
+        frame = pd.DataFrame(
+            {
+                "high": [100.0] * 12,
+                "low": [0.0] * 12,
+                "close": [
+                    15.0,
+                    5.0,
+                    15.0,
+                    5.0,
+                    3.0,
+                    5.0,
+                    85.0,
+                    95.0,
+                    85.0,
+                    95.0,
+                    97.0,
+                    95.0,
+                ],
+            }
+        )
+        config = KDStrategyConfig(
+            k_period=1,
+            d_period=2,
+            smooth_k=1,
+            overbought=overbought,
+            oversold=oversold,
+        )
         strategy = KDStrategy(config=config)
-        result = strategy.generate_signals(sample_ohlcv_with_kd)
-        assert "signal" in result.columns
+        result = strategy.generate_signals(frame)
+        assert result["signal"].tolist() == expected
 
     def test_no_look_ahead_bias(
         self,

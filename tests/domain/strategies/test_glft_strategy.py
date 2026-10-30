@@ -124,11 +124,16 @@ class TestGLFTStateMachine:
         for j in range(entry_idx, min(entry_idx + 5, n)):
             assert signals[j] != 0, f"Exited too early at bar {j}"
 
-    def test_max_holding_forced_exit(self) -> None:
+    @pytest.mark.parametrize(
+        ("price", "position"), [(99.5, 1), (100.5, -1)], ids=["long", "short"]
+    )
+    def test_max_holding_forced_exit(self, price: float, position: int) -> None:
         """Position must exit at max_holding_bars."""
-        n = 30
-        # Price stays slightly below EMA the entire time
-        close = np.full(n, 99.5)
+        max_hold = 10
+        n = max_hold + 1
+        # A constant deviation beyond the entry spread opens a position and
+        # cannot trigger either the profit target or the adverse stop-loss.
+        close = np.full(n, price)
         ema = np.full(n, 100.0)
         sigma = np.full(n, 0.001)
 
@@ -136,26 +141,15 @@ class TestGLFTStateMachine:
             close=close,
             ema=ema,
             sigma=sigma,
-            gamma=0.001,
-            kappa=0.5,
+            gamma=0.0,
+            kappa=1000.0,
             min_hold=2,
-            max_hold=10,
+            max_hold=max_hold,
         )
 
-        # Find entry and check forced exit
-        in_pos = False
-        hold_count = 0
-        for i in range(n):
-            if not in_pos and signals[i] != 0:
-                in_pos = True
-                hold_count = 0
-            elif in_pos:
-                if signals[i] != 0:
-                    hold_count += 1
-                else:
-                    # Exited — should be at or before max_hold
-                    assert hold_count <= 10
-                    break
+        assert signals[0] == position, "Must enter before checking the deadline"
+        np.testing.assert_array_equal(signals[:max_hold], position)
+        assert signals[max_hold] == 0
 
     def test_flat_when_within_spread(self) -> None:
         """No entry when price is near EMA (within spread)."""
