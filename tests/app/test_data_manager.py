@@ -122,7 +122,7 @@ def _manager(
     )
 
 
-def test_extending_query_bounds_fetches_data_and_preserves_prior_generation(
+def test_extended_and_still_forming_intervals_refresh_until_settled(
     tmp_path: Path,
 ) -> None:
     now = [datetime(2026, 1, 2, tzinfo=UTC)]
@@ -135,6 +135,14 @@ def test_extending_query_bounds_fetches_data_and_preserves_prior_generation(
     assert later.timestamp.max() == pd.Timestamp("2026-01-03", tz=UTC)
     assert crawler.fetch.call_count == 2 and path != old_path
     assert old_path.is_file()  # Existing readers retain an immutable generation.
+    manager.load()
+    assert crawler.fetch.call_count == 3  # Even the same recent interval can change.
+    now[0] = datetime(2026, 1, 10, tzinfo=UTC)
+    manager.load()
+    assert crawler.fetch.call_count == 4  # Earlier acquisition was not settled.
+    manager.load()
+    _manager(tmp_path, crawler, now).load()
+    assert crawler.fetch.call_count == 4
 
 
 @pytest.mark.parametrize(
@@ -164,7 +172,6 @@ def test_refresh_failure_preserves_previous_generation_and_cleans_attempt(
         )
 
     now[0] = datetime(2026, 1, 3, tzinfo=UTC)
-    manager = _manager(tmp_path, crawler, now, end="2026-01-03")
     if failure in {"fetch", "timeout"}:
         crawler.fetch.side_effect = fail
     elif failure == "process":
@@ -216,9 +223,6 @@ def test_year_boundary_refresh_keeps_previous_readable_version(tmp_path: Path) -
     manager = _manager(tmp_path, crawler, now, start="2025-01-01", end="2025-12-31")
     _, old = manager.load()
     now[0] = datetime(2026, 1, 8, tzinfo=UTC)
-    manager = _manager(
-        tmp_path, crawler, now, start="2025-01-01", end="2025-12-31T23:59:59.999999Z"
-    )
     _, latest = manager.load()
     assert latest != old and latest.is_file() and old.is_file()
     manager.load()
@@ -232,6 +236,33 @@ def test_future_request_fails_before_provider_or_cache_write(tmp_path: Path) -> 
         manager.load()
     crawler.fetch.assert_not_called()
     assert not list(tmp_path.iterdir())
+
+
+def test_cached_only_recent_query_explains_why_immediate_retry_cannot_help(
+    tmp_path: Path,
+) -> None:
+    now = [datetime(2026, 1, 3, tzinfo=UTC)]
+    crawler = _crawler()
+    manager = _manager(tmp_path, crawler, now)
+    service = DataService(WorkspacePaths(tmp_path / "workspace"))
+    config = {
+        "data": {
+            "source": "binance_api",
+            "raw_dir": str(tmp_path / "raw"),
+            "processed_dir": str(tmp_path / "processed"),
+        }
+    }
+    for _ in range(2):
+        manager.load()
+        with pytest.raises(ValueError, match="seven days.*wait"):
+            service.load_cached(
+                symbol="BTC/USDT",
+                timeframe="1d",
+                start_date="2026-01-01",
+                end_date="2026-01-02",
+                raw_config=config,
+            )
+    assert crawler.fetch.call_count == 2
 
 
 def test_inspection_distinguishes_missing_observations_from_empty_query(

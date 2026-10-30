@@ -548,10 +548,10 @@ the requested interval has complete observations.
 
 The application queries each requested UTC year through its end or acquisition
 time, whichever is earlier. A receipt is reusable only if it covers the requested
-year slice. Receipt age does not yet restrict reuse, so already queried recent
-intervals may retain earlier observations. Future request endpoints fail.
-Successful queries do not prove complete observations or prevent later provider
-corrections.
+year slice and was acquired at least seven days after that slice ended. Recent
+intervals refresh on every load; merely waiting seven days after an earlier
+download does not make it reusable. Future request endpoints fail. Successful
+queries do not prove complete observations or prevent later provider corrections.
 Cached-only reads require reusable evidence and fail without downloading when it
 is absent; empty observations cannot serve as ML input.
 

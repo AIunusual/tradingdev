@@ -284,6 +284,12 @@ class DataService:
                     "no cached market query covers the requested interval; "
                     "run ensure_data first"
                 )
+            if not receipt.reusable(lower, upper):
+                raise ValueError(
+                    "cached-only loading requires a query acquired at least seven "
+                    "days after the requested interval ended; for recent intervals, "
+                    "wait until that boundary before fetching again"
+                )
             path = cache.processed_path(receipt)
             paths.append(path)
             frames.append(self._loader.load_parquet(path))

@@ -124,9 +124,9 @@ def register(mcp: MCPServer, service: DataService) -> None:
 
         Requires an explicit download request. Preparation uses code/settings and
         synthetic fixtures. Approved backtests fetch independently; no prerequisite.
-        Choose source/market via list_data_sources. Reuse requires a successful
-        query covering the interval. Queries may be empty and do not prove complete
-        candles or freshness.
+        Choose source/market via list_data_sources. Recent ranges refresh each load;
+        reuse needs a query acquired >=7 days after the interval ended. Queries may be
+        empty and do not prove complete candles.
         """
         try:
             MarketDataRequest.model_validate(

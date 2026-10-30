@@ -100,7 +100,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         """Build a saved single-symbol feature/label dataset from cached bars.
 
         Choose features via get_ml_contract; source/market via list_data_sources.
-        Requires successful queries covering the interval; never downloads.
+        Requires queries acquired >=7 days after the interval ended; never downloads.
         Returns dropped rows and dataset_id for training/evaluation.
         """
         try:

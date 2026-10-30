@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from tests.e2e.report_delivery import verify_report_delivery
@@ -77,3 +78,40 @@ def verify_discovery_outcome(
         expected_commentary=None,
     )
     return str(run_id)
+
+
+def verify_market_cache_reply(reply: str, *, settled: bool) -> None:
+    """Check each market's explicit reuse and reacquisition decisions."""
+    plain = re.sub(r"[*`_]", "", reply)
+    for label, count in (("現貨|spot", 3), ("期貨|futures/um", 5)):
+        lines = [
+            line
+            for line in plain.splitlines()
+            if re.search(label, line) and "可直接重用" in line
+        ]
+        assert len(lines) == 1, "Each market needs one unambiguous decision line"
+        line = lines[0]
+        assert re.search(rf"(?<!\d){count}\s*筆", line)
+        fields = list(
+            re.finditer(
+                r"(?<!\w)(可直接重用|[須需]重新取得(?:才符合重用政策)?|理由)\s*[:：]\s*",
+                line,
+            )
+        )
+        reuse, reacquire = [], []
+        for index, field in enumerate(fields):
+            end = fields[index + 1].start() if index + 1 < len(fields) else len(line)
+            value = line[field.end() : end].strip(" \t；;|｜，,。.")
+            if field[1] == "可直接重用":
+                reuse.append(value)
+            elif field[1] != "理由":
+                reacquire.append(value)
+        assert reuse == ["是" if settled else "否"], (
+            "Reuse decision must match this market's acquisition evidence"
+        )
+        assert reacquire == ["否" if settled else "是"], (
+            "Waiting cannot make an earlier acquisition reusable"
+        )
+    assert re.search("不保證|不代表|不能|不足以|無法保證", plain)
+    if not settled:
+        assert re.search(r"(?<!\d)7\s*天|七天|seven days", plain)
