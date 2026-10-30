@@ -34,11 +34,13 @@ A bundled ML strategy that enables its rolling switch also reports
 `metadata.rolling_trace`: the rolls it actually ran, each with its training
 window, labelled rows, whether a model was fitted, and how many bars it scored.
 It is saved beside `strategy_parameters` for a full backtest, for each
-walk-forward fold frame, for each optimization training trial, and for the
-optimization's selected `test` evaluation; it is absent when the switch is off,
-so other strategies' metadata is unchanged. A fold captures the trace of each
-frame separately, because the training replay and the evaluation frame call
-`generate_signals` in turn and each produces its own schedule.
+walk-forward fold frame, for each fixed-comparison candidate, for each
+optimization training trial, and for the optimization's selected `test`
+evaluation; it is absent when the switch is off, so other strategies' metadata is
+unchanged. A comparison candidate is a backtest in its own right, so its `full`
+scope can carry the trace. A fold captures the trace of each frame separately,
+because the training replay and the evaluation frame call `generate_signals` in
+turn and each produces its own schedule.
 
 | Field | Meaning |
 | --- | --- |
