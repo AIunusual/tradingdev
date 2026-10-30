@@ -175,9 +175,12 @@ aligned `timestamps`, `equity_curve`, `returns`, `values` and `metadata`.
 The baseline buys once at the first aligned close, paying the run's own
 per-side commission and slippage, and is marked to market afterwards. It is not
 liquidated on the final bar, matching how the strategy's open positions are
-valued, so no exit cost is charged. `values` uses the same metric catalog and
-annualization settings as the strategy; closed-trade metrics are unavailable
-because a baseline has no trades. Bars align on shared UTC timestamps only:
+valued, so no exit cost is charged. Its supported entry fees and slippage are
+each in `[0, 1)`; either rate at or above 1 makes the baseline unavailable even
+when the strategy accepts those finite nonnegative execution settings.
+`values` uses the same metric catalog and annualization settings as the strategy.
+The closed-trade count is zero; statistics requiring closed trades are unavailable
+because the baseline has no closed trades. Bars align on shared UTC timestamps only:
 `coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
 and a missing bar is never back-filled. An unavailable baseline carries a
 reason and no values, so it is never read as a zero return. A baseline is
@@ -187,9 +190,12 @@ provider, not independent verification of an existing cache's provenance.
 `market_type` records the effective provider setting and is null for adapters
 that ignore it. `dataset_id` includes source, effective market and full UTC bounds.
 Otherwise the baseline is fetched and processed in memory, without creating
-temporary dataset files. Each such run needs its provider to be available; no
-ordinary cache is reused, rewritten or removed. The saved performance artifact
-retains the baseline after acquisition completes.
+temporary dataset files. Acquisition requires its provider to be available; no
+ordinary cache is reused, rewritten or removed. A fixed comparison captures one
+baseline before the candidate loop and shares that evidence with all candidates;
+each derives its own aligned scalar-scope values. Other eligible executions
+acquire their own baseline. The saved performance artifact retains the baseline
+after acquisition completes.
 
 Incomplete coverage retains the observed baseline values but prevents report
 differences and excess returns against the full strategy period. The overview
