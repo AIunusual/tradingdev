@@ -585,6 +585,10 @@ are not refreshed merely because a requested period changes. Missing explicit
 DVOL files can be downloaded from Deribit to the specified path. A `raw_path`
 requires an explicit `path`; omit both to use managed caching.
 
+All automatic DVOL downloads require `source: deribit`, including pathless
+managed queries and downloads to missing explicit paths. Existing explicit
+local files may use another source label; they are read without downloading.
+
 Inspection exposes `query` and `query_reusable` for managed DVOL. An unqueried
 interval has no path or query, unknown row count and `query_reusable: false`;
 a successful empty query has zero rows and its receipt. Explicit local files
