@@ -274,6 +274,8 @@ class PanelSummary(ContractModel):
     """A built multi-symbol panel dataset and the calendar behind it."""
 
     dataset_id: str
+    source: str
+    market_type: str | None
     symbols: list[str]
     timeframe: str
     start_date: str
@@ -313,6 +315,8 @@ class DatasetSummary(ContractModel):
     """A built, labelled feature dataset and how it was produced."""
 
     dataset_id: str
+    source: str
+    market_type: str | None
     symbol: str
     timeframe: str
     start_date: str

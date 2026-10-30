@@ -21,6 +21,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp_types import ElicitResult, PaginatedRequestParams
 
+from tests.data_cache import seed_market_cache
 from tradingdev.adapters.execution.process_runner import (
     WorkerHandle,
     request_worker_stop,
@@ -157,9 +158,7 @@ class MCPWorkspace:
         return self.root / "market-data"
 
     def seed_market(self, frame: pd.DataFrame) -> Path:
-        path = self.data_root / "processed" / "btcusdt_1h_2024.parquet"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_parquet(path, index=False)
+        path = seed_market_cache(self.data_root / "processed", frame)
         return path
 
     def environment(self) -> dict[str, str]:

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.data_cache import cached_market_path
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
@@ -182,8 +183,10 @@ def test_ccxt_crypto_source_flows_into_backtest_pipeline(
 
     assert run.mode == "simple"
     assert "total_return" in run.metrics
-    assert run.dataset_id.startswith("BTC/USDT:1d:2024-01-01:2024-02-29")
-    cached = workspace.processed_data / "btcusdt_1d_2024.parquet"
+    assert run.dataset_id.startswith("query-sha256:")
+    cached = cached_market_path(
+        workspace.processed_data, timeframe="1d", source="binance_api"
+    )
     assert cached.exists()
     assert sum(inst.calls for inst in _FakeBinance.instances) >= 1
 
@@ -212,8 +215,10 @@ def test_yahoo_finance_equity_source_flows_into_backtest_pipeline(
 
     assert run.mode == "simple"
     assert "total_return" in run.metrics
-    assert run.dataset_id.startswith("AAPL:1d:2024-01-01:2024-02-29")
-    cached = workspace.processed_data / "aapl_1d_2024.parquet"
+    assert run.dataset_id.startswith("query-sha256:")
+    cached = cached_market_path(
+        workspace.processed_data, symbol="AAPL", timeframe="1d", source="yahoo_finance"
+    )
     assert cached.exists()
     assert Counter(_FakeYahooClient.requested_symbols) == {"AAPL": 1, "^GSPC": 1}
     original_cache = cached.read_bytes()
@@ -222,9 +227,7 @@ def test_yahoo_finance_equity_source_flows_into_backtest_pipeline(
     rerun = service.run_raw_config(_raw_config("yahoo_finance", "AAPL"))
     assert Counter(_FakeYahooClient.requested_symbols) == {"AAPL": 1, "^GSPC": 2}
     assert cached.read_bytes() == original_cache
-    assert sorted(path.name for path in workspace.processed_data.glob("*.parquet")) == [
-        "aapl_1d_2024.parquet"
-    ]
+    assert list(workspace.processed_data.rglob("*.parquet")) == [cached]
     assert rerun.metrics == run.metrics
     for result in (run, rerun):
         benchmark = result.pipeline.benchmark

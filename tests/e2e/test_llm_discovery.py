@@ -7,7 +7,9 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 
+from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex, verify_generated_strategy
 from tests.e2e.conversation_user import ObservedPlanUser
 from tests.e2e.discovery_workflow import NATURAL_REQUEST, verify_discovery_outcome
@@ -160,3 +162,90 @@ def test_natural_request_reads_historical_job_duration(
             re.IGNORECASE,
         )
         print("[historical-duration] Final model reply:\n" + turns[-1].text, flush=True)
+
+
+def test_natural_request_inspects_separate_market_caches(
+    pytestconfig: pytest.Config,
+) -> None:
+    with temporary_mcp_workspace() as workspace:
+        paths = []
+        for market, count in (("spot", 3), ("futures/um", 5)):
+            seed_market_cache(
+                workspace.data_root / "processed",
+                market_frame().head(count),
+                market_type=market,
+            )
+            path = workspace.root / f"{market.replace('/', '-')}.yaml"
+            path.write_text(
+                yaml.safe_dump(
+                    {
+                        "data": {"source": "binance_vision", "market_type": market},
+                        "backtest": {
+                            "symbol": "BTC/USDT",
+                            "timeframe": "1h",
+                            "start_date": "2024-01-01",
+                            "end_date": "2024-01-02",
+                            "init_cash": 10000,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            paths.append(str(path))
+        request = (
+            f"我有兩份研究設定：{paths[0]} 與 {paths[1]}。"
+            "請只查本機行情，分別說明來源、市場、實際保存幾筆，以及要求期間的查詢紀錄。"
+            "請每個市場各用一行回答，並說明查詢成功是否足以證明行情完整。"
+            "不要下載、改資料或執行研究。"
+        )
+        turns: list[ModelTurn] = []
+
+        async def user(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": user,
+            }
+            async with workspace.connect() as client:
+                names = [
+                    tool.name for tool in (await client.session.list_tools()).tools
+                ]
+                assert all(name not in request for name in names)
+                options["tool_names"] = names
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        calls = asyncio.run(run())
+        observed = {}
+        for call in calls:
+            assert call.name in {
+                "inspect_dataset",
+                "list_available_data",
+                "list_data_sources",
+            }
+            if call.name == "inspect_dataset" and call.result.get("market"):
+                market = call.result["market"]
+                assert market["source"] == "binance_vision"
+                assert market["queries"] and call.result["market_available"] is True
+                observed[market["market_type"]] = market["rows"]
+        assert observed == {"spot": 3, "futures/um": 5}
+        assert turns
+        reply = turns[-1].text
+        for label, count in (("現貨|spot", 3), ("期貨|futures/um", 5)):
+            lines = " ".join(
+                line for line in reply.splitlines() if re.search(label, line)
+            )
+            assert re.search(rf"(?<!\d){count}(?!\d)", lines)
+        assert re.search("不保證|不代表|不能|不足以|無法保證", reply)
+        print("[market-cache-inspection] Final model reply:\n" + reply, flush=True)

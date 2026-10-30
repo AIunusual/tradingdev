@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -26,7 +27,7 @@ _SYMBOLS = ["BTC/USDT", "ETH/USDT"]
 def _write_bars(
     workspace: WorkspacePaths, symbol: str, *, drop: range | None = None
 ) -> None:
-    """Write one year of hourly OHLCV under the canonical cache name."""
+    """Cache a successful historical query with hourly OHLCV observations."""
     skip = set(drop or ())
     index = np.arange(_ROWS, dtype=float)
     close = 100.0 + 10.0 * np.sin(index / 5.0) + index * 0.01
@@ -42,10 +43,7 @@ def _write_bars(
     )
     keep = [i for i in range(_ROWS) if i not in skip]
     frame = frame.iloc[keep].reset_index(drop=True)
-    name = symbol.lower().replace("/", "") + "_1h_2024.parquet"
-    path = workspace.processed_data / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    seed_market_cache(workspace.processed_data, frame, symbol=symbol)
 
 
 @pytest.fixture

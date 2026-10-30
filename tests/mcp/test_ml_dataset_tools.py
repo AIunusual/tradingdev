@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import (
@@ -38,9 +39,7 @@ def _write_cached_bars(workspace: WorkspacePaths, rows: int = 300) -> None:
             "volume": np.full(rows, 10.0),
         }
     )
-    path = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    seed_market_cache(workspace.processed_data, frame)
 
 
 def _dispatch(
@@ -413,3 +412,73 @@ def test_build_dataset_reports_feature_reuse(service: MLService) -> None:
     assert reused.features_from_cache is True
     assert reused.dataset_id == computed.dataset_id
     assert reused.content_hash == computed.content_hash
+
+
+@pytest.mark.parametrize("tool", ["build_dataset", "build_panel"])
+@pytest.mark.parametrize("same_prices", [False, True])
+def test_ml_market_selection_preserves_prices_and_identity(
+    tmp_path: Path, tool: str, same_prices: bool
+) -> None:
+    from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    workspace.ensure()
+    for market, base in (
+        ("spot", 100.0),
+        ("futures/um", 100.0 if same_prices else 1000.0),
+    ):
+        for symbol in ("BTC/USDT", "ETH/USDT"):
+            close = base + np.arange(100, dtype=float)
+            seed_market_cache(
+                workspace.processed_data,
+                pd.DataFrame(
+                    {
+                        "timestamp": pd.date_range(
+                            "2024-01-01", periods=100, freq="h", tz="UTC"
+                        ),
+                        "open": close,
+                        "high": close + 1,
+                        "low": close - 1,
+                        "close": close,
+                        "volume": 10.0,
+                    }
+                ),
+                symbol=symbol,
+                market_type=market,
+            )
+    server = MCPServer("market-isolation")
+    ml.register(server, MLService(workspace))
+    identities = set()
+    for market, base in (
+        ("spot", 100.0),
+        ("futures/um", 100.0 if same_prices else 1000.0),
+    ):
+        arguments: dict[str, object] = {
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-05",
+            "feature_set": "returns",
+            "source": "binance_vision",
+            "market_type": market,
+        }
+        arguments.update(
+            {"symbol": "BTC/USDT"}
+            if tool == "build_dataset"
+            else {"symbols": ["BTC/USDT", "ETH/USDT"]}
+        )
+        payload = _dispatch(server, tool, arguments)
+        assert payload["success"] is True
+        summary = payload["dataset" if tool == "build_dataset" else "panel"]
+        assert isinstance(summary, dict)
+        assert summary["source"] == "binance_vision"
+        assert summary["market_type"] == market
+        dataset_id = str(summary["dataset_id"])
+        identities.add(dataset_id)
+        frame, manifest = MLDatasetStore(workspace.ml_datasets).load(dataset_id)
+        assert manifest["source"] == "binance_vision"
+        assert manifest["market_type"] == market
+        positions = (
+            frame["timestamp"] - pd.Timestamp("2024-01-01", tz="UTC")
+        ).dt.total_seconds() / 3600
+        np.testing.assert_allclose(frame["close"], base + positions)
+    assert len(identities) == 2

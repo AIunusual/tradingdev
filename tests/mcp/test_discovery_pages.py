@@ -6,10 +6,12 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pytest
 from jsonschema import Draft202012Validator
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 from tests.integration.execution_fixtures import research_input
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -102,7 +104,11 @@ def _seed(
                     (created_at, identity),
                 )
         else:
-            (workspace.processed_data / f"market{index:03d}_1h_2024.parquet").touch()
+            seed_market_cache(
+                workspace.processed_data,
+                pd.DataFrame({"timestamp": pd.to_datetime([], utc=True)}),
+                symbol=f"MARKET{index:03d}",
+            )
     if tool == "list_strategies":
         return (
             {"kind": "generated"},
@@ -213,10 +219,20 @@ def test_discovery_pages_preserve_all_matches_and_hide_large_details(
             narrowed = await _page(server, tool, status="done")
             assert narrowed["total"] == 0
         else:
-            narrowed = await _page(server, tool, symbol="market/001", timeframe="1h")
+            narrowed = await _page(
+                server,
+                tool,
+                symbol="MARKET001",
+                timeframe="1h",
+                source="binance_vision",
+                market_type="futures/um",
+            )
             assert (
                 narrowed["total"] == 1 and narrowed["items"][0]["symbol"] == "MARKET001"
             )
+            assert (await _page(server, tool, symbol="market/001"))["total"] == 0
+            assert (await _page(server, tool, source="binance_api"))["total"] == 0
+            assert (await _page(server, tool, market_type="spot"))["total"] == 0
 
     asyncio.run(check())
 

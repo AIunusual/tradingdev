@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -256,7 +257,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert run["strategy_id"] == STRATEGY_ID
         assert run["revision_id"] == saved["revision_id"]
         assert run["manifest_hash"] == manifest_hash
-        assert run["dataset_id"].startswith("BTC/USDT:1h:2024-01-01:2024-01-07:")
+        assert re.fullmatch(r"query-sha256:[0-9a-f]{64}", run["dataset_id"])
         assert run["details_available"] is True
         assert run["default_scope"] == "test"
         assert run["selected_train_scope"] == "trial/2/train"

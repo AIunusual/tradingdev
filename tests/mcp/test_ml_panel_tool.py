@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import BuildPanelResponse, MlContractResponse
@@ -40,11 +41,9 @@ def _write_bars(
         }
     )
     keep = [i for i in range(_ROWS) if i not in skip]
-    path = workspace.processed_data / (
-        symbol.lower().replace("/", "") + "_1h_2024.parquet"
+    seed_market_cache(
+        workspace.processed_data, frame.iloc[keep].reset_index(drop=True), symbol=symbol
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.iloc[keep].reset_index(drop=True).to_parquet(path, index=False)
 
 
 def _dispatch(

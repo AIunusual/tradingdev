@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pandas as pd
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
@@ -31,9 +32,10 @@ def test_missing_dvol_samples_all_sparse_market_timestamps(
             **dict.fromkeys(("open", "high", "low", "close", "volume"), 100.0),
         }
     )
-    cache = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    frame.to_parquet(cache, index=False)
+    cache = seed_market_cache(workspace.processed_data, frame)
     original = cache.read_bytes()
+    source_files = set(workspace.processed_data.rglob("*"))
+    raw_files = set(workspace.raw_data.rglob("*"))
     config = BacktestConfig(
         symbol="BTC/USDT",
         timeframe="1h",
@@ -87,5 +89,5 @@ def test_missing_dvol_samples_all_sparse_market_timestamps(
     saved = pd.read_parquet(tmp_path / "sample/feature-0.parquet")
     assert saved["timestamp"].tolist() == list(timestamps)
     assert cache.read_bytes() == original
-    assert list(workspace.processed_data.iterdir()) == [cache]
-    assert not list(workspace.raw_data.iterdir())
+    assert set(workspace.processed_data.rglob("*")) == source_files
+    assert set(workspace.raw_data.rglob("*")) == raw_files

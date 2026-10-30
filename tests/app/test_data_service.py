@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
@@ -136,7 +137,6 @@ def test_ensure_fetches_utc_years_for_offset_dates(
             "tradingdev.domain.data.crawlers.binance_api.BinanceAPICrawler.fetch",
             side_effect=hourly_data,
         ) as fetch,
-        patch("tradingdev.domain.data.crawlers.binance_api.BinanceAPICrawler.save_raw"),
     ):
         selected = service.ensure(
             symbol="BTC/USDT",
@@ -181,11 +181,12 @@ def test_ensure_rejects_reversed_dates_before_constructing_provider(
 def test_data_service_uses_shared_data_root(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    sample_ohlcv_df: pd.DataFrame,
 ) -> None:
     data_root = tmp_path / "shared_data"
     processed = data_root / "processed"
     processed.mkdir(parents=True)
-    (processed / "btcusdt_1h_2024.parquet").write_text("", encoding="utf-8")
+    seed_market_cache(processed, sample_ohlcv_df)
     monkeypatch.setenv("TRADINGDEV_DATA_ROOT", str(data_root))
 
     service = DataService(WorkspacePaths(tmp_path / "workspace"))
@@ -207,7 +208,13 @@ def test_data_service_uses_shared_data_root(
     assert config.raw_dir == str(data_root.resolve() / "raw")
     assert config.processed_dir == str(processed.resolve())
     assert service.list_available_data() == [
-        {"symbol": "BTCUSDT", "timeframe": "1h", "years_available": [2024]}
+        {
+            "source": "binance_vision",
+            "market_type": "futures/um",
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "years_available": [2024],
+        }
     ]
     assert service.data_available("BTC/USDT", "1h", "2024-01-01", "2024-01-31")
 
@@ -217,16 +224,20 @@ def test_inspect_dataset_reports_feature_sources_and_missing_values(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.processed_data.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        {
-            "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
-            "open": [100.0, 101.0, 102.0],
-            "high": [101.0, 102.0, 103.0],
-            "low": [99.0, 100.0, 101.0],
-            "close": [100.5, 101.5, 102.5],
-            "volume": [10.0, 11.0, 12.0],
-        }
-    ).to_parquet(workspace.processed_data / "btcusdt_1h_2024.parquet", index=False)
+    seed_market_cache(
+        workspace.processed_data,
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
+                "open": [100.0, 101.0, 102.0],
+                "high": [101.0, 102.0, 103.0],
+                "low": [99.0, 100.0, 101.0],
+                "close": [100.5, 101.5, 102.5],
+                "volume": [10.0, 11.0, 12.0],
+            }
+        ),
+        source="binance_api",
+    )
     feature_path = tmp_path / "funding_rate.parquet"
     pd.DataFrame(
         {
@@ -274,7 +285,7 @@ data:
         "volume",
     ]
     assert report["market"]["timezone"] == "UTC"
-    assert report["dataset_fingerprint"]["dataset_id"].startswith("BTC/USDT:1h")
+    assert report["dataset_fingerprint"]["dataset_id"].startswith("query-sha256:")
     assert report["requirements"]["market"]["symbol"] == "BTC/USDT"
     assert report["features"] == [
         {

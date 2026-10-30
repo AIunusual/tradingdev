@@ -13,13 +13,13 @@ import httpx
 import pandas as pd
 import pytest
 
+from tradingdev.app.data_manager import DataManager
 from tradingdev.domain.data.crawlers.binance_vision import (
     BinanceVisionCrawler,
     _month_range,
     _parse_zip_csv,
     _to_vision_symbol,
 )
-from tradingdev.domain.data.data_manager import DataManager
 from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 
 if TYPE_CHECKING:

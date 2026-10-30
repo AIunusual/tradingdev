@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import pytest
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.data.crawlers.binance_api import BinanceAPICrawler
-from tradingdev.domain.data.data_manager import market_data_filename
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -74,10 +74,12 @@ def _service(
             selected = frame.loc[
                 pd.to_datetime(frame["timestamp"], utc=True).dt.year == year
             ]
-            selected.to_parquet(
-                workspace.processed_data
-                / market_data_filename("AAPL", timeframe, year),
-                index=False,
+            seed_market_cache(
+                workspace.processed_data,
+                selected,
+                symbol="AAPL",
+                timeframe=timeframe,
+                year=year,
             )
     config = BacktestConfig(
         symbol="AAPL",
@@ -292,7 +294,9 @@ def test_sufficient_earlier_year_cache_avoids_fetching_later_year(
         cached=True,
     )
     # Only the earlier year exists, and it already satisfies the sample budget.
-    (tmp_path / "workspace/data/processed/aapl_1h_2025.parquet").unlink()
+    cached_market_path(
+        tmp_path / "workspace/data/processed", symbol="AAPL", year=2025
+    ).unlink()
     result = service.load_sample(
         {}, config, max_rows=64, output_dir=tmp_path / "sample"
     )
@@ -319,7 +323,7 @@ def test_unsorted_cache_batches_keep_earliest_unique_utc_bars(
         end="2024-01-08",
         cached=True,
     )
-    path = tmp_path / "workspace/data/processed/aapl_1h_2024.parquet"
+    path = cached_market_path(tmp_path / "workspace/data/processed", symbol="AAPL")
     stored.to_parquet(path, index=False, row_group_size=13)
     before = path.read_bytes()
     result = service.load_sample(
@@ -371,8 +375,11 @@ def test_provider_sampling_includes_midnight_at_year_end(
         cached=False,
     )
     if earlier_year_cached:
-        frame.iloc[:-1].to_parquet(
-            tmp_path / "workspace/data/processed/aapl_1m_2024.parquet", index=False
+        seed_market_cache(
+            tmp_path / "workspace/data/processed",
+            frame.iloc[:-1],
+            symbol="AAPL",
+            timeframe="1m",
         )
     milliseconds = [int(timestamp.timestamp() * 1000) for timestamp in timestamps]
 
@@ -424,9 +431,12 @@ def test_complete_year_cache_wins_over_overlapping_provider_data(
         end=timestamps[-1].strftime("%Y-%m-%d %H:%M"),
         cached=False,
     )
-    cache = tmp_path / f"workspace/data/processed/aapl_1m_{cached_year}.parquet"
-    expected.loc[expected["timestamp"].dt.year == cached_year].to_parquet(
-        cache, index=False
+    cache = seed_market_cache(
+        tmp_path / "workspace/data/processed",
+        expected.loc[expected["timestamp"].dt.year == cached_year],
+        symbol="AAPL",
+        timeframe="1m",
+        year=cached_year,
     )
     before = cache.read_bytes()
     result = service.load_sample(

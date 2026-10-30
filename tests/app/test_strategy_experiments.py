@@ -139,7 +139,7 @@ def experiment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Experiment:
         )
 
     monkeypatch.setattr(data, "load", load)
-    monkeypatch.setattr(data, "data_available", lambda *_args: True)
+    monkeypatch.setattr(data, "data_available", lambda *_args, **_kwargs: True)
     service = BacktestService(
         data_service=data, strategy_loader=loader, strategy_gate=strategies
     )

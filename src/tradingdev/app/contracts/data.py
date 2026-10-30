@@ -23,6 +23,8 @@ class CachedDataset(ContractModel):
 
     symbol: str
     timeframe: str
+    source: str
+    market_type: str | None
     years_available: list[int]
 
 
@@ -51,14 +53,25 @@ class DatasetRequirements(ContractModel):
     features: list[FeatureRequirement]
 
 
+class QueryEvidence(ContractModel):
+    """Successful query bounds and time; not a guarantee of complete observations."""
+
+    query_start: str
+    query_end: str
+    fetched_at: str
+
+
 class MarketInspection(ContractModel):
     """Observed local market-file contents and read errors."""
 
     symbol: str
     timeframe: str
+    source: str
+    market_type: str | None
+    queries: list[QueryEvidence]
     paths: list[str]
     exists: bool
-    rows: int
+    rows: int | None
     columns: list[str]
     start_timestamp: str | None
     end_timestamp: str | None
@@ -101,7 +114,7 @@ class DatasetInspection(ContractModel):
 
 
 class EnsureDataResponse(ContractModel):
-    """A requested market-data slice is available in the cache."""
+    """A successful market query was cached; zero observations remain possible."""
 
     success: Literal[True]
     rows: int

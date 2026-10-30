@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import cached_market_path, seed_market_cache
 from tests.mcp.ml_fixtures import model_pair
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -41,11 +42,7 @@ def _write_bars(workspace: WorkspacePaths, symbol: str) -> None:
             "volume": np.full(_ROWS, 10.0),
         }
     )
-    path = workspace.processed_data / (
-        symbol.lower().replace("/", "") + "_1h_2024.parquet"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    seed_market_cache(workspace.processed_data, frame, symbol=symbol)
 
 
 @pytest.fixture
@@ -245,7 +242,7 @@ def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
     records: dict[str, str] = {}
     for version in (1, 2):
         if version == 2:
-            source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            source = cached_market_path(workspace.processed_data)
             frame = pd.read_parquet(source)
             frame["close"] *= np.linspace(1.0, 1.2, len(frame))
             frame.to_parquet(source, index=False)

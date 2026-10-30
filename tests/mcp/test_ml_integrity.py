@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.common import ErrorResponse
@@ -47,16 +48,21 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
     paths.ensure()
     positions = np.arange(300, dtype=float)
     close = 100.0 + 10.0 * np.sin(positions / 5.0) + positions * 0.01
-    pd.DataFrame(
-        {
-            "timestamp": pd.date_range("2024-01-01", periods=300, freq="h", tz="UTC"),
-            "open": close,
-            "high": close + 1.0,
-            "low": close - 1.0,
-            "close": close,
-            "volume": np.full(300, 10.0),
-        }
-    ).to_parquet(paths.processed_data / "btcusdt_1h_2024.parquet", index=False)
+    seed_market_cache(
+        paths.processed_data,
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range(
+                    "2024-01-01", periods=300, freq="h", tz="UTC"
+                ),
+                "open": close,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": np.full(300, 10.0),
+            }
+        ),
+    )
     return paths
 
 

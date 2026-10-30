@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
@@ -35,9 +36,9 @@ def test_sample_reads_year_cache_without_fetching_or_modifying_it(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "source")
     data = DataService(workspace)
-    cached = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    sample_ohlcv_df.to_parquet(cached, index=False)
+    cached = seed_market_cache(workspace.processed_data, sample_ohlcv_df)
     original = cached.read_bytes()
+    cache_files = set(workspace.processed_data.rglob("*"))
 
     def unexpected(*_args: Any, **_kwargs: Any) -> None:
         pytest.fail("A sample must not use the yearly downloader or fetch cached data")
@@ -55,7 +56,7 @@ def test_sample_reads_year_cache_without_fetching_or_modifying_it(
     assert len(result.frame) == 64
     assert result.processed_path == tmp_path / "sample" / "sample.parquet"
     assert cached.read_bytes() == original
-    assert list(workspace.processed_data.iterdir()) == [cached]
+    assert set(workspace.processed_data.rglob("*")) == cache_files
 
 
 def test_sample_cache_miss_fetches_short_interval_without_creating_year_cache(
@@ -99,9 +100,7 @@ def test_sample_checks_provider_even_when_bars_are_cached(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "source")
     data = DataService(workspace)
-    sample_ohlcv_df.to_parquet(
-        workspace.processed_data / "btcusdt_1h_2024.parquet", index=False
-    )
+    seed_market_cache(workspace.processed_data, sample_ohlcv_df)
     with pytest.raises(ValueError, match="unsupported_provider"):
         data.load_sample(
             {"data": {"source": "unsupported_provider"}},
@@ -140,9 +139,7 @@ def test_sample_missing_feature_is_fetched_only_into_sample_directory(
 ) -> None:
     workspace = WorkspacePaths(tmp_path / "source")
     data = DataService(workspace)
-    sample_ohlcv_df.to_parquet(
-        workspace.processed_data / "btcusdt_1h_2024.parquet", index=False
-    )
+    seed_market_cache(workspace.processed_data, sample_ohlcv_df)
     missing = workspace.processed_data / "dvol.parquet"
     raw: dict[str, Any] = {
         "data": {

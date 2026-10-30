@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from tests.app.test_run_metrics import _publish, _scope
+from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.ml_report_evidence import (
@@ -52,6 +53,8 @@ DATASET_ARGUMENTS = {
     "end_date": "2024-01-10",
     "feature_set": "returns",
     "horizon": 1,
+    "source": "binance_vision",
+    "market_type": "spot",
 }
 MODEL_PARAMETERS = {"n_estimators": 12, "max_depth": 3, "n_jobs": 1, "random_state": 42}
 TRAINING_ARGUMENTS = {
@@ -215,6 +218,8 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     dataset = evidence.dataset
     frame, manifest = MLDatasetStore(paths.ml_datasets).load(dataset["dataset_id"])
     assert manifest["content_hash"] == dataset["content_hash"]
+    assert manifest["source"] == "binance_vision"
+    assert manifest["market_type"] == "spot"
     parquet = Path(dataset["path"])
     assert parquet.is_relative_to(paths.ml_datasets)
     assert hashlib.sha256(parquet.read_bytes()).hexdigest() == dataset["content_hash"]
@@ -253,12 +258,22 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
 
 
+def seed_ml_markets(workspace: MCPWorkspace) -> None:
+    """Provide selected spot prices alongside a different default futures market."""
+    seed_market_cache(
+        workspace.data_root / "processed", ml_market_frame(), market_type="spot"
+    )
+    other_market = ml_market_frame()
+    other_market["close"] *= 2
+    workspace.seed_market(other_market)
+
+
 @pytest.mark.live_llm
 def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"
     with temporary_mcp_workspace() as workspace:
-        workspace.seed_market(ml_market_frame())
+        seed_ml_markets(workspace)
         turns: list[ModelTurn] = []
 
         async def observe_final(turn: ModelTurn) -> None:

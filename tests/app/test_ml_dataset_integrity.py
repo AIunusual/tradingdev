@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.app.data_manager import DataManager
 from tradingdev.app.ml_service import MLService
-from tradingdev.domain.data.data_manager import DataManager
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,8 +34,7 @@ def _build(service: MLService) -> dict[str, Any]:
 def _seed(tmp_path: Path, frame: pd.DataFrame) -> tuple[WorkspacePaths, Path]:
     workspace = WorkspacePaths(tmp_path / "workspace")
     workspace.ensure()
-    path = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    frame.to_parquet(path, index=False)
+    path = seed_market_cache(workspace.processed_data, frame)
     return workspace, path
 
 
@@ -113,23 +113,20 @@ def test_metadata_tampering_is_rejected(
         service.train_model(dataset_id=dataset["dataset_id"], model_kind="xgboost")
 
 
-def test_cached_only_build_preserves_old_partial_and_never_downloads(
+def test_cached_only_build_preserves_generation_and_never_downloads(
     tmp_path: Path,
     sample_ohlcv_df: pd.DataFrame,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace, complete = _seed(tmp_path, sample_ohlcv_df)
-    partial = complete.with_name("btcusdt_1h_2024_partial.parquet")
-    complete.rename(partial)
-    original = partial.read_bytes()
+    original = complete.read_bytes()
 
     def refuse_download(*args: object, **kwargs: object) -> pd.DataFrame:
         pytest.fail("cached-only build attempted a download")
 
-    monkeypatch.setattr(DataManager, "_fetch_and_cache_year", refuse_download)
+    monkeypatch.setattr(DataManager, "load", refuse_download)
     assert _build(MLService(workspace))["rows"] > 0
-    assert partial.read_bytes() == original
-    assert not complete.exists()
+    assert complete.read_bytes() == original
 
 
 def test_dataset_identity_includes_feature_implementation(
