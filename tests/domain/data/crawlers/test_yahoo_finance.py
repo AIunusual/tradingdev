@@ -171,7 +171,42 @@ class TestYahooFinanceCrawler:
             )
 
         params = mock_get.call_args.kwargs["params"]
-        assert params["period2"] <= int(datetime.now(UTC).timestamp())
+        assert params["period2"] <= int(datetime.now(UTC).timestamp()) + 1
+
+    @pytest.mark.parametrize(
+        "end",
+        [
+            "2024-01-02T00:00:01+00:00",
+            "2024-01-02T08:00:01+08:00",
+            "2024-01-02T00:00:01.500000+00:00",
+        ],
+    )
+    def test_fetch_keeps_the_inclusive_end_with_exclusive_provider(
+        self, end: str
+    ) -> None:
+        base = 1704153600
+        crawler = YahooFinanceCrawler()
+
+        def respond(_url: str, *, params: dict[str, Any]) -> MagicMock:
+            # Simulate the real API boundary instead of returning the tail
+            # regardless of the requested period2.
+            stamps = [
+                t
+                for t in range(base, base + 4)
+                if params["period1"] <= t < params["period2"]
+            ]
+            return _mock_response(_chart_payload(stamps, [100.0] * len(stamps)))
+
+        with patch.object(crawler._client, "get", side_effect=respond):
+            frame = crawler.fetch(
+                "^GSPC",
+                "1m",
+                datetime.fromtimestamp(base, UTC),
+                datetime.fromisoformat(end),
+            )
+        assert frame["timestamp"].tolist() == list(
+            pd.to_datetime([base, base + 1], unit="s", utc=True)
+        )
 
     def test_save_raw_writes_csv(self, tmp_path: Path) -> None:
         crawler = YahooFinanceCrawler()

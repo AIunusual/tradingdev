@@ -63,7 +63,7 @@ Up to 20 plain-text title/text notes
 replace computed values or inject HTML. The client selects information and writes
 interpretation; the server renders tables, charts and document structure.
 
-Report schema 3 / template 22 uses two navigation levels within one offline HTML
+Report schema 3 / template 24 uses two navigation levels within one offline HTML
 file when at least one detail section (`settings`, `metrics`, `benchmark`,
 `equity`, `ledger`, or `trades`) is selected. The overview compares every loaded
 run/scope, including effective parameters, date coverage, train/test role,
@@ -177,11 +177,14 @@ plot state, and removes temporary output/new figures on success or failure. It
 does not close pre-existing figures or silently substitute another HTML provider.
 
 The `benchmark` section presents the baseline saved with each scalar scope: its
-fixed identity (asset class, symbol, weighting and rationale), the provider and
-market type actually read, whether the run's own frame was reused, the costs
+fixed identity (asset class, symbol, weighting and rationale), the requested provider and
+effective market setting, whether the run's own frame was reused, the costs
 applied, and how many of the scope's bars the baseline observed. A comparison
 table puts the strategy's saved values beside the baseline's under the same
-units, with a difference only where both sides are finite and the units match.
+units, with a difference only where coverage is complete, both sides are finite
+and the units match. The overview includes aligned/total bar counts and withholds
+excess returns for incomplete or unknown coverage. Reused frames explicitly retain
+the run's unverified cache provenance; they do not independently prove the provider.
 When the baseline was normalized to one quote currency unit because the run had
 no initial capital, its `amount` values are withheld instead of sitting beside
 the strategy's realized amounts, and no `amount` difference is computed. A normalized equity chart

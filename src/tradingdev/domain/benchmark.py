@@ -10,6 +10,7 @@ application layer supplies the closes and records how it obtained them.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
@@ -75,7 +76,7 @@ BENCHMARKS = MappingProxyType(
 
 def asset_class_for(source: str, symbol: str) -> str | None:
     """Classify a saved market requirement; unknown markets stay unclassified."""
-    if source in CRYPTO_SOURCES:
+    if source in CRYPTO_SOURCES and re.fullmatch(r"[A-Z0-9]+/?USDT", symbol.upper()):
         return "crypto"
     if source == "yahoo_finance":
         return "us_equity" if is_us_equity_symbol(symbol) else None
@@ -95,8 +96,12 @@ def is_us_equity_symbol(symbol: str) -> bool:
     if value.startswith("^"):
         return value in US_INDEX_SYMBOLS
     if "." in value:
-        return value.rsplit(".", 1)[1] == "US"
-    return True
+        if not value.endswith(".US"):
+            return False
+        value = value[:-3]
+    # Share classes such as BRK-B are supported; currency pairs such as BTC-USD
+    # are not evidence of a US equity listing.
+    return re.fullmatch(r"[A-Z][A-Z0-9]*(?:-[A-Z])?", value) is not None
 
 
 def resolve_benchmark(source: str, symbol: str) -> BenchmarkDefinition | None:

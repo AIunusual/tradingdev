@@ -156,10 +156,12 @@ those results. Historical values are not asserted to follow the new definitions.
 
 New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the
 same scalar scope IDs. The baseline is chosen from the saved market requirement,
-never from a request parameter: `binance_vision` and `binance_api` markets use
+never from a request parameter: `binance_vision` and `binance_api` USDT-quoted markets use
 `BTC/USDT`, and `yahoo_finance` US listings use `^GSPC`. A market with no
 defined asset class, another venue suffix, a future or an FX pair is recorded as
-`undefined` instead of borrowing a foreign index.
+`undefined` instead of borrowing a foreign index. Yahoo crypto pairs are not US
+equities; Binance pairs quoted in another currency have no baseline until a
+same-currency comparison is defined.
 
 Each entry records `status` (`available`, `unavailable`, `undefined`), the
 snapshot of the fixed definition, `source`, `market_type`, `dataset_id`,
@@ -178,12 +180,18 @@ because a baseline has no trades. Bars align on shared UTC timestamps only:
 and a missing bar is never back-filled. An unavailable baseline carries a
 reason and no values, so it is never read as a zero return. A baseline is
 captured when the run executes. When the benchmark symbol equals the traded
-symbol, the already loaded frame is reused. Otherwise the baseline symbol is
-loaded through the same yearly cache the run uses: cached years are read, and a
-missing year is fetched from the run's own provider and cached like any other
-market load, so the first run of a market may reach the provider for the
-baseline symbol. The baseline load never rewrites or re-fetches the traded
-symbol's own files.
+symbol, the already loaded frame is reused. Its `source` records the requested
+provider, not independent verification of an existing cache's provenance.
+`market_type` records the effective provider setting and is null for adapters
+that ignore it. `dataset_id` includes source, effective market and full UTC bounds.
+Otherwise the baseline is fetched and processed in memory, without creating
+temporary dataset files. Each such run needs its provider to be available; no
+ordinary cache is reused, rewritten or removed. The saved performance artifact
+retains the baseline after acquisition completes.
+
+Incomplete coverage retains the observed baseline values but prevents report
+differences and excess returns against the full strategy period. The overview
+also reports aligned/total bar counts.
 
 The walk-forward `test_summary` has no baseline because it has no single equity
 path. Optimization trial scopes are individual backtests, but the optimization

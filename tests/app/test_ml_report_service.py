@@ -285,7 +285,7 @@ def test_invalid_saved_evidence_is_not_silently_skipped(
 def test_no_ml_request_report_bytes_are_pinned(
     context: tuple[WorkspacePaths, SQLiteStore, ReportService],
 ) -> None:
-    # Re-pinned at template 22 when the benchmark section was added; the ML
+    # Re-pinned at template 24 when the benchmark section was added; the ML
     # renderer must still be absent from a request that never asks for it.
     _, store, service = context
     _save(context)
@@ -302,7 +302,7 @@ def test_no_ml_request_report_bytes_are_pinned(
         result["sha256"],
         hashlib.sha256(path.read_bytes()).hexdigest(),
     ) == (
-        "84bc42bb2f77fe38a1d12f3bf54e5cbb33f47ee2e6e3587518989b732791807a",
-        "824f0e6d83e164416cd36b866611e694b9bedcc34817200d396bd888ee2ab2c4",
-        "4af5f0ebe8e1e299be531a9d40cdfba3d5b888bd9ccb489966dfcea163224327",
+        "4ff6c967ef3cf6b9cdbbb9c61a0dccd5dc8def8bb42948cb61a971ef3820a44d",
+        "b768b19434280d02a7657d2142de50dadc289aae70926fd7a75dbb13471677f9",
+        "8727f7b052fa975f2588e7e13d0aa8bbbaa4bd4d68119e07a83003b2a5951ce4",
     )

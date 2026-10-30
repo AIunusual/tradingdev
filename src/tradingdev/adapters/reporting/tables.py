@@ -177,6 +177,7 @@ def _benchmark_row(scope: dict[str, Any]) -> dict[str, Any]:
             "benchmark_symbol": None,
             "benchmark_return": None,
             "excess_return": None,
+            "benchmark_coverage": None,
         }
     definition = benchmark.get("definition")
     definition = definition if isinstance(definition, dict) else {}
@@ -194,12 +195,19 @@ def _benchmark_row(scope: dict[str, Any]) -> dict[str, Any]:
         if isinstance(strategy, int | float) and not isinstance(strategy, bool)
         else None
     )
+    coverage = benchmark.get("coverage")
+    coverage = coverage if isinstance(coverage, dict) else {}
     return {
         "benchmark_symbol": definition.get("symbol"),
         "benchmark_return": reference,
         "excess_return": None
-        if strategy is None or reference is None
+        if strategy is None or reference is None or coverage.get("complete") is not True
         else float(strategy) - float(reference),
+        "benchmark_coverage": (
+            f"{coverage['aligned_bars']}/{coverage['scope_bars']}"
+            if "aligned_bars" in coverage and "scope_bars" in coverage
+            else None
+        ),
     }
 
 
@@ -289,6 +297,9 @@ def comparison_table(payload: dict[str, Any], *, navigate: bool) -> dict[str, An
                 )
             )
     columns.append(column("benchmark_symbol", "基準標的", group="基準", width=110))
+    columns.append(
+        column("benchmark_coverage", "基準覆蓋 K 線", group="基準", width=130)
+    )
     columns.append(
         column(
             "benchmark_return",

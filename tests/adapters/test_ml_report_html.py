@@ -278,12 +278,12 @@ def test_untrusted_ml_fields_are_escaped_in_html_and_embedded_json() -> None:
     assert attack in unescape(_body(document))
 
 
-def test_report_without_ml_keeps_template_22_html_bytes_unchanged() -> None:
-    # Captured from template 22 after adding the benchmark section. This also
+def test_report_without_ml_keeps_template_24_html_bytes_unchanged() -> None:
+    # Captured from template 24 after adding the benchmark section. This also
     # protects the unselected-sections list when the catalogue grows.
     payload = {"runs": [], "sections": ["limitations"], "commentary": []}
     document = render_report(payload, "legacy-report")
-    assert REPORT_TEMPLATE_VERSION == "22"
+    assert REPORT_TEMPLATE_VERSION == "24"
     assert hashlib.sha256(document.encode()).hexdigest() == (
         "97872c12410d1d4c7a2ee8a2227e9c3624a2097fd43295dddbe3719e0489e889"
     )
@@ -292,11 +292,11 @@ def test_report_without_ml_keeps_template_22_html_bytes_unchanged() -> None:
 
 
 def test_report_without_ml_pins_interpretation_template_bytes() -> None:
-    # Template 22 combines the benchmark section with interpretation/diagnostics
+    # Template 24 combines the benchmark section with interpretation/diagnostics
     # rendering; ML remains optional and must stay absent from this request.
     payload = {"runs": [], "sections": ["limitations"], "commentary": []}
     document = render_report(payload, "legacy-report")
-    assert REPORT_TEMPLATE_VERSION == "22"
+    assert REPORT_TEMPLATE_VERSION == "24"
     assert hashlib.sha256(document.encode()).hexdigest() == (
         "97872c12410d1d4c7a2ee8a2227e9c3624a2097fd43295dddbe3719e0489e889"
     )

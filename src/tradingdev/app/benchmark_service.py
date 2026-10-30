@@ -17,6 +17,8 @@ from tradingdev.domain.benchmark import (
     asset_class_for,
     benchmark_source,
 )
+from tradingdev.domain.data.crawlers.registry import describe_sources
+from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 from tradingdev.shared.utils.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -58,7 +60,7 @@ class BenchmarkService:
                 source=market.source,
             )
         source = benchmark_source(definition, market.source)
-        market_type = _market_type(raw_config)
+        market_type = _market_type(raw_config, source)
         reused = definition.symbol == market.symbol and source == market.source
         try:
             benchmark_frame = (
@@ -108,7 +110,7 @@ class BenchmarkService:
             source=source,
             market_type=market_type,
             dataset_id=_range_id(
-                definition.symbol, backtest_config.timeframe, backtest_config
+                definition.symbol, source, market_type, backtest_config
             ),
             reused_run_frame=reused,
             timestamps=timestamps,
@@ -138,22 +140,37 @@ class BenchmarkService:
             resolved["features"] = []
             data["requirements"] = resolved
         config["data"] = data
-        return self._data_service.load(
+        # Ordinary yearly caches do not prove provider/market identity and may
+        # delete old partial files before a failed refresh. Supplementary reads
+        # must neither reuse nor mutate that user data (issues #73 and #74).
+        return self._data_service.fetch_market(
             config, BacktestConfig.model_validate(config["backtest"])
-        ).frame
+        )
 
 
-def _market_type(raw_config: dict[str, Any]) -> str | None:
+def _market_type(raw_config: dict[str, Any], source: str) -> str | None:
     data = raw_config.get("data")
-    value = data.get("market_type") if isinstance(data, dict) else None
-    return None if value is None else str(value)
+    details = next(item for item in describe_sources() if item["source"] == source)
+    if not details["market_types"]:
+        return None
+    config = DataConfig.model_validate(data if isinstance(data, dict) else {})
+    return config.market_type
 
 
-def _range_id(symbol: str, timeframe: str, backtest_config: BacktestConfig) -> str:
+def _range_id(
+    symbol: str, source: str, market_type: str | None, backtest_config: BacktestConfig
+) -> str:
     """Describe the baseline request; the run's own binding stays authoritative."""
-    start = backtest_config.start_date.date()
-    end = backtest_config.end_date.date()
-    return f"{symbol}:{timeframe}:{start}:{end}"
+    request = MarketDataRequest(
+        symbol=symbol,
+        timeframe=backtest_config.timeframe,
+        start_date=backtest_config.start_date,
+        end_date=backtest_config.end_date,
+    )
+    return (
+        f"{source}:{market_type or '-'}:{symbol}:{request.timeframe}:"
+        f"{request.start_date.isoformat()}:{request.end_date.isoformat()}"
+    )
 
 
 def _unavailable(

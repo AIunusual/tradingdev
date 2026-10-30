@@ -26,6 +26,7 @@ from tradingdev.domain.data.crawlers.deribit_dvol import DeribitDVOLCrawler
 from tradingdev.domain.data.crawlers.registry import create_crawler, describe_sources
 from tradingdev.domain.data.data_manager import DataManager, market_data_filename
 from tradingdev.domain.data.loader import DataLoader
+from tradingdev.domain.data.processor import DataProcessor
 from tradingdev.domain.data.requirements import (
     DataRequirement,
     FeatureSpec,
@@ -211,6 +212,34 @@ class DataService:
             processed_path=processed_path,
             dataset_id=self._dataset_id(request, requirements),
         )
+
+    def fetch_market(
+        self,
+        raw_config: dict[str, Any],
+        backtest_config: BacktestConfig,
+    ) -> pd.DataFrame:
+        """Fetch supplementary OHLCV without reading or publishing cache files.
+
+        Only the declared market is fetched; strategy feature sources are not
+        merged. The response stays in memory, so cancellation leaves no temporary
+        raw or processed dataset behind.
+        """
+        config = self.data_config(raw_config)
+        market = self.requirements(raw_config, backtest_config).market
+        self._check_market_settings(market, config.market_type)
+        request = self._request_from_backtest(backtest_config)
+        crawler = create_crawler(market.source, config)
+        raw = crawler.fetch(
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            start=request.start_date,
+            end=request.end_date,
+        ).copy()
+        raw["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
+        frame = DataProcessor().process(raw)
+        return frame.loc[
+            frame["timestamp"].between(request.start_date, request.end_date)
+        ].reset_index(drop=True)
 
     def load_cached(
         self,

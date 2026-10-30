@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
 
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.benchmark_service import BenchmarkService
+from tradingdev.app.data_service import DataService
 from tradingdev.domain.backtest.schemas import BacktestConfig
+from tradingdev.domain.data.crawlers.base import BaseCrawler
 from tradingdev.domain.data.requirements import DataRequirement, MarketDataSpec
 
 if TYPE_CHECKING:
-    from tradingdev.app.data_service import DataService
+    from pathlib import Path
 
 
 class _StubDataService:
@@ -33,16 +36,16 @@ class _StubDataService:
             {"market": MarketDataSpec(**market), "features": features}
         )
 
-    def load(
+    def fetch_market(
         self, raw_config: dict[str, Any], backtest_config: BacktestConfig
-    ) -> SimpleNamespace:
+    ) -> pd.DataFrame:
         self.loaded.append(
             (backtest_config.symbol, raw_config["data"]["source"], raw_config)
         )
         frame = self.frames[backtest_config.symbol]
         if isinstance(frame, Exception):
             raise frame
-        return SimpleNamespace(frame=frame)
+        return cast("pd.DataFrame", frame)
 
 
 def _frame(closes: list[float], start: str = "2024-01-01") -> pd.DataFrame:
@@ -176,4 +179,85 @@ def test_baseline_range_identity_records_the_requested_period() -> None:
     evidence, _ = _evidence(
         {"BTC/USDT": _frame([100.0, 101.0])}, config, _frame([1.0, 1.0])
     )
-    assert evidence.dataset_id == "BTC/USDT:1h:2024-01-01:2024-01-02"
+    assert evidence.dataset_id == (
+        "binance_vision:futures/um:BTC/USDT:1h:"
+        "2024-01-01T00:00:00+00:00:2024-01-02T00:00:00+00:00"
+    )
+
+
+@pytest.mark.parametrize("source", ["binance_api", "yahoo_finance"])
+def test_unused_market_type_is_not_claimed_as_effective(source: str) -> None:
+    symbol = "ETH/USDT" if source == "binance_api" else "AAPL"
+    baseline = "BTC/USDT" if source == "binance_api" else "^GSPC"
+    evidence, stub = _evidence(
+        {baseline: _frame([100.0, 101.0])}, _config(symbol, source), _frame([1.0, 1.0])
+    )
+    assert evidence.market_type is None
+    assert "processed_dir" not in stub.loaded[0][2]["data"]
+
+
+@pytest.mark.parametrize("failure", [None, OSError, TimeoutError])
+def test_supplementary_load_never_reuses_or_deletes_existing_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception] | None
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    service = BenchmarkService(DataService(workspace))
+    cached = workspace.processed_data / "btcusdt_1h_2024_partial.parquet"
+    existing = _frame([10.0, 11.0])
+    existing.to_parquet(cached)
+    before = cached.read_bytes()
+    existing_files = set(workspace.root.rglob("*"))
+    config = _config("ETH/USDT", "binance_vision")
+    config["data"]["processed_dir"] = str(workspace.processed_data)
+    config["data"]["raw_dir"] = str(workspace.raw_data)
+    crawler = Mock(spec=BaseCrawler)
+    if failure:
+        crawler.fetch.side_effect = failure("provider unavailable")
+    else:
+        crawler.fetch.return_value = _frame([200.0, 201.0]).assign(
+            open=200.0, high=201.0, low=199.0, volume=1.0
+        )
+    monkeypatch.setattr(
+        "tradingdev.app.data_service.create_crawler", lambda *_: crawler
+    )
+    evidence = service.evidence(
+        _frame([1.0, 1.0]), config, BacktestConfig.model_validate(config["backtest"])
+    )
+    assert cached.read_bytes() == before
+    assert set(workspace.root.rglob("*")) == existing_files
+    crawler.save_raw.assert_not_called()
+    assert crawler.fetch.call_count == 1
+    if failure:
+        assert evidence.status == "unavailable"
+    else:
+        assert evidence.closes is not None
+        assert evidence.closes.tolist() == [200.0, 201.0]
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_fresh_market_normalizes_and_trims_without_publishing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty: bool
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    data_service = DataService(workspace)
+    config = _config("AAPL", "yahoo_finance")
+    config["backtest"]["start_date"] = "2024-01-01T08:00:00+08:00"
+    config["backtest"]["end_date"] = "2024-01-01T09:00:00+08:00"
+    raw = _frame([99.0, 100.0, 101.0, 102.0], start="2023-12-31T23:00:00").assign(
+        open=100.0, high=102.0, low=99.0, volume=1.0
+    )
+    raw = raw.iloc[:0] if empty else raw.iloc[::-1]
+    raw["timestamp"] = raw["timestamp"].astype(str)
+    crawler = Mock(spec=BaseCrawler)
+    crawler.fetch.return_value = raw
+    monkeypatch.setattr(
+        "tradingdev.app.data_service.create_crawler", lambda *_: crawler
+    )
+    before = set(workspace.root.rglob("*"))
+    frame = data_service.fetch_market(
+        config, BacktestConfig.model_validate(config["backtest"])
+    )
+    assert frame["close"].tolist() == ([] if empty else [100.0, 101.0])
+    assert str(frame["timestamp"].dt.tz) == "UTC"
+    assert set(workspace.root.rglob("*")) == before
+    crawler.save_raw.assert_not_called()

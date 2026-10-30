@@ -33,6 +33,11 @@ from tradingdev.domain.benchmark import (
         ("yahoo_finance", "^TWII", None),
         ("yahoo_finance", "ES=F", None),
         ("yahoo_finance", "EURUSD=X", None),
+        ("yahoo_finance", "BTC-USD", None),
+        ("yahoo_finance", "USDT-USD", None),
+        ("yahoo_finance", "BRK-B", "us_equity"),
+        ("binance_api", "ETH/BTC", None),
+        ("binance_vision", "BTC/USD", None),
         ("csv", "AAPL", None),
     ],
 )

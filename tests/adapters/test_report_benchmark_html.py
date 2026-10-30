@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from tradingdev.adapters.reporting.html import _benchmark
+from tradingdev.adapters.reporting.tables import _benchmark_row
 
 
 def _bars(count: int) -> list[str]:
@@ -122,3 +123,22 @@ def test_normalized_baseline_withholds_amounts_instead_of_mixing_units() -> None
     assert cells[0] != "—"  # the strategy's realized amount stays visible
     assert cells[1] == "—"  # a one-unit baseline amount is not comparable
     assert cells[2] == "—"  # so no difference is computed
+
+
+def test_partial_baseline_never_subtracts_returns_from_different_periods() -> None:
+    scope = _scope(
+        benchmark=_available(
+            coverage={
+                "scope_bars": 3,
+                "aligned_bars": 2,
+                "missing_bars": 1,
+                "complete": False,
+            }
+        )
+    )
+    row = _benchmark_row(scope)
+    assert row["excess_return"] is None
+    assert row["benchmark_coverage"] == "2/3"
+    fragment = _benchmark(scope)
+    result_row = fragment.split("<th>累積報酬率</th>", 1)[1].split("</tr>", 1)[0]
+    assert _cells(result_row)[2] == "—"

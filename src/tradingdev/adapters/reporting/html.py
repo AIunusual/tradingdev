@@ -356,6 +356,7 @@ def _benchmark_table(scope: dict[str, Any], benchmark: dict[str, Any]) -> str:
     values = _object(scope.get("values"))
     baseline = _object(benchmark.get("values"))
     comparable_amounts = benchmark.get("capital_basis") == "run_init_cash"
+    comparable_period = _object(benchmark.get("coverage")).get("complete") is True
     rows = []
     for key in _BENCHMARK_METRICS:
         if key not in values and key not in baseline:
@@ -366,8 +367,8 @@ def _benchmark_table(scope: dict[str, Any], benchmark: dict[str, Any]) -> str:
         strategy_number = _number(strategy)
         reference_number = _number(reference)
         difference = None
-        comparable_unit = unit in {"fraction", "ratio"} or (
-            unit == "amount" and comparable_amounts
+        comparable_unit = comparable_period and (
+            unit in {"fraction", "ratio"} or (unit == "amount" and comparable_amounts)
         )
         if (
             strategy_number is not None
@@ -392,8 +393,9 @@ def _benchmark_table(scope: dict[str, Any], benchmark: dict[str, Any]) -> str:
     if not rows:
         return "<p>策略與基準都沒有可比較的報酬或風險指標。</p>"
     note = (
-        "差異為策略減基準；只有兩側都是有限數值且單位相同時才計算，"
-        "單位不同時顯示「—」，缺少數值時顯示「未知／未記錄」。"
+        "差異為策略減基準；只有基準涵蓋全部策略 K 線、"
+        "兩側都是有限數值且單位相同時才計算，"
+        "期間或單位不同時顯示「—」，缺少數值時顯示「未知／未記錄」。"
         + (
             ""
             if comparable_amounts
@@ -489,8 +491,8 @@ def _benchmark(scope: dict[str, Any]) -> str:
             if definition.get("weighting") == "buy_and_hold"
             else definition.get("weighting"),
             "基準狀態": _enum("benchmark_status", status),
-            "行情資料源": benchmark.get("source"),
-            "市場類型": benchmark.get("market_type"),
+            "請求資料源": benchmark.get("source"),
+            "有效市場設定（未適用時為空）": benchmark.get("market_type"),
             "行情區間識別": benchmark.get("dataset_id"),
             "沿用本次回測行情": "是（基準標的即交易標的）"
             if benchmark.get("reused_run_frame")
@@ -501,6 +503,12 @@ def _benchmark(scope: dict[str, Any]) -> str:
     rationale = definition.get("rationale")
     if isinstance(rationale, str) and rationale:
         header += f"<p>{escape(rationale)}</p>"
+    if benchmark.get("reused_run_frame"):
+        header += (
+            "<p class='notice'>此基準沿用策略的同一份行情；"
+            "資料源與市場欄位描述請求設定，"
+            "不代表已獨立核驗既有快取的實際來源。來源不明的行情亦會影響策略本身。</p>"
+        )
     if status != "available":
         return (
             header
@@ -524,7 +532,7 @@ def _benchmark(scope: dict[str, Any]) -> str:
     coverage_note = (
         f"<p class='notice'>基準行情缺少 {missing} 根回測 K 線（對齊 "
         f"{coverage.get('aligned_bars')}／{coverage.get('scope_bars')} 根），"
-        "比較期間不完全相同，數值僅供參考。</p>"
+        "比較期間不完全相同，保留各自數值但不計算差異或超額報酬。</p>"
         if isinstance(missing, int) and missing > 0
         else ""
     )
