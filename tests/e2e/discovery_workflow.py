@@ -92,13 +92,20 @@ def verify_market_cache_reply(reply: str, *, settled: bool) -> None:
         assert len(lines) == 1, "Each market needs one unambiguous decision line"
         line = lines[0]
         assert re.search(rf"(?<!\d){count}\s*筆", line)
-        decision_end = r"(?=\s*(?:[；;|｜，,。]|$))"
-        reuse = re.findall(r"(?<!\w)可直接重用\s*[:：]\s*(是|否)" + decision_end, line)
-        reacquire = re.findall(
-            r"(?<!\w)[須需]重新取得(?:才符合重用政策)?\s*[:：]\s*(是|否)"
-            + decision_end,
-            line,
+        fields = list(
+            re.finditer(
+                r"(?<!\w)(可直接重用|[須需]重新取得(?:才符合重用政策)?|理由)\s*[:：]\s*",
+                line,
+            )
         )
+        reuse, reacquire = [], []
+        for index, field in enumerate(fields):
+            end = fields[index + 1].start() if index + 1 < len(fields) else len(line)
+            value = line[field.end() : end].strip(" \t；;|｜，,。.")
+            if field[1] == "可直接重用":
+                reuse.append(value)
+            elif field[1] != "理由":
+                reacquire.append(value)
         assert reuse == ["是" if settled else "否"], (
             "Reuse decision must match this market's acquisition evidence"
         )
