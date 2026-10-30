@@ -44,6 +44,7 @@ class XGBoostStrategy(BaseStrategy):
         self._best_lookback: int | None = None
         self._best_threshold: float = config.signal_threshold
         self._train_data: pd.DataFrame | None = None
+        self._rolling_trace: dict[str, Any] | None = None
 
     def fit(self, df: pd.DataFrame) -> None:
         """Optimise lookback and train the XGBoost model."""
@@ -155,19 +156,27 @@ class XGBoostStrategy(BaseStrategy):
         if self._config.rolling_gen.enabled:
             # Imported here so that a defect in the optional engine cannot stop
             # the classic path below from loading and running.
-            from tradingdev.domain.ml.rolling_gen import run_rolling
+            from tradingdev.domain.ml.rolling_gen import (
+                rolling_outcome,
+                signals_from_probabilities,
+                trace_payload,
+            )
 
-            signals = run_rolling(
+            outcome = rolling_outcome(
                 self._train_data,
                 df,
                 self._config.rolling_gen.resolve(),
                 model=self._model,
                 model_config=self._config.model,
                 fe=self._feature_engineer,
-                threshold=self._best_threshold,
-                cooldown=self._config.min_bars_between_trades,
                 lookback=self._best_lookback,
                 retrain_interval=self._config.retrain_interval,
+            )
+            self._rolling_trace = trace_payload(outcome)
+            signals = signals_from_probabilities(
+                outcome.probabilities,
+                threshold=self._best_threshold,
+                cooldown=self._config.min_bars_between_trades,
             )
             result = df.copy()
             result["signal"] = signals
@@ -197,3 +206,7 @@ class XGBoostStrategy(BaseStrategy):
         params["best_lookback"] = self._best_lookback
         params["best_threshold"] = self._best_threshold
         return params
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Return the rolls that scored the last run, if the switch was on."""
+        return self._rolling_trace

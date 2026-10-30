@@ -63,6 +63,8 @@ class SafetyVolumeStrategy(BaseStrategy):
         self._dir_model: XGBoostDirectionModel | None = None
         self._dir_fe: FeatureEngineer | None = None
 
+        self._rolling_trace: dict[str, Any] | None = None
+
     # ------------------------------------------------------------------
     # BaseStrategy interface
     # ------------------------------------------------------------------
@@ -422,10 +424,10 @@ class SafetyVolumeStrategy(BaseStrategy):
 
         # Imported here so that a defect in the optional engine cannot stop the
         # classic loop above from loading and running.
-        from tradingdev.domain.ml.rolling_gen import rolling_probabilities
+        from tradingdev.domain.ml.rolling_gen import rolling_outcome, trace_payload
 
         lookback = self._best_lookback or 720
-        probabilities = rolling_probabilities(
+        outcome = rolling_outcome(
             self._train_data,
             df,
             self._config.rolling_gen.resolve(),
@@ -435,7 +437,12 @@ class SafetyVolumeStrategy(BaseStrategy):
             lookback=lookback,
             retrain_interval=self._config.retrain_interval,
         )
-        return probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)
+        self._rolling_trace = trace_payload(outcome)
+        return outcome.probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Return the rolls that scored the last run, if the switch was on."""
+        return self._rolling_trace
 
     # ------------------------------------------------------------------
     # Direction signal

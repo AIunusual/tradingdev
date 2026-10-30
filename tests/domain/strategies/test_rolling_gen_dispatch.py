@@ -8,7 +8,7 @@ retrainer does, so ``test_train_replay_context.py`` stays the authority on that.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ import pytest
 from tradingdev.domain.ml.features.risk_features import RiskFeatureEngineer
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
+from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.bundled.safety_volume_strategy.config import (
     SafetyVolumeStrategyConfig,
 )
@@ -34,6 +35,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _FIT_BARS = 800
+
+
+class _PlainStrategy(BaseStrategy):
+    """A strategy that neither fits nor retrains."""
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df.assign(signal=0)
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {}
 
 
 def _fitted_xgboost(df: pd.DataFrame, *, enabled: bool) -> XGBoostStrategy:
@@ -59,7 +70,7 @@ def test_the_switch_decides_which_loop_runs(
     def _called(*args: object, **kwargs: object) -> None:
         raise AssertionError("the declared rolling engine was called")
 
-    monkeypatch.setattr("tradingdev.domain.ml.rolling_gen.run_rolling", _called)
+    monkeypatch.setattr("tradingdev.domain.ml.rolling_gen.rolling_outcome", _called)
 
     disabled = _fitted_xgboost(large_ohlcv_df, enabled=False)
     result = disabled.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
@@ -94,6 +105,41 @@ def test_enabled_run_has_no_look_ahead(
     scored = large_ohlcv_df.iloc[_FIT_BARS:].reset_index(drop=True)
 
     assert_no_look_ahead(strategy, scored, check_points=[60, 120, 199])
+
+
+def test_the_trace_is_absent_while_the_switch_is_off(
+    large_ohlcv_df: pd.DataFrame,
+) -> None:
+    """No provenance record is invented for a run that never rolled."""
+    strategy = _fitted_xgboost(large_ohlcv_df, enabled=False)
+
+    strategy.generate_signals(large_ohlcv_df.iloc[_FIT_BARS:])
+
+    assert strategy.rolling_trace() is None
+
+
+def test_a_strategy_that_never_rolls_has_no_trace() -> None:
+    """The default keeps run metadata unchanged for every other strategy."""
+    assert _PlainStrategy().rolling_trace() is None
+
+
+def test_the_trace_accounts_for_every_scored_bar(
+    large_ohlcv_df: pd.DataFrame,
+) -> None:
+    strategy = _fitted_xgboost(large_ohlcv_df, enabled=True)
+    scored = large_ohlcv_df.iloc[_FIT_BARS:]
+
+    strategy.generate_signals(scored)
+
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    assert trace["scheme"] == "roll_ex"
+    assert trace["bars"] == len(scored)
+    rolls = trace["rolls"]
+    assert isinstance(rolls, list)
+    assert len(rolls) >= 1
+    # The rolls partition the scored bars, so their counts must add up.
+    assert sum(entry["bars_scored"] for entry in rolls) == trace["bars_scored"]
 
 
 class _AlwaysSafe(XGBoostDirectionModel):
@@ -148,6 +194,22 @@ def test_safety_risk_scores_one_value_per_bar_when_enabled(
     assert scores.max() <= 1.0
 
 
+def test_safety_risk_records_the_rolls_it_ran(
+    large_ohlcv_df: pd.DataFrame,
+) -> None:
+    train = large_ohlcv_df.iloc[:300].copy()
+    scored = large_ohlcv_df.iloc[300:500].copy()
+    strategy, _ = _fitted_safety(train, enabled=True)
+
+    strategy._predict_risk_rolling(scored)
+
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    assert trace["scheme"] == "roll_ex"
+    assert trace["bars"] == len(scored)
+    assert trace["bars_scored"] == len(scored)
+
+
 def test_safety_risk_switch_off_never_reaches_the_declared_engine(
     large_ohlcv_df: pd.DataFrame,
     monkeypatch: pytest.MonkeyPatch,
@@ -155,9 +217,7 @@ def test_safety_risk_switch_off_never_reaches_the_declared_engine(
     def _called(*args: object, **kwargs: object) -> None:
         raise AssertionError("the declared rolling engine was called")
 
-    monkeypatch.setattr(
-        "tradingdev.domain.ml.rolling_gen.rolling_probabilities", _called
-    )
+    monkeypatch.setattr("tradingdev.domain.ml.rolling_gen.rolling_outcome", _called)
 
     train = large_ohlcv_df.iloc[:300].copy()
     scored = large_ohlcv_df.iloc[300:500].copy()

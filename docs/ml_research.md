@@ -324,6 +324,18 @@ bar's. These are the rules the classic retrainer already follows; the scheme
 only changes the window shape. A run that cannot score any bar at all fails
 rather than returning all-zero signals.
 
+The schedule can be printed before anything runs. `enumerate_rolls` returns one
+window per retrain — the training bounds, the bar that triggered it, and the
+bars that model scores — built from the same geometry the engine executes, so
+it previews the run rather than describing a second one.
+
+A run that enables the switch also records what actually happened. Each scored
+bar is attributed to the roll that produced it, and each roll reports its window,
+how many labelled rows it offered, and whether a model was fitted or the previous
+one kept. The record lands in the run's metric metadata as `rolling_trace`,
+beside `strategy_parameters`; it is provenance, not a parameter, and it is absent
+whenever the switch is off.
+
 This is not fold validation. `validation_schemes` cut one dataset into
 train/test folds to estimate the training procedure; `rolling_gen` decides how
 an already fitted strategy refits and predicts bar by bar. Date anchoring is not

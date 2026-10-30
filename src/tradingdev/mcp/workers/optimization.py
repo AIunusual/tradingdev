@@ -192,6 +192,9 @@ def _run_single_combo(
         result.metric_metadata["strategy_parameters"] = deepcopy(
             strategy.get_parameters()
         )
+        rolling_trace = strategy.rolling_trace()
+        if rolling_trace is not None:
+            result.metric_metadata["rolling_trace"] = rolling_trace
 
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 

@@ -17,6 +17,7 @@ remembered:
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -25,6 +26,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.rolling_gen.schedule import RollWindow, enumerate_rolls
 from tradingdev.domain.ml.rolling_gen.scheme import (
     RollingGeometry,
     RollingScheme,
@@ -41,6 +43,86 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 _PROBABILITY_COLUMNS = ("p_long", "p_short")
+
+
+@dataclass(frozen=True)
+class RollTrace:
+    """What one roll actually did, next to the window it was declared to cover.
+
+    ``window`` is the same :class:`RollWindow` the schedule enumerates, so a
+    trace can be compared with a preview by equality instead of by recomputing
+    bounds. ``trained`` separates "fitted on this window" from "kept the previous
+    model because the window was too small", which is the difference between a
+    model that saw this data and one that did not.
+    """
+
+    window: RollWindow
+    n_train_rows: int
+    """Labelled rows the window offered; 0 when it was too short to try."""
+
+    trained: bool
+    """Whether a model was fitted, or the previous one kept."""
+
+    bars_scored: int
+    """Bars this roll's model actually scored."""
+
+
+@dataclass(frozen=True)
+class RollingOutcome:
+    """Probabilities, the geometry that produced them, and their provenance."""
+
+    probabilities: pd.DataFrame
+    bar_roll: tuple[int, ...]
+    """Roll index per scored bar; -1 where the bar could not be scored."""
+
+    rolls: tuple[RollTrace, ...]
+    scheme_name: str
+    geometry: RollingGeometry
+    """The effective geometry: unset scheme fields already resolved."""
+
+
+@dataclass(frozen=True)
+class _RetrainOutcome:
+    """A retrain's model and what it was fitted on."""
+
+    model: XGBoostDirectionModel
+    n_train_rows: int
+    trained: bool
+
+
+def trace_payload(outcome: RollingOutcome) -> dict[str, object]:
+    """A JSON-ready record of the run, for storage beside the run metrics.
+
+    One entry per roll rather than per bar: a reader can resolve any bar's model
+    by its roll, and the record stays proportional to the retrain count instead
+    of the bar count. The geometry reported is the effective one, so a run that
+    left ``step`` unset still records the cadence it actually used.
+    """
+    scored = sum(1 for roll in outcome.bar_roll if roll >= 0)
+    return {
+        "scheme": outcome.scheme_name,
+        "rtype": outcome.geometry.rtype.value,
+        "step": outcome.geometry.step,
+        "window_size": outcome.geometry.window_size,
+        "min_train_bars": outcome.geometry.min_train_bars,
+        "predict_lookback": outcome.geometry.predict_lookback,
+        "bars": len(outcome.bar_roll),
+        "bars_scored": scored,
+        "rolls": [
+            {
+                "index": trace.window.index,
+                "retrain_bar": trace.window.retrain_bar,
+                "train_start": trace.window.train_start,
+                "train_end": trace.window.train_end,
+                "test_start": trace.window.test_start,
+                "test_end": trace.window.test_end,
+                "n_train_rows": trace.n_train_rows,
+                "trained": trace.trained,
+                "bars_scored": trace.bars_scored,
+            }
+            for trace in outcome.rolls
+        ],
+    }
 
 
 class FeatureTransformer(Protocol):
@@ -75,7 +157,7 @@ class _Retrainer:
         fallback: XGBoostDirectionModel,
         retrain_count: int,
         bar: int,
-    ) -> XGBoostDirectionModel:
+    ) -> _RetrainOutcome:
         """Train on the declared window, or keep the previous model.
 
         A window that holds too few labelled rows is skipped rather than
@@ -93,7 +175,7 @@ class _Retrainer:
         start, stop = self.geometry.train_window(combined_idx)
         window = self.combined.iloc[start:stop].copy()
         if len(window) < 2:
-            return fallback
+            return _RetrainOutcome(fallback, 0, trained=False)
         labelled = self.fe.transform(window, include_target=True)
         if len(labelled) < self.geometry.min_train_bars:
             logger.info(
@@ -104,10 +186,10 @@ class _Retrainer:
                 bar,
                 self.geometry.min_train_bars,
             )
-            return fallback
+            return _RetrainOutcome(fallback, len(labelled), trained=False)
         model = self.model_factory(self.model_config)
         model.train(labelled)
-        return model
+        return _RetrainOutcome(model, len(labelled), trained=True)
 
     def score(
         self,
@@ -135,7 +217,7 @@ class _Retrainer:
         return True
 
 
-def rolling_probabilities(
+def rolling_outcome(
     train_data: pd.DataFrame,
     test_df: pd.DataFrame,
     scheme: RollingScheme,
@@ -148,8 +230,8 @@ def rolling_probabilities(
     model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
         XGBoostDirectionModel
     ),
-) -> pd.DataFrame:
-    """Score every bar of ``test_df`` with the scheme's retraining geometry.
+) -> RollingOutcome:
+    """Score every bar of ``test_df`` and report which roll scored it.
 
     Args:
         train_data: History kept by ``fit()``; rows overlapping the scored frame
@@ -164,8 +246,9 @@ def rolling_probabilities(
         model_factory: Builds a fresh untrained model; overridable for tests.
 
     Returns:
-        One row per scored bar, with ``p_long`` and ``p_short``. A bar whose
-        features could not be computed is NaN in both columns.
+        The per-bar probabilities (a bar whose features could not be computed is
+        NaN in both columns), the roll that scored each bar, and one trace entry
+        per roll describing what it actually trained on.
 
     Raises:
         ValueError: If either frame lacks a usable time identity, or the scheme
@@ -180,6 +263,18 @@ def rolling_probabilities(
     combined = pd.concat([history, scored], ignore_index=True)
     test_offset = len(history)
     total_bars = len(scored)
+    # The declared schedule names the windows; the loop below records what each
+    # one actually did. Both come from the same geometry, and the traces carry
+    # the schedule's own RollWindow so a trace can be compared by equality.
+    schedule = enumerate_rolls(
+        scheme,
+        n_scored_bars=total_bars,
+        history_bars=test_offset,
+        lookback=lookback,
+        retrain_interval=retrain_interval,
+    )
+    bar_roll = [-1] * total_bars
+    retrains: dict[int, _RetrainOutcome] = {}
 
     probabilities = np.full((total_bars, len(_PROBABILITY_COLUMNS)), np.nan)
     scored_mask = np.zeros(total_bars, dtype=bool)
@@ -212,20 +307,25 @@ def rolling_probabilities(
     retrain_count = 0
     for bar in range(total_bars):
         combined_idx = test_offset + bar
+        roll_index = bar // geometry.step
         if bar % geometry.step == 0:
             retrain_count += 1
-            current_model = retrainer.retrain(
+            retrain = retrainer.retrain(
                 combined_idx,
                 fallback=current_model,
                 retrain_count=retrain_count,
                 bar=bar,
             )
+            current_model = retrain.model
+            retrains[roll_index] = retrain
         scored_mask[bar] = retrainer.score(
             combined_idx,
             current_model,
             probabilities,
             bar=bar,
         )
+        if scored_mask[bar]:
+            bar_roll[bar] = roll_index
 
     elapsed = time.monotonic() - t_start
     logger.info(
@@ -245,7 +345,59 @@ def rolling_probabilities(
             "raise rolling_gen.predict_lookback"
         )
         raise ValueError(msg)
-    return pd.DataFrame(probabilities, columns=list(_PROBABILITY_COLUMNS))
+    scored_per_roll = Counter(roll for roll in bar_roll if roll >= 0)
+    traces: list[RollTrace] = []
+    for window in schedule:
+        record = retrains.get(window.index)
+        if record is None:
+            msg = (
+                f"rolling scheme {scheme.name!r} enumerated {len(schedule)} rolls "
+                f"but never retrained for roll {window.index}"
+            )
+            raise ValueError(msg)
+        traces.append(
+            RollTrace(
+                window=window,
+                n_train_rows=record.n_train_rows,
+                trained=record.trained,
+                bars_scored=scored_per_roll.get(window.index, 0),
+            )
+        )
+    return RollingOutcome(
+        probabilities=pd.DataFrame(probabilities, columns=list(_PROBABILITY_COLUMNS)),
+        bar_roll=tuple(bar_roll),
+        rolls=tuple(traces),
+        scheme_name=scheme.name,
+        geometry=geometry,
+    )
+
+
+def rolling_probabilities(
+    train_data: pd.DataFrame,
+    test_df: pd.DataFrame,
+    scheme: RollingScheme,
+    *,
+    model: XGBoostDirectionModel,
+    model_config: XGBoostModelConfig,
+    fe: FeatureTransformer,
+    lookback: int,
+    retrain_interval: int,
+    model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
+        XGBoostDirectionModel
+    ),
+) -> pd.DataFrame:
+    """The probabilities alone, for callers that do not need the provenance."""
+    return rolling_outcome(
+        train_data,
+        test_df,
+        scheme,
+        model=model,
+        model_config=model_config,
+        fe=fe,
+        lookback=lookback,
+        retrain_interval=retrain_interval,
+        model_factory=model_factory,
+    ).probabilities
 
 
 def signals_from_probabilities(
