@@ -56,14 +56,18 @@ trace: fold capture is not implemented.
 Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
 frame where the model was fitted; `train_start` and `train_end`, half-open
 positions in the concatenated history-plus-scored frame, ending at the bar being
-scored; `test_start` and `test_end`, the interval that model was assigned to
-score; `n_train_rows`, the labelled rows the window offered — zero when the raw
-window was shorter than two bars, because nothing was transformed; `trained`,
-false when the window was too small and the previous model was kept; and
-`bars_scored`, the
-subset of its interval that was actually scored. Positions are indices in the
-concatenated frame rather than timestamps, so a bar's model is found by the roll
-whose interval contains it, unless the bar appears in `unscored_bars`.
+scored; `test_start` and `test_end`, the scored-frame interval that model was
+assigned to score; `n_train_rows`, the labelled rows the window offered — zero
+when the raw window was shorter than two bars, because nothing was transformed;
+`trained`, false when the window was too small and the previous model was kept;
+and `bars_scored`, the subset of its interval that was actually scored.
+
+Coordinates are positions rather than timestamps, and they use two frames.
+`train_start` and `train_end` are positions in the concatenated
+history-plus-scored frame. `retrain_bar`, `test_start`, `test_end` and every entry
+of `unscored_bars` are positions in the scored frame alone. A bar's model is
+therefore the roll whose `test_start`–`test_end` interval contains its
+scored-frame position, unless that position appears in `unscored_bars`.
 
 Optimization keeps its existing meaning: `parameters` contains the trial's
 searched values (or the selected values for `test`), while
