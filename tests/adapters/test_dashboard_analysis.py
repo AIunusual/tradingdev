@@ -15,6 +15,7 @@ from tradingdev.adapters.dashboard.analysis import (
     filter_by_month,
     metric_cards,
     monthly_volume,
+    rolling_mdd_absolute,
 )
 
 
@@ -176,3 +177,44 @@ def test_percentage_curve_uses_initial_capital() -> None:
     equity = pd.Series([100.0, 110.0, 90.0])
 
     np.testing.assert_allclose(cumulative_pnl_pct(equity, 100.0), [0.0, 10.0, -10.0])
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ([100.0, 50.0, 60.0, 70.0], [50.0, 0.0]),
+        ([10.0, 20.0, 30.0, 40.0], [0.0, 0.0]),
+        ([40.0, 30.0, 20.0, 10.0], [20.0, 20.0]),
+        ([20.0, 20.0, 20.0, 20.0], [0.0, 0.0]),
+        ([10.0, 40.0, 30.0, 20.0], [10.0, 20.0]),
+    ],
+)
+def test_rolling_drawdown_uses_only_ordered_pairs_in_each_window(
+    values: list[float], expected: list[float]
+) -> None:
+    result = rolling_mdd_absolute(pd.Series(values), 3)
+    assert result.iloc[:2].isna().all()
+    np.testing.assert_allclose(result.iloc[2:], expected)
+
+
+def test_rolling_drawdown_matches_independent_pairwise_reference() -> None:
+    values = np.random.default_rng(72).normal(size=100)
+    for window in (1, 7, 30):
+        expected = [
+            max(
+                values[a] - values[b]
+                for a in range(i - window + 1, i + 1)
+                for b in range(a, i + 1)
+            )
+            for i in range(window - 1, len(values))
+        ]
+        np.testing.assert_allclose(
+            rolling_mdd_absolute(pd.Series(values), window).iloc[window - 1 :], expected
+        )
+
+
+def test_rolling_drawdown_invalid_values_do_not_become_zero_risk() -> None:
+    result = rolling_mdd_absolute(pd.Series([10.0, np.nan, 20.0, 15.0, 12.0]), 2)
+    np.testing.assert_allclose(
+        result, [np.nan, np.nan, np.nan, 5.0, 3.0], equal_nan=True
+    )
