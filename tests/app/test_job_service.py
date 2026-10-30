@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import TYPE_CHECKING
+from threading import Event
+from typing import TYPE_CHECKING, Any
 
 import psutil
 import pytest
@@ -381,3 +384,149 @@ def test_running_job_without_any_worker_identity_cannot_claim_cancellation(
 
     assert response["success"] is False
     assert "cannot confirm process cleanup" in response["error"]
+
+
+@pytest.mark.parametrize(
+    "job_type", ["backtest", "walk_forward", "optimization", "comparison"]
+)
+def test_poll_preserves_completion_during_liveness_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, job_type: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path))
+    store.create_job(job_id="race", job_type=job_type)
+    store.update_job("race", status="running_backtest")
+    service = JobService(job_store=store)
+
+    def finish(job: object) -> bool:
+        store.update_job("race", status="done")
+        return False
+
+    monkeypatch.setattr(service, "_is_process_alive", finish)
+    assert service.get_job_status("race")["status"] == "done"
+    record = store.get_job("race")
+    assert record is not None
+    assert record["status"] == "done" and record["ended_at"]
+    assert record["error"] is None
+
+
+def test_cancellation_does_not_override_completion_during_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path))
+    store.create_job(job_id="race")
+    store.update_job(
+        "race",
+        status="running_backtest",
+        **WorkerHandle(12345, 100.0, "b" * 32).job_fields(),
+    )
+
+    def stop(root: Path, handle: WorkerHandle) -> bool:
+        store.update_job("race", status="done")
+        return False
+
+    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    response = JobService(job_store=store).cancel_job("race")
+    assert response["success"] is False
+    assert response["status"] == "done"
+    record = store.get_job("race")
+    assert record is not None and record["status"] == "done"
+    assert record["error"] is None
+
+
+@pytest.mark.parametrize(
+    "terminal", ["done", "failed", "cancelled", "estimation_timeout"]
+)
+def test_terminal_lifecycle_is_immutable_but_late_process_identity_is_saved(
+    tmp_path: Path, terminal: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path))
+    store.create_job(job_id="race")
+    store.update_job("race", status=terminal, error="original")
+    before = store.get_job("race")
+    assert before is not None
+    store.update_job("race", status="running_backtest", error=None, ended_at=None)
+    store.update_job("race", status="failed", error="late failure")
+    store.update_job("race", pid=12345)
+    assert store.get_job("race") == {**before, "pid": 12345}
+
+
+def test_identity_writer_and_worker_merge_inside_one_sqlite_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tradingdev.app.job_store as module
+
+    workspace = WorkspacePaths(tmp_path)
+    first, second = JobStore(workspace=workspace), JobStore(workspace=workspace)
+    first.create_job(job_id="race")
+    first.update_job("race", status="running_backtest")
+    identity_read, worker_attempted, release = Event(), Event(), Event()
+    encode = module._record_to_dict
+    connect = second.store.connect
+
+    def hold_identity(record: module.JobRecord) -> dict[str, Any]:
+        if record.pid == 12345 and record.status == "running_backtest":
+            identity_read.set()
+            assert release.wait(10)
+        return encode(record)
+
+    def worker_connection() -> Any:
+        connection = connect()
+        connection.set_trace_callback(
+            lambda sql: worker_attempted.set() if sql == "BEGIN IMMEDIATE" else None
+        )
+        return connection
+
+    monkeypatch.setattr(module, "_record_to_dict", hold_identity)
+    monkeypatch.setattr(second.store, "connect", worker_connection)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        identity = pool.submit(first.update_job, "race", pid=12345)
+        try:
+            assert identity_read.wait(10)
+            worker = pool.submit(second.update_job, "race", status="done")
+            assert worker_attempted.wait(10)
+        finally:
+            release.set()
+        identity.result(timeout=10)
+        worker.result(timeout=10)
+    record = first.get_job("race")
+    assert record is not None
+    assert record["status"] == "done" and record["pid"] == 12345
+    assert record["ended_at"] and record["error"] is None
+    with first.store.connect() as connection:
+        row = connection.execute("select * from jobs where job_id='race'").fetchone()
+        assert json.loads(row["payload"]) == record
+        for key in ("status", "pid", "started_at", "ended_at", "error"):
+            assert row[key] == record[key]
+
+
+@pytest.mark.parametrize("operation", ["cancel", "poll_comparison"])
+def test_cleanup_failure_keeps_diagnostic_and_reads_worker_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    store = JobStore(workspace=WorkspacePaths(tmp_path))
+    store.create_job(
+        job_id="race",
+        job_type="comparison" if operation == "poll_comparison" else "backtest",
+    )
+    store.update_job(
+        "race",
+        status="running_backtest",
+        **WorkerHandle(12345, 100.0, "b" * 32).job_fields(),
+    )
+    service = JobService(job_store=store)
+    monkeypatch.setattr(service, "_is_process_alive", lambda _: False)
+
+    def stop(root: Path, handle: WorkerHandle) -> bool:
+        store.update_job("race", status="done")
+        raise RuntimeError("cleanup acknowledgement unavailable")
+
+    monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stop)
+    response = (
+        service.cancel_job("race")
+        if operation == "cancel"
+        else service.get_job_status("race")
+    )
+    assert response["status"] == "done"
+    error = response if operation == "cancel" else response["detail_error"]
+    assert error["code"] == "worker_cleanup_failed"
+    assert "cleanup acknowledgement unavailable" in error["error"]

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
 from tradingdev.shared.utils.json_values import normalize_json_object
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _STORE_CACHE: dict[str, SQLiteStore] = {}
@@ -180,6 +182,42 @@ class SQLiteStore:
                     payload,
                 ),
             )
+
+    def mutate_job(
+        self,
+        job_id: str,
+        update: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Read, validate and update under one database write transaction.
+
+        BEGIN IMMEDIATE serializes writers across connections/processes before
+        reading the payload. The callback must perform only in-memory validation.
+        """
+        with closing(self.connect()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "select payload from jobs where job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            current = json.loads(str(row["payload"]))
+            if not isinstance(current, dict):
+                raise ValueError("Invalid persisted job payload")
+            record = update(current)
+            if record["job_id"] != job_id:
+                raise ValueError("Cannot change job identity")
+            columns = [column for column in _JOB_COLUMNS if column != "job_id"]
+            values = {
+                **record,
+                "payload": json.dumps(record, ensure_ascii=False, sort_keys=True),
+            }
+            conn.execute(
+                "update jobs set "
+                + ", ".join(f"{column} = ?" for column in columns)
+                + " where job_id = ?",
+                (*[values.get(column) for column in columns], job_id),
+            )
+            return record
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Return a job payload by id."""
