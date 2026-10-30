@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -157,6 +158,68 @@ def test_old_confirmation_tool_is_no_longer_registered(job_service: JobService) 
     jobs.register(server, job_service)
     with pytest.raises(ToolError, match="Unknown tool"):
         asyncio.run(server.call_tool("confirm_optimization", {"job_id": "legacy"}))
+
+
+@pytest.mark.parametrize(
+    "ended_at,expected", [("2024-01-01T00:00:10+00:00", 10.0), (None, None)]
+)
+def test_elapsed_duration_is_consistent_on_status_and_list_wire(
+    job_service: JobService, ended_at: str | None, expected: float | None
+) -> None:
+    store = job_service._job_store
+    record = store.create_job(job_id="legacy")
+    store.store.upsert_job(
+        {
+            **record,
+            "status": "failed",
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "ended_at": ended_at,
+        }
+    )
+    server = MCPServer("elapsed-test")
+    jobs.register(server, job_service)
+    for tool, arguments in (
+        ("get_job_status", {"job_id": "legacy"}),
+        ("list_jobs", {}),
+    ):
+        result = asyncio.run(server.call_tool(tool, arguments))
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        payload: Any = (
+            result.structured_content["items"][0]
+            if tool == "list_jobs"
+            else result.structured_content["result"]
+        )
+        assert payload["elapsed_seconds"] == expected
+        if tool == "get_job_status":
+            assert payload["ended_at"] == ended_at
+        assert payload["elapsed_unavailable_reason"] == (
+            "missing_or_invalid_timestamps" if expected is None else None
+        )
+
+
+def test_missing_created_timestamp_does_not_break_job_inventory(
+    job_service: JobService,
+) -> None:
+    store = job_service._job_store
+    record = store.create_job(job_id="legacy")
+    record.update(status="failed", ended_at="2024-01-01T00:00:10+00:00")
+    del record["created_at"]
+    with store.store.connect() as connection:
+        connection.execute(
+            "update jobs set payload = ? where job_id = ?",
+            (json.dumps(record), "legacy"),
+        )
+    server = MCPServer("missing-time")
+    jobs.register(server, job_service)
+    result = asyncio.run(server.call_tool("list_jobs", {}))
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    assert result.structured_content["total"] == 1
+    item = result.structured_content["items"][0]
+    assert item["job_id"] == "legacy"
+    assert item["elapsed_seconds"] is None
+    assert item["elapsed_unavailable_reason"] == "missing_or_invalid_timestamps"
 
 
 @pytest.mark.parametrize("metric", ["max_drawdown", "daily_pnl_mean"])

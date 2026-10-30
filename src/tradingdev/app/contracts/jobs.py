@@ -34,7 +34,8 @@ class JobSummary(ContractModel):
     timeframe: str | None
     start_date: str | None
     end_date: str | None
-    elapsed_seconds: float
+    elapsed_seconds: float | None
+    elapsed_unavailable_reason: Literal["missing_or_invalid_timestamps"] | None = None
     data_downloaded: bool
     total_combinations: int | None = None
     completed: int | None = None
@@ -80,7 +81,8 @@ class JobStatus(ContractModel):
     timeframe: str | None
     start_date: str | None
     end_date: str | None
-    elapsed_seconds: float
+    elapsed_seconds: float | None
+    elapsed_unavailable_reason: Literal["missing_or_invalid_timestamps"] | None = None
     ended_at: str | None = None
     run_id: str | None = None
     metrics: dict[str, JsonValue] | None = None
