@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,7 @@ from mcp_types import CallToolResult
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.artifact_service import ArtifactService
 from tradingdev.app.contracts.jobs import JobStatus
 from tradingdev.app.contracts.research import (
     CompareRunsResponse,
@@ -140,6 +142,108 @@ def _publish(
     )
     PerformanceStore(workspace, store).publish(artifacts)
     return artifacts
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_rolling_trace_queries_are_bounded_and_full_evidence_remains_readable(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService], nested: bool
+) -> None:
+    workspace, store, service = storage
+    trace = {
+        "scheme": "roll_ex",
+        "step": 24,
+        "bars": 525600,
+        "bars_scored": 525576,
+        "initial_model_available": False,
+        "rolls": [
+            {"index": i, "trained": i > 0, "bars_scored": 24} for i in range(21900)
+        ],
+        "unscored_bars": list(range(24)),
+    }
+    metadata = (
+        {"fold_metadata": [{"fold/0~test": {"rolling_trace": trace}}]}
+        if nested
+        else {"rolling_trace": trace}
+    )
+    scope_id = "fold/0/test"
+    for run_id in ("first", "second"):
+        _publish(
+            storage,
+            run_id,
+            scopes={scope_id: _scope(metadata=metadata)},
+            default_scope=scope_id,
+        )
+    payload = service.get_run_metrics("first", metric_ids=[])
+    assert len(json.dumps(payload)) < 8000
+    result_metadata = payload["metadata"]
+    summary = (
+        result_metadata["fold_metadata"][0]["fold/0~test"]["rolling_trace"]
+        if nested
+        else result_metadata["rolling_trace"]
+    )
+    assert summary["content_included"] is False
+    assert summary["roll_count"] == 21900
+    assert summary["trained_roll_count"] == 21899
+    assert summary["unscored_bar_count"] == 24
+    assert summary["scheme"] == "roll_ex"
+    assert "rolls" not in summary and "unscored_bars" not in summary
+    pointer = "/scopes/fold~10~1test/metadata/"
+    pointer += "fold_metadata/0/fold~10~0test/" if nested else ""
+    assert summary["json_pointer"] == pointer + "rolling_trace"
+    assert summary["artifact_id"] == "first:performance_json"
+    comparison = service.compare_runs(["first", "second"], metric_ids=[])
+    assert len(json.dumps(comparison)) < 16000
+    assert comparison["runs"][0]["metadata"] == result_metadata
+    assert (
+        metadata
+        == PerformanceStore(workspace, store).load("first").scopes[scope_id].metadata
+    )
+    artifact = ArtifactService(workspace=workspace, store=store).get_artifact(
+        summary["artifact_id"], include_content=True, limit=100
+    )
+    assert artifact["success"]
+    assert artifact["content_page"]["next_offset"] == 100
+    assert artifact["content_page"]["total_characters"] > 1_000_000
+    saved = json.loads(workspace.runs.joinpath("first", "performance.json").read_text())
+    assert saved["scopes"][scope_id]["metadata"] == metadata
+
+    server = MCPServer("trace-query-test")
+    runs.register(server, service)
+
+    async def check_wire() -> None:
+        response = await server.call_tool(
+            "get_run_metrics", {"run_id": "first", "metric_ids": []}
+        )
+        assert isinstance(response, CallToolResult)
+        assert response.structured_content is not None
+        typed = RunMetricsResponse.model_validate(response.structured_content["result"])
+        assert typed.metadata == result_metadata
+
+    asyncio.run(check_wire())
+
+
+@pytest.mark.parametrize(
+    ("trace", "expected"),
+    [
+        ({}, None),
+        ({"rolls": [{}]}, None),
+        ({"rolls": [{"trained": True}, {}]}, None),
+        ({"rolls": [{"trained": 1}]}, None),
+        ({"rolls": []}, 0),
+        ({"rolls": [{"trained": False}]}, 0),
+    ],
+)
+def test_unknown_rolling_training_status_is_not_counted_as_false(
+    storage: tuple[WorkspacePaths, SQLiteStore, RunService],
+    trace: dict[str, Any],
+    expected: int | None,
+) -> None:
+    _publish(
+        storage, "unknown", scopes={"full": _scope(metadata={"rolling_trace": trace})}
+    )
+    summary = storage[2].get_run_metrics("unknown")["metadata"]["rolling_trace"]
+    assert summary["trained_roll_count"] == expected
+    assert summary["unscored_bar_count"] is None
 
 
 def test_summary_uses_saved_flags_and_detail_keeps_every_value(

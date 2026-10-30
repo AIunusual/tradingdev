@@ -17,9 +17,10 @@ strategy lifecycle. User workflow is documented in the
 
 `get_ml_contract` returns schema version 1 discovery information: named feature
 sets with ordered columns, model kinds with default parameters, validation
-schemes, processor types, IC methods, quantile limits, calendar modes, missing
-policies and rankable metrics. Use these returned names rather than constructing
-arbitrary model classes. `processor_types` advertises domain building blocks
+schemes, rolling schemes with their window type and default cadence, processor
+types, IC methods, quantile limits, calendar modes, missing policies and rankable
+metrics. Use these returned names rather than constructing arbitrary model
+classes. `processor_types` advertises domain building blocks
 only: `build_dataset`, `build_panel` and `train_model` do not accept or execute a
 processor pipeline. In particular, training does not implicitly fit a scaler
 because its name appears in discovery.
@@ -287,6 +288,121 @@ Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
 proof of a trustworthy publisher. Do not load model files from an untrusted
 workspace.
+
+### Rolling Retraining Schemes
+
+The bundled `XGBoostStrategy` and `SafetyVolumeStrategy` retrain while they
+score: every `retrain_interval` bars the engine attempts a refit, and each bar is
+predicted with whichever model is current. A `rolling_gen` block declares that
+window geometry instead of leaving it inside the strategy loop. It is **off by default**; with `enabled: false` the
+strategy runs its classic retrainer, untouched. `get_ml_contract` advertises the
+schemes under `rolling_schemes` — each entry carries `name`, `description`,
+`rtype` and `default_step`, where a null `default_step` means the cadence follows
+the strategy's own interval — and execution resolves them from the same registry,
+so the menu and the geometry that actually runs cannot drift apart.
+
+```yaml
+strategy:
+  parameters:
+    rolling_gen:
+      enabled: true      # off unless set
+      scheme: roll_sd    # or roll_ex
+      step: 720          # optional; follows retrain_interval
+      window_size: 7200  # roll_sd only; follows 10 x lookback
+```
+
+- `roll_sd` slides a training window of `window_size` bars forward with each
+  retrain. Early windows are clipped at the first bar, so they can be shorter
+  than that length; a clipped window below `min_train_bars` skips the refit and
+  keeps a previous model only when one is available.
+- `roll_ex` keeps the first bar and expands the window with each retrain.
+
+The scheme name fixes the window shape; there is no separate override, so a name
+cannot describe one geometry while running another. `window_size` is accepted
+only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
+
+`min_train_bars` and `predict_lookback` are optional as well; they follow
+`lookback + 10` labelled rows and `2 x lookback` prior bars of scoring context.
+`predict_lookback` counts bars *before* the scored one, which is then added on
+top, so the default context is up to `2 x lookback + 1` rows, clipped to the
+available history. It must also be at least
+`lookback + 1`, otherwise the context could not cover the feature lookback and
+geometry resolution raises before scoring. Resolution happens during signal
+generation, so `fit()`'s
+initial model already exists at that point; it is the rolling refits that never
+start. Those defaults are derived from the strategy's own lookback on purpose: a
+fixed window shorter than the feature warm-up would leave no labelled rows and
+skip every refit, which the trace records as `trained: false` with the row count
+the window offered. An enabled unknown scheme or a conflicting expanding
+`window_size` is rejected earlier, when strategy configuration is validated.
+
+A refit is skipped, and an available previous model kept, when the window holds fewer than
+`min_train_bars` labelled rows or fewer than two bars at all. The trace records
+`trained: false` for that roll, so a carried-over model is never mistaken for one
+that saw the data. The initial fitted model is available only if its entire
+training frame precedes the scored frame. An overlapping training replay waits
+for its first successful refit; clipping history cannot remove future knowledge
+from a fitted model. If no model becomes available during a nonempty replay,
+execution fails with a model-availability error rather than reporting a successful
+all-neutral run. These replay metrics remain in-sample diagnostics: lookback and
+other strategy settings may still have been selected using the full training fold.
+
+Whichever scheme is declared, a training window ends strictly before the bar it
+scores, the scored frame is never concatenated in front of itself, and a bar
+whose features are unavailable is not scored rather than reusing the previous
+bar's value. Those are the same rules the classic retrainer follows in its own
+loop. The engine adds one rule of its own: a training row whose label reads past
+the last bar of the training window is dropped before fitting, whatever the feature engineer
+returned. The classic retrainer has no such filter — it relies on the engineer
+leaving that tail unlabelled for `dropna` to remove — which is why the engine
+takes `label_horizon` explicitly and why an engineer that fills its unlabelled
+tail cannot smuggle an unrealised outcome into an enabled run. A nonempty scored
+frame in which no bar can be scored fails rather than returning all-zero signals;
+an empty scored frame simply has nothing to score.
+
+What an unscored bar becomes differs by consumer: the direction strategy emits
+`0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a
+neighbouring bar's value. The neutral score is an input, not a decision: it is
+still compared against the strategy's effective threshold — `risk_threshold`, or
+the value chosen from `risk_threshold_candidates` during `fit()` — so with a
+threshold above `0.5` it blocks a new entry and, once the minimum holding period
+has passed, triggers the configured risk exit for an open position.
+
+The schedule can be printed before anything runs. `enumerate_rolls` returns one
+window per retrain — the training bounds, the bar that triggered it, and the
+interval that model is assigned to score — built from the same geometry the
+engine executes, so it previews the run rather than describing a second one. The
+intervals are planned, not observed: bars whose features are missing are not
+scored, and the trace reports the actual count per roll. Training bounds and
+`combined_idx` use the concatenated history-plus-scored frame; `retrain_bar`
+and `test_start`/`test_end` use positions within the scored frame. Both window
+intervals are half-open. The schedule and saved trace use the same coordinates;
+`retrain_bar` identifies an attempt, while `trained` records whether fitting ran.
+
+A run that enables the switch also records what actually happened. Each roll
+reports its window, how many labelled rows it offered, whether a model was fitted
+or the previous one kept, and how many of its bars were actually scored; the bars
+that could not be scored at all are listed separately, so a bar's model can be
+recovered from the trace without storing an entry per bar. A window shorter than
+two raw bars is skipped before any feature work, so its `n_train_rows` is zero
+because nothing was measured, not because it held no labels. The record lands in
+the run's metric metadata as `rolling_trace`, beside `strategy_parameters`; it is
+provenance, not a parameter, and it is absent whenever the switch is off.
+`initial_model_available` records whether the initial fit could be used; before
+the first successful refit, a skipped window can only score if this flag is true.
+Saved traces are independent snapshots even if a strategy reuses its mutable hook
+payload. The bundled strategies require training and therefore support this path
+through walk-forward execution; the generic trace hook does not add simple
+backtest or optimization support to them.
+Metric queries return compact trace summaries and a reference to the full saved
+artifact, so long histories do not expand every roll into the model context.
+See [performance artifacts](performance_artifacts.md#performance-scopes-and-provenance)
+for the summary fields and paged evidence retrieval.
+
+This is not fold validation. `validation_schemes` cut one dataset into
+train/test folds to estimate the training procedure; `rolling_gen` decides how
+an already fitted strategy refits and predicts bar by bar. Date anchoring is not
+implemented: declaring `train_start` is rejected instead of silently ignored.
 
 ## ML Research Artifacts
 

@@ -31,6 +31,21 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 
+def _attach_rolling_trace(
+    strategy: BaseStrategy,
+    result: BacktestResult,
+) -> None:
+    """Store a strategy's rolling provenance beside the run's other metadata.
+
+    The trace describes the signals just generated, so it is read before the next
+    frame replaces it. A strategy without a rolling schedule returns ``None`` and
+    leaves the result untouched.
+    """
+    trace = strategy.rolling_trace()
+    if trace is not None:
+        result.metric_metadata["rolling_trace"] = deepcopy(trace)
+
+
 @dataclass
 class WalkForwardResult:
     """Result from a single walk-forward fold."""
@@ -143,10 +158,14 @@ class WalkForwardValidator:
         train_signals = generate_checked_signals(strategy, train_df)
         train_result = self._engine.run(train_signals)
         train_metrics = train_result.metrics
+        # Captured per frame, before the next call replaces it: the trace belongs
+        # to the signals that were just generated, not to the fold as a whole.
+        _attach_rolling_trace(strategy, train_result)
 
         test_signals = generate_checked_signals(strategy, test_df)
         test_result = self._engine.run(test_signals)
         test_metrics = test_result.metrics
+        _attach_rolling_trace(strategy, test_result)
 
         logger.info(
             "Fold %d: train %s=%s, test %s=%s",

@@ -63,6 +63,8 @@ class SafetyVolumeStrategy(BaseStrategy):
         self._dir_model: XGBoostDirectionModel | None = None
         self._dir_fe: FeatureEngineer | None = None
 
+        self._rolling_trace: dict[str, Any] | None = None
+
     # ------------------------------------------------------------------
     # BaseStrategy interface
     # ------------------------------------------------------------------
@@ -303,6 +305,9 @@ class SafetyVolumeStrategy(BaseStrategy):
         assert self._risk_model is not None
         assert self._train_data is not None
 
+        if self._config.rolling_gen.enabled:
+            return self._predict_risk_with_scheme(df)
+
         lookback = self._best_lookback or 720
         retrain_interval = self._config.retrain_interval
         model_cfg = self._config.risk_model
@@ -402,6 +407,43 @@ class SafetyVolumeStrategy(BaseStrategy):
             total_bars / elapsed if elapsed > 0 else 0,
         )
         return p_safe_arr
+
+    def _predict_risk_with_scheme(
+        self,
+        df: pd.DataFrame,
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Predict P(safe) with the declared rolling scheme.
+
+        Reached only when ``rolling_gen`` is enabled.  A bar whose features are
+        missing keeps the neutral 0.5 the classic loop starts from, so the Risk
+        Gate never borrows a neighbouring bar's score.
+        """
+        assert self._risk_fe is not None
+        assert self._risk_model is not None
+        assert self._train_data is not None
+
+        # Imported here so that a defect in the optional engine cannot stop the
+        # classic loop above from loading and running.
+        from tradingdev.domain.ml.rolling_gen import rolling_outcome, trace_payload
+
+        lookback = self._best_lookback or 720
+        outcome = rolling_outcome(
+            self._train_data,
+            df,
+            self._config.rolling_gen.resolve(),
+            model=self._risk_model,
+            model_config=self._config.risk_model,
+            fe=self._risk_fe,
+            lookback=lookback,
+            retrain_interval=self._config.retrain_interval,
+            label_horizon=self._config.target_holding_bars,
+        )
+        self._rolling_trace = trace_payload(outcome)
+        return outcome.probabilities["p_long"].fillna(0.5).to_numpy(dtype=np.float64)
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Return the rolls that scored the last run, if the switch was on."""
+        return self._rolling_trace
 
     # ------------------------------------------------------------------
     # Direction signal

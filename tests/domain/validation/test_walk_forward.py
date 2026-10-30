@@ -1,5 +1,7 @@
 """Tests for the walk-forward validation framework."""
 
+from typing import Any
+
 import pandas as pd
 
 from tradingdev.domain.backtest.signal_engine import (
@@ -37,9 +39,54 @@ def _explicit_config(df: pd.DataFrame) -> ExplicitWalkForwardConfig:
     )
 
 
+class _TracingKDStrategy(KDStrategy):
+    """Count ``generate_signals`` calls and report the count as its trace."""
+
+    def __init__(self) -> None:
+        super().__init__(config=KDStrategyConfig())
+        self.calls = 0
+        self.trace: dict[str, Any] = {"call": 0, "nested": {"call": 0}}
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        self.calls += 1
+        self.trace["call"] = self.calls
+        self.trace["nested"]["call"] = self.calls
+        return super().generate_signals(df)
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        return self.trace
+
+
 class TestWalkForwardValidator:
     def setup_method(self) -> None:
         self.engine = SignalBacktestEngine(init_cash=10_000.0, fees=0.0, slippage=0.0)
+
+    def test_each_fold_frame_keeps_its_own_rolling_trace(
+        self, walk_forward_ohlcv_df: pd.DataFrame
+    ) -> None:
+        """The trace describes the frame just scored, not the fold as a whole.
+
+        Both frames call ``generate_signals``, so a single stored value would
+        attribute the training replay's schedule to the evaluation frame.
+        """
+        config = _explicit_config(walk_forward_ohlcv_df)
+        strategy = _TracingKDStrategy()
+        validator = WalkForwardValidator(config=config, engine=self.engine)
+
+        results = validator.validate(strategy, walk_forward_ohlcv_df)
+
+        train_meta = results[0].train_backtest
+        test_meta = results[0].test_backtest
+        assert train_meta is not None
+        assert test_meta is not None
+        assert train_meta.metric_metadata["rolling_trace"] == {
+            "call": 1,
+            "nested": {"call": 1},
+        }
+        assert test_meta.metric_metadata["rolling_trace"] == {
+            "call": 2,
+            "nested": {"call": 2},
+        }
 
     def test_single_explicit_split(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
         config = _explicit_config(walk_forward_ohlcv_df)

@@ -39,6 +39,22 @@ class ValidationSchemeSummary(ContractModel):
     description: str
 
 
+class RollingSchemeSummary(ContractModel):
+    """A rolling retraining geometry a bundled strategy may enable by name.
+
+    Listed whether or not any strategy enables it: the menu describes what can
+    be declared, while the strategy's own ``rolling_gen.enabled`` decides
+    whether the classic retraining loop is replaced.
+    """
+
+    name: str
+    description: str
+    rtype: str
+    """``ROLL_SD`` slides a fixed-length window; ``ROLL_EX`` expands one."""
+    default_step: int | None
+    """Cadence when the strategy declares none; null follows its own interval."""
+
+
 class MlContractResponse(ContractModel):
     """The full enumerable ML vocabulary; the menu for LLM-driven selection."""
 
@@ -47,6 +63,7 @@ class MlContractResponse(ContractModel):
     feature_sets: list[FeatureSetSummary]
     model_kinds: list[ModelKindSummary]
     validation_schemes: list[ValidationSchemeSummary]
+    rolling_schemes: list[RollingSchemeSummary]
     processor_types: list[str]
     ic_methods: list[str]
     n_quantiles_range: list[int]
