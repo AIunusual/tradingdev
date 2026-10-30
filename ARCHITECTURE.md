@@ -238,6 +238,10 @@ PipelineResult；最佳化沒有此 pickle。讀取依保存路徑，不用目�
 失敗只清除尚未發布的檔案。格式及限制見
 [Market Data Cache](docs/run_artifacts.md#market-data-cache)。
 
+`app/dvol_data.py` 管理未指定本機路徑的 DVOL，以精確 UTC 區間建立獨立查詢身分，
+共用上述儲存與重用政策。準備執行時固定資料目錄，仍保留自動查詢模式；
+取樣取得的少量特徵不發布為完整研究期間的查詢證據。
+
 ### 獨立行情取樣
 
 DataService 的受限取樣與確認前檢查分開。Application 層協調日曆窗口，storage

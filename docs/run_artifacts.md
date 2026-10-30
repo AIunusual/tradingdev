@@ -560,6 +560,36 @@ readers and are not automatically collected. Lock files may remain after release
 Legacy flat files are preserved but excluded because their source cannot be
 proven; fetching again creates v2 data without relabeling or deleting them.
 
+## Automatic DVOL Queries
+
+Without an explicit feature `path`, `app/dvol_data.py` manages Deribit DVOL
+queries in the configured raw/processed roots. The cache identity separates
+DVOL from OHLCV and records provider, currency and timeframe. A
+`query-<sha256>.json` receipt hashes the exact UTC start/end instants, so changing
+either bound, including within one year, cannot reuse an unqueried interval.
+Successful empty queries are recorded independently of observed timestamps.
+The same seven-day acquisition rule, future-time rejection, file locks and
+immutable atomic publication used for OHLCV apply here. Failed refreshes preserve
+the previous query and data; old year-only files are retained but not inferred
+to cover any automatic query.
+
+Prepared execution configs retain `path: null` and `raw_path: null` for automatic
+DVOL, using the already resolved data roots. Preparation must not convert an
+automatic query into an unchecked local file. Explicit feature paths remain local
+file inputs when present, with existing exact-join/forward-fill behavior; they
+are not refreshed merely because a requested period changes. Missing explicit
+DVOL files can be downloaded from Deribit to the specified path. A `raw_path`
+requires an explicit `path`; omit both to use managed caching.
+
+Inspection exposes `query` and `query_reusable` for managed DVOL. An unqueried
+interval has no path or query, unknown row count and `query_reusable: false`;
+a successful empty query has zero rows and its receipt. Explicit local files
+have `null` query fields because no automatic query evidence is claimed.
+Sampling reuses only a receipt for the original requested interval that satisfies
+the reuse policy. Otherwise it fetches bounded selected timestamps into the
+sample directory, leaving source caches unchanged and publishing no evidence
+that the full research interval was queried.
+
 ## Bounded Historical Sampling
 
 `DataService.load_sample` and crawler `fetch_sample` remain independent data

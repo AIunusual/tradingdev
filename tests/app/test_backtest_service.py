@@ -507,12 +507,10 @@ def test_prepared_manifest_resolves_data_locations_before_environment_changes(
     assert data["raw_dir"] == str(tmp_path / "relative" / "raw")
     assert data["processed_dir"] == str(tmp_path / "relative" / "processed")
     dvol, custom = data["requirements"]["features"]
-    assert dvol["path"] == str(
-        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.parquet"
-    )
-    assert dvol["raw_path"] == str(
-        tmp_path / "initial-data" / "processed" / "btc_dvol_1h_2024_2024.csv"
-    )
+    # Automatic feature queries use the already fixed data roots, retaining
+    # automatic coverage checks instead of becoming an unchecked local file.
+    assert dvol["path"] is None
+    assert dvol["raw_path"] is None
     assert custom["path"] == str(tmp_path / "features" / "sentiment.parquet")
 
 

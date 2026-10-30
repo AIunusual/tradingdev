@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -11,6 +12,7 @@ from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
+from tradingdev.app.dvol_data import DVOLData
 from tradingdev.domain.backtest.schemas import BacktestConfig
 
 if TYPE_CHECKING:
@@ -153,11 +155,22 @@ def test_dvol_uses_original_range_default_cache_and_column_precedence(
 ) -> None:
     timestamps = pd.date_range("2024-01-01", periods=4, freq="h", tz="UTC")
     service, config = _service(tmp_path, monkeypatch, timestamps, end="2025-12-31")
-    path = tmp_path / "workspace/data/processed/btc_dvol_1h_2024_2025.parquet"
     frame = pd.DataFrame({"timestamp": timestamps, "dvol_close": 51.0})
     if preferred_column:
         frame["volatility"] = 42.0
-    frame.to_parquet(path, index=False)
+    request = service._request_from_backtest(config)
+    managed = DVOLData(service.data_config({}), request)
+    with managed.cache.lock(managed.key):
+        receipt = managed.cache.publish(
+            managed.key,
+            raw=frame,
+            frame=frame,
+            query_start=request.start_date,
+            query_end=request.end_date,
+            fetched_at=datetime(2026, 1, 8, tzinfo=UTC),
+            save_raw=lambda data, target: data.to_csv(target, index=False),
+        )
+    path = managed.cache.processed_path(receipt)
     before = path.read_bytes()
     result = service.load_sample(
         _raw([{"type": "dvol", "source": "deribit", "column": "volatility"}]),

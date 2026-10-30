@@ -296,6 +296,8 @@ data:
             "exists": True,
             "rows": 3,
             "missing_values": 1,
+            "query": None,
+            "query_reusable": None,
         }
     ]
 

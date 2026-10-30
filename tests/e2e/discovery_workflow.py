@@ -108,3 +108,70 @@ def verify_market_cache_reply(reply: str, *, settled: bool) -> None:
     assert re.search("不保證|不代表|不能|不足以|無法保證", plain)
     if not settled:
         assert re.search(r"(?<!\d)7\s*天|七天|seven days", plain)
+
+
+def verify_dvol_query_reply(reply: str) -> None:
+    """Bind queried versus unqueried feature evidence to each requested config."""
+    plain = re.sub(r"[*`_]", "", reply)
+    records: dict[str, list[dict[str, str]]] = {"short.yaml": [], "extended.yaml": []}
+
+    def config_link(match: re.Match[str]) -> str:
+        label, target = (value.rsplit("/", 1)[-1] for value in match.groups())
+        if label in records:
+            assert target == label, "Config link label and target must agree"
+        return target if target in records else label
+
+    plain = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", config_link, plain)
+    headers: list[str] = []
+    fields = ("設定", "查詢紀錄", "DVOL筆數", "可直接重用")
+    for line in plain.splitlines():
+        if line.strip().startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if all(field in cells for field in fields):
+                assert len(cells) == len(set(cells)), "Ambiguous table headers"
+                headers = cells
+            elif headers and not all(re.fullmatch(r":?-+:?", cell) for cell in cells):
+                assert len(cells) == len(headers), "Incomplete evidence table row"
+                record = dict(zip(headers, cells, strict=True))
+                name = record["設定"].rsplit("/", 1)[-1]
+                if name in records:
+                    records[name].append(record)
+        else:
+            headers = []
+            if re.search(r"查詢紀錄\s*[:：]", line):
+                names = [
+                    name
+                    for name in records
+                    if re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w.-])", line)
+                ]
+                assert len(names) == 1, "Evidence must identify the requested config"
+                boundaries = list(
+                    re.finditer(
+                        r"(?<!\w)(查詢紀錄|DVOL筆數|可直接重用|理由)\s*[:：]\s*",
+                        line,
+                    )
+                )
+                record = {}
+                for index, boundary in enumerate(boundaries):
+                    end = (
+                        boundaries[index + 1].start()
+                        if index + 1 < len(boundaries)
+                        else len(line)
+                    )
+                    assert boundary[1] not in record, "Duplicate evidence field"
+                    record[boundary[1]] = line[boundary.end() : end].strip(
+                        " \t；;|｜，,。."
+                    )
+                assert all(field in record for field in fields[1:])
+                records[names[0]].append(record)
+    for label, queried, rows, reusable in (
+        ("short.yaml", "有", "2", "是"),
+        ("extended.yaml", "無", "未知", "否"),
+    ):
+        assert len(records[label]) == 1, "Each config needs one unambiguous record"
+        record = records[label][0]
+        assert record["查詢紀錄"] == queried
+        assert re.fullmatch(rf"{rows}(?:\s*筆)?", record["DVOL筆數"]), (
+            "Unqueried rows must stay unknown, never zero"
+        )
+        assert record["可直接重用"] == reusable

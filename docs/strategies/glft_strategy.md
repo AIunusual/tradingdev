@@ -121,6 +121,11 @@ FLAT ──(|deviation| > half_spread)──► LONG/SHORT
 
 當 `vol_type: "implied"` 時，策略使用 DataFrame 中的 `dvol` 欄位作為波動度來源，而非從歷史價格估計。DVOL 檔案路徑由 `data.requirements.features` 宣告，策略參數不保存資料路徑。
 
+省略 `path` 時，由資料服務依完整研究期間管理自動快取；指定已存在的本機
+`path` 檔案時直接讀取，不會因延長研究期間自動更新。`raw_path` 須搭配
+`path` 指定。查詢證據與重用限制見
+[自動 DVOL 查詢](../run_artifacts.md#automatic-dvol-queries)。
+
 **DVOL 簡介**：
 
 - Deribit 的 BTC 隱含波動度指數，類似傳統市場的 VIX
