@@ -539,8 +539,12 @@ files use immutable generation IDs; `<year>.json` in the processed directory
 points to the current generation and records identity, successful query bounds
 and acquisition time. These bounds describe the provider query, not the first
 or last returned candle. Empty successful queries have receipts too. Inspection
-exposes query evidence and observed rows separately; unreadable or absent data
-has unknown row count rather than zero.
+exposes query evidence and observed rows separately. `rows` is `null` when no
+generation can be read; otherwise it counts the loaded annual generations,
+including successful empty ones. This count can be partial when other requested
+years are missing or unreadable. Callers must also inspect `exists` and `errors`;
+a known row count does not establish that every requested year was read or that
+the requested interval has complete observations.
 
 The application queries each requested UTC year through its end or acquisition
 time, whichever is earlier. A receipt is reusable only if it covers the requested
