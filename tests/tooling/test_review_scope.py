@@ -414,6 +414,13 @@ def test_invalid_scope_is_not_treated_as_empty_context() -> None:
     ("path", "owner", "heading", "scopes", "evidence"),
     [
         (
+            "docs/development.md",
+            "tooling",
+            "測試設計與精簡",
+            {"tooling", "presentation"},
+            "mutation testing",
+        ),
+        (
             "docs/ml_research.md",
             "ml",
             "Dataset and Model Inputs",
