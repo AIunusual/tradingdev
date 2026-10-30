@@ -30,13 +30,16 @@ Walk-forward captures each fold's values independently after fitting; later
 folds cannot overwrite earlier snapshots. The summary retains those values in
 `metadata.fold_metadata`.
 
-A bundled ML strategy that enables its rolling switch also reports
+A strategy can report
 `metadata.rolling_trace`: the rolls it actually ran, each with its training
 window, labelled rows, whether a model was fitted, and how many bars it scored.
-It is saved beside `strategy_parameters` for a full backtest, for each
+The optional trace hook is saved beside `strategy_parameters` for a full backtest, for each
 walk-forward fold frame, for each optimization training trial, and for the
 optimization's selected `test` evaluation; it is absent when the switch is off,
-so other strategies' metadata is unchanged. A fold captures the trace of each
+for the bundled ML strategies, so other strategies' metadata is unchanged. These
+bundled strategies require training and support walk-forward execution only;
+the hook on the other paths does not expand their supported modes.
+A fold captures an independent deep snapshot of the trace of each
 frame separately, because the training replay and the evaluation frame call
 `generate_signals` in turn and each produces its own schedule.
 
@@ -49,8 +52,9 @@ frame separately, because the training replay and the evaluation frame call
 | `min_train_bars` | Labelled rows a window must offer before a refit is attempted. |
 | `predict_lookback` | Bars of context given to each scored bar. |
 | `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
+| `initial_model_available` | Whether the complete initial training frame precedes scoring; otherwise scoring waits for a successful refit. |
 | `bars` | Bars to score after rows overlapping the training history are removed. |
-| `bars_scored` | Bars it actually scored; missing features leave the remainder. |
+| `bars_scored` | Bars it actually scored; missing features or no available model leave the remainder. |
 | `unscored_bars` | Positions that could not be scored; empty when every bar was. |
 | `rolls` | One entry per roll, in order. |
 

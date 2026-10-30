@@ -194,7 +194,7 @@ def _run_single_combo(
         )
         rolling_trace = strategy.rolling_trace()
         if rolling_trace is not None:
-            result.metric_metadata["rolling_trace"] = rolling_trace
+            result.metric_metadata["rolling_trace"] = deepcopy(rolling_trace)
 
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 

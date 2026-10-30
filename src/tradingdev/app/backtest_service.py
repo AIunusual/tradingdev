@@ -332,7 +332,7 @@ class BacktestService:
         if rolling_trace is not None:
             # Provenance, not a parameter: which window trained the model that
             # scored each roll. Absent whenever the rolling switch is off.
-            result.metric_metadata["rolling_trace"] = rolling_trace
+            result.metric_metadata["rolling_trace"] = deepcopy(rolling_trace)
         pipeline = PipelineResult(
             mode="simple",
             backtest_result=result,

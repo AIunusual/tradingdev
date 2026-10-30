@@ -154,8 +154,8 @@ def test_a_starved_window_is_recorded_as_untrained() -> None:
     assert len(windows) == len(outcome.rolls)
     for trace in outcome.rolls:
         assert trace.trained is False
-        # The window is offered in full; it is the minimum that rejects it.
-        assert trace.n_train_rows == _WINDOW
+        # The one-bar target of the last raw row is outside the training window.
+        assert trace.n_train_rows == _WINDOW - 1
 
 
 def test_a_fitted_window_reports_the_rows_it_trained_on() -> None:
@@ -169,7 +169,7 @@ def test_a_fitted_window_reports_the_rows_it_trained_on() -> None:
     outcome, _ = _outcome(scheme)
 
     assert all(trace.trained is True for trace in outcome.rolls)
-    assert [trace.n_train_rows for trace in outcome.rolls] == [_WINDOW] * 3
+    assert [trace.n_train_rows for trace in outcome.rolls] == [_WINDOW - 1] * 3
 
 
 def test_the_payload_records_the_effective_geometry() -> None:
@@ -183,6 +183,7 @@ def test_the_payload_records_the_effective_geometry() -> None:
     assert payload["window_size"] == _WINDOW
     assert payload["bars"] == _SCORED
     assert payload["bars_scored"] == _SCORED
+    assert payload["initial_model_available"] is True
     assert payload["unscored_bars"] == []
     rolls = payload["rolls"]
     assert isinstance(rolls, list)

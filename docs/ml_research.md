@@ -323,21 +323,27 @@ only for `roll_sd` and is rejected for an expanding scheme rather than ignored.
 `predict_lookback` counts bars *before* the scored one, which is then added on
 top, so the default context is `2 x lookback + 1` rows. It must also be at least
 `lookback + 1`, otherwise the context could not cover the feature lookback and
-resolution raises before any model is trained. Those defaults are derived from
+geometry resolution raises before scoring. Those defaults are derived from
 the strategy's own lookback on purpose: a fixed window shorter than the feature
 warm-up would leave no labelled rows and stop retraining without saying so.
 
-A refit is skipped, and the previous model kept, when the window holds fewer than
+A refit is skipped, and an available previous model kept, when the window holds fewer than
 `min_train_bars` labelled rows or fewer than two bars at all. The trace records
 `trained: false` for that roll, so a carried-over model is never mistaken for one
-that saw the data.
+that saw the data. The initial fitted model is available only if its entire
+training frame precedes the scored frame. An overlapping training replay waits
+for its first successful refit; clipping history cannot remove future knowledge
+from a fitted model. If no model becomes available during a nonempty replay,
+execution fails with a model-availability error rather than reporting a successful
+all-neutral run. These replay metrics remain in-sample diagnostics: lookback and
+other strategy settings may still have been selected using the full training fold.
 
 Whichever scheme is declared, a training window ends strictly before the bar it
 scores, the scored frame is never concatenated in front of itself, and a bar
 whose features are unavailable is not scored rather than reusing the previous
 bar's value. Those are the same rules the classic retrainer follows in its own
 loop. The engine adds one rule of its own: a training row whose label reads past
-the bar being scored is dropped before fitting, whatever the feature engineer
+last bar of the training window is dropped before fitting, whatever the feature engineer
 returned. The classic retrainer has no such filter — it relies on the engineer
 leaving that tail unlabelled for `dropna` to remove — which is why the engine
 takes `label_horizon` explicitly and why an engineer that fills its unlabelled
@@ -368,6 +374,12 @@ two raw bars is skipped before any feature work, so its `n_train_rows` is zero
 because nothing was measured, not because it held no labels. The record lands in
 the run's metric metadata as `rolling_trace`, beside `strategy_parameters`; it is
 provenance, not a parameter, and it is absent whenever the switch is off.
+`initial_model_available` records whether the initial fit could be used; before
+the first successful refit, a skipped window can only score if this flag is true.
+Saved traces are independent snapshots even if a strategy reuses its mutable hook
+payload. The bundled strategies require training and therefore support this path
+through walk-forward execution; the generic trace hook does not add simple
+backtest or optimization support to them.
 
 This is not fold validation. `validation_schemes` cut one dataset into
 train/test folds to estimate the training procedure; `rolling_gen` decides how

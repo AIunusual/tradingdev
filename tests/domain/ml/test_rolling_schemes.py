@@ -97,6 +97,23 @@ def test_the_switch_defaults_to_off() -> None:
 
 
 @pytest.mark.parametrize(
+    "strategy_config", [XGBoostStrategyConfig, SafetyVolumeStrategyConfig]
+)
+@pytest.mark.parametrize(
+    "declaration",
+    [{"scheme": "unknown"}, {"scheme": "roll_ex", "window_size": 240}],
+)
+def test_invalid_enabled_scheme_fails_before_constructing_a_strategy(
+    strategy_config: type[XGBoostStrategyConfig] | type[SafetyVolumeStrategyConfig],
+    declaration: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        strategy_config.model_validate(
+            {"rolling_gen": {"enabled": True, **declaration}}
+        )
+
+
+@pytest.mark.parametrize(
     "config",
     [XGBoostStrategyConfig(), SafetyVolumeStrategyConfig()],
     ids=["xgboost", "safety-volume"],

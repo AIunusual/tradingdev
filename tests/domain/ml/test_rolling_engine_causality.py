@@ -494,7 +494,7 @@ def test_the_engine_drops_labels_the_engineer_filled_in() -> None:
     The engineer here fills every tail label, so nothing is missing for
     ``dropna`` to remove. The engine still refuses to fit past the last
     realisable label: with the window ending at bar 99 and a horizon of 5, that
-    is bar 95.
+    is bar 94: close[99] is the last price the transformer received.
     """
     horizon = 5
     history_bars = 100
@@ -518,8 +518,62 @@ def test_the_engine_drops_labels_the_engineer_filled_in() -> None:
     assert sink, "the run must have trained at least one model"
     first = sink[0]
     assert pd.Timestamp(first["timestamp"].max()) == pd.Timestamp(
-        frame["timestamp"].iloc[history_bars - horizon]
+        frame["timestamp"].iloc[history_bars - 1 - horizon]
     ), "the engine trained on a label the engineer had filled in"
+
+
+def test_replay_waits_for_a_model_that_has_not_seen_the_scored_future() -> None:
+    frame = _market_frame(40)
+
+    class FutureModel(_AlwaysLong):
+        def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
+            raise AssertionError("model fitted on replay's future must not score")
+
+    outcome = rolling_outcome(
+        frame,
+        frame.iloc[:20],
+        RollingScheme(
+            name="test",
+            description="",
+            rtype=RollType.ROLL_EX,
+            step=5,
+            min_train_bars=1,
+            predict_lookback=20,
+        ),
+        model=FutureModel(),
+        model_config=_MODEL_CONFIG,
+        fe=_RecordingFeatureEngineer(),
+        lookback=10,
+        retrain_interval=5,
+        label_horizon=1,
+        model_factory=_AlwaysLong,
+    )
+    assert outcome.probabilities.iloc[:5].isna().all().all()
+    assert outcome.probabilities.iloc[5:]["p_long"].eq(1).all()
+
+
+def test_replay_without_a_successful_refit_reports_model_availability() -> None:
+    frame = _market_frame(40)
+    with pytest.raises(ValueError, match="no causal model"):
+        rolling_outcome(
+            frame,
+            frame.iloc[:20],
+            RollingScheme(
+                name="test",
+                description="",
+                rtype=RollType.ROLL_EX,
+                step=100,
+                min_train_bars=1,
+                predict_lookback=20,
+            ),
+            model=_AlwaysLong(),
+            model_config=_MODEL_CONFIG,
+            fe=_RecordingFeatureEngineer(),
+            lookback=10,
+            retrain_interval=100,
+            label_horizon=1,
+            model_factory=_AlwaysLong,
+        )
 
 
 @pytest.mark.parametrize("horizon", [0, -1])

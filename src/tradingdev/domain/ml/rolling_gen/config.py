@@ -7,9 +7,9 @@ unchanged; the configuration block is the only thing that decides that.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tradingdev.domain.ml.rolling_gen.registry import resolve_rolling_scheme
 
@@ -68,3 +68,10 @@ class RollingGenConfig(RollingSchemeConfig):
         default=False,
         description="Off by default; off runs the classic rolling retrainer",
     )
+
+    @model_validator(mode="after")
+    def validate_enabled_scheme(self) -> Self:
+        """Reject an unusable enabled declaration before strategy fitting."""
+        if self.enabled:
+            self.resolve()
+        return self

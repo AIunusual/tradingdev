@@ -140,9 +140,16 @@ def test_full_replay_keeps_the_context_chronological() -> None:
 
     result = strategy.generate_signals(frame)
 
-    assert len(recorder.contexts) == len(frame)
+    # Bar 0 has no earlier history; the next scheduled fit is bar 50. No model
+    # fitted on the full frame may score the preceding 50 replay bars.
+    assert len(recorder.contexts) == len(frame) - 50
+    assert (result["signal"].iloc[:50] == 0).all()
+    trace = strategy.rolling_trace()
+    assert trace is not None
+    assert trace["initial_model_available"] is False
+    assert trace["unscored_bars"] == list(range(50))
     assert _context_complaints(recorder.contexts) == []
-    for bar, context in enumerate(recorder.contexts):
+    for bar, context in enumerate(recorder.contexts, start=50):
         assert pd.Timestamp(_stamps(context)[-1]) == pd.Timestamp(
             _stamps(frame)[bar]
         ), f"bar {bar}: the context ends on a different bar"

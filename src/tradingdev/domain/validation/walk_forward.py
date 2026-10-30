@@ -43,7 +43,7 @@ def _attach_rolling_trace(
     """
     trace = strategy.rolling_trace()
     if trace is not None:
-        result.metric_metadata["rolling_trace"] = trace
+        result.metric_metadata["rolling_trace"] = deepcopy(trace)
 
 
 @dataclass

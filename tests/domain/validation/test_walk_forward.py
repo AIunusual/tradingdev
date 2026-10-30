@@ -45,13 +45,16 @@ class _TracingKDStrategy(KDStrategy):
     def __init__(self) -> None:
         super().__init__(config=KDStrategyConfig())
         self.calls = 0
+        self.trace: dict[str, Any] = {"call": 0, "nested": {"call": 0}}
 
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         self.calls += 1
+        self.trace["call"] = self.calls
+        self.trace["nested"]["call"] = self.calls
         return super().generate_signals(df)
 
     def rolling_trace(self) -> dict[str, Any] | None:
-        return {"call": self.calls}
+        return self.trace
 
 
 class TestWalkForwardValidator:
@@ -76,8 +79,14 @@ class TestWalkForwardValidator:
         test_meta = results[0].test_backtest
         assert train_meta is not None
         assert test_meta is not None
-        assert train_meta.metric_metadata["rolling_trace"] == {"call": 1}
-        assert test_meta.metric_metadata["rolling_trace"] == {"call": 2}
+        assert train_meta.metric_metadata["rolling_trace"] == {
+            "call": 1,
+            "nested": {"call": 1},
+        }
+        assert test_meta.metric_metadata["rolling_trace"] == {
+            "call": 2,
+            "nested": {"call": 2},
+        }
 
     def test_single_explicit_split(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
         config = _explicit_config(walk_forward_ohlcv_df)

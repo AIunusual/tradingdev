@@ -83,12 +83,15 @@ class RollingOutcome:
     label_horizon: int
     """Bars a label looks ahead; the engine refuses to train past it."""
 
+    initial_model_available: bool
+    """Whether fit() used only history preceding the scored frame."""
+
 
 @dataclass(frozen=True)
 class _RetrainOutcome:
     """A retrain's model and what it was fitted on."""
 
-    model: XGBoostDirectionModel
+    model: XGBoostDirectionModel | None
     n_train_rows: int
     trained: bool
 
@@ -110,6 +113,7 @@ def trace_payload(outcome: RollingOutcome) -> dict[str, object]:
         "min_train_bars": outcome.geometry.min_train_bars,
         "predict_lookback": outcome.geometry.predict_lookback,
         "label_horizon": outcome.label_horizon,
+        "initial_model_available": outcome.initial_model_available,
         "bars": len(outcome.bar_roll),
         "bars_scored": scored,
         # Positions that could not be scored at all. With the roll intervals,
@@ -164,14 +168,15 @@ class _Retrainer:
         """Keep only rows whose label was realised by the bar being scored.
 
         A label at row ``r`` reads the close ``label_horizon`` bars later, so it
-        is realised once ``r + label_horizon <= combined_idx``. Rows past that
+        is realised within the supplied window once
+        ``r + label_horizon < combined_idx``. Rows past that
         point are dropped here rather than trusted to the feature engineer: an
         engineer that fills its tail would otherwise train the model on outcomes
         that had not happened yet, which is the shape of issue #24's tail-label
         defect. Filtering the output instead of shortening the input keeps this a
         no-op for an engineer that already leaves those rows unlabelled.
         """
-        last_realisable = combined_idx - self.label_horizon
+        last_realisable = combined_idx - 1 - self.label_horizon
         if last_realisable < 0:
             return labelled.iloc[:0]
         if "timestamp" not in labelled.columns:
@@ -188,7 +193,7 @@ class _Retrainer:
         self,
         combined_idx: int,
         *,
-        fallback: XGBoostDirectionModel,
+        fallback: XGBoostDirectionModel | None,
         retrain_count: int,
         bar: int,
     ) -> _RetrainOutcome:
@@ -276,7 +281,8 @@ def rolling_outcome(
             are dropped before concatenation.
         test_df: Bars to score, in chronological order.
         scheme: The declared geometry.
-        model: The model trained by ``fit()``, used until a retrain replaces it.
+        model: The model trained on train_data by ``fit()``. It may be reused
+            only when all of that training frame precedes the scoring frame.
         model_config: Configuration handed to each retrained model.
         fe: Feature engineer producing training features and scoring context.
         lookback: The strategy's feature lookback, used for unset scheme fields.
@@ -321,7 +327,11 @@ def rolling_outcome(
 
     probabilities = np.full((total_bars, len(_PROBABILITY_COLUMNS)), np.nan)
     scored_mask = np.zeros(total_bars, dtype=bool)
-    current_model = model
+    # Clipping the frame cannot remove future information from an already fitted
+    # model. An overlapping replay must wait for its first successful refit.
+    initial_model_available = bool(len(history) and len(history) == len(train_data))
+    current_model = model if initial_model_available else None
+    model_was_available = current_model is not None
     total_retrains = (total_bars - 1) // geometry.step + 1
     retrainer = _Retrainer(
         combined=combined,
@@ -362,12 +372,14 @@ def rolling_outcome(
             )
             current_model = retrain.model
             retrains[roll_index] = retrain
-        scored_mask[bar] = retrainer.score(
-            combined_idx,
-            current_model,
-            probabilities,
-            bar=bar,
-        )
+        if current_model is not None:
+            model_was_available = True
+            scored_mask[bar] = retrainer.score(
+                combined_idx,
+                current_model,
+                probabilities,
+                bar=bar,
+            )
         if scored_mask[bar]:
             bar_roll[bar] = roll_index
 
@@ -380,6 +392,12 @@ def rolling_outcome(
         int(scored_mask.sum()),
     )
     if total_bars and not scored_mask.any():
+        if not model_was_available:
+            raise ValueError(
+                "rolling replay has no causal model: its initial training frame "
+                "overlaps scoring and no scheduled window could fit a model; "
+                "provide earlier training history or revise the rolling geometry"
+            )
         # Every bar lost its features, so every signal would be a silent 0 and
         # the run would look like a strategy that simply never trades.
         msg = (
@@ -414,6 +432,7 @@ def rolling_outcome(
         scheme_name=scheme.name,
         geometry=geometry,
         label_horizon=label_horizon,
+        initial_model_available=initial_model_available,
     )
 
 
