@@ -29,10 +29,6 @@ class TestKDStrategy:
         self.config = KDStrategyConfig()
         self.strategy = KDStrategy(config=self.config)
 
-    def test_signal_column_exists(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
-        result = self.strategy.generate_signals(sample_ohlcv_with_kd)
-        assert "signal" in result.columns
-
     def test_signal_values_valid(self, sample_ohlcv_with_kd: pd.DataFrame) -> None:
         result = self.strategy.generate_signals(sample_ohlcv_with_kd)
         unique_signals = set(result["signal"].unique())
