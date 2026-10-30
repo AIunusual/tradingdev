@@ -225,12 +225,17 @@ same-currency comparison is defined.
 Supported Binance USDT markets include spot and futures; the baseline follows
 the provider's effective market setting rather than excluding all futures.
 
-Each entry records `status` (`available`, `unavailable`, `undefined`), the
-snapshot of the fixed definition, `source`, `market_type`, `dataset_id`,
-`reused_run_frame`, the entry `fees`/`slippage`, `capital_basis`, `coverage`,
-aligned `timestamps`, `equity_curve`, `returns`, `values` and `metadata`.
-`capital_basis` is `run_init_cash` when the scope had initial capital, and
-`normalized_unit` (capital `1.0`) when it did not.
+Each entry always records `status` (`available`, `unavailable`, `undefined`),
+`values` and `metadata`; `values` stays empty when the baseline is not
+available. Every other field is optional and follows the entry's status: an
+`available` entry records the definition snapshot, the aligned `timestamps`,
+`equity_curve`, `returns`, `capital_basis` and the acquisition evidence it
+used (`source`, `market_type`, `dataset_id`, `reused_run_frame`,
+`fees`/`slippage`, `coverage`). `unavailable` and `undefined` entries always
+carry a `reason` and may omit `fees`, `slippage`, `capital_basis` and
+`coverage`; an entry that fails before alignment also omits the aligned
+series. `capital_basis` is `run_init_cash` when the scope had initial capital,
+and `normalized_unit` (capital `1.0`) when it did not.
 
 The baseline buys once at the first aligned close, paying the run's own
 per-side commission and slippage, and is marked to market afterwards. It is not
