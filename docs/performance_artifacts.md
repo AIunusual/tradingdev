@@ -30,6 +30,66 @@ Walk-forward captures each fold's values independently after fitting; later
 folds cannot overwrite earlier snapshots. The summary retains those values in
 `metadata.fold_metadata`.
 
+A strategy can report
+`metadata.rolling_trace`: the rolls it actually ran, each with its training
+window, labelled rows, whether a model was fitted, and how many bars it scored.
+The optional trace hook is saved beside `strategy_parameters` for a full backtest,
+each walk-forward fold frame, each fixed-comparison candidate, each optimization
+training trial and the optimization's selected `test` evaluation. For bundled
+ML strategies it is absent when the switch is off; other strategies that do not
+implement the hook retain their existing metadata. These
+bundled strategies require training and support walk-forward execution only;
+the hook on the other paths does not expand their supported modes. A supported
+comparison candidate is a backtest in its own right, so its `full` scope can
+carry the trace.
+A fold captures an independent deep snapshot of the trace of each
+frame separately, because the training replay and the evaluation frame call
+`generate_signals` in turn and each produces its own schedule.
+
+| Field | Meaning |
+| --- | --- |
+| `scheme` | The declared scheme name. |
+| `rtype` | Effective window shape: `ROLL_SD` slides, `ROLL_EX` expands. |
+| `step` | Effective bars between retrains, after defaults were resolved. |
+| `window_size` | Effective sliding length, or null for an expanding window. |
+| `min_train_bars` | Labelled rows a window must offer before a refit is attempted. |
+| `predict_lookback` | Maximum preceding context bars, excluding the scored bar; the scored bar is also supplied, for up to `predict_lookback + 1` rows. |
+| `label_horizon` | Bars a label reads ahead; rows past it are dropped before fitting. |
+| `initial_model_available` | Whether the complete initial training frame precedes scoring; otherwise scoring waits for a successful refit. |
+| `bars` | All bars in the scored frame, including unscored bars; overlap is removed from training history, not this frame. |
+| `bars_scored` | Bars it actually scored; missing features or no available model leave the remainder. |
+| `unscored_bars` | Positions that could not be scored; empty when every bar was. |
+| `rolls` | One entry per roll, in order. |
+
+Each `rolls` entry carries `index`; `retrain_bar`, its position in the scored
+frame of the scheduled retrain attempt (fitting can be skipped); `train_start` and `train_end`, half-open
+positions in the concatenated history-plus-scored frame, ending at the bar being
+scored; `test_start` and `test_end`, the scored-frame interval that model was
+assigned to score; `n_train_rows`, the labelled rows the window offered — zero
+when the raw window was shorter than two bars, because nothing was transformed;
+`trained`, false when the window was too small and the previous model was kept;
+and `bars_scored`, the subset of its interval that was actually scored.
+
+`get_run_metrics` and `compare_runs` return a compact projection of every
+`rolling_trace`, including nested `test_summary.metadata.fold_metadata` traces.
+It retains scalar geometry and scored counts, plus `roll_count`,
+`trained_roll_count` and `unscored_bar_count` (null when the corresponding list
+was not recorded; trained count is also null if any training flag is missing or
+not a boolean). `representation: "summary"` and `content_included: false`
+make the omission explicit. `rolls` and `unscored_bars` remain complete in
+`performance.json`; they are not copied into normal query responses.
+Use the returned `artifact_id` with `get_artifact(include_content=true)` and
+its bounded text pagination; `json_pointer` identifies the trace in the saved
+JSON document, with JSON Pointer escaping for slash/tilde path components.
+Queries do not rewrite the artifact or replace report evidence with this summary.
+
+Coordinates are positions rather than timestamps, and they use two frames.
+`train_start` and `train_end` are positions in the concatenated
+history-plus-scored frame. `retrain_bar`, `test_start`, `test_end` and every entry
+of `unscored_bars` are positions in the scored frame alone. A bar's model is
+therefore the roll whose `test_start`–`test_end` interval contains its
+scored-frame position, unless that position appears in `unscored_bars`.
+
 Optimization keeps its existing meaning: `parameters` contains the trial's
 searched values (or the selected values for `test`), while
 `metadata.strategy_parameters` contains the strategy's complete reported values.

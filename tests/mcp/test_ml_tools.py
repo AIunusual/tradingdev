@@ -54,6 +54,8 @@ def test_get_ml_contract_lists_the_enumerable_vocabulary(tmp_path: Path) -> None
         "purged_walk_forward",
         "purged_kfold",
     }
+    assert {rs.name for rs in contract.rolling_schemes} == {"roll_sd", "roll_ex"}
+    assert {rs.rtype for rs in contract.rolling_schemes} == {"ROLL_SD", "ROLL_EX"}
     assert len(contract.processor_types) == 6
     assert contract.ic_methods == ["pearson", "spearman"]
     assert contract.n_quantiles_range == [2, 10]

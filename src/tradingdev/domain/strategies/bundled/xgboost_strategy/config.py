@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from tradingdev.domain.ml.rolling_gen import RollingGenConfig
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 
 
@@ -19,3 +20,5 @@ class XGBoostStrategyConfig(BaseModel):
     target_horizon: int = 1
     min_bars_between_trades: int = 1
     monthly_volume_target: float | None = None
+    rolling_gen: RollingGenConfig = RollingGenConfig()
+    """Optional declarative rolling geometry; disabled unless enabled is set."""

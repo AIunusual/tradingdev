@@ -66,3 +66,14 @@ class BaseStrategy(ABC):
             Dictionary of parameter names to values.
         """
         ...
+
+    def rolling_trace(self) -> dict[str, Any] | None:
+        """Describe how a rolling schedule produced these signals, if it did.
+
+        Returns:
+            A diagnostic record, or ``None`` when the strategy does not retrain
+            or ran with its rolling switch off. This is captured after
+            ``generate_signals`` and stored with the run metrics; it is not a
+            parameter and must not be searched over.
+        """
+        return None

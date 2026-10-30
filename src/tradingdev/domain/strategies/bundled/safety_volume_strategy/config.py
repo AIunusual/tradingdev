@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+from tradingdev.domain.ml.rolling_gen import RollingGenConfig
 from tradingdev.domain.ml.schemas import XGBoostModelConfig
 from tradingdev.domain.strategies.bundled.indicator_parameters import (
     MovingAveragePeriod,
@@ -28,3 +29,5 @@ class SafetyVolumeStrategyConfig(BaseModel):
     validation_ratio: float = 0.2
     monthly_volume_target: float | None = None
     position_size: float = 3000.0
+    rolling_gen: RollingGenConfig = RollingGenConfig()
+    """Optional declarative rolling geometry; disabled unless enabled is set."""

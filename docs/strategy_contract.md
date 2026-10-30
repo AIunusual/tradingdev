@@ -78,6 +78,19 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+`BaseStrategy` also offers an optional `rolling_trace()` hook whose default
+returns `None`. After `generate_signals`, a simple backtest, each walk-forward
+fold frame and each optimization run call it and, when it returns a mapping,
+store an independent deep snapshot as run metadata beside `strategy_parameters`. A fold calls
+`generate_signals` for its training replay and its evaluation frame in turn, so
+each frame's result carries the trace of the signals it actually scored.
+Returning `None` — the default, and what every strategy without a declared
+retraining schedule should do — means there is no rolling provenance to record.
+The payload and where it is stored are described in the
+[ML research contract](ml_research.md#rolling-retraining-schemes) and
+[performance artifacts](performance_artifacts.md); implementing the hook is
+optional.
+
 The shared frame checker enforces these structural rules on synthetic fixtures
 and the actual frames used by simple backtests, fixed comparisons, optimization
 trials and both sides of walk-forward folds. Invalid frames fail before their
@@ -322,6 +335,11 @@ empty result.
 
 When warm-up or immature horizon labels leave a rolling training slice with no
 usable observations, scoring retains the fitted model until observations mature.
+The optional `rolling_gen` engine is stricter during overlapping replay: it
+discards the initial model and waits for a successful refit on preceding rows.
+If none becomes available it fails explicitly. Full-fold parameter selection
+still makes training replay an in-sample diagnostic; see
+[rolling retraining](ml_research.md#rolling-retraining-schemes).
 
 Quantile predictions are mapped back by source row. Its feature warm-up and
 missing indicator values may remove rows; recursive indicators can also leave subsequent rows
