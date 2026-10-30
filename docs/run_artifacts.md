@@ -165,6 +165,14 @@ fold checks do not reconstruct the original dataset or prove its split geometry.
   and `worker_control_id`, its unique launch token. The PID belongs to the
   supervisor, not the strategy-executing child. New submissions also record
   `manifest_hash`, the expected digest of their fixed execution specification.
+  Field updates read, validate and merge within one SQLite `BEGIN IMMEDIATE`
+  transaction, including the indexed columns and JSON payload. Execution identity
+  remains immutable. The first persisted terminal state (`done`, `failed`,
+  `cancelled`, `estimation_timeout`) wins; later lifecycle updates cannot replace
+  its status, timestamps or error. Late process identity fields may still be
+  attached without restoring an earlier lifecycle snapshot. Polling and
+  cancellation condition their writes on an active state and report the state
+  actually saved; completion during cancellation is not reported as cancellation.
 - `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
   random seed, dataset id, artifact directory, selected `revision_id`, and
   execution `manifest_hash`.
@@ -248,11 +256,13 @@ signalling or claiming that the process stopped. A queued job that has not start
 a process can be cancelled directly. Status checks mark a started job failed when
 its supervisor identity is missing or no longer matches, with a comparison-specific
 exception: comparison status checks must first confirm worker cleanup. If cleanup
-cannot be verified, they retain the active job and candidate states and return
-`detail_error.code = worker_cleanup_failed`, rather than marking the job failed.
-Explicit cancellation likewise preserves those states on cleanup failure and
-returns `code = worker_cleanup_failed`; missing control identity instead returns
-`worker_identity_unavailable`. When a status check does mark a job failed, its
+cannot be verified, the status check does not itself change job or candidate
+states and returns `detail_error.code = worker_cleanup_failed`. Explicit
+cancellation likewise does not change lifecycle states on cleanup failure and
+returns `code = worker_cleanup_failed`. Both reread the saved job, so a concurrent
+worker completion is preserved and reported: `status = done` can appear alongside
+the cleanup diagnostic. Missing control identity during cancellation instead
+returns `worker_identity_unavailable`. When a status check does mark a job failed, its
 first response includes the same error persisted in the database. Spawn failures
 also persist `failed`, an explanatory error and `ended_at` before propagating the
 exception.

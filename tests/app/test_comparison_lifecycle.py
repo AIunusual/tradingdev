@@ -588,17 +588,18 @@ def test_status_preserves_completion_between_liveness_check_and_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fixture = _comparison(tmp_path)
-    fixture.service.execute("comparison")
     fixture.jobs.update_job(
         "comparison",
-        status="running_backtest",
         **WorkerHandle(12345, 100.0, "b" * 32).job_fields(),
     )
     service = JobService(job_store=fixture.jobs)
     monkeypatch.setattr(service, "_is_process_alive", lambda _job: False)
 
+    calls: list[WorkerHandle] = []
+
     def stopped(_root: Path, _handle: WorkerHandle) -> bool:
-        fixture.jobs.update_job("comparison", status="done")
+        calls.append(_handle)
+        fixture.service.execute("comparison", worker_handle=_handle)
         return False
 
     monkeypatch.setattr("tradingdev.app.job_service.request_worker_stop", stopped)
@@ -606,4 +607,5 @@ def test_status_preserves_completion_between_liveness_check_and_cleanup(
     response = service.get_job_status("comparison")
 
     assert response["status"] == "done"
+    assert calls == [WorkerHandle(12345, 100.0, "b" * 32)]
     assert _statuses(fixture) == ["succeeded"] * 3

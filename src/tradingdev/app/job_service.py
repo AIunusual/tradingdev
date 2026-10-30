@@ -28,7 +28,12 @@ from tradingdev.app.job_config import (
     apply_run_overrides,
     bind_strategy_revision,
 )
-from tradingdev.app.job_store import JobStore, get_default_job_store
+from tradingdev.app.job_store import (
+    ACTIVE_JOB_STATUSES,
+    TERMINAL_JOB_STATUSES,
+    JobStore,
+    get_default_job_store,
+)
 from tradingdev.app.pagination import paginate
 from tradingdev.app.prepared_execution import PreparedExecution
 from tradingdev.app.run_service import RunService
@@ -51,15 +56,8 @@ if TYPE_CHECKING:
 class JobService:
     """Create and query background jobs."""
 
-    _ACTIVE_STATUSES = {
-        "queued",
-        "downloading_data",
-        "running_backtest",
-        "estimating",
-        "optimizing",
-        "testing_oos",
-    }
-    _TERMINAL_STATUSES = {"done", "failed", "cancelled", "estimation_timeout"}
+    _ACTIVE_STATUSES = ACTIVE_JOB_STATUSES
+    _TERMINAL_STATUSES = TERMINAL_JOB_STATUSES
 
     def __init__(
         self,
@@ -273,6 +271,9 @@ class JobService:
             and (status != "queued" or job.get("pid") is not None)
             and not self._is_process_alive(job)
         ):
+            latest = self._job_store.get_job(job_id)
+            if latest is not None and latest["status"] in self._TERMINAL_STATUSES:
+                return self.get_job_status(job_id)
             if job.get("job_type") == "comparison":
                 handle = WorkerHandle.from_job(job)
                 try:
@@ -314,9 +315,15 @@ class JobService:
                     "error": "Worker process terminated unexpectedly.",
                     "ended_at": datetime.now(UTC).isoformat(),
                 }
-                self._job_store.update_job(job_id, **failure)
-                job.update(failure)
+                latest = self._job_store.update_job(job_id, **failure)
+                if latest is not None:
+                    job = latest
+                    status = str(job["status"])
 
+        # A cleanup attempt can fail after the worker commits its final state.
+        # Preserve that state while still reporting the cleanup diagnostic.
+        job = self._job_store.get_job(job_id) or job
+        status = str(job["status"])
         created_at = datetime.fromisoformat(str(job["created_at"]))
         elapsed = round((datetime.now(UTC) - created_at).total_seconds(), 1)
         response: dict[str, Any] = {
@@ -534,13 +541,23 @@ class JobService:
                     self._job_store.workspace.root, handle
                 )
             except (OSError, ValueError, RuntimeError) as exc:
+                cleanup_job = self._job_store.get_job(job_id) or job
                 return {
                     "success": False,
                     "error": f"Worker cleanup could not be confirmed: {exc}",
                     "code": "worker_cleanup_failed",
-                    "status": status,
+                    "status": cleanup_job["status"],
                     "pid": handle.pid,
                 }
+
+        latest = self._job_store.get_job(job_id)
+        if latest is not None and latest["status"] in self._TERMINAL_STATUSES:
+            return {
+                "success": False,
+                "code": "invalid_job_state",
+                "error": "Job finished before cancellation was recorded.",
+                "status": latest["status"],
+            }
 
         if job.get("job_type") == "comparison":
             try:
@@ -550,20 +567,31 @@ class JobService:
                     active_status="cancelled",
                 )
             except (OSError, TypeError, ValueError) as exc:
-                self._job_store.update_job(job_id, status="failed", error=str(exc))
+                latest = self._job_store.update_job(
+                    job_id,
+                    status="failed",
+                    error=str(exc),
+                )
                 return {
                     "success": False,
                     "error": f"Comparison evidence could not be finalized: {exc}",
                     "code": "execution_manifest_invalid",
-                    "status": "failed",
+                    "status": latest["status"] if latest else status,
                 }
 
-        self._job_store.update_job(
+        latest = self._job_store.update_job(
             job_id,
             status="cancelled",
             error="Cancelled by user.",
             ended_at=datetime.now(UTC).isoformat(),
         )
+        if latest is None or latest["status"] != "cancelled":
+            return {
+                "success": False,
+                "code": "invalid_job_state",
+                "error": "Job finished before cancellation was recorded.",
+                "status": latest["status"] if latest else status,
+            }
         return {
             "success": True,
             "job_id": job_id,

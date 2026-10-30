@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+ACTIVE_JOB_STATUSES = {
+    "queued",
+    "downloading_data",
+    "running_backtest",
+    "estimating",
+    "optimizing",
+    "testing_oos",
+}
+TERMINAL_JOB_STATUSES = {"done", "failed", "cancelled", "estimation_timeout"}
+
 
 class JobRecord(BaseModel):
     """Typed job record persisted in SQLite."""
@@ -241,45 +251,50 @@ class JobStore:
             raise ManifestError("Job and execution manifest identity differ")
         return manifest
 
-    def update_job(self, job_id: str, **fields: Any) -> None:
-        """Update specific fields of an existing job record."""
-        current = self._store.get_job(job_id)
-        if current is None:
-            logger.warning("update_job: job %s not found", job_id)
-            return
-        if current.get("manifest_hash") is not None:
-            for key in (
-                "job_id",
-                "manifest_hash",
-                "strategy_name",
-                "revision_id",
-                "job_type",
+    def update_job(
+        self,
+        job_id: str,
+        **fields: Any,
+    ) -> dict[str, Any] | None:
+        """Atomically merge fields, preserving the first persisted terminal state."""
+
+        def update(current: dict[str, Any]) -> dict[str, Any]:
+            if "job_id" in fields and fields["job_id"] != current["job_id"]:
+                raise ManifestError("Cannot change a job's execution identity: job_id")
+            if current.get("manifest_hash") is not None:
+                for key in (
+                    "manifest_hash",
+                    "strategy_name",
+                    "revision_id",
+                    "job_type",
+                ):
+                    if key in fields and fields[key] != current.get(key):
+                        raise ManifestError(
+                            f"Cannot change a job's execution identity: {key}"
+                        )
+            patch = dict(fields)
+            status = patch.get("status")
+            if (
+                status is not None
+                and status not in ACTIVE_JOB_STATUSES | TERMINAL_JOB_STATUSES
             ):
-                if key in fields and fields[key] != current.get(key):
-                    raise ManifestError(
-                        f"Cannot change a job's execution identity: {key}"
-                    )
-        status = fields.get("status")
-        if (
-            status
-            in {
-                "downloading_data",
-                "running_backtest",
-                "estimating",
-                "optimizing",
-                "testing_oos",
-            }
-            and current.get("started_at") is None
-            and "started_at" not in fields
-        ):
-            fields["started_at"] = _now_iso()
-        if (
-            status in {"done", "failed", "cancelled", "estimation_timeout"}
-            and "ended_at" not in fields
-        ):
-            fields["ended_at"] = _now_iso()
-        current.update(fields)
-        self._store.upsert_job(_record_to_dict(JobRecord.model_validate(current)))
+                raise ValueError(f"Unknown job status: {status}")
+            if current["status"] not in ACTIVE_JOB_STATUSES:
+                if status is not None:
+                    return current
+                for key in ("started_at", "ended_at", "error"):
+                    patch.pop(key, None)
+            if (
+                status in ACTIVE_JOB_STATUSES - {"queued"}
+                and current.get("started_at") is None
+            ):
+                patch.setdefault("started_at", _now_iso())
+            if status in TERMINAL_JOB_STATUSES:
+                patch.setdefault("ended_at", _now_iso())
+            current.update(patch)
+            return _record_to_dict(JobRecord.model_validate(current))
+
+        return self._store.mutate_job(job_id, update)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Return a single job record, or None if not found."""
