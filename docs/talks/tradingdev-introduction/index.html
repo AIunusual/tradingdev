@@ -32,8 +32,8 @@
 支援成員建構、修改與驗證不同的量化方法。</p>
 <p><strong>協助改進策略的回饋</strong><br />
 檢查策略問題，分析實驗結果，協助下一輪修正。</p>
-<p><strong>研究經驗回饋專案</strong><br />
-將成員研究中的共通需求與可重用成果，納入後端能力。</p>
+<p><strong>AI 驅動的自動迭代</strong><br />
+讓 AI 從使用者的策略開發經驗，自動提出並驗證後端改進。</p>
 <footer>開發目標，尚未全部完成。</footer>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="4" data-paginate="true" data-class="compact" data-footer="來源：[VectorBT](https://vectorbt.dev/)、[Backtrader](https://www.backtrader.com/docu/)、[VBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)、[QC Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents)" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" class="compact" data-marpit-pagination="4" style="--paginate:true;--class:compact;--footer:來源：[VectorBT](https://vectorbt.dev/)、[Backtrader](https://www.backtrader.com/docu/)、[VBT PRO MCP](https://vectorbt.pro/features/ai/mcp-server/)、[QC Agents](https://www.quantconnect.com/docs/v2/ai-assistance/agents);--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="52" data-size="16:9">
@@ -820,7 +820,8 @@
 初稿專案事實基準：d57da5c20aa7dc578dabef92bbf14d796df8adb6；執行確認與報告交付流程依對應頁面所列的新版本更新。外部資料查核：2026-10-25 至 2026-10-26。
 來源：https://github.com/Kuan-Lun/tradingdev/blob/d57da5c20aa7dc578dabef92bbf14d796df8adb6/README.md</p></div><div class="bespoke-marp-note" data-index="1" tabindex="0"><p>我是國立臺灣大學資訊工程學系計算理論暨金融計算實驗室的一員。許多成員的研究與金融交易相關，因此希望建立共用的後端，協助大家開發自己的策略。
 共用的對象是研究所需的基礎能力，各位成員仍能研究自己的策略構想。接下來先說明這個目標需要哪些能力，再看現有工具能提供什麼。</p></div><div class="bespoke-marp-note" data-index="2" tabindex="0"><p>共用實驗基礎需要清楚區分各自的策略、版本及結果，並保存重現實驗所需的設定與依據。多樣的策略與模型包含交易規則、統計方法及機器學習模型的建構，以及適用的訓練與驗證。
-策略回饋應引用檢查與實驗證據，協助提出修改，再驗證修改是否有效。研究經驗回饋專案，則把適合共用的需求、問題與成果轉成檢查、元件或流程改善，經測試及審查後整合。
+策略回饋應引用檢查與實驗證據，協助提出修改，再驗證修改是否有效。
+AI 開發助手從多位使用者的策略開發紀錄中辨識共通問題與需求，自動產生後端改進方案及程式修改，執行測試並依結果繼續修正。通過審查後，將適合共用的檢查、元件或流程改善整合回後端，支援下一輪研究。
 這些是目標能力。目前已有回測與研究紀錄等基礎，多人服務身分、權限及自動工程回饋仍待開發。以下以這些需求檢視現有工具與整合責任。</p></div><div class="bespoke-marp-note" data-index="3" tabindex="0"><p>回測是用歷史行情模擬交易規則。現有工具已能完成許多計算與研究工作，TradingDev 也沿用其中的成熟套件。
 Freqtrade 是含回測、最佳化及交易功能的應用。cloudQuant/backtrader-mcp、bcosm 也支援自訂策略，後段逐一比較。QuantConnect 平台已涵蓋完整研究流程，不能把它描述成只有回測引擎。</p></div><div class="bespoke-marp-note" data-index="4" tabindex="0"><p>每列描述特定路線的整合責任，不能推論整個市場都沒有這些功能。個人 Python 環境以 VBT PRO 的持續 kernel 為例；模板型工具以所查 MaverickMCP 的自然語言模板路徑為例。
 QuantConnect 已提供策略建立、回測與結果分析。其取捨在於採用平台的策略及專案模型，或投入自行整合的工作。其他開源 MCP 也有相近流程，詳細差異留在後段比較。</p></div><div class="bespoke-marp-note" data-index="5" tabindex="0"><p>後端可理解為真正接收工具請求、執行計算和保存資料的程式服務。使用者不必自己把一次次實驗的程式、設定和結果拼回來。
