@@ -65,6 +65,22 @@ designed for research on market-making volume targets, not live execution.
   accepted input, the exception and the empty-frame rules.
 - Signals follow the project convention: `1` long, `-1` short, `0` flat.
 
+## Declarative Rolling Schemes
+
+`rolling_gen` replaces the rolling retrainer with a named window geometry. It is
+off unless enabled, and while it is off the classic loop above is what runs. The
+schemes, their optional fields and the causal boundary are described once in the
+[ML research contract](../ml_research.md#rolling-retraining-schemes); this
+strategy needs only the switch:
+
+```yaml
+strategy:
+  parameters:
+    rolling_gen:
+      enabled: true
+      scheme: roll_ex
+```
+
 ## Data Requirements
 
 The strategy declares market OHLCV only:

@@ -79,6 +79,10 @@ from tradingdev.domain.ml.registry import (
     ModelArtifactStore,
 )
 from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
+from tradingdev.domain.ml.rolling_gen import (
+    get_rolling_scheme,
+    rolling_scheme_names,
+)
 from tradingdev.domain.ml.validation import (
     get_validation_scheme,
     validation_scheme_names,
@@ -151,6 +155,16 @@ _ML_GUIDANCE = {
         "Fold scores estimate the training procedure, not out-of-sample "
         "predictions of the saved all-row artifact. purged_kfold can train on "
         "later dates and is retrospective, not a past-only deployment simulation."
+    ),
+    "rolling_schemes": (
+        "Declarative rolling retraining geometry for bundled ML strategies, off "
+        "by default and meant for expert use. Enabling a strategy's rolling_gen "
+        "block replaces its classic retrainer for that run; leaving it off keeps "
+        "the classic loop untouched. roll_sd slides a fixed-length training "
+        "window, roll_ex keeps the first bar and expands. A training window "
+        "always ends strictly before the bar it scores. Unset step, window_size, "
+        "min_train_bars and predict_lookback follow the strategy's own "
+        "retrain_interval and lookback."
     ),
     "evaluation": (
         "evaluate_signal loads the verified model and single-symbol dataset by ID "
@@ -247,12 +261,24 @@ class MLService:
                 get_validation_scheme(name) for name in validation_scheme_names()
             )
         ]
+        # Listed from the same registry a strategy resolves, so the menu and the
+        # executable geometry cannot drift apart.
+        rolling_schemes = [
+            {
+                "name": scheme.name,
+                "description": scheme.description,
+                "rtype": scheme.rtype.value,
+                "default_step": scheme.step,
+            }
+            for scheme in (get_rolling_scheme(name) for name in rolling_scheme_names())
+        ]
         return {
             "success": True,
             "schema_version": 1,
             "feature_sets": feature_sets,
             "model_kinds": model_kinds,
             "validation_schemes": validation_schemes,
+            "rolling_schemes": rolling_schemes,
             "processor_types": _PROCESSOR_TYPES,
             "ic_methods": ["pearson", "spearman"],
             "n_quantiles_range": [2, 10],

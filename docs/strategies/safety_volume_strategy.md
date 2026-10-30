@@ -95,6 +95,22 @@ FLAT ──(safe + direction)──► LONG/SHORT
 | `lookback_candidates` | [360, 720, 1440] | 搜尋最佳特徵 lookback |
 | `retrain_interval` | 720 | 每 720 根 bar（12h @1m）重訓模型 |
 | `validation_ratio` | 0.2 | 驗證集比例 |
+| `rolling_gen` | 見下節 | 宣告式滾動視窗；預設關閉 |
+
+### 宣告式滾動視窗（`rolling_gen`）
+
+預設關閉。未啟用時，Risk Gate 沿用原本的滾動重訓迴圈；啟用後改由具名的視窗
+幾何決定訓練窗與重訓節奏。兩個方案的差異、可選欄位與因果邊界統一寫在
+[ML 研究契約](../ml_research.md#rolling-retraining-schemes)，此處只列本策略的
+最小設定：
+
+```yaml
+strategy:
+  parameters:
+    rolling_gen:
+      enabled: true
+      scheme: roll_ex
+```
 
 ### Position & Volume
 

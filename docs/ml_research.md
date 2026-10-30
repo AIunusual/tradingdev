@@ -288,6 +288,47 @@ checks do not apply to those objects, and a matching hash is not a sandbox or
 proof of a trustworthy publisher. Do not load model files from an untrusted
 workspace.
 
+### Rolling Retraining Schemes
+
+Bundled ML strategies retrain while they score: the model is refitted every
+`retrain_interval` bars and then predicts the next bar. A `rolling_gen` block
+declares that window geometry instead of leaving it inside the strategy loop.
+It is **off by default**; with `enabled: false` the strategy runs its classic
+retrainer, untouched. `get_ml_contract` advertises the names under
+`rolling_schemes`, and execution resolves them from the same registry, so the
+menu and the geometry that actually runs cannot drift apart.
+
+```yaml
+strategy:
+  parameters:
+    rolling_gen:
+      enabled: true      # off unless set
+      scheme: roll_sd    # or roll_ex
+      step: 720          # optional; follows retrain_interval
+      window_size: 7200  # roll_sd only; follows 10 x lookback
+```
+
+- `roll_sd` slides a fixed-length training window forward with each retrain.
+- `roll_ex` keeps the first bar and expands the window with each retrain.
+
+`min_train_bars` and `predict_lookback` are optional as well; they follow
+`lookback + 10` labelled rows and `2 x lookback` bars of scoring context. Those
+defaults are derived from the strategy's own lookback on purpose: a fixed
+window shorter than the feature warm-up would leave no labelled rows and stop
+retraining without saying so.
+
+Whichever scheme is declared, a training window ends strictly before the bar it
+scores, the scored frame is never concatenated in front of itself, and a bar
+whose features are unavailable emits no signal instead of reusing the previous
+bar's. These are the rules the classic retrainer already follows; the scheme
+only changes the window shape. A run that cannot score any bar at all fails
+rather than returning all-zero signals.
+
+This is not fold validation. `validation_schemes` cut one dataset into
+train/test folds to estimate the training procedure; `rolling_gen` decides how
+an already fitted strategy refits and predicts bar by bar. Date anchoring is not
+implemented: declaring `train_start` is rejected instead of silently ignored.
+
 ## ML Research Artifacts
 
 ML datasets, feature matrices, trained models and signal evaluations use the

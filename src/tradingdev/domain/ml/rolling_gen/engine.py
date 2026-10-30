@@ -1,0 +1,316 @@
+"""Execute a declared rolling scheme: causal retraining plus per-bar scoring.
+
+The engine is a sibling of :class:`~tradingdev.domain.ml.retrainer.RollingRetrainer`,
+not a replacement.  It is reached only when a strategy enables ``rolling_gen``;
+the classic loop stays untouched for every run that does not.
+
+Two rules from the scoring-history work are structural here rather than
+remembered:
+
+* history is cut with :func:`align_scoring_history`, so the scored frame is
+  never concatenated in front of itself;
+* a training window ends at the bar being scored, never after it, and the
+  prediction is read back by the scored bar's own row label rather than by
+  position in the returned probabilities.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+
+from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
+from tradingdev.domain.ml.rolling_gen.scheme import (
+    RollingGeometry,
+    RollingScheme,
+    resolve_geometry,
+)
+from tradingdev.domain.ml.scoring_history import align_scoring_history
+from tradingdev.shared.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tradingdev.domain.ml.schemas import XGBoostModelConfig
+
+logger = setup_logger(__name__)
+
+_PROBABILITY_COLUMNS = ("p_long", "p_short")
+
+
+class FeatureTransformer(Protocol):
+    """The part of a feature engineer the engine relies on.
+
+    Both the direction and the risk feature engineers satisfy it, which is why
+    one engine can serve both strategies without importing either.
+    """
+
+    def transform(
+        self, df: pd.DataFrame, *, include_target: bool = True
+    ) -> pd.DataFrame: ...
+
+
+@dataclass(frozen=True)
+class _Retrainer:
+    """The immutable inputs of one rolling run's retraining step."""
+
+    combined: pd.DataFrame
+    geometry: RollingGeometry
+    scheme_name: str
+    fe: FeatureTransformer
+    model_config: XGBoostModelConfig
+    model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel]
+    total_retrains: int
+    total_bars: int
+
+    def retrain(
+        self,
+        combined_idx: int,
+        *,
+        fallback: XGBoostDirectionModel,
+        retrain_count: int,
+        bar: int,
+    ) -> XGBoostDirectionModel:
+        """Train on the declared window, or keep the previous model.
+
+        A window that holds too few labelled rows is skipped rather than
+        stretched: extending it forward to reach the minimum would train on the
+        bar being scored.
+        """
+        logger.info(
+            "[rolling_gen:%s] Retrain %d/%d at bar %d/%d",
+            self.scheme_name,
+            retrain_count,
+            self.total_retrains,
+            bar,
+            self.total_bars,
+        )
+        start, stop = self.geometry.train_window(combined_idx)
+        window = self.combined.iloc[start:stop].copy()
+        if len(window) < 2:
+            return fallback
+        labelled = self.fe.transform(window, include_target=True)
+        if len(labelled) < self.geometry.min_train_bars:
+            logger.info(
+                "[rolling_gen:%s] %d labelled bars at bar %d is below "
+                "min_train_bars=%d; keeping the previous model",
+                self.scheme_name,
+                len(labelled),
+                bar,
+                self.geometry.min_train_bars,
+            )
+            return fallback
+        model = self.model_factory(self.model_config)
+        model.train(labelled)
+        return model
+
+    def score(
+        self,
+        combined_idx: int,
+        model: XGBoostDirectionModel,
+        probabilities: npt.NDArray[np.float64],
+        *,
+        bar: int,
+    ) -> bool:
+        """Write this bar's class probabilities; report whether it scored.
+
+        A bar whose features did not survive the feature warm-up is left
+        unscored.  Borrowing the previous bar's probability would answer a
+        question about a bar that has no answer.
+        """
+        start, stop = self.geometry.predict_context(combined_idx)
+        context = self.combined.iloc[start:stop].copy()
+        features = self.fe.transform(context, include_target=False)
+        if combined_idx not in features.index:
+            return False
+        proba = model.predict_proba(features.loc[[combined_idx]])
+        # A class the model never saw keeps probability 0 rather than a guess.
+        probabilities[bar, 0] = float(proba[1].iloc[0]) if 1 in proba.columns else 0.0
+        probabilities[bar, 1] = float(proba[-1].iloc[0]) if -1 in proba.columns else 0.0
+        return True
+
+
+def rolling_probabilities(
+    train_data: pd.DataFrame,
+    test_df: pd.DataFrame,
+    scheme: RollingScheme,
+    *,
+    model: XGBoostDirectionModel,
+    model_config: XGBoostModelConfig,
+    fe: FeatureTransformer,
+    lookback: int,
+    retrain_interval: int,
+    model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
+        XGBoostDirectionModel
+    ),
+) -> pd.DataFrame:
+    """Score every bar of ``test_df`` with the scheme's retraining geometry.
+
+    Args:
+        train_data: History kept by ``fit()``; rows overlapping the scored frame
+            are dropped before concatenation.
+        test_df: Bars to score, in chronological order.
+        scheme: The declared geometry.
+        model: The model trained by ``fit()``, used until a retrain replaces it.
+        model_config: Configuration handed to each retrained model.
+        fe: Feature engineer producing training features and scoring context.
+        lookback: The strategy's feature lookback, used for unset scheme fields.
+        retrain_interval: The strategy's classic cadence, used for an unset step.
+        model_factory: Builds a fresh untrained model; overridable for tests.
+
+    Returns:
+        One row per scored bar, with ``p_long`` and ``p_short``. A bar whose
+        features could not be computed is NaN in both columns.
+
+    Raises:
+        ValueError: If either frame lacks a usable time identity, or the scheme
+            cannot form a usable window.
+    """
+    history, scored = align_scoring_history(train_data, test_df)
+    geometry = resolve_geometry(
+        scheme,
+        lookback=lookback,
+        retrain_interval=retrain_interval,
+    )
+    combined = pd.concat([history, scored], ignore_index=True)
+    test_offset = len(history)
+    total_bars = len(scored)
+
+    probabilities = np.full((total_bars, len(_PROBABILITY_COLUMNS)), np.nan)
+    scored_mask = np.zeros(total_bars, dtype=bool)
+    current_model = model
+    total_retrains = (total_bars - 1) // geometry.step + 1
+    retrainer = _Retrainer(
+        combined=combined,
+        geometry=geometry,
+        scheme_name=scheme.name,
+        fe=fe,
+        model_config=model_config,
+        model_factory=model_factory,
+        total_retrains=total_retrains,
+        total_bars=total_bars,
+    )
+
+    t_start = time.monotonic()
+    logger.info(
+        "[rolling_gen:%s] Starting: %d bars, %s, step=%d, %d retrains, "
+        "window=%s, min_train_bars=%d",
+        scheme.name,
+        total_bars,
+        geometry.rtype.value,
+        geometry.step,
+        total_retrains,
+        "expanding" if geometry.window_size is None else geometry.window_size,
+        geometry.min_train_bars,
+    )
+
+    retrain_count = 0
+    for bar in range(total_bars):
+        combined_idx = test_offset + bar
+        if bar % geometry.step == 0:
+            retrain_count += 1
+            current_model = retrainer.retrain(
+                combined_idx,
+                fallback=current_model,
+                retrain_count=retrain_count,
+                bar=bar,
+            )
+        scored_mask[bar] = retrainer.score(
+            combined_idx,
+            current_model,
+            probabilities,
+            bar=bar,
+        )
+
+    elapsed = time.monotonic() - t_start
+    logger.info(
+        "[rolling_gen:%s] Complete: %d bars in %.1fs, %d scored",
+        scheme.name,
+        total_bars,
+        elapsed,
+        int(scored_mask.sum()),
+    )
+    if total_bars and not scored_mask.any():
+        # Every bar lost its features, so every signal would be a silent 0 and
+        # the run would look like a strategy that simply never trades.
+        msg = (
+            f"rolling scheme {scheme.name!r} scored none of {total_bars} bars: "
+            f"predict_lookback={geometry.predict_lookback} is shorter than the "
+            "feature warm-up, so the feature engineer drops every scored bar; "
+            "raise rolling_gen.predict_lookback"
+        )
+        raise ValueError(msg)
+    return pd.DataFrame(probabilities, columns=list(_PROBABILITY_COLUMNS))
+
+
+def signals_from_probabilities(
+    probabilities: pd.DataFrame,
+    *,
+    threshold: float,
+    cooldown: int,
+) -> npt.NDArray[np.intp]:
+    """Turn per-bar probabilities into ``1``/``-1``/``0`` signals.
+
+    The cooldown is applied here, after every bar has been scored, so it can
+    only suppress entries and never change which bars trained which model.
+    """
+    total = len(probabilities)
+    signals = np.zeros(total, dtype=int)
+    p_long = probabilities["p_long"].to_numpy()
+    p_short = probabilities["p_short"].to_numpy()
+    last_trade_bar = -cooldown
+    for bar in range(total):
+        if bar - last_trade_bar < cooldown:
+            continue
+        if np.isnan(p_long[bar]) or np.isnan(p_short[bar]):
+            continue
+        if p_long[bar] >= threshold and p_long[bar] >= p_short[bar]:
+            signals[bar] = 1
+            last_trade_bar = bar
+        elif p_short[bar] >= threshold:
+            signals[bar] = -1
+            last_trade_bar = bar
+    return signals
+
+
+def run_rolling(
+    train_data: pd.DataFrame,
+    test_df: pd.DataFrame,
+    scheme: RollingScheme,
+    *,
+    model: XGBoostDirectionModel,
+    model_config: XGBoostModelConfig,
+    fe: FeatureTransformer,
+    threshold: float,
+    cooldown: int,
+    lookback: int,
+    retrain_interval: int,
+    model_factory: Callable[[XGBoostModelConfig], XGBoostDirectionModel] = (
+        XGBoostDirectionModel
+    ),
+) -> npt.NDArray[np.intp]:
+    """Score ``test_df`` with the scheme and map probabilities to signals.
+
+    Same arguments as :func:`rolling_probabilities`, plus the decision rule the
+    direction strategy applies to each bar's probabilities.
+    """
+    return signals_from_probabilities(
+        rolling_probabilities(
+            train_data,
+            test_df,
+            scheme,
+            model=model,
+            model_config=model_config,
+            fe=fe,
+            lookback=lookback,
+            retrain_interval=retrain_interval,
+            model_factory=model_factory,
+        ),
+        threshold=threshold,
+        cooldown=cooldown,
+    )
