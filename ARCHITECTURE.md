@@ -61,7 +61,7 @@ flowchart LR
 
 這是目前實作的責任分組，尚未形成全面的依賴反轉。
 Application services 直接使用具體的儲存與程序 adapters；`domain/data` 內的
-crawlers、loader 與 DataManager 仍執行網路及檔案 I/O，StrategyLoader 也會
+crawlers 與 loader 仍執行網路及檔案 I/O，StrategyLoader 也會
 讀取、載入策略檔案。`domain/ml/registry` 的模型、特徵快取與排行榜 stores
 也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
 最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
@@ -228,6 +228,15 @@ CLI 透過 ArtifactService 保存，均共用儲存 adapters。SQLite 保存索�
 RunService 查詢 run 與指標，ArtifactService 探索與讀取檔案。Dashboard 使用已保存的
 PipelineResult；最佳化沒有此 pickle。讀取依保存路徑，不用目前 YAML 重建查找鍵，
 也不自動重用以前的回測。格式與查詢入口見[執行產物契約](docs/run_artifacts.md)。
+
+### 行情快取
+
+`app/data_manager.py` 協調年度查詢及更新，`domain/data/cache.py` 定義共用身分、
+成功查詢證據與重用政策，`adapters/storage/data_cache.py` 負責鎖、不可變版本與
+原子發布。DataService 的正式載入、只讀載入、可用性、檢查與取樣使用相同身分；
+不同來源、市場及原始代號不共用價格。保留舊版本讓讀取端不受更新影響，
+失敗只清除尚未發布的檔案。格式及限制見
+[Market Data Cache](docs/run_artifacts.md#market-data-cache)。
 
 ### 獨立行情取樣
 

@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.data_cache import seed_market_cache
 from tests.research_fixtures import research_for_config
 
 from tradingdev.adapters.execution.process_runner import ProcessRunner, WorkerHandle
@@ -90,9 +91,10 @@ def test_generated_strategy_can_start_backtest_job(
     store = SQLiteStore(workspace)
     job_store = JobStore(workspace=workspace, store=store)
     workspace.processed_data.mkdir(parents=True, exist_ok=True)
-    (workspace.processed_data / "btcusdt_1h_2024.parquet").write_text(
-        "",
-        encoding="utf-8",
+    seed_market_cache(
+        workspace.processed_data,
+        pd.DataFrame({"timestamp": pd.to_datetime([], utc=True)}),
+        source="binance_api",
     )
 
     strategy_service = StrategyService(workspace)

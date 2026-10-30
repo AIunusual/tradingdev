@@ -92,7 +92,7 @@ def test_capture_contains_real_merged_features_and_loads_only_once(
     pd.testing.assert_frame_equal(pd.read_parquet(BytesIO(snapshot.payload)), expected)
     assert snapshot.content_sha256 == hashlib.sha256(snapshot.payload).hexdigest()
     assert snapshot.dataset_id == f"sha256:{snapshot.content_sha256}"
-    assert snapshot.source_dataset_id.startswith("BTC/USDT:1h:")
+    assert snapshot.source_dataset_id.startswith("query-sha256:")
     assert snapshot.payload != data.dataset.processed_path.read_bytes()
     binding = json.loads(snapshot.data_binding_json)
     assert binding["data"] == manifest.config["data"]

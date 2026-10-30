@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -36,11 +37,10 @@ def _write_bars(workspace: WorkspacePaths, symbol: str) -> None:
             "volume": np.full(_ROWS, 10.0),
         }
     )
-    path = workspace.processed_data / (
-        symbol.lower().replace("/", "") + "_1h_2024.parquet"
+    seed_market_cache(workspace.processed_data, frame, symbol=symbol)
+    seed_market_cache(
+        workspace.processed_data, frame, symbol=symbol, source="yahoo_finance"
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
 
 
 @pytest.fixture
@@ -403,7 +403,7 @@ class TestComparability:
             first, workspace, dataset_id=old_id, model_id=_GOOD_MODEL, quality=1.0
         )
         if changed == "bars":
-            source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            source = cached_market_path(workspace.processed_data)
             frame = pd.read_parquet(source)
             frame["close"] *= np.linspace(1.0, 1.2, len(frame))
             frame.to_parquet(source, index=False)
@@ -698,7 +698,7 @@ class TestParameterSurface:
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
         """A rebuilt dataset at the same horizon must not share a grid row."""
-        source = workspace.processed_data / "btcusdt_1h_2024.parquet"
+        source = cached_market_path(workspace.processed_data)
         first = _build(service)
         _record(service, workspace, dataset_id=first, model_id=_GOOD_MODEL, quality=1.0)
         frame = pd.read_parquet(source)
@@ -947,7 +947,7 @@ class TestReturnSampling:
         self, service: MLService, workspace: WorkspacePaths, source: str, gap: bool
     ) -> None:
         if gap:
-            path = workspace.processed_data / "btcusdt_1h_2024.parquet"
+            path = cached_market_path(workspace.processed_data)
             bars = pd.read_parquet(path).drop(index=150)
             bars.to_parquet(path, index=False)
         built = service.build_dataset(

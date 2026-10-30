@@ -523,13 +523,54 @@ on a later run. Integrity verification assumes the job's expected digest remains
 trusted; it is not a security boundary against someone controlling both the
 database and workspace files.
 
+## Market Data Cache
+
+OHLCV cache v2 uses an exact identity: provider, effective market type, original
+symbol (including case and punctuation), and timeframe. Providers that ignore
+market type use `null` for it. `requirements.market.source` overrides
+`data.source`. Request IDs additionally hash the full UTC start/end instants
+and feature requirements; they identify requests, not immutable data contents.
+Load, cached-only ML reads, sampling, availability and inspection share this
+identity and honor configured raw/processed roots. The inventory tool uses the
+default root; config inspection inventories the configured root.
+
+Each root contains `cache-v2/<identity-sha256>/`. Raw CSV and processed Parquet
+files use immutable generation IDs; `<year>.json` in the processed directory
+points to the current generation and records identity, successful query bounds
+and acquisition time. These bounds describe the provider query, not the first
+or last returned candle. Empty successful queries have receipts too. Inspection
+exposes query evidence and observed rows separately. `rows` is `null` when no
+generation can be read; otherwise it counts the loaded annual generations,
+including successful empty ones. This count can be partial when other requested
+years are missing or unreadable. Callers must also inspect `exists` and `errors`;
+a known row count does not establish that every requested year was read or that
+the requested interval has complete observations.
+
+The application queries each requested UTC year through its end or acquisition
+time, whichever is earlier. A receipt is reusable only if it covers the requested
+year slice. Receipt age does not yet restrict reuse, so already queried recent
+intervals may retain earlier observations. Future request endpoints fail.
+Successful queries do not prove complete observations or prevent later provider
+corrections.
+Cached-only reads require reusable evidence and fail without downloading when it
+is absent; empty observations cannot serve as ML input.
+
+A per-identity/year file lock serializes refreshes. The storage adapter stages
+CSV, Parquet and metadata, publishes immutable files, then atomically replaces
+the receipt. Failures leave the previous receipt and generation readable and
+remove unpublished attempt files; older or narrower query evidence cannot
+replace newer evidence. Published generations remain available to concurrent
+readers and are not automatically collected. Lock files may remain after release.
+Legacy flat files are preserved but excluded because their source cannot be
+proven; fetching again creates v2 data without relabeling or deleting them.
+
 ## Bounded Historical Sampling
 
 `DataService.load_sample` and crawler `fetch_sample` remain independent data
 utilities; MCP confirmation preparation does not call them. Sampling uses the
 selected market-data pipeline and effective settings and searches bounded calendar
 windows within the requested dates, continuing past empty market-closure windows until it reaches the bar budget or end date.
-Market requests normalize their bounds to UTC before selecting yearly cache files
+Market requests normalize their bounds to UTC before selecting reusable cache receipts
 or provider intervals. An offset timestamp near New Year can therefore select
 the preceding or following UTC year. Reversed intervals fail before data access;
 one inclusive instant remains valid for the data utilities.
@@ -595,11 +636,11 @@ it is `null`; do not treat a first page as the complete inventory.
 | `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
 | `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
 | `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
-| `list_available_data` | `symbol`, `timeframe` | symbol, timeframe |
+| `list_available_data` | `source`, `market_type`, `symbol`, `timeframe` | source, market type, symbol, timeframe |
 | `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
 
-Filters are exact matches except cached-data symbols, which normalize case and
-remove `/`. Ordering is deterministic for unchanged data; separate page calls
+Filters are exact matches, including symbol case and punctuation.
+Ordering is deterministic for unchanged data; separate page calls
 are not a snapshot across concurrent writes. Restart at offset zero if the
 inventory changes before claiming complete discovery.
 

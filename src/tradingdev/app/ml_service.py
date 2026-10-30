@@ -20,7 +20,9 @@ from tradingdev.adapters.storage.filesystem import (
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
 from tradingdev.app.ml_training import MLTrainingService
+from tradingdev.domain.data.cache import DataIdentity
 from tradingdev.domain.data.crawlers.registry import describe_sources
+from tradingdev.domain.data.schemas import DataConfig, MarketDataRequest
 from tradingdev.domain.ml.calendar import (
     CalendarMode,
     MissingPolicy,
@@ -799,6 +801,7 @@ class MLService:
         feature_set: str,
         horizon: int = 1,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
     ) -> dict[str, Any]:
         """Build immutable labelled features from existing cached OHLCV bars.
 
@@ -818,6 +821,7 @@ class MLService:
             entry=entry,
             horizon=horizon,
             source=source,
+            market_type=market_type,
         )
         dataset = labelled.frame
         dropped_rows = labelled.dropped_rows
@@ -832,6 +836,14 @@ class MLService:
                 "start_date": start_date,
                 "end_date": end_date,
                 "source": source,
+                "market_type": self._market_identity(
+                    source,
+                    market_type,
+                    timeframe,
+                    start_date,
+                    end_date,
+                    symbol,
+                ).market_type,
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
                 "code_fingerprint": self._code_fingerprint(),
@@ -846,6 +858,8 @@ class MLService:
             "success": True,
             "dataset": {
                 "dataset_id": dataset_id,
+                "source": manifest["source"],
+                "market_type": manifest["market_type"],
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "start_date": start_date,
@@ -874,6 +888,7 @@ class MLService:
         feature_set: str,
         horizon: int = 1,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
         calendar_mode: str = "intersection",
         missing_policy: str = "drop",
         max_staleness: int | None = None,
@@ -907,6 +922,7 @@ class MLService:
                 entry=entry,
                 horizon=horizon,
                 source=source,
+                market_type=market_type,
             )
             dropped_rows += labelled.dropped_rows
             # A panel is cached only when every symbol is a hit.
@@ -941,6 +957,14 @@ class MLService:
                 "start_date": start_date,
                 "end_date": end_date,
                 "source": source,
+                "market_type": self._market_identity(
+                    source,
+                    market_type,
+                    timeframe,
+                    start_date,
+                    end_date,
+                    symbol,
+                ).market_type,
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
                 "code_fingerprint": self._code_fingerprint(),
@@ -957,6 +981,8 @@ class MLService:
             "success": True,
             "panel": {
                 "dataset_id": dataset_id,
+                "source": manifest["source"],
+                "market_type": manifest["market_type"],
                 "symbols": list(ordered),
                 "timeframe": timeframe,
                 "start_date": start_date,
@@ -1134,6 +1160,25 @@ class MLService:
         except KeyError as exc:
             raise ValueError(f"unknown feature set: {name}") from exc
 
+    @staticmethod
+    def _market_identity(
+        source: str,
+        market_type: str,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        symbol: str,
+    ) -> DataIdentity:
+        return DataIdentity.market(
+            DataConfig(source=source, market_type=market_type),
+            MarketDataRequest(
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+        )
+
     def _cached_bars(
         self,
         *,
@@ -1142,6 +1187,7 @@ class MLService:
         start_date: str,
         end_date: str,
         source: str,
+        market_type: str,
     ) -> pd.DataFrame:
         """Load one symbol's cached OHLCV bars, or say what is missing."""
         loaded = self._data_service.load_cached(
@@ -1150,6 +1196,7 @@ class MLService:
             start_date=start_date,
             end_date=end_date,
             source=source,
+            market_type=market_type,
         )
         frame = loaded.frame.reset_index(drop=True)
         missing = [column for column in _OHLCV_COLUMNS if column not in frame.columns]
@@ -1166,6 +1213,7 @@ class MLService:
         end_date: str,
         entry: FeatureSet,
         source: str,
+        market_type: str,
     ) -> tuple[pd.DataFrame, bool]:
         """Return bars plus features and a cache-hit flag.
 
@@ -1177,6 +1225,7 @@ class MLService:
             start_date=start_date,
             end_date=end_date,
             source=source,
+            market_type=market_type,
         )
         identity = FeatureCacheIdentity(
             symbol=symbol,
@@ -1207,6 +1256,7 @@ class MLService:
         entry: FeatureSet,
         horizon: int,
         source: str,
+        market_type: str,
     ) -> LabelledFrame:
         """Label one symbol before panel alignment, dropping incomplete rows."""
         frame, features_from_cache = self._feature_frame(
@@ -1216,6 +1266,7 @@ class MLService:
             end_date=end_date,
             entry=entry,
             source=source,
+            market_type=market_type,
         )
         dataset = frame.copy()
         forward = forward_returns(dataset["close"], horizon)

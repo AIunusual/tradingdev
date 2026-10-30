@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -50,10 +51,7 @@ def seed_temporal_workspace(root: Path) -> WorkspacePaths:
         )
         if number:
             frame = frame.drop(index=range(88, 112))
-        path = paths.processed_data / (
-            symbol.replace("/", "").lower() + "_1h_2024.parquet"
-        )
-        frame.to_parquet(path, index=False)
+        seed_market_cache(paths.processed_data, frame, symbol=symbol)
     return paths
 
 
@@ -76,8 +74,7 @@ def test_label_intervals_keep_original_symbol_dates_before_panel_alignment(
     observed_gap = False
     for symbol, dataset in groups:
         source = pd.read_parquet(
-            workspace.processed_data
-            / (symbol.replace("/", "").lower() + "_1h_2024.parquet")
+            cached_market_path(workspace.processed_data, symbol=symbol)
         )
         expected_ends = pd.Series(
             source["timestamp"].shift(-3).to_numpy(), index=source["timestamp"]

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pyarrow.dataset as arrow_dataset
 import pytest
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.data_service import DataService
@@ -30,9 +31,7 @@ def _service(
             **dict.fromkeys(("open", "high", "low", "close", "volume"), 100.0),
         }
     )
-    frame.to_parquet(
-        root / "workspace/data/processed/btcusdt_1h_2024.parquet", index=False
-    )
+    seed_market_cache(root / "workspace/data/processed", frame)
 
     class Crawler:
         def fetch(self, *_args: Any, **_kwargs: Any) -> pd.DataFrame:
@@ -204,7 +203,7 @@ def test_feature_loading_only_fills_from_earlier_matching_values(
             stored_column: [999.0, 42.0, None, 43.0, *([999.0] * 1000), 999.0],
         }
     ).sample(frac=1, random_state=42).to_parquet(path, index=False, row_group_size=7)
-    market_path = tmp_path / "workspace/data/processed/btcusdt_1h_2024.parquet"
+    market_path = cached_market_path(tmp_path / "workspace/data/processed")
     before = {source: source.read_bytes() for source in (path, market_path)}
     raw = _raw(
         [

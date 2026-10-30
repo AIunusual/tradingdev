@@ -12,6 +12,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import UnexpectedToolError
 from mcp_types import CallToolResult, TextContent
 from pydantic import TypeAdapter, ValidationError
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.common import Page
@@ -55,17 +56,19 @@ def test_source_discovery_provides_settings_without_fetching(tmp_path: Path) -> 
 def test_data_tools_validate_local_cache_and_inspection(tmp_path: Path) -> None:
     workspace = WorkspacePaths(tmp_path / "workspace")
     service = DataService(workspace)
-    path = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    pd.DataFrame(
-        {
-            "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
-            "open": [100.0, 101.0, 102.0],
-            "high": [101.0, 102.0, 103.0],
-            "low": [99.0, 100.0, 101.0],
-            "close": [100.5, 101.5, 102.5],
-            "volume": [10.0, 11.0, 12.0],
-        }
-    ).to_parquet(path, index=False)
+    path = seed_market_cache(
+        workspace.processed_data,
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC"),
+                "open": [100.0, 101.0, 102.0],
+                "high": [101.0, 102.0, 103.0],
+                "low": [99.0, 100.0, 101.0],
+                "close": [100.5, 101.5, 102.5],
+                "volume": [10.0, 11.0, 12.0],
+            }
+        ),
+    )
     config_path = tmp_path / "fixture.yaml"
     config_path.write_text(
         "backtest:\n  symbol: BTC/USDT\n  timeframe: 1h\n"
@@ -133,6 +136,8 @@ def test_data_tool_rejects_undeclared_cache_fields(
                 "symbol": "BTC",
                 "timeframe": "1h",
                 "years_available": [],
+                "source": "binance_vision",
+                "market_type": "futures/um",
                 "bad": "PRIVATE_CACHE_RECORD",
             }
         ],

@@ -27,12 +27,18 @@ because its name appears in discovery.
 
 ### Dataset and Model Inputs
 
-`build_dataset` reads existing yearly OHLCV files for the requested symbol and
-timeframe, selecting available rows within the requested period. Missing yearly
-files or an empty selected period fail the request; success does not establish
-complete bar-by-bar coverage. Use `ensure_data` separately when a download is
-needed. Building a dataset does not download, refresh an old partial-year market
-cache or remove market files. The feature builder preserves rows and emits unavailable values
+`build_dataset` and `build_panel` select cached OHLCV by source, effective
+`market_type`, exact symbol and timeframe. Binance Vision defaults to `futures/um`
+and also accepts `spot`; providers that ignore market type store it as `null`.
+The effective source/market is returned in the build summary, saved in dataset
+metadata and participates in its identity.
+Each requested year slice requires a covering successful query. Missing coverage
+or an empty selected period fails; success does not establish complete bar
+coverage or freshness. Use `ensure_data` with the same source/market when a download
+is needed. Legacy unidentified flat files are preserved but excluded. Builds
+never download, refresh or remove market data.
+See [Market Data Cache](run_artifacts.md#market-data-cache).
+The feature builder preserves rows and emits unavailable values
 during warm-up. The service computes `forward_return = close[t+horizon] /
 close[t] - 1` and `target = sign(forward_return)`, then drops incomplete feature
 or label rows and reports their count. `horizon` is a positive number of source
@@ -419,7 +425,8 @@ publication and retention are defined in [Reports](reports.md#composable-offline
 containing `dataset.parquet` and `manifest.json`. The manifest records:
 
 - The single symbol or ordered panel symbols, timeframe, requested date range,
-  source and dataset kind.
+  source, effective `market_type` (`null` when the provider ignores it) and dataset
+  kind. The effective market is also returned in dataset and panel summaries.
 - Feature-set name, ordered feature columns, build-time feature-code fingerprint,
   label column, label horizon and dropped-row count.
 - For panels, the calendar settings, coverage summary and date count. As in the

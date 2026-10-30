@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -30,9 +31,7 @@ def _write_cached_bars(workspace: WorkspacePaths, rows: int = 300) -> None:
             "volume": np.full(rows, 10.0),
         }
     )
-    path = workspace.processed_data / "btcusdt_1h_2024.parquet"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(path, index=False)
+    seed_market_cache(workspace.processed_data, frame)
 
 
 @pytest.fixture

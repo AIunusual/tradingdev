@@ -16,7 +16,7 @@ from tests.e2e.test_llm_ml import (
     TRAINING_ARGUMENTS,
     assert_ml_artifacts,
     assert_ml_workflow,
-    ml_market_frame,
+    seed_ml_markets,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 @pytest.fixture(scope="module")
 def ml_workflow() -> Iterator[tuple[MCPWorkspace, list[ToolCall]]]:
     with temporary_mcp_workspace() as workspace:
-        workspace.seed_market(ml_market_frame())
+        seed_ml_markets(workspace)
 
         async def run() -> list[ToolCall]:
             calls: list[ToolCall] = []

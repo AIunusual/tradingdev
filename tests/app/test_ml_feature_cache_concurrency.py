@@ -17,6 +17,7 @@ from unittest.mock import Mock
 import numpy as np
 import pandas as pd
 import pytest
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
@@ -181,10 +182,7 @@ def _seed(workspace: WorkspacePaths) -> dict[str, pd.DataFrame]:
                 "volume": np.full(300, 10.0),
             }
         )
-        path = workspace.processed_data / (
-            symbol.lower().replace("/", "") + "_1h_2024.parquet"
-        )
-        frame.to_parquet(path, index=False)
+        seed_market_cache(workspace.processed_data, frame, symbol=symbol)
         frames[symbol] = frame
     return frames
 
@@ -253,7 +251,7 @@ def test_service_processes_serialize_cache_publication_and_eviction(
         preserved = {
             path: path.read_bytes()
             for path in (
-                *workspace.processed_data.glob("*.parquet"),
+                *workspace.processed_data.rglob("*.parquet"),
                 *(workspace.ml_datasets / previous["dataset_id"]).iterdir(),
             )
         }

@@ -651,12 +651,13 @@ class JobService:
             backtest["timeframe"],
             backtest["start_date"],
             backtest["end_date"],
+            raw_config=prepared.manifest.config_copy(),
         )
         submitted = self._submission.submit(prepared)
         data_msg = (
-            "Data already cached locally."
+            "A reusable market query is cached locally; observations may have gaps."
             if data_available
-            else "Data not fully cached; worker will download it automatically."
+            else "No reusable market query; worker will query the provider."
         )
         return {
             **submitted,

@@ -45,17 +45,24 @@ def register(mcp: MCPServer, service: DataService) -> None:
     def list_available_data(
         symbol: str | None = None,
         timeframe: str | None = None,
+        source: str | None = None,
+        market_type: str | None = None,
         offset: PageOffset = 0,
         limit: PageLimit = DEFAULT_PAGE_LIMIT,
     ) -> Page[CachedDataset]:
-        """Discover cached OHLCV identities; inspect_dataset reads file details.
+        """List cached OHLCV identities: source, market, symbol, timeframe.
 
-        Filters are exact (symbol ignores case and '/'); order is symbol, timeframe.
-        total counts matches; follow next_offset. Restart at offset=0 after cache
-        changes because pages do not retain a cross-call snapshot. No files are read.
+        Exact filters; sorted in that order. Reads receipts, excluding unidentified
+        legacy files. Follow next_offset; restart at 0 after changes (no snapshot).
+        inspect_dataset(config_path) reads custom roots, query bounds and observations.
         """
         return service.list_available_data_page(
-            symbol=symbol, timeframe=timeframe, offset=offset, limit=limit
+            symbol=symbol,
+            timeframe=timeframe,
+            source=source,
+            market_type=market_type,
+            offset=offset,
+            limit=limit,
         )
 
     @mcp.tool(
@@ -67,12 +74,11 @@ def register(mcp: MCPServer, service: DataService) -> None:
         )
     )
     def list_data_sources() -> list[DataSourceDescription]:
-        """Discover source names, assets, symbols, intervals and market settings.
+        """Discover sources, assets, symbols, intervals and market settings.
 
-        Select data.requirements.market.source in YAML. null timeframes means
-        upstream-dependent, not unrestricted support. Preparation checks declared
-        local capabilities offline. Historical availability is checked when the
-        execution obtains data after approval; discovery performs no fetch.
+        Set data.requirements.market.source in YAML. null timeframes means upstream-
+        dependent. Discovery and preparation check local capabilities offline;
+        execution checks historical data after approval.
         """
         return [
             DataSourceDescription.model_validate(item) for item in describe_sources()
@@ -89,10 +95,9 @@ def register(mcp: MCPServer, service: DataService) -> None:
     def inspect_dataset(config_path: str | None = None) -> DatasetInspection:
         """Inspect local caches, optionally against an existing run config.
 
-        This does not fetch data. Missing caches do not block plan preparation;
-        approved backtest execution obtains its own data. Use ensure_data only
-        when the user explicitly requests obtaining data, not merely to prepare
-        a strategy confirmation.
+        No downloads. Missing caches do not block preparation; approved backtests
+        fetch independently. ensure_data requires an explicit download request.
+        Query coverage does not prove complete candles.
         """
         path = Path(config_path) if config_path else None
         if path is not None and not path.is_file():
@@ -113,16 +118,15 @@ def register(mcp: MCPServer, service: DataService) -> None:
         start_date: str,
         end_date: str,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
     ) -> EnsureDataResponse:
-        """Fetch and cache OHLCV data for the requested range when needed.
+        """Cache queried OHLCV for the requested interval.
 
-        Requires an explicit user request to obtain data; a request to develop
-        or prepare a strategy alone does not authorize downloading. Do not call
-        this to prepare a strategy confirmation: that stage uses code/settings
-        and synthetic fixtures only. Approved backtest execution obtains its own
-        data, so this is not a backtest prerequisite.
-        Select a source from list_data_sources. Completed-year downloads may
-        replace partial caches.
+        Requires an explicit download request. Preparation uses code/settings and
+        synthetic fixtures. Approved backtests fetch independently; no prerequisite.
+        Choose source/market via list_data_sources. Reuse requires a successful
+        query covering the interval. Queries may be empty and do not prove complete
+        candles or freshness.
         """
         try:
             MarketDataRequest.model_validate(
@@ -146,6 +150,7 @@ def register(mcp: MCPServer, service: DataService) -> None:
             start_date=start_date,
             end_date=end_date,
             source=source,
+            market_type=market_type,
         )
         return EnsureDataResponse(
             success=True,

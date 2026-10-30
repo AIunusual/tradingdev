@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from pyarrow import parquet as pq
+from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
@@ -37,12 +38,7 @@ def _bars(offset: float = 0.0) -> pd.DataFrame:
 
 
 def _write_bars(workspace: WorkspacePaths, symbol: str, offset: float = 0.0) -> Path:
-    path = workspace.processed_data / (
-        symbol.lower().replace("/", "") + "_1h_2024.parquet"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _bars(offset).to_parquet(path, index=False)
-    return path
+    return seed_market_cache(workspace.processed_data, _bars(offset), symbol=symbol)
 
 
 @pytest.fixture
@@ -140,7 +136,7 @@ class TestStaleBars:
         retained = {
             path: path.read_bytes()
             for path in (
-                *workspace.processed_data.glob("*.parquet"),
+                *workspace.processed_data.rglob("*.parquet"),
                 *dataset_root.iterdir(),
             )
             if path.is_file()
@@ -181,7 +177,7 @@ class TestStaleBars:
         retained = {
             path: path.read_bytes()
             for path in (
-                *workspace.processed_data.glob("*.parquet"),
+                *workspace.processed_data.rglob("*.parquet"),
                 *dataset_root.iterdir(),
             )
             if path.is_file()
@@ -217,7 +213,7 @@ class TestStaleBars:
     ) -> None:
         service = _service(workspace)
         before = _rows(workspace, _build(service))
-        path = workspace.processed_data / "btcusdt_1h_2024.parquet"
+        path = cached_market_path(workspace.processed_data)
         size_before = path.stat().st_size
         bars = pd.read_parquet(path)
         # Preserve file size but change observable values after warmup.

@@ -95,12 +95,13 @@ def register(mcp: MCPServer, service: MLService) -> None:
         feature_set: str,
         horizon: int = 1,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
     ) -> BuildDatasetResponse | ErrorResponse:
-        """Build an immutable single-symbol feature/label dataset from cached bars.
+        """Build a saved single-symbol feature/label dataset from cached bars.
 
-        Choose feature_set from get_ml_contract. Missing cache requires ensure_data;
-        this tool never downloads. Response identifies dropped warm-up/tail rows and
-        the dataset_id used for training or evaluation.
+        Choose features via get_ml_contract; source/market via list_data_sources.
+        Requires successful queries covering the interval; never downloads.
+        Returns dropped rows and dataset_id for training/evaluation.
         """
         try:
             result = service.build_dataset(
@@ -111,6 +112,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 feature_set=feature_set,
                 horizon=horizon,
                 source=source,
+                market_type=market_type,
             )
         except (ValueError, KeyError) as exc:
             return ErrorResponse(
@@ -129,6 +131,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         feature_set: str,
         horizon: int = 1,
         source: str = "binance_vision",
+        market_type: str = "futures/um",
         calendar_mode: str = "intersection",
         missing_policy: str = "drop",
         max_staleness: int | None = None,
@@ -148,6 +151,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 feature_set=feature_set,
                 horizon=horizon,
                 source=source,
+                market_type=market_type,
                 calendar_mode=calendar_mode,
                 missing_policy=missing_policy,
                 max_staleness=max_staleness,

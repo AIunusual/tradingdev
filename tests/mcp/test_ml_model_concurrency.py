@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.contracts.ml import (
@@ -44,16 +45,21 @@ def _seed(workspace: WorkspacePaths) -> None:
     workspace.ensure()
     index = np.arange(300, dtype=float)
     close = 100.0 + 10.0 * np.sin(index / 5.0) + index * 0.01
-    pd.DataFrame(
-        {
-            "timestamp": pd.date_range("2024-01-01", periods=300, freq="h", tz="UTC"),
-            "open": close,
-            "high": close + 1.0,
-            "low": close - 1.0,
-            "close": close,
-            "volume": np.full(300, 10.0),
-        }
-    ).to_parquet(workspace.processed_data / "btcusdt_1h_2024.parquet", index=False)
+    seed_market_cache(
+        workspace.processed_data,
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range(
+                    "2024-01-01", periods=300, freq="h", tz="UTC"
+                ),
+                "open": close,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": np.full(300, 10.0),
+            }
+        ),
+    )
 
 
 @pytest.mark.parametrize("outcome", ["normal", "failure", "timeout"])
