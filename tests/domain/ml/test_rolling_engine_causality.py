@@ -22,6 +22,7 @@ from tradingdev.domain.ml.models.xgboost_model import XGBoostDirectionModel
 from tradingdev.domain.ml.rolling_gen import (
     RollingScheme,
     RollType,
+    rolling_outcome,
     rolling_probabilities,
     run_rolling,
     signals_from_probabilities,
@@ -403,3 +404,60 @@ def test_signals_follow_the_threshold_and_cooldown(
     signals = signals_from_probabilities(frame, threshold=0.6, cooldown=cooldown)
 
     assert signals.tolist() == expected
+
+
+def _training_recorder(
+    sink: list[pd.DataFrame],
+) -> Callable[[XGBoostModelConfig], XGBoostDirectionModel]:
+    """A model that records the frame it was fitted on, and nothing else."""
+
+    class _Recorder(XGBoostDirectionModel):
+        def __init__(self, config: XGBoostModelConfig) -> None:
+            super().__init__(config)
+
+        def train(self, df: pd.DataFrame, eval_df: pd.DataFrame | None = None) -> None:
+            sink.append(df.copy())
+
+        def predict_proba(self, df: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame({-1: 0.0, 1: 1.0}, index=df.index)
+
+    return _Recorder
+
+
+def test_the_engine_never_trains_on_an_unrealised_label() -> None:
+    """Issue #24: unknown tail labels must not be treated as realised.
+
+    With a real feature engineer, the last ``target_horizon`` rows of a training
+    window have no future close to label them. They must be dropped, not filled
+    with a flat label: the window ends at bar 299 and the horizon is 5, so the
+    last bar that can carry a realised label is bar 294.
+    """
+    horizon = 5
+    history_bars = 300
+    frame = _market_frame(history_bars + 20)
+    sink: list[pd.DataFrame] = []
+    factory = _training_recorder(sink)
+
+    rolling_outcome(
+        frame.iloc[:history_bars].copy(),
+        frame.iloc[history_bars:].copy(),
+        _scheme(RollType.ROLL_EX),
+        model=factory(_MODEL_CONFIG),
+        model_config=_MODEL_CONFIG,
+        fe=FeatureEngineer(lookback=24, target_horizon=horizon),
+        lookback=24,
+        retrain_interval=1,
+        model_factory=factory,
+    )
+
+    assert sink, "the run must have trained at least one model"
+    # The first roll trains on bars 0..299 of the concatenated frame. Its last
+    # label needs close[299 + 1 + horizon - 1], which is outside the window, so
+    # the last usable bar is 299 - horizon = 294.
+    first = sink[0]
+    assert pd.Timestamp(first["timestamp"].max()) == pd.Timestamp(
+        frame["timestamp"].iloc[history_bars - 1 - horizon]
+    ), "the window trained on a bar whose label was not realised yet"
+    # Every roll's labels are realised: none was filled in to keep the row.
+    for trained in sink:
+        assert trained["target"].notna().all(), "an unrealised label was filled in"
