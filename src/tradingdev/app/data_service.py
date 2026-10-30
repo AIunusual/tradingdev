@@ -21,6 +21,7 @@ from tradingdev.adapters.storage.filesystem import (
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.data import CachedDataset
 from tradingdev.app.data_manager import DataManager
+from tradingdev.app.dvol_data import DVOLData
 from tradingdev.app.market_sample import load_market_sample
 from tradingdev.app.pagination import paginate
 from tradingdev.domain.backtest.schemas import BacktestConfig
@@ -117,17 +118,10 @@ class DataService:
                 "the backtest fields determine the actual data request"
             )
         self._check_market_settings(requirements.market, str(data["market_type"]))
-        request = self._request_from_backtest(backtest_config)
         features = []
         for feature in requirements.features:
             resolved = feature.model_dump(mode="json")
-            path = (
-                self._resolve_data_path(feature.path)
-                if feature.path
-                else self._default_dvol_path(request)
-                if feature.type == "dvol"
-                else None
-            )
+            path = self._resolve_data_path(feature.path) if feature.path else None
             resolved["path"] = str(path) if path is not None else None
             raw_path = (
                 self._resolve_data_path(feature.raw_path)
@@ -183,7 +177,9 @@ class DataService:
         )
 
         for feature in requirements.features:
-            frame = self._merge_feature(frame, feature, request)
+            frame = self._merge_feature(
+                frame, feature, request, data_config=data_config
+            )
 
         dataset_id = self._dataset_id(request, requirements, data_config)
         return LoadedDataset(
@@ -341,12 +337,14 @@ class DataService:
         # Check that boundary here too, without calling its network fetch.
         crawler = create_crawler(requirements.market.source, sample_config)
         frame = load_market_sample(request, data_config, crawler, max_rows=max_rows)
-        features = [
-            feature.model_copy(update={"path": str(self._default_dvol_path(request))})
-            if feature.type == "dvol" and not feature.path
-            else feature
-            for feature in requirements.features
-        ]
+        features = []
+        for feature in requirements.features:
+            selected = feature
+            if feature.type == "dvol" and not feature.path:
+                path = self._managed_dvol(feature, request, data_config).reusable_path()
+                if path is not None:
+                    selected = feature.model_copy(update={"path": str(path)})
+            features.append(selected)
         request = request.model_copy(
             update={
                 "start_date": frame["timestamp"].iloc[0],
@@ -492,7 +490,8 @@ class DataService:
             data_config,
         )
         response["features"] = [
-            self._inspect_feature(feature, request) for feature in requirements.features
+            self._inspect_feature(feature, request, data_config)
+            for feature in requirements.features
         ]
         return response
 
@@ -525,6 +524,7 @@ class DataService:
         feature: FeatureSpec,
         request: MarketDataRequest,
         *,
+        data_config: DataConfig | None = None,
         sample_max_rows: int | None = None,
     ) -> pd.DataFrame:
         path = self._resolve_data_path(feature.path) if feature.path else None
@@ -540,6 +540,7 @@ class DataService:
             feature_df = self._load_or_fetch_dvol(
                 feature,
                 request,
+                data_config=data_config,
                 sample_max_rows=sample_max_rows,
                 sample_timestamps=pd.DatetimeIndex(frame["timestamp"].unique())
                 if sample_max_rows is not None
@@ -584,14 +585,17 @@ class DataService:
         feature: FeatureSpec,
         request: MarketDataRequest,
         *,
+        data_config: DataConfig | None = None,
         sample_max_rows: int | None = None,
         sample_timestamps: pd.DatetimeIndex | None = None,
     ) -> pd.DataFrame:
-        processed_path = (
-            self._resolve_data_path(feature.path)
-            if feature.path
-            else self._default_dvol_path(request)
-        )
+        if not feature.path:
+            if sample_max_rows is not None:
+                raise ValueError("Sample DVOL requires an isolated output path")
+            return self._managed_dvol(
+                feature, request, data_config or self.data_config({})
+            ).load(DeribitDVOLCrawler)
+        processed_path = self._resolve_data_path(feature.path)
         if processed_path.exists():
             if sample_max_rows is not None and sample_timestamps is not None:
                 return read_feature_sample(
@@ -603,6 +607,8 @@ class DataService:
                 )
             return self._loader.load_parquet(processed_path)
 
+        if feature.source != "deribit":
+            raise ValueError("Automatic DVOL downloads require source='deribit'")
         crawler = DeribitDVOLCrawler()
         currency = request.symbol.split("/")[0]
         if sample_max_rows is None:
@@ -635,13 +641,13 @@ class DataService:
         raw.to_parquet(processed_path, index=False)
         return raw
 
-    def _default_dvol_path(self, request: MarketDataRequest) -> Path:
-        symbol = request.symbol.split("/")[0].lower()
-        start_year = request.start_date.year
-        end_year = request.end_date.year
-        return self._processed_data_dir() / (
-            f"{symbol}_dvol_{request.timeframe}_{start_year}_{end_year}.parquet"
-        )
+    @staticmethod
+    def _managed_dvol(
+        feature: FeatureSpec, request: MarketDataRequest, config: DataConfig
+    ) -> DVOLData:
+        if feature.source != "deribit":
+            raise ValueError("Automatic DVOL downloads require source='deribit'")
+        return DVOLData(config, request)
 
     def _data_dirs(self) -> tuple[Path, Path]:
         data_root = os.environ.get("TRADINGDEV_DATA_ROOT")
@@ -649,9 +655,6 @@ class DataService:
             root = Path(data_root).expanduser().resolve()
             return root / "raw", root / "processed"
         return self._workspace.raw_data, self._workspace.processed_data
-
-    def _processed_data_dir(self) -> Path:
-        return self._data_dirs()[1]
 
     @staticmethod
     def _market_cache(request: MarketDataRequest, config: DataConfig) -> DataCache:
@@ -746,14 +749,21 @@ class DataService:
         self,
         feature: FeatureSpec,
         request: MarketDataRequest,
+        config: DataConfig,
     ) -> dict[str, Any]:
-        path = (
-            self._default_dvol_path(request)
-            if feature.type == "dvol" and not feature.path
-            else self._resolve_data_path(feature.path)
-            if feature.path
-            else None
-        )
+        path = self._resolve_data_path(feature.path) if feature.path else None
+        query = None
+        query_reusable = None
+        if feature.type == "dvol" and not feature.path:
+            managed = self._managed_dvol(feature, request, config)
+            receipt = managed.receipt()
+            query_reusable = False
+            if receipt is not None:
+                path = managed.cache.processed_path(receipt)
+                query = receipt.model_dump(
+                    mode="json", exclude={"identity", "generation", "version"}
+                )
+                query_reusable = receipt.reusable(request.start_date, request.end_date)
         exists = bool(path and path.exists())
         missing_values: int | None = None
         rows: int | None = None
@@ -775,6 +785,8 @@ class DataService:
             "exists": exists,
             "rows": rows,
             "missing_values": missing_values,
+            "query": query,
+            "query_reusable": query_reusable,
         }
 
     def _dataset_fingerprint_report(

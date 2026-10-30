@@ -92,7 +92,7 @@ class DeribitDVOLCrawler(BaseCrawler):
         )
 
         current_end_ms = end_ms
-        while current_end_ms > start_ms:
+        while current_end_ms >= start_ms:
             params: dict[str, str | int] = {
                 "currency": symbol.upper(),
                 "start_timestamp": start_ms,
@@ -119,7 +119,10 @@ class DeribitDVOLCrawler(BaseCrawler):
             if continuation is None:
                 break
 
-            current_end_ms = int(continuation)
+            next_end_ms = int(continuation)
+            if next_end_ms >= current_end_ms:
+                raise ValueError("DVOL pagination cursor did not move backward")
+            current_end_ms = next_end_ms
             time.sleep(_REQUEST_DELAY)
 
         if not all_rows:

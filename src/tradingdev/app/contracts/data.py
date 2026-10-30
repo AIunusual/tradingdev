@@ -90,6 +90,8 @@ class FeatureInspection(ContractModel):
     exists: bool
     rows: int | None
     missing_values: int | None
+    query: QueryEvidence | None
+    query_reusable: bool | None
 
 
 class DatasetFingerprint(ContractModel):

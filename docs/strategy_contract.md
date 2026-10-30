@@ -561,6 +561,13 @@ fill subsequent gaps, but leading gaps remain missing rather than using later
 observations. Strategies must handle these missing values without backfilling
 from the future; unmatched feature timestamps do not seed the fill.
 
+For automatically managed DVOL, use `source: deribit` and omit both `path` and
+`raw_path`. Exact UTC query bounds and acquisition time determine reuse; changing
+the research period cannot reuse an unqueried range. A `raw_path` requires an
+explicit `path`. Existing explicit local files retain the join behavior above
+and do not automatically refresh when the period changes. See
+[Automatic DVOL Queries](run_artifacts.md#automatic-dvol-queries).
+
 ### Strategy Walk-Forward Settings
 
 The top-level YAML `validation` mapping configures strategy backtests through
