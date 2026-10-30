@@ -78,6 +78,16 @@ Generated code must:
 - avoid network, subprocess, destructive filesystem, dynamic import, `eval`, and
   `exec`.
 
+`BaseStrategy` also offers an optional `rolling_trace()` hook whose default
+returns `None`. The application calls it after `generate_signals` and, when it
+returns a mapping, stores that mapping as run metadata beside
+`strategy_parameters`. Returning `None` — the default, and what every strategy
+without a declared retraining schedule should do — means there is no rolling
+provenance to record. The payload and where it is stored are described in the
+[ML research contract](ml_research.md#rolling-retraining-schemes) and
+[performance artifacts](performance_artifacts.md); implementing the hook is
+optional.
+
 The shared frame checker enforces these structural rules on synthetic fixtures
 and the actual frames used by simple backtests, fixed comparisons, optimization
 trials and both sides of walk-forward folds. Invalid frames fail before their

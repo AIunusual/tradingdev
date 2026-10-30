@@ -291,10 +291,10 @@ workspace.
 
 ### Rolling Retraining Schemes
 
-Bundled ML strategies retrain while they score: every `retrain_interval` bars the
-engine attempts a refit, and each bar is predicted with whichever model is
-current. A `rolling_gen` block declares that window geometry instead of leaving
-it inside the strategy loop. It is **off by default**; with `enabled: false` the
+The bundled `XGBoostStrategy` and `SafetyVolumeStrategy` retrain while they
+score: every `retrain_interval` bars the engine attempts a refit, and each bar is
+predicted with whichever model is current. A `rolling_gen` block declares that
+window geometry instead of leaving it inside the strategy loop. It is **off by default**; with `enabled: false` the
 strategy runs its classic retrainer, untouched. `get_ml_contract` advertises the
 schemes under `rolling_schemes` — each entry carries `name`, `description`,
 `rtype` and `default_step`, where a null `default_step` means the cadence follows
@@ -360,7 +360,9 @@ A run that enables the switch also records what actually happened. Each roll
 reports its window, how many labelled rows it offered, whether a model was fitted
 or the previous one kept, and how many of its bars were actually scored; the bars
 that could not be scored at all are listed separately, so a bar's model can be
-recovered from the trace without storing an entry per bar. The record lands in
+recovered from the trace without storing an entry per bar. A window shorter than
+two raw bars is skipped before any feature work, so its `n_train_rows` is zero
+because nothing was measured, not because it held no labels. The record lands in
 the run's metric metadata as `rolling_trace`, beside `strategy_parameters`; it is
 provenance, not a parameter, and it is absent whenever the switch is off.
 
