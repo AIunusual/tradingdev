@@ -133,17 +133,19 @@ class TestFeatureCodeFingerprint:
     def test_copying_the_package_to_another_install_keeps_the_fingerprint(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        from tradingdev.domain import indicators
         from tradingdev.domain.ml import features as features_package
 
         original = feature_code_fingerprint()
         sources = feature_cache._package_sources()
-        copied = tmp_path / "another-install" / "features"
+        copied = tmp_path / "another-install"
         for relative, source in sources:
             assert not Path(relative).is_absolute()
             destination = copied / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(source)
-        monkeypatch.setattr(features_package, "__path__", [str(copied)])
+        monkeypatch.setattr(features_package, "__path__", [str(copied / "feature")])
+        monkeypatch.setattr(indicators, "__path__", [str(copied / "indicator")])
         assert feature_code_fingerprint() == original
 
         # Relative names still matter even when bytes are identical.
@@ -153,6 +155,17 @@ class TestFeatureCodeFingerprint:
 
     def test_is_stable_across_calls(self) -> None:
         assert feature_code_fingerprint() == feature_code_fingerprint()
+
+    @pytest.mark.parametrize("dependency", ["numpy", "pandas", "TA-Lib", "TA-Lib-C"])
+    def test_numerical_dependency_versions_change_identity(
+        self, monkeypatch: pytest.MonkeyPatch, dependency: str
+    ) -> None:
+        original = feature_code_fingerprint()
+        versions = feature_cache._dependency_versions()
+        assert versions[dependency]
+        versions[dependency] += "-changed"
+        monkeypatch.setattr(feature_cache, "_dependency_versions", lambda: versions)
+        assert feature_code_fingerprint() != original
 
     def test_is_a_short_hex_digest(self) -> None:
         fingerprint = feature_code_fingerprint()
