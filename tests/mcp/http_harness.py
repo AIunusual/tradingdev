@@ -9,10 +9,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import uvicorn
 from mcp import ClientSession
+from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from sse_starlette import sse
 from tests.integration.mcp_harness import MCPClient
@@ -36,12 +37,18 @@ class HTTPPlanServer:
     listener: socket.socket
     address: tuple[str, int]
     shutdown_watchers: set[asyncio.Task[None]]
+    transport: Literal["sse", "streamable-http"] = "streamable-http"
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[MCPClient]:
         host, port = self.address
+        connection = (
+            sse_client(f"http://{host}:{port}/sse")
+            if self.transport == "sse"
+            else streamable_http_client(f"http://{host}:{port}/mcp")
+        )
         async with (
-            streamable_http_client(f"http://{host}:{port}/mcp") as (read, write),
+            connection as (read, write),
             ClientSession(
                 read,
                 write,
@@ -61,6 +68,10 @@ class HTTPPlanServer:
 @asynccontextmanager
 async def http_plan_server(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    transport: Literal["sse", "streamable-http"] = "streamable-http",
+    allowed_hosts: tuple[str, ...] = (),
+    allowed_origins: tuple[str, ...] = (),
 ) -> AsyncIterator[HTTPPlanServer]:
     root = Path(mkdtemp(prefix="tradingdev-http-test-")).resolve()
     task: asyncio.Task[None] | None = None
@@ -93,12 +104,22 @@ async def http_plan_server(
             patch.setattr(sse, "_shutdown_watcher", tracked_shutdown_watcher)
             listener.bind(("127.0.0.1", 0))
             address = listener.getsockname()
+            security = server_module.http_transport_security(
+                address[1],
+                allowed_hosts=allowed_hosts,
+                allowed_origins=allowed_origins,
+            )
+            app = (
+                mcp.sse_app(transport_security=security)
+                if transport == "sse"
+                else mcp.streamable_http_app(
+                    json_response=False,
+                    transport_security=security,
+                )
+            )
             server = uvicorn.Server(
                 uvicorn.Config(
-                    mcp.streamable_http_app(
-                        json_response=False,
-                        transport_security=server_module.HTTP_TRANSPORT_SECURITY,
-                    ),
+                    app,
                     log_level="error",
                     lifespan="on",
                     timeout_graceful_shutdown=2,
@@ -114,7 +135,14 @@ async def http_plan_server(
                             raise RuntimeError("HTTP test server exited during startup")
                         await asyncio.sleep(0.01)
                 yield HTTPPlanServer(
-                    root, context, server, task, listener, address, shutdown_watchers
+                    root,
+                    context,
+                    server,
+                    task,
+                    listener,
+                    address,
+                    shutdown_watchers,
+                    transport,
                 )
             finally:
                 server.should_exit = True
