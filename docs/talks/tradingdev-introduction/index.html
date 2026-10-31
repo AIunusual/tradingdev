@@ -195,16 +195,36 @@
 <p>TradingDev 透過 MCP 提供<strong>研究流程指引與檢查規則</strong>，<br />
 引導 AI 釐清需求、開發策略，並依實驗證據提出下一步。</p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="12" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" data-paginate="true" data-header="02　策略研究" data-class="compact" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" class="compact" data-marpit-pagination="12" style="--paginate:true;--header:02　策略研究;--class:compact;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
-<h2 id="mcp-%E7%9A%84%E6%8F%90%E7%A4%BA%E8%A9%9E%E5%BC%95%E5%B0%8E">MCP 的提示詞引導</h2>
-<p>TradingDev 透過 MCP，引導前端 LLM 與使用者協作：</p>
-<ul>
-<li><strong>缺項時追問</strong>：補齊構想、標的、回測期間與 K 棒頻率。</li>
-<li><strong>將策略具體化</strong>：釐清進出場規則與參數，撰寫可驗證的策略。</li>
-<li><strong>執行前確認</strong>：核對本金或交易規模、手續費與滑價，同意後才回測。</li>
-</ul>
-<p><em>本金與成本可採模擬預設，仍須在回測前呈現確認。</em></p>
+
+<h2 id="mcp-%E7%9A%84%E6%8F%90%E7%A4%BA%E8%A9%9E%E5%BC%95%E5%B0%8E%E5%9D%87%E7%B7%9A%E7%AD%96%E7%95%A5%E6%A1%88%E4%BE%8B">MCP 的提示詞引導：均線策略案例</h2>
+<blockquote>
+<p><strong>使用者</strong>：「我想測試短均線高於長均線時買進。」</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>TradingDev 的指引</th>
+<th>前端 AI 可能接著問</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>缺項時追問</strong></td>
+<td>「想測哪個標的、哪段期間？每根 K 棒代表多久？」</td>
+</tr>
+<tr>
+<td><strong>將策略具體化</strong></td>
+<td>「均線各用幾根？短均線跌破時，是平倉還是做空？」</td>
+</tr>
+<tr>
+<td><strong>執行前確認</strong></td>
+<td>「本金、手續費與滑價有指定嗎？若沒有，我先列出模擬預設供你確認。」</td>
+</tr>
+</tbody>
+</table>
+<p><em>示意對話，問法依情境調整；整理成確認單後，使用者同意才回測。</em></p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="13" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
@@ -938,7 +958,8 @@ QuantConnect 已提供專案回測、結果管理與 ML 研究；Agents 能依�
 TradingDev 不內建對話模型。這些能力是研究後端的現有基礎，不代表已提供多人權限或完整執行隔離。
 研究指引來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 tools/strategy.py 的按需契約。</p></div><div class="bespoke-marp-note" data-index="10" tabindex="0"><p>研究不是泛稱投資分析。此處具體指策略程式的建立、檢查、歷史回測、參數實驗、時序驗證與結果查詢。
 指引由後端提供，推理與互動由使用者選擇的 AI 客戶端承擔。直接在 Codex 開發策略時，Codex 就是這個角色，不需要另建一套助手服務。實際呈現與指引採用方式由客戶端決定，不能把提示詞當成所有客戶端必然遵循的保證。
-來源：src/tradingdev/mcp/prompts.py、server.py 與 tools/strategy.py。</p></div><div class="bespoke-marp-note" data-index="11" tabindex="0"><p>提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
+來源：src/tradingdev/mcp/prompts.py、server.py 與 tools/strategy.py。</p></div><div class="bespoke-marp-note" data-index="11" tabindex="0"><p>本頁保留使用者只有均線交易構想的情境，以具體問句展示 TradingDev 的指引如何影響前端互動。表中的問題可分散於多輪對話，不是要求一次問完；補齊必要研究選擇後，再釐清策略細節與提出方案。這是依現有指引編寫的示意，不是真實模型逐字紀錄或已執行的回測。
+提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
 建立新研究前，構想、標的、回測期間與 K 棒頻率缺項時須追問，不能從範例猜出選擇。只有明確要求沿用已選定研究時，才可繼承其設定。
 策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
 本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現後端產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
