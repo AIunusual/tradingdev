@@ -330,7 +330,7 @@ class QuantileStrategy(BaseStrategy):
         horizons = cfg.horizon_candidates or [cfg.horizon]
         confidence_candidates = cfg.min_entry_edge_candidates or [cfg.min_entry_edge]
         efs_candidates: list[float] = (
-            cfg.edge_for_full_size_candidates
+            (cfg.edge_for_full_size_candidates or [cfg.edge_for_full_size])
             if cfg.dynamic_sizing
             else [cfg.edge_for_full_size]
         )
