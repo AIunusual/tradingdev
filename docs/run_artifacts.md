@@ -802,6 +802,12 @@ These fingerprints describe the execution inputs; they do not archive immutable
 copies of all data or environment dependencies and do not guarantee full
 reproducibility.
 
+Training trials share the same loaded frame values, column dtypes and index
+metadata, including timezone and timestamp precision. Worker transfer uses
+joblib's DataFrame serialization without a lossy JSON conversion; the first trial
+and subsequent candidates therefore evaluate the same data. Out-of-sample
+evaluation preserves the corresponding loaded test frame as well.
+
 Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
 projection remains in SQLite; `get_run` and completed `get_job_status` select a

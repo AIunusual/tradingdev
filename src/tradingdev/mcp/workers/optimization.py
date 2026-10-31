@@ -26,7 +26,6 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 from joblib import Parallel, delayed
@@ -52,6 +51,8 @@ from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from tradingdev.domain.backtest.result import BacktestResult
     from tradingdev.domain.performance.artifacts import PerformanceArtifacts
     from tradingdev.domain.strategies.execution import StrategyExecution
@@ -110,7 +111,7 @@ def _evaluate_combo(
     strategy_cfg: dict[str, Any],
     strategy_execution: StrategyExecution,
     bt_cfg_dict: dict[str, Any],
-    df_json: str,
+    df: pd.DataFrame,
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg_dict: dict[str, Any],
@@ -125,7 +126,7 @@ def _evaluate_combo(
         strategy_cfg: Strategy config section.
         strategy_execution: Captured constructor arguments, including defaults.
         bt_cfg_dict: BacktestConfig fields as a plain dict.
-        df_json: Training DataFrame serialised as JSON string.
+        df: Training DataFrame transferred losslessly by joblib.
         param_dict: Parameter combination to evaluate.
         metric_name: Target metric to extract.
         parallel_cfg_dict: Fixed parallel resource policy from the manifest.
@@ -134,9 +135,6 @@ def _evaluate_combo(
     Returns:
         Complete backtest result, parameters, and objective identifier.
     """
-    import pandas as pd
-
-    df = pd.read_json(StringIO(df_json), orient="split")
     return _run_single_combo(
         strategy_cfg,
         strategy_execution,
@@ -153,7 +151,7 @@ def _run_single_combo(
     strategy_cfg: dict[str, Any],
     strategy_execution: StrategyExecution,
     bt_cfg: BacktestConfig,
-    df: Any,
+    df: pd.DataFrame,
     param_dict: dict[str, Any],
     metric_name: str,
     parallel_cfg: ParallelConfig,
@@ -425,9 +423,6 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
     remaining_combos = all_combos[1:]
     optimization_start = time.monotonic()
 
-    # Serialise train_df once for joblib workers
-    train_df_json = train_df.to_json(orient="split", date_format="iso")
-
     batch_size = max(n_jobs * 2, 10)
     for batch_start in range(0, len(remaining_combos), batch_size):
         batch = remaining_combos[batch_start : batch_start + batch_size]
@@ -438,7 +433,7 @@ def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
                     strategy_cfg,
                     strategy_execution,
                     train_bt_cfg.model_dump(),
-                    train_df_json,
+                    train_df,
                     combo,
                     optimization_metric,
                     parallel_cfg.model_dump(),
