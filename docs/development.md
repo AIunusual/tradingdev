@@ -198,6 +198,7 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 | 策略生成、修復與既有結果查詢 | [test_llm_workflows.py](../tests/e2e/test_llm_workflows.py) |
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
 | 執行計畫、使用者決策與訓練指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
+| 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
 | 固定參數比較與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
