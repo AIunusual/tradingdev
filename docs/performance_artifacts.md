@@ -225,12 +225,17 @@ same-currency comparison is defined.
 Supported Binance USDT markets include spot and futures; the baseline follows
 the provider's effective market setting rather than excluding all futures.
 
-Each entry records `status` (`available`, `unavailable`, `undefined`), the
-snapshot of the fixed definition, `source`, `market_type`, `dataset_id`,
-`reused_run_frame`, the entry `fees`/`slippage`, `capital_basis`, `coverage`,
-aligned `timestamps`, `equity_curve`, `returns`, `values` and `metadata`.
-`capital_basis` is `run_init_cash` when the scope had initial capital, and
-`normalized_unit` (capital `1.0`) when it did not.
+Each entry always records `status` (`available`, `unavailable`, `undefined`),
+`values` and `metadata`; `values` stays empty when the baseline is not
+available. Every other field is optional and follows the entry's status: an
+`available` entry records the definition snapshot, the aligned `timestamps`,
+`equity_curve`, `returns`, `capital_basis` and the acquisition evidence it
+used (`source`, `market_type`, `dataset_id`, `reused_run_frame`,
+`fees`/`slippage`, `coverage`). `unavailable` and `undefined` entries always
+carry a `reason` and may omit `fees`, `slippage`, `capital_basis` and
+`coverage`; an entry that fails before alignment also omits the aligned
+series. `capital_basis` is `run_init_cash` when the scope had initial capital,
+and `normalized_unit` (capital `1.0`) when it did not.
 
 The baseline buys once at the first aligned close, paying the run's own
 per-side commission and slippage, and is marked to market afterwards. It is not
@@ -243,8 +248,10 @@ The closed-trade count is zero; statistics requiring closed trades are unavailab
 because the baseline has no closed trades. Bars align on shared UTC timestamps only:
 `coverage` reports `scope_bars`, `aligned_bars`, `missing_bars` and `complete`,
 and a missing bar is never back-filled. An unavailable baseline carries a
-reason and no values, so it is never read as a zero return. A baseline is
-captured when the run executes. When the benchmark symbol equals the traded
+reason and no values, so it is never read as a zero return. Baseline
+acquisition and metric-calculation failures do not fail the strategy run: the
+run still completes and saves, and the baseline is recorded as `unavailable`
+with its reason. A baseline is captured when the run executes. When the benchmark symbol equals the traded
 symbol, the already loaded frame is reused. Its `source` records the requested
 provider, not independent verification of an existing cache's provenance.
 `market_type` records the effective provider setting and is null for adapters

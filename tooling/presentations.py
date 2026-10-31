@@ -39,7 +39,11 @@ _TOOL_PATHS = frozenset(
 )
 _TITLE = "TradingDev｜讓 AI 助手協助研究交易策略"
 _DESCRIPTION = "產品介紹、使用場景、分類比較與後續開發方向"
-_INSTALL_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
+_SETUP_HELP = "Run scripts/presentations.sh setup to install the locked toolchain."
+_NODE_HELP = (
+    "Install Node.js 18+ and npm, confirm `node` is on PATH, then run "
+    "scripts/presentations.sh setup to install the locked toolchain."
+)
 
 
 class PresentationError(RuntimeError):
@@ -379,6 +383,13 @@ def _check_root_manifest(
         raise PresentationError("Unsupported root npm dependency resolution settings.")
 
 
+def _install_help() -> str:
+    """Return the install step that can succeed for the missing dependency."""
+    if shutil.which("node") is None or shutil.which("npm") is None:
+        return _NODE_HELP
+    return _SETUP_HELP
+
+
 def _toolchain(root: Path) -> Path:
     expected = root / "tooling/marp"
     installed = Path(
@@ -442,7 +453,7 @@ def _toolchain(root: Path) -> Path:
             )
     except (OSError, ValueError) as error:
         raise PresentationError(
-            f"Locked presentation dependencies are unavailable. {_INSTALL_HELP}"
+            f"Locked presentation dependencies are unavailable. {_install_help()}"
         ) from error
     return installed
 
@@ -450,7 +461,7 @@ def _toolchain(root: Path) -> Path:
 def _command(toolchain: Path, source: Path, theme: Path, output: Path) -> list[str]:
     node = shutil.which("node")
     if node is None:
-        raise PresentationError(f"Node.js is unavailable. {_INSTALL_HELP}")
+        raise PresentationError(f"Node.js is unavailable. {_install_help()}")
     return [
         node,
         str(toolchain / "node_modules/@marp-team/marp-cli/marp-cli.js"),
