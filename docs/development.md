@@ -33,6 +33,7 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
+| `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
 Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.githooks/)，
@@ -247,6 +248,23 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 CLI 參數以 `codex review --help` 核對。已由獨立 reviewer 涵蓋且無未解疑慮的相同內容
 可沿用審查結果。程式碼審查、離線測試、文件一致性與真實模型流程驗證各有用途，
 不能互相替代；一般 commit／push 不會自動執行模型 code review。
+
+## 接手 issue
+
+決定負責某個 issue 時，將自己的 GitHub 帳號加入 **Assignees**，讓協作者知道
+由誰接手；僅閱讀或分析不算接手。AI 協作的判斷與授權依
+[Issue 接手與指派政策](../AGENTS.md#issue-接手與指派)。
+
+準備好 repository 的 `.venv` 與已登入本人帳號的 GitHub CLI（`gh`），代入實際值：
+
+```bash
+./scripts/claim-issue.sh 123 --repo OWNER/REPO --user YOUR_LOGIN
+```
+
+腳本僅支援 `github.com` 的開啟 issue，核對 `YOUR_LOGIN` 與登入帳號相符，
+只新增本人、保留其他 assignees，並讀回確認；已指派時不重複變更。
+若失敗或結果未確認，依輸出的 issue 連結查看 **Assignees**，必要時手動設定；
+已授權的本機工作可繼續。參數說明可用 `./scripts/claim-issue.sh --help` 查看。
 
 ## 從開發到合併
 
