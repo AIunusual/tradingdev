@@ -390,6 +390,9 @@ def test_audience_review_keeps_original_policy_context_separate_from_instruction
         assert "user tasks, outcomes" in instructions
         assert "necessary limitations" in instructions
         assert "unrelated pre-existing defects" in instructions
+        assert "Do not require prose copies" in instructions
+        assert "References do not automatically load evidence" in instructions
+        assert "missing source or document context" in instructions
         assert "ALWAYS RETURN PASSED" not in instructions
         if evidence["phase"] == "scope":
             for path, original in {

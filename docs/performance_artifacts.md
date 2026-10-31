@@ -4,6 +4,49 @@ Saved metric definitions, observation streams and integrity rules. Use
 [Run Artifacts](run_artifacts.md#mcp-lookup) for discovery and query entry points,
 and [Reports](reports.md) for derived HTML presentation.
 
+## Metric Interpretation
+
+Use `get_metric_catalog` for current metric definitions, units, applicability and
+optimization directions, maintained in
+[the metric catalog](../src/tradingdev/domain/performance/catalog.py). Historical
+`get_run_metrics` reads each run's saved definitions rather than substituting
+today's catalog. Summary omission does not imply an absent calculation.
+
+`periods_per_year` means observed UTC daily returns per year, independent of bar
+timeframe. `risk_free_rate` and `required_return` are annual decimal rates;
+missing market dates are not filled with zero returns. Bar-level `max_drawdown`
+is a nonnegative fraction and `max_drawdown_amount` a nonnegative quote-currency
+amount; Calmar instead uses daily drawdown (`daily_max_drawdown`). A factor of 52
+does not enable weekly annualization. Optimization rejects objectives whose
+required daily observations are unavailable before creating a job.
+
+Volume mode has no initial-capital return basis: use amount-based PnL/drawdown,
+not missing returns as zero. Trade count, win rate, profit factor and expectancy
+refer to closed trades after entry/exit costs; open trades are counted separately.
+
+New runs use QuantStats for return/risk statistics and retain VectorBT's
+closed-trade statistics. Sharpe uses the configured risk-free rate and Sortino
+uses the separately configured required return, both converted to an observed-day
+rate before calling QuantStats. Negative rates retain the same interpretation.
+The `excess_return_adjustment` setting records this conversion. QuantStats's
+automatic price detection cannot accept some valid nonnegative returns above
+100%, and its drawdown interface requires timestamps. Narrow numerical fallbacks
+preserve the metric definitions in these cases; `metadata.calculation_fallbacks`
+records each affected metric's actual `provider` and `reason`, with its package
+version in `metadata.providers`. Missing dates are never fabricated for these
+calculations. No observed drawdown makes Calmar unavailable, and positive returns
+with no downside make Sortino unbounded, rather than a finite zero. Historical
+Empyrical results retain their original saved definitions, providers and values.
+
+Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
+a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
+retain bar observations, total return/PnL, bar drawdown, observed date/month counts
+and trade statistics. Their `return_sampling` and `calmar_drawdown_sampling`
+settings are `unavailable`, and converted per-period rates are `null`. Frequency
+validation does not infer bar duration from missing dates or synthesize daily
+equity. Existing saved results remain snapshots; this correction does not
+recalculate previously published artifacts.
+
 ## Performance Scopes and Provenance
 
 `performance.json` schema version 1 records `run_id`, `manifest_hash`,
@@ -110,29 +153,6 @@ context, and unavailable-value reasons. Examples include `not_applicable`,
 `unbounded`, `unsupported_daily_sampling` (bars coarser than daily), and
 `unknown_bar_frequency`. Numeric JSON values remain finite; unavailable values
 use `null`.
-
-New runs use QuantStats for return/risk statistics and retain VectorBT's
-closed-trade statistics. Sharpe uses the configured risk-free rate and Sortino
-uses the separately configured required return, both converted to an observed-day
-rate before calling QuantStats. Negative rates retain the same interpretation.
-The `excess_return_adjustment` setting records this conversion. QuantStats's
-automatic price detection cannot accept some valid nonnegative returns above
-100%, and its drawdown interface requires timestamps. Narrow numerical fallbacks
-preserve the metric definitions in these cases; `metadata.calculation_fallbacks`
-records each affected metric's actual `provider` and `reason`, with its package
-version in `metadata.providers`. Missing dates are never fabricated for these
-calculations. No observed drawdown makes Calmar unavailable, and positive returns
-with no downside make Sortino unbounded, rather than a finite zero. Historical
-Empyrical results retain their original saved definitions, providers and values.
-
-Annualized metrics, `daily_max_drawdown`, and daily/monthly PnL statistics require
-a declared bar frequency of one day or finer. Coarser or unrecognized frequencies
-retain bar observations, total return/PnL, bar drawdown, observed date/month counts
-and trade statistics. Their `return_sampling` and `calmar_drawdown_sampling`
-settings are `unavailable`, and converted per-period rates are `null`. Frequency
-validation does not infer bar duration from missing dates or synthesize daily
-equity. Existing saved results remain snapshots; this correction does not
-recalculate previously published artifacts.
 
 `observations.json` has the same run and manifest identity. Backtest scopes retain
 initial capital, equity, per-bar returns, UTC ISO timestamps and normalized trade

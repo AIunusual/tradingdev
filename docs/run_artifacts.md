@@ -1,117 +1,63 @@
 # Run Artifacts
 
-TradingDev stores runtime metadata in `workspace/tradingdev.sqlite` and files
-under `workspace/`.
+This contract explains saved identities, authority, retention and historical reads.
+TradingDev stores indexed runtime metadata in `workspace/tradingdev.sqlite` and
+files under `workspace/`. For authoring use [Strategy Contract](strategy_contract.md);
+for approval use [Execution Plans](execution_plans.md).
+
+## Artifact References
+
+Use the relevant definition when implementing a writer, reader or inspection tool.
+These repository references serve developers; MCP clients discover input/output
+schemas through `tools/list` and use the [lookup tools](#mcp-lookup).
+
+| Information needed | Maintained definition |
+| --- | --- |
+| Execution fields, schema version and digest | [ExecutionManifest and OptimizationSpec](../src/tradingdev/domain/execution.py) |
+| Comparison membership and candidate limits | [ComparisonManifest](../src/tradingdev/domain/comparison.py) |
+| Research explanation fields and bindings | [ResearchEvidenceDraft, BoundResearchEvidence and bind_research_evidence](../src/tradingdev/domain/research_evidence.py); MCP `get_strategy_contract(section="evidence")` supplies authoring guidance |
+| Runtime table columns and record updates | [SQLiteStore](../src/tradingdev/adapters/storage/sqlite.py), [ExecutionPlanStore](../src/tradingdev/adapters/storage/execution_plans.py) and [ResearchNoteStore](../src/tradingdev/adapters/storage/research_notes.py) |
+| Publishing run files and registering artifact types | [RunPublisher](../src/tradingdev/app/run_publisher.py) and [PerformanceStore](../src/tradingdev/adapters/storage/performance.py) |
+| Saved metrics, observations and reporting | [Performance Artifacts](performance_artifacts.md) and [Reports](reports.md) |
+
+The following sections retain cross-file meaning and failure behavior; they are
+not a second field-by-field schema. A digest detects inconsistency only while its
+expected value remains trusted, not against a writer controlling both records
+and files.
 
 ## Workspace Layout
 
-```text
-workspace/
-  tradingdev.sqlite
-  .workers/
-    <launch_token>/
-      start.json
-      ready.json
-      stop
-      finished.json
-  generated_strategies/
-    .locks/
-      <strategy_id>.lock
-    <strategy_id>/
-      current.json
-      revisions/
-        <revision_id>/
-          strategy.py
-          config.yaml
-          metadata.json
-  configs/
-  data/
-    raw/
-    processed/
-  ml_datasets/
-    .publish.lock
-    <dataset_id>/
-      dataset.parquet
-      manifest.json
-  ml_feature_cache/
-    .feature-cache.lock
-    <cache_key>.parquet
-    <cache_key>.json
-  models/
-    .<model_id>.lock
-    <model_id>.json
-    <model_id>.bin
-  ml_leaderboard/
-    .leaderboard.lock
-    leaderboard.jsonl
-  comparisons/
-    <job_id>/
-      manifest.json
-      config.yaml
-      ledger.json
-      snapshot.parquet
-      receipt.json
-  runs/
-    <run_id>/
-      manifest.json
-      result.json
-      performance.json
-      observations.json
-      research_evidence.json
-      config.yaml
-      strategy.py
-      dataset_fingerprint.json
-      pipeline_result.pkl
-  feature_requests/
-  research_evidence/
-    <evidence_id>.json
-  submitted_research/
-    <job_id>.json
-  execution_plans/
-    <plan_id>/
-      confirmation.txt
-      confirmation.html
-      .approval.lock
-  research_archives/
-    <archive_id>/
-      index.html
-      research.json
-      manifest.json
-      reports/
-      research.zip
-  reports/
-    <report_id>/
-      report.html
-      manifest.json
-```
+Choose a location by the artifact's owner; a path alone does not prove a complete
+result exists. Standard roots are resolved by
+[WorkspacePaths](../src/tradingdev/adapters/storage/filesystem.py).
 
-Comparison snapshots and receipts are published only after approval and data
-loading. A failed or cancelled comparison may have neither `snapshot.parquet`
-nor `receipt.json` if it stopped before data publication.
+| Location under the workspace | Owner and use |
+| --- | --- |
+| `generated_strategies/<strategy_id>/revisions/<revision_id>/` | Immutable `strategy.py` and base `config.yaml`, plus lifecycle `metadata.json`; the strategy's `current.json` selects the latest saved revision. |
+| `generated_strategies/.locks/` | Per-strategy lifecycle locks, outside deletable revisions. |
+| `configs/`, `data/raw/`, `data/processed/` | Execution projections and configured data/cache roots; see [market cache](#market-data-cache). |
+| `runs/<run_id>/` | [Completed run files](#completed-run-files); a standalone job's manifest is already published here at submission. |
+| `comparisons/<job_id>/` | Shared manifest/config, ledger and post-approval data snapshot/receipt; see [comparison evidence](#fixed-comparison-evidence). |
+| `.workers/<launch_token>/` | Supervisor startup, readiness, stop request and cleanup acknowledgement; see [worker identity](#job-state-and-worker-identity). |
+| `research_evidence/`, `submitted_research/` | Draft explanations and approved job snapshots, described below. |
+| `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
+| `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). |
+| `reports/`, `research_archives/`, `feature_requests/` | Derived reports, notebook exports and recorded unsupported requests; see [Reports](reports.md). |
 
-Strategy validation and dry-run use a separate system temporary directory named
-`tradingdev-strategy-check-*`, outside the source workspace. It contains
-`request.json`, the worker's `result.json` when available, `.workers/<launch_token>`
-supervisor controls, and isolated `tmp`, `numba`, `matplotlib` and `mypy` paths as
-needed. The request identifies the source workspace, fixed revision metadata and
-fixture size; the response binds its evidence to the request's SHA-256 digest.
-These files are runtime-check artifacts, not saved research runs or reports.
-
-The directory is removed after the supervisor confirms its owned process group
-has stopped, on both success and failure. If shutdown cannot be verified, the
-directory is retained and its path is included in failure diagnostics. Failure
-to remove the directory also returns a cleanup diagnostic with its path; neither
-case grants passing validation or dry-run evidence. The process-group guarantee
-excludes descendants that create a separate session and external forced
-termination of the supervisor, as described in the
+Strategy validation/dry-run use separate `tradingdev-strategy-check-*` system
+temporary directories, not research runs. Request/response evidence binds the
+selected revision and fixture; caches and supervisor controls stay inside the
+temporary directory. Cleanup happens only after owned processes stop. Unverified
+shutdown or failed file removal returns failure with the retained path, never
+passing evidence. Guarantees and exclusions are in the
 [strategy security model](strategy_contract.md#security-model).
 
 ## Research Evidence Records
 
 `ResearchEvidenceService` saves client-authored explanations without fetching
 sources, executing strategies or acquiring market data. Each
-`research_evidence/<evidence_id>.json` is a canonical UTF-8 record, limited to
-512 KiB, with a creation time, 32-character hexadecimal ID and content digest.
+`research_evidence/<evidence_id>.json` is a size-bounded canonical UTF-8 record
+with creation time, identity and content digest.
 Publication does not replace an existing record; an identical record can be
 retried. Reads check the ID, schema, digest and canonical bytes, rejecting unsafe
 paths and symbolic links. These checks detect inconsistency, not an attacker
@@ -138,18 +84,37 @@ alone does not explain the search grid. Bound content retains the complete recor
 target values, execution identities and its own digest. These are explanation
 bindings, not proof that the supplied formulas faithfully implement Python or ML.
 
+Capacity is checked on both the saved draft and expanded binding, so a successful
+save can still fail preparation. Optimization binds the base and each search-axis
+option, not every Cartesian trial. Values also have independent finite/acyclic
+JSON, depth, node, string and key limits. For exact budgets, read
+`MAX_PARAMETER_TARGETS`, `MAX_PARAMETER_BINDINGS` and the models in
+[research_evidence.py](../src/tradingdev/domain/research_evidence.py), plus
+`MAX_RESEARCH_EVIDENCE_BYTES` and `bounded_json` in
+[research_evidence_values.py](../src/tradingdev/domain/research_evidence_values.py).
+The tool schema exposes field-level constraints. Reduce candidate complexity or
+explanation size while retaining every required binding; do not silently split
+the user's comparison or omit provenance to evade limits. Binding errors provide
+required paths/values; save corrected evidence and prepare with the new ID.
+
+Descriptions identify each effective constructor leaf with a distinct readable
+label, explanation and optional unit. JSON pointers are relative to
+`strategy_execution.constructor_kwargs` (for example `/fast_period` or
+`/config/k_period`); their union covers base and effective candidates. Explanations
+do not rescale values. The [confirmation contract](execution_plans.md) owns
+presentation, approval and code-check coverage.
+
 `ApprovedResearch` freezes bound declarations together with one versioned execution
 policy disclosure per distinct manifest. Submission and worker startup compare the
 saved policy with the simulator's current policy before acquiring data or running
 the strategy. Historical reads validate the saved content and identity without
 replacing its wording with today's policy.
 
-Execution policy `execution-v2` uses the observed month-boundary equity baseline
-for Volume's monthly loss limit, as defined in the
-[signal and execution contract](strategy_contract.md#python-contract).
-Plans prepared under an older execution policy must be prepared and confirmed
-again before submission; already saved results and their disclosures are not
-rewritten or recalculated.
+Execution policy version and fixed simulator defaults are maintained in
+[execution_policy.py](../src/tradingdev/domain/backtest/execution_policy.py); their
+[signal/execution semantics](strategy_contract.md#signal-and-execution-semantics)
+remain distinct from source-code validation. A policy change requires preparation
+and confirmation again; historical results and disclosures are not rewritten.
 
 `submitted_research/<job_id>.json` retains the complete target and approved snapshot
 before worker launch; the job stores its expected `research_evidence_hash`. The
@@ -174,35 +139,10 @@ fold checks do not reconstruct the original dataset or prove its split geometry.
 
 ## SQLite Tables
 
-- `jobs`: generic background job status, job type, pid,
-  `created_at`/`started_at`/`ended_at`, error, and payload. Backtest-specific
-  fields such as strategy, symbol, timeframe, date range, and config path are
-  nullable columns mirrored in the JSON payload when present. The payload also
-  records `process_create_time`, the supervisor's OS creation time in Unix seconds,
-  and `worker_control_id`, its unique launch token. The PID belongs to the
-  supervisor, not the strategy-executing child. New submissions also record
-  `manifest_hash`, the expected digest of their fixed execution specification.
-  Field updates read, validate and merge within one SQLite `BEGIN IMMEDIATE`
-  transaction, including the indexed columns and JSON payload. Execution identity
-  remains immutable. The first persisted terminal state (`done`, `failed`,
-  `cancelled`, `estimation_timeout`) wins; later lifecycle updates cannot replace
-  its status, timestamps or error. Late process identity fields may still be
-  attached without restoring an earlier lifecycle snapshot. Polling and
-  cancellation condition their writes on an active state and report the state
-  actually saved; completion during cancellation is not reported as cancellation.
-  Status and list responses compute `elapsed_seconds` from creation to the saved
-  terminal `ended_at`; only active jobs use the query time. Missing, invalid,
-  timezone-less or reversed timestamps return `elapsed_seconds: null` with
-  `elapsed_unavailable_reason: missing_or_invalid_timestamps`, without inventing
-  a duration or rewriting legacy records.
-- `runs`: completed run metadata, owning `job_id`, metrics JSON, config hash, source hash,
-  random seed, dataset id, artifact directory, selected `revision_id`, and
-  execution `manifest_hash`.
-- `artifacts`: run and non-run artifact metadata, path, sha256, and metadata JSON.
-- `events`: job-scoped structured events.
-- `execution_plans`: immutable plan payload, independent approval state,
-  active confirmation token, submitted job ID, error, and the saved text/HTML
-  digests. The plan payload includes its manifest, preflight evidence and document.
+The core index stores jobs, completed runs, registered artifacts and job events.
+Plans and editable notes have separate table-owning stores; use the
+[table definitions](#artifact-references) for exact columns and JSON payloads.
+Schema initialization is not permission to migrate old execution evidence.
 
 `job_id` and `run_id` are currently the same for completed standalone backtest,
 walk-forward and optimization jobs. `get_job_status(job_id)` returns the `run_id`
@@ -214,46 +154,54 @@ bundled strategies and historical records without revision identity expose
 pointer and does not change the
 revision used by an existing job or completed run.
 
-Run publication is handled by `RunPublisher`, separately from job lifecycle
-updates. `RunPublicationBinding` supplies the owning `job_id`, the distinct
-`run_id`, and the expected execution manifest established by the submission
-owner. The publisher verifies comparison membership against the saved parent
-bundle and ledger; the binding alone does not prove that a child was approved.
-The publisher verifies the existing
-job, strategy/revision, executed manifest, configuration, source and performance
-identity. Each run keeps its own `manifest.json` and run-scoped artifact IDs.
-Artifacts registered directly by `RunPublisher` retain the owning job ID in their
-metadata. `PerformanceStore` instead registers `performance_json` and
-`observations_json` with only `schema_version` and `manifest_hash` in metadata;
-their owning job is obtained through the artifact's `run_id` and the run record's
-`job_id`. Child runs require complete
-performance artifacts. Publication locking, rollback and retry checks cover
-the run files and lineage. `JobStore.save_result` retains the single-run
-interface and always constructs a binding with `run_id == job_id`.
-Job creation and child publication share the run-ID submission lock; a new job
-cannot reuse an existing run ID, and a child cannot occupy an existing job ID.
-The lock file remains for concurrent waiters and same-thread nested submission.
+### Run Publication
 
-Draft cleanup scans raw job identities and payloads, run references and all stored
-manifests, including manifests left without a database job. Failed and cancelled
-jobs still retain their source references. A malformed or ambiguous history blocks
-cleanup. Only explicitly selected non-current drafts without references can be
-deleted; runnable sources and execution artifacts remain. Cleanup does not dedupe
-or migrate old revisions. The per-strategy `.locks` files coordinate saves,
-validation, status updates and cleanup; they stay outside deletable revision
-directories and are never unlinked while another process might use their inode.
+`RunPublisher` verifies the owning job, strategy/revision, executed manifest,
+configuration, source and performance identity before registering a result.
+`RunPublicationBinding` identifies job, run and expected manifest, but comparison
+children must also match the saved parent bundle and ledger; binding alone is not
+approval evidence. Each child has its own manifest and run-scoped artifact IDs.
+`JobStore.save_result` retains the single-run interface with `run_id == job_id`.
 
-Successful MCP `prepare_backtest`, `prepare_comparison`, `prepare_walk_forward`, and
-`prepare_optimization` responses include the required `manifest_hash` and a
-`plan_id`; they do not create a job. `submit_execution_decision` with `approve`
-returns the job ID after the caller relays the user's explicit consent.
-Job status and job-list items carry the parent digest. Single-run `get_run`
-records carry that same digest; comparison children instead carry their individual
-execution digests and retain the parent job ID. Historical entries without an execution manifest
-return `null`. Historical results remain readable, but old jobs cannot resume
-through the new workers. Prepare a new plan to execute through MCP under a fixed
-specification. The old MCP `start_backtest`, `start_walk_forward`,
-`start_optimization` and `confirm_optimization` tools are removed.
+Publication locking, rollback and retries cover both files and lineage. Job
+creation and child publication share a run-ID submission lock, preventing collisions
+between jobs and child runs. Lock files remain for concurrent waiters. Files and
+SQLite are not one transaction; complete verification and recovery rules are in
+[Performance Artifacts](performance_artifacts.md#performance-scopes-and-provenance).
+Artifact metadata differs by producer; resolve ownership through the registered
+artifact's run and the run's `job_id`, not a presumed universal metadata field.
+
+Draft cleanup scans raw jobs, run references and all stored manifests, including
+orphans and failed/cancelled jobs. Ambiguous history blocks deletion. Lifecycle
+locks stay outside revision directories and are not unlinked while waiters may
+use them. Eligibility and partial-failure behavior are defined once in
+[Draft Cleanup](strategy_contract.md#draft-cleanup).
+
+Preparation returns a plan and manifest hash, not a job. Approval returns the
+submitted job ID. Status/list responses use the parent hash; comparison child runs
+carry their individual hashes and parent job ID. Missing historical manifest
+identity stays `null`. Old jobs cannot resume through new workers: prepare a new
+plan under a fixed specification. The removed `start_*` and `confirm_optimization`
+MCP tools are not execution entry points.
+
+### Job State and Worker Identity
+
+Job field updates merge indexed columns and JSON payload within one SQLite
+`BEGIN IMMEDIATE` transaction; execution identity is immutable. The first terminal
+state wins, including its timestamps and error. Late process identity may be
+attached without restoring an earlier lifecycle state. Poll/cancel operations
+condition writes on active state and return the state actually saved, so concurrent
+completion is not reported as cancellation.
+
+Elapsed time ends at the saved terminal timestamp; only active jobs use query
+time. Missing, invalid, timezone-less or reversed timestamps return an explicit
+unavailable reason and `null`, without rewriting legacy records.
+
+The job PID identifies the supervisor, not the strategy child. Its OS creation
+time and unique `worker_control_id` bind a launch to `.workers/<launch_token>`;
+do not trust a potentially reused PID alone. Control records remain in normal
+workspaces for later cleanup verification. Temporary tests remove them only after
+verified shutdown.
 
 Persisted legacy jobs with `status: pending_confirmation` are incompatible with
 the current job response contracts and are not migrated. `get_job_status` and
@@ -267,27 +215,18 @@ control files into it. The new workspace does not automatically import strategie
 or history; old result files remain in the preserved workspace. This is a new
 workspace recovery path, not an in-place migration or resumption of old jobs.
 
-`.workers/<launch_token>` stores the startup identity, worker startup response,
-optional cancellation request (`stop`), and final cleanup acknowledgement. These
-small records remain in a regular workspace so later sessions can verify cleanup
-without trusting a potentially reused PID. Test workspaces remove them with the
-rest of the temporary workspace after verified cleanup.
+Cancellation requires a complete control identity before signalling a running
+process; queued jobs without a process can be cancelled directly. Status checks
+fail a started job whose supervisor identity is missing/mismatched. Comparisons
+first require verified worker cleanup; failure leaves lifecycle states unchanged.
+Cancellation likewise preserves states on cleanup failure. Both return the saved
+job, so concurrent `done` may coexist with a cleanup diagnostic.
 
-Cancellation of an active job without a complete control identity fails without
-signalling or claiming that the process stopped. A queued job that has not started
-a process can be cancelled directly. Status checks mark a started job failed when
-its supervisor identity is missing or no longer matches, with a comparison-specific
-exception: comparison status checks must first confirm worker cleanup. If cleanup
-cannot be verified, the status check does not itself change job or candidate
-states and returns `detail_error.code = worker_cleanup_failed`. Explicit
-cancellation likewise does not change lifecycle states on cleanup failure and
-returns `code = worker_cleanup_failed`. Both reread the saved job, so a concurrent
-worker completion is preserved and reported: `status = done` can appear alongside
-the cleanup diagnostic. Missing control identity during cancellation instead
-returns `worker_identity_unavailable`. When a status check does mark a job failed, its
-first response includes the same error persisted in the database. Spawn failures
-also persist `failed`, an explanatory error and `ended_at` before propagating the
-exception.
+Status failure returns its persisted error immediately; launch failure saves the
+error and terminal timestamp before propagating. For response placement and codes,
+read [JobService](../src/tradingdev/app/job_service.py) and its
+[job response models](../src/tradingdev/app/contracts/jobs.py). A cleanup diagnostic
+does not prove the process stopped; resolve it before deleting its workspace.
 
 ## ML Research Artifacts
 
@@ -302,25 +241,16 @@ one effective config before a generated revision or execution manifest is saved.
 The required request modes, cost defaults and annualization rules are described
 in the [research-input contract](strategy_contract.md#research-inputs-and-simulation-policy).
 
-The canonical values are stored at their execution locations:
+Effective research values live in their execution locations (`backtest`, the
+outline in `research`, and the name in `strategy.display_name`); provenance does
+not store a second copy. For exact paths, version and field constraints, read
+`RESEARCH_FIELD_PATHS`, `ResearchMetadata` and `ResearchRevisionIdentity` in
+[research.py](../src/tradingdev/domain/research.py).
 
-- `research.strategy_outline`: the resolved research outline;
-- `backtest.symbol`, `timeframe`, `start_date`, `end_date`, `init_cash`, `fees`,
-  `slippage`, and `periods_per_year`: the effective choices and simulation settings;
-- `strategy.display_name`: the human-readable name supplied during authoring or
-  generated from the outline, separate from `strategy.id` and `revision_id`.
-
-`research` uses metadata schema version 1. Besides its outline, it contains
-`policy_version`, `field_sources`, optional `selected_revision`, and
-`annualization_reason`. `field_sources` covers exactly the JSON pointer for the
-outline and each of the eight backtest fields above. Values are `request`,
-`project_default`, or `selected_revision`; these describe resolution paths, not
-proof of human input or approval. No second copy of the market, period, cost or
-annualization values is stored in this metadata. An inherited field requires a
-selected-revision identity containing `strategy_id`, `revision_id`, and its
-`config_hash` when recorded. Generated revision metadata's `request_summary` is
-a derived outline projection, not an independent save input or configuration
-authority.
+Origins distinguish request, project default and explicitly selected revision.
+They describe resolution paths, not proof of human input or approval. Inheritance
+retains the selected identity and config hash. Revision `request_summary` is a
+derived outline projection, not independent configuration authority.
 
 The config hash and manifest hash cover these saved values and origins. Equal
 numeric costs with different origins or policy versions can therefore have
@@ -340,31 +270,25 @@ Keep the generated strategy identity and revision-bound declarations unchanged;
 the saved source revision remains intact. Only changing strategy parameters does
 not require removing research metadata.
 
-Strategy creation and revision publication share the per-strategy lifecycle lock.
-Omitted strategy IDs allocate a new `strategy_<uuid>` namespace; explicit IDs
-without `expected_revision_id` also mean creation. Existing revision directories,
-legacy files and incomplete publications reserve their namespace. Revising requires
-the explicit expected current revision and verifies its stored content before
-publication. A stale revision or creation collision does not move current.
-Recovery from legacy flat files creates a new identity and leaves the original
-files in place. As before, revision-directory publication and current-pointer
-replacement are separate filesystem operations: a failed pointer update can leave
-a complete unreferenced revision while the previous current pointer remains.
+Revision creation, namespace collisions and current-pointer publication are
+covered by [Revision Identity and Eligibility](strategy_contract.md#revision-identity-and-eligibility).
 
 ## Fixed Comparison Evidence
 
-`ComparisonManifest` fixes one to eight ordered ordinary-backtest candidates,
-including their labels, proposal rationale and complete execution manifests.
-Only effective constructor parameters may differ; strategy identity, research,
-data settings, execution assumptions and seed must match. Repeated effective
-parameter sets are rejected. Its digest binds every candidate before execution.
-`prepare_comparison` resolves research once and captures complete constructor
-values from one selected revision. Candidate overrides never rewrite the base
-revision. The plan contains this bundle, a separate program receipt for each
-candidate and one confirmation covering the entire set. Each candidate, including
-bundled strategies, passes both fixed synthetic fixtures; the whole preparation
-shares one supervised time limit. No market data, engine or training runs before
-approval. Training-required and walk-forward comparisons are not supported.
+`ComparisonManifest` fixes a bounded ordered set of ordinary-backtest candidates,
+including labels, rationale and complete manifests. Only effective constructor
+parameters may differ; strategy/revision, research, data settings, execution
+assumptions and seed must match. Labels are unique after trimming; repeated
+effective parameter sets are rejected. Candidate count and field constraints
+come from the [comparison definition](#artifact-references) and tool schema.
+
+`prepare_comparison` captures the selected revision once without rewriting its
+base. It accepts candidate-specific overrides, not a global `parameters` argument.
+All candidates, including bundled strategies, pass both synthetic fixtures under
+one shared preparation deadline. One confirmation covers the complete bundle;
+no market data, engine or training runs first. Training-required and walk-forward
+comparisons are unsupported. Fixed comparison performs no adaptive search or
+automatic winner selection. See [Execution Plans](execution_plans.md) for receipts.
 
 `ComparisonStore` uses `comparisons/<job_id>/manifest.json` and `ledger.json`.
 Alongside them, `config.yaml` projects the shared configuration without selecting
@@ -402,7 +326,8 @@ identity and every candidate's ID, label, run ID, child hash, status and reason.
 `outcome=no_success` is explicit when none succeeded. Status reads receipt metadata
 without loading the Parquet frame; execution and report creation verify actual
 snapshot bytes. Constructor maps and proposal rationales stay in the confirmation
-and report rather than being repeated on every poll.
+and report rather than being repeated on every poll. Generate reports with
+`comparison_job_id` to retain every candidate, including failed or unexecuted ones.
 
 ## Execution Manifest
 
@@ -410,33 +335,22 @@ For a single execution, before spawning a background worker, the service publish
 `runs/<job_id>/manifest.json` and records its hash in the job. Publication never
 replaces a different existing manifest. Atomic publication applies to the manifest
 file; file publication and the database job write do not form one transaction.
-Schema version 5 contains:
+The [ExecutionManifest definition](#artifact-references) owns the supported schema,
+fields and digest calculation. `config` holds effective execution settings and
+resolved absolute data/feature paths. `strategy_execution` separately captures
+constructor values, including nested bundled config/fit defaults; injected engine
+and parallel objects are supplied from execution configuration, outside this JSON.
+Research origins and display names are saved metadata, not constructor arguments.
 
-- `kind`: `backtest`, `walk_forward`, or `optimization`.
-- `config`: the effective strategy identity and source hash, backtest settings,
-  optional walk-forward settings, parallel policy, seed settings, and data
-  requirements with resolved absolute directories and feature paths. Typed
-  execution defaults are materialized and dates are JSON strings. Guided research
-  also includes the resolved `research` metadata and the saved strategy display
-  name; these are not executable constructor arguments.
-- `strategy_execution`: the strategy kind (`bundled` or `generated`) and
-  `constructor_kwargs`. Bundled `config` and optional `fit_config` objects include
-  nested model defaults; generated keyword arguments include declared constructor
-  defaults. Injected engine and parallel policy objects remain outside this JSON
-  object and are supplied from the manifest's execution configuration.
-- `optimization`: `null` for other kinds; otherwise the parameter ranges,
-  optimization metric, `train_start`/`train_end`/`test_start`/`test_end`,
-  catalog-defined `direction: maximize|minimize`, and `trial_timeout_seconds: 300`.
-  This timeout is fixed at preparation and limits only the first training
-  candidate used to estimate the formal search duration. Remaining candidates
-  and held-out evaluation do not use that deadline. It is separate from the
-  complete preflight-process budget. Parameter names are
-  sorted; the caller's candidate order within each range is preserved.
-  Confirmation timeout/polling fields are removed: the worker no longer owns
-  the user-confirmation interaction.
-- `manifest_hash`: SHA-256 of canonical JSON over all the preceding fields and
-  `schema_version: 5`, excluding the hash field itself. Object keys are sorted;
-  job IDs and creation timestamps are not part of the specification.
+Optimization fixes candidate ranges, objective/direction, calendar train/test
+bounds and the first-trial estimation timeout. The timeout limits only that
+training trial; remaining candidates and held-out evaluation do not share it.
+It is separate from MCP preflight's total process budget. Parameter names are
+sorted while each caller-supplied option order is preserved. User approval occurs
+before worker launch, not inside the worker.
+
+`manifest_hash` covers canonical JSON including schema version and excluding the
+hash itself. Job IDs and creation times are outside this specification.
 
 Typed backtest, walk-forward, parallel, and data defaults have the same digest
 whether implicit or explicit when the rest of the specification, including any
@@ -455,6 +369,8 @@ the captured constructor keyword mapping. The run's `config.yaml` projection
 reflects that replacement. The revision's original YAML and evidence stay unchanged.
 Overrides can target only keys already captured from base parameters or constructor
 defaults; unknown keys at any recursively merged mapping level are rejected.
+Mappings merge recursively; other values replace the specified parameter. Empty
+objects preserve existing mappings, and `**kwargs` does not permit new override keys.
 
 Without overrides, omitted versus explicit constructor defaults in the input
 parameter mapping can produce different digests despite equal effective values.
@@ -481,31 +397,21 @@ Non-finite numbers in execution configuration or search values are rejected inst
 being converted to `null`. Invalid resolved execution settings return
 `invalid_execution_request` for backtest/walk-forward submissions or
 `invalid_optimization_request` for optimization, without creating a job.
-MCP preflight maps `StrategyNotExecutableError` raised during research preparation
-to `strategy_not_executable`, including initial strategy selection, identity
-mismatches, revision-file read failures during binding, and repeated
-executable-state checks during capture. Caught configuration, type, YAML and I/O
-errors use the invalid-request codes above; execution-mode refusals retain their
-capability-specific codes and guidance.
+For refusal codes and caller-specific error handling, use the relevant
+[MCP execution tools](../src/tradingdev/mcp/tools/execution.py),
+[JobService](../src/tradingdev/app/job_service.py) or
+[OptimizationService](../src/tradingdev/app/optimization_service.py).
+MCP preparation exceptions are mapped in
+[`execute_preflight`](../src/tradingdev/adapters/execution/preflight_worker.py)
+and forwarded by [PreflightService](../src/tradingdev/app/preflight_service.py).
+The lower-level `BacktestService` raises exceptions rather than service responses.
 
-Direct Python `JobService` and `OptimizationService` preparation methods instead
-return `strategy_not_executable` for failed initial selection and their respective
-invalid-request code for binding or subsequent capture failures. The lower-level
-`BacktestService` direct YAML/config methods raise exceptions rather than returning
-these structured service codes.
 The mode must match the presence of walk-forward
 validation settings. Optimization has its own training/test split and rejects
 configs containing `validation` with `invalid_optimization_request`.
-MCP `prepare_walk_forward` alone accepts `validation_config` to replace the entire
-effective validation mapping before research resolution and manifest capture.
-There is no merge with base validation settings; omitted or `null` input preserves
-them. Active explicit train/test windows use inclusive UTC calendar days and must
-fit within the research period. New settings require `mode: automatic`, `explicit`
-or `purged` and reject fields belonging to another mode. Historical flat settings
-remain readable with their recorded mode precedence; they cannot be submitted as
-new execution inputs. See the [strategy split contract](strategy_contract.md#strategy-walk-forward-settings).
-Failed containment does not change the requested dates or publish a
-plan; the caller must supply suitable windows or automatic-fold settings.
+Walk-forward replacement, mode-specific fields and inclusive calendar containment
+follow [Strategy Walk-Forward Settings](strategy_contract.md#strategy-walk-forward-settings).
+Invalid windows do not change the requested dates or publish a plan.
 
 Manifest decoding preserves stored JSON without reapplying today's config defaults.
 Before execution, current runtime models must accept the saved config and effective
@@ -634,23 +540,20 @@ from earlier matched values. Leading gaps remain missing; later observations
 never fill earlier bars. Unmatched feature timestamps do not seed the fill.
 Sampling does not rewrite source market or feature caches.
 
-Each crawler implements `fetch_sample(..., max_rows=...)` independently of full
-history loading, enforcing bounds before constructing sample frames and honoring
-inclusive endpoints, including a single timestamp. Custom providers must also
-implement this method. API paths use bounded pages or time windows; Yahoo and
-Deribit streamed JSON responses have a 4 MiB ceiling. Streamed sample requests
-reject redirects and extra HTTP compression before reading the body, avoiding
-client buffering or decoding before the size checks. Binance Vision
-prefers daily archives, falling back to a monthly archive on a missing daily
-file. Downloads stream into spooled temporary files with identity HTTP encoding.
-Each selected CSV is scanned in batches of at most 1024 rows, retaining only
-the earliest requested bars even when stored rows are out of order. Later-date
-archives are not read once the output budget is satisfied. Downloads are limited
-to 16 MiB per archive and 32 MiB per `fetch_sample` call; declared CSV expansion
-is limited to 128 MiB. Exceeding a limit fails the sampling operation.
-An archive is still downloaded in full before parsing, so sample bar counts do
-not imply proportionate network traffic. These are application-level resource
-controls, not an operating-system memory limit or a Python sandbox.
+Custom crawlers must implement `fetch_sample(..., max_rows=...)` with bounds
+enforced before frame materialization, including inclusive single-instant requests.
+API sampling uses bounded pages/windows; streamed responses reject redirects and
+extra HTTP compression before body reads. Binance Vision prefers daily archives,
+falls back to monthly on missing daily files, and scans bounded CSV batches while
+retaining earliest requested bars even if stored rows are unordered. It stops
+before later-date archives once the row budget is satisfied.
+
+For exact streaming, expansion and per-call budgets, inspect the selected
+`fetch_sample` implementation through the [crawler modules](../src/tradingdev/domain/data/crawlers/)
+and their shared [sampling helpers](../src/tradingdev/domain/data/crawlers/sampling.py).
+Exceeding a limit fails; archives are downloaded in full before parsing, so bar
+count is not proportional to traffic. These are application resource controls,
+not OS memory limits or a Python sandbox.
 
 ## Execution Plans and Confirmation Documents
 
@@ -660,35 +563,26 @@ A plan fixes the manifest; preparing it does not start a formal job or backtest.
 
 ## MCP Lookup
 
-- `list_jobs` / `get_job_status` / `cancel_job`: operational progress and
-  cancellation.
-- `list_runs` / `get_run`: completed result summaries and metric/scope discovery.
-- `get_metric_catalog`: current definitions, units, applicability, summary choices,
-  annualization requirements and optimization directions.
-- `get_run_metrics`: complete or selected metrics in a saved scope, with definition
-  snapshots, provider versions, settings and unavailable-value reasons.
-- `compare_runs`: scoped metric comparison with explicit comparability reasons.
-- `list_artifacts` / `get_artifact`: result JSON and other artifact lookup.
-- `promote_strategy`: generated strategy artifact promotion.
-- `record_feature_request`: structured unsupported feature requests.
+Choose queries by purpose; exact arguments, bounds and output fields come from
+the registered MCP schemas. Tool definitions and response models are maintained in
+[`mcp/tools/`](../src/tradingdev/mcp/tools/) and
+[`app/contracts/`](../src/tradingdev/app/contracts/).
+
+| Need | Entry |
+| --- | --- |
+| Job progress or cancellation | `list_jobs`, `get_job_status`, `cancel_job` |
+| Saved result identity and scopes | `list_runs`, `get_run`, `find_runs` |
+| Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
+| Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
+| Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
 
 ### Discovery Pages
 
-MCP `list_strategies`, `list_runs`, `list_jobs`, `list_available_data` and
-`list_artifacts` return an object with `items`, `offset`, `limit`, `total` and
-`next_offset`, rather than a bare list. `offset` is a nonnegative integer;
-`limit` defaults to 20 and accepts 1–100. Booleans and numeric strings are not
-valid page bounds. `total` counts all matching items before paging, while an
-offset at or beyond the total returns an empty page. Follow `next_offset` until
-it is `null`; do not treat a first page as the complete inventory.
-
-| Tool | Filters applied before paging | Order |
-| --- | --- | --- |
-| `list_strategies` | `kind`, `strategy_id` | strategy ID, kind, revision ID |
-| `list_runs` | `strategy_id`, `revision_id` | creation time descending, run ID ascending |
-| `list_jobs` | `status`, `job_type`, `strategy_name` | creation time descending, job ID ascending |
-| `list_available_data` | `source`, `market_type`, `symbol`, `timeframe` | source, market type, symbol, timeframe |
-| `list_artifacts` | `run_id`, `artifact_type` | creation time descending, artifact ID ascending |
+Growing discovery lists use [Page and PageRequest](../src/tradingdev/app/contracts/common.py).
+Use each tool's schema and description for accepted filters, bounds and ordering.
+Filters apply before paging; `total` counts all matches. An offset at or beyond
+the total returns an empty page. Follow `next_offset` until `null` before claiming
+complete discovery; a first page is not the full inventory.
 
 Filters are exact matches, including symbol case and punctuation.
 Ordering is deterministic for unchanged data; separate page calls
@@ -706,13 +600,12 @@ application callers; only the MCP discovery contract uses these pages.
 
 ### Reading Artifact Text
 
-`get_artifact` returns metadata by default. With `include_content=true`, it
-returns one original UTF-8 text page: `offset` counts Unicode code points and
-`limit` defaults to 8192, with a maximum of 32768. `content_page` reports
-`offset`, `limit`, `total_characters`, `next_offset` and `content_sha256`.
-Follow `next_offset` until it is `null`; concatenate every page before parsing
-JSON or hashing a whole report. Use structured result/trade queries when only
-selected observations are needed, rather than reading the entire artifact.
+`get_artifact` returns metadata by default. Set `include_content=true` for one
+original UTF-8 text page. Offsets count Unicode code points, not bytes. Bounds and
+page fields are defined by the [artifact tool](../src/tradingdev/mcp/tools/artifacts.py)
+and [read_text_page](../src/tradingdev/adapters/storage/artifact_text.py).
+Follow `content_page.next_offset` to `null` and concatenate all pages before parsing
+JSON or hashing a whole report. Use structured queries for selected observations.
 
 Every content request streams the complete file to validate UTF-8, count
 characters and hash its original bytes, while retaining only the requested
@@ -721,64 +614,32 @@ claim that the file still matches the registered `artifact.sha256`. Send the
 first page's `content_sha256` as `expected_sha256` on subsequent requests to
 reject changed content. Reading pages does not rewrite files or normalize JSON.
 
-Unknown IDs return `artifact_not_found`; missing files return
-`artifact_file_missing`; other file I/O failures return
-`artifact_file_unreadable`. Invalid UTF-8 returns `artifact_not_text`, including
-invalid bytes outside the requested page. Observed mutation or a mismatched
-expected digest returns `artifact_content_changed`. Invalid page bounds or
-paging options without `include_content=true` return `invalid_artifact_request`;
-the MCP input schema may reject malformed arguments before service execution.
-Metadata lookup does not read file content and remains available for binary
-artifacts. A server-local path is not a public download URL.
+Missing/unreadable files, invalid UTF-8 anywhere in the file, changed content and
+invalid paging requests fail explicitly rather than returning partial evidence.
+Metadata remains available for binary artifacts and does not read their contents.
+Exact diagnostics are maintained in [ArtifactService.get_artifact](../src/tradingdev/app/artifact_service.py).
+A server-local path is not a public download URL.
 
 ### Completed Run Files
 
-The generated revision's `config.yaml` holds its base settings and, for guided
-authoring, research provenance and its human-readable name;
-`runs/<run_id>/config.yaml` holds effective execution settings and includes
-`strategy.revision_id`. Runtime market/date and parameter experiments
-do not rewrite the base revision. Backtest and walk-forward requests may supply
-`parameters`, recursively merged into the base parameters. CLI runtime configs
-may change `strategy.parameters` while preserving other strategy declarations.
-The same revision can therefore have many runs with different parameters and
-manifest hashes, without duplicate generated source revisions. Both short and
-long signal-contract fixtures check effective generated settings before execution.
-The execution manifest additionally fixes runtime overrides and search settings
-without rewriting the base revision.
+A revision's base YAML remains unchanged; a run's config projection contains its
+fixed effective settings. [Execution Manifest](#execution-manifest) defines the
+authority, overrides and hashes. For background runs, including comparison children,
+the following files are independently registered under `runs/<run_id>/`:
 
-Each successfully published background run, including a comparison child, writes
-files under `workspace/runs/<run_id>/` and records matching SQLite metadata:
+| File | Purpose |
+| --- | --- |
+| `result.json` | Numerical result projection; normal job/run responses may select only a summary. |
+| `performance.json`, `observations.json` | Complete saved metrics, definitions and observations by scope; see [Performance Artifacts](performance_artifacts.md). |
+| `manifest.json` | Approved execution specification; single-job publication occurs at submission, child publication when saving its approved result. |
+| `config.yaml` | Inspection projection checked against the executed manifest, without reloading caller YAML. |
+| `strategy.py` | Source snapshot when a source path is available; generated source is from the selected immutable revision. |
+| `dataset_fingerprint.json` | Dataset identity and fingerprint, not a complete archive of inputs. |
+| `pipeline_result.pkl` | Dashboard cache for completed backtest/walk-forward runs, including successful backtest comparison children. |
+| `research_evidence.json` | Independently readable approved explanation when recorded; see [Research Evidence Records](#research-evidence-records). |
 
-- `result.json`: serialized metrics, stored as `result_json`.
-- `performance.json`: all metric values by scope, definitions and calculation
-  metadata, stored as `performance_json`.
-- `observations.json`: aligned timestamps, equity, per-bar returns and trade
-  records by scope, stored as `observations_json`.
-- `manifest.json`: the approved execution specification, registered after
-  successful result persistence as `execution_manifest`. For a single job, the
-  file is published at submission; a comparison child's file is published from
-  its approved parent bundle when saving that child's result. Its artifact metadata
-  includes `manifest_hash` and `schema_version`. Use `list_artifacts` and
-  `get_artifact(include_content=true)` to inspect the JSON after completion.
-- `config.yaml`: effective config snapshot used for the run, stored as
-  `config_snapshot` with `config_hash`. It projects the executed manifest config;
-  persistence checks the worker's snapshot against that manifest and the job's
-  digest rather than reloading a possibly changed YAML file. It includes the
-  resolved research symbol, timeframe, and date range together with fixed defaults
-  and their recorded origins when available.
-  Optimization includes the entire final calendar day; ordinary backtest bounds
-  remain timestamps.
-- `strategy.py`: generated or bundled strategy source snapshot when
-  `strategy.source_path` is available, stored as `strategy_source` with
-  source hash metadata. Generated source snapshots come from the selected
-  immutable revision, not whichever revision is current at completion.
-  The same hash is indexed in `runs.source_hash` for
-  direct SQL lookup.
-- `dataset_fingerprint.json`: dataset id, symbol, timeframe, date range, and a
-  fingerprint hash, stored as `dataset_fingerprint`.
-- `pipeline_result.pkl`: full `PipelineResult` for dashboard rendering, stored
-  as `pipeline_result` for completed backtest and walk-forward runs, including
-  successful ordinary-backtest comparison children.
+For exact artifact type identifiers and metadata, use the [publishing references](#artifact-references)
+or `list_artifacts`/`get_artifact`; do not infer registration from file presence.
 
 For background runs, SQLite `runs.artifact_dir` must match the corresponding
 `workspace/runs/<run_id>/` directory. `runs.config_hash` is the SHA-256 of the
@@ -789,41 +650,25 @@ run seed. Run comparison,
 dashboard rendering, and artifact lookup always read through SQLite first, then
 resolve files from the recorded artifact paths.
 
-CLI runs instead store their `pipeline_result` cache under
-`workspace/data/processed/cache` (or `$TRADINGDEV_DATA_ROOT/processed/cache`),
-while `runs.artifact_dir` points to
-`workspace/runs/cli_<cache_key>_<execution_id>/`, where the
-execution manifest is published and registered as an artifact. The pipeline
-shares the same performance/observations JSON storage in that run directory;
-the pickle is only needed for dashboard rendering. The pipeline
-result embeds both its config snapshot and execution manifest. The run's config
-hash, manifest hash, and revision identity come from the executed specification.
-Saving uses this manifest without re-reading the original config file; editing
-that file after execution does not prevent saving the original result. The
-original `config_path` remains descriptive artifact metadata. Each save has a
-fresh execution ID and a separate `<run_id>.pkl`; same-request reruns can preserve
-different results. Clearing the pickle cache leaves historical performance JSON
-readable; the cleared historical dashboard artifact is unavailable, while a new
-execution writes its own complete cache.
+CLI runs keep dashboard pickles under the processed-data `cache` directory, while
+`runs.artifact_dir` points to `runs/cli_<cache_key>_<execution_id>/` with the
+registered manifest and shared performance/observation JSON. Each save gets a
+fresh execution ID and separate pickle; rerunning the same request can preserve
+different results. Clearing the pickle leaves historical JSON readable but its
+dashboard unavailable. No previous backtest is automatically reused.
 
-The CLI cache fingerprint requires the executed manifest hash and combines it
-with the processed-data file's content hash and the executed strategy revision
-and source hash. It does not derive code identity from the current Git checkout
-or use file size/mtime as data identity. There is no YAML-based key fallback.
-New settings produce a different manifest and therefore
-a different cache key. Completed results are loaded by run ID through the
-registered artifact path, without recomputing a key from current YAML, data, or
-code. The unused YAML-based `load_cached_result` and `save_cached_result` helpers
-have been removed; this storage path does not automatically reuse prior backtests.
-These fingerprints describe the execution inputs; they do not archive immutable
-copies of all data or environment dependencies and do not guarantee full
-reproducibility.
+The pipeline result embeds the executed config and manifest. Saving uses those
+snapshots, not a later YAML read; `config_path` is descriptive metadata. The cache
+key combines executed manifest, processed-file content and strategy revision/source
+hashes, not current Git state, file size/mtime or a YAML fallback. Historical reads
+resolve the registered run artifact without recomputing identity from today's
+inputs. These fingerprints do not freeze all data or dependencies or guarantee
+reproducibility. Inspect `compute_cache_key` in [cache.py](../src/tradingdev/shared/utils/cache.py)
+and [ArtifactService](../src/tradingdev/app/artifact_service.py) when changing
+dashboard cache publication or lookup.
 
-Training trials share the same loaded frame values, column dtypes and index
-metadata, including timezone and timestamp precision. Worker transfer uses
-joblib's DataFrame serialization without a lossy JSON conversion; the first trial
-and subsequent candidates therefore evaluate the same data. Out-of-sample
-evaluation preserves the corresponding loaded test frame as well.
+Optimization trials share the same loaded frame values, dtypes and index/time
+metadata; held-out evaluation preserves its corresponding test frame too.
 
 Optimization `result.json` includes the best parameters, training metrics,
 out-of-sample metrics, objective and fixed direction. Its complete numerical
