@@ -329,6 +329,125 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
 
 
 @pytest.mark.live_llm
+def test_natural_request_discovers_rule_and_repairs_threshold(
+    pytestconfig: pytest.Config,
+) -> None:
+    with temporary_mcp_workspace() as workspace:
+        seed_ml_markets(workspace)
+        paths = WorkspacePaths(workspace.workspace)
+
+        async def prepare() -> dict[str, Any]:
+            async with workspace.connect() as client:
+                result = await client.call(
+                    "build_dataset", **{**DATASET_ARGUMENTS, "feature_set": "technical"}
+                )
+                assert result["success"], result
+                dataset: dict[str, Any] = result["dataset"]
+                return dataset
+
+        dataset = asyncio.run(prepare())
+        request = (
+            f"請使用已保存的資料集 {dataset['dataset_id']}，研究 RSI14 低於 150 時"
+            "偏多、否則偏空的手設訊號，評估並保存結果。若無法評估，請說明原因，"
+            "等我提供新門檻，不要自行改設定。這次只做訊號研究，不訓練模型或執行回測。"
+        )
+        correction = (
+            "改成 RSI14 低於 50 時偏多、否則偏空，沿用同一資料集，評估並保存。"
+            "最後只列出手設規則的候選排名，說明訊號模擬的持倉限制及保存結果的識別碼。"
+        )
+        turns: list[ModelTurn] = []
+        # Saving requested research includes failure notes and their delivery;
+        # unrelated model/strategy/execution writes remain forbidden.
+        permitted = {
+            "evaluate_signal",
+            "save_research_note",
+            "export_research_note",
+            "generate_report",
+        }
+
+        async def reply(turn: ModelTurn) -> str | None:
+            turns.append(turn)
+            print(
+                f"[rule-research] Turn {len(turns)} for semantic review:\n{turn.text}",
+                flush=True,
+            )
+            if len(turns) == 1:
+                for call in turn.calls:
+                    if call.name == "evaluate_signal":
+                        assert call.arguments.get("threshold") == 150
+                        assert call.arguments.get("direction") == "below"
+                        assert call.arguments.get("column") == "rsi_14"
+                        assert call.arguments.get("dataset_id") == dataset["dataset_id"]
+                        assert not call.arguments.get("model_id")
+                assert not LeaderboardStore(paths.ml_leaderboard).entries(), (
+                    "The unsupported threshold must not save a candidate"
+                )
+                return correction
+            return None
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "user_reply": reply,
+                "max_tool_calls": 18,
+            }
+            async with workspace.connect() as client:
+                tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in tools]
+                permitted.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
+                assert all(name not in request + correction for name in names)
+                options["tool_names"] = names
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, request, **options))
+
+        calls = asyncio.run(run())
+        assert len(turns) == 2
+        assert all(call.name in permitted for call in calls), calls
+        evaluated = [
+            call
+            for call in effective_workflow_calls(calls)
+            if call.name == "evaluate_signal" and call.result.get("success")
+        ]
+        assert evaluated and all(
+            call.arguments.get("threshold") == 50
+            and call.arguments.get("direction") == "below"
+            and call.arguments.get("column") == "rsi_14"
+            and call.arguments.get("dataset_id") == dataset["dataset_id"]
+            for call in evaluated
+        )
+        entries = LeaderboardStore(paths.ml_leaderboard).entries()
+        assert len(entries) == 1
+        entry = entries[0]
+        frame, _ = MLDatasetStore(paths.ml_datasets).load(dataset["dataset_id"])
+        signal = np.where(frame["rsi_14"] < 50, 1.0, -1.0)
+        assert entry.family == "rule" and entry.parameters == {"threshold": 50.0}
+        assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
+        ranked = [
+            call
+            for call in calls
+            if call.name == "leaderboard"
+            and call.arguments.get("family") == "rule"
+            and call.result.get("success")
+        ]
+        assert ranked and ranked[-1].result["families"] == {"rule": 1}
+        assert entry.entry_id in turns[-1].text
+    assert not workspace.root.exists()
+
+
+@pytest.mark.live_llm
 def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) -> None:
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}, "Use scripts/check-llm.sh codex|local"

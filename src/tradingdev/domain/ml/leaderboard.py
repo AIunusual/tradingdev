@@ -3,6 +3,13 @@
 Reject incomparable contexts unless explicitly allowed. Report candidate
 counts and a multiple-comparison caveat rather than treating the selected
 winner as unqualified evidence.
+
+Candidates are not all machine-learning models. A row declares the method
+family that produced its signal, so a hand-set indicator rule can be ranked
+beside a fitted model without being mistaken for one. The family is identity,
+not a measurement condition: it stays out of :class:`EvaluationContext`, so
+rules and models measured on one dataset remain comparable, and the ranking
+reports the mix instead of hiding it.
 """
 
 from __future__ import annotations
@@ -14,11 +21,17 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import NormalDist
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 
 Direction = Literal["maximize", "minimize"]
+MethodFamily = Literal["ml_model", "rule", "other"]
+
+# Stable presentation order; family declarations do not prove provenance.
+METHOD_FAMILIES: tuple[MethodFamily, ...] = ("ml_model", "rule", "other")
+
+_MAX_METHOD_NAME_CHARACTERS = 160
 
 _NORMAL = NormalDist()
 _MAX_CONTEXT_EXAMPLES = 3
@@ -183,12 +196,7 @@ class LeaderboardEntry:
     model_id: str = ""
     dataset_id: str = ""
     parameters: Mapping[str, Any] = field(default_factory=dict)
-    """The candidate's own hyperparameters as fitted.
-
-    A row that records only ``model_id`` cannot say how that model was
-    configured, so a later parameter study cannot read the settings back.
-    Empty for ad-hoc signals, which have no fitted parameters.
-    """
+    """Artifact settings for models; caller-declared settings for other methods."""
     signal_fingerprint: str = ""
     """Hash of the evaluated signal, kept apart from ``entry_id``.
 
@@ -196,6 +204,29 @@ class LeaderboardEntry:
     candidate without changing how candidates are identified; ``""`` marks
     rows written before it was kept.
     """
+    method_family: str = ""
+    """Which kind of method produced the signal; ``""`` when not declared.
+
+    Read it through :attr:`family`, which infers the family of older rows from
+    the model ID they carry instead of guessing from today's catalog.
+    """
+    method_name: str = ""
+    """Readable name of a non-model candidate, such as a rule's settings."""
+
+    @property
+    def family(self) -> MethodFamily:
+        """The declared family, or the one this row's identity implies.
+
+        Rows written before families existed read as ``ml_model`` when they
+        carry a model ID. That ID is the caller's declaration of a fitted
+        model, not proof that one produced the signal, so the family records
+        what the row claims. Rows without an ID stay ``other``: nothing in them
+        says whether a rule built them, and claiming otherwise would overstate
+        their provenance.
+        """
+        if self.method_family:
+            return cast("MethodFamily", self.method_family)
+        return "ml_model" if self.model_id else "other"
 
     def metric(self, name: str) -> float | None:
         """Return a finite metric value, or None when missing/non-finite."""
@@ -214,6 +245,8 @@ class LeaderboardEntry:
             "dataset_id": self.dataset_id,
             "parameters": dict(self.parameters),
             "signal_fingerprint": self.signal_fingerprint,
+            "method_family": self.method_family,
+            "method_name": self.method_name,
             "n_observations": self.n_observations,
             "metrics": {
                 key: _stored_metric(value) for key, value in self.metrics.items()
@@ -258,6 +291,11 @@ class LeaderboardEntry:
         raw_parameters = record.get("parameters")
         if raw_parameters is not None and not isinstance(raw_parameters, Mapping):
             raise ValueError("leaderboard record has malformed parameters")
+        family = str(record.get("method_family", "") or "")
+        if family and family not in METHOD_FAMILIES:
+            raise ValueError(
+                f"leaderboard record declares an unknown method family: {family!r}"
+            )
         return cls(
             entry_id=str(record["entry_id"]),
             label=str(record["label"]),
@@ -265,6 +303,11 @@ class LeaderboardEntry:
             dataset_id=str(record.get("dataset_id", "")),
             parameters=dict(raw_parameters or {}),
             signal_fingerprint=str(record.get("signal_fingerprint", "")),
+            # An empty family stays empty rather than being rewritten to the
+            # inferred value, so a read-write cycle does not add evidence the
+            # row never carried. ``family`` performs the inference on access.
+            method_family=family,
+            method_name=str(record.get("method_name", "")),
             n_observations=int(record.get("n_observations", 0)),
             # A stored null is a measured-and-failed score, not a missing key,
             # so it must come back as None instead of being converted or dropped.
@@ -282,14 +325,36 @@ def build_entry_id(
     dataset_id: str,
     context: EvaluationContext,
     signal_fingerprint: str = "",
+    method_name: str = "",
+    method_family: MethodFamily = "other",
+    method_parameters: Mapping[str, float] | None = None,
 ) -> str:
     """Identify one candidate within a dataset and measurement context.
 
     Repeated evaluation replaces that row without inflating candidate count.
     Use ``signal_fingerprint`` when model_id is absent so distinct ad-hoc
     signals remain distinct. A supplied model ID is a caller-declared label.
+
+    Named methods use their family, name and full-precision declared parameters,
+    independent of the signal they produced. Display-name rounding cannot merge
+    different settings, and different families cannot overwrite one another.
+    Existing model and unnamed-signal identities retain their encoding.
     """
-    payload = "|".join((model_id, dataset_id, context.key, signal_fingerprint))
+    if method_name and not model_id:
+        payload = json.dumps(
+            [
+                method_family,
+                method_name,
+                dict(method_parameters or {}),
+                dataset_id,
+                context.key,
+            ],
+            sort_keys=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+    else:
+        payload = "|".join((model_id, dataset_id, context.key, signal_fingerprint))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -301,6 +366,88 @@ def signal_fingerprint(signal: Sequence[float]) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class MethodIdentity:
+    """What produced a candidate's signal, as far as the record can say.
+
+    ``parameters`` means the settings that produced the signal, whatever their
+    provenance: fitted hyperparameters copied from a model artifact, or the
+    caller's declared rule settings. A reader must not treat the two as the
+    same kind of evidence, which is why ``family`` travels with them.
+    """
+
+    family: MethodFamily
+    name: str
+    parameters: Mapping[str, float]
+
+
+def resolve_method(
+    *,
+    model_id: str | None,
+    method_family: str | None,
+    method_name: str | None,
+    method_parameters: Mapping[str, float] | None,
+) -> MethodIdentity:
+    """Validate and complete a candidate's declared method identity.
+
+    A model ID declares a model, without proving signal origin. A rule requires
+    a name so its declared construction can be reported.
+    A model's parameters are copied from its artifact, so caller-declared
+    parameters are refused for model candidates rather than silently replacing
+    them.
+    """
+    family: str = method_family or ("ml_model" if model_id else "other")
+    if family not in METHOD_FAMILIES:
+        raise ValueError(
+            f"method_family must be one of {list(METHOD_FAMILIES)}, got {family!r}"
+        )
+    name = (method_name or "").strip()
+    if len(name) > _MAX_METHOD_NAME_CHARACTERS:
+        raise ValueError(
+            "method_name must be at most "
+            f"{_MAX_METHOD_NAME_CHARACTERS} characters, got {len(name)}"
+        )
+    if family == "ml_model" and not model_id:
+        raise ValueError(
+            "a ml_model candidate needs model_id; a signal built by hand is "
+            "family 'rule' when it has a name, or 'other' when it has none"
+        )
+    if model_id and family != "ml_model":
+        raise ValueError(
+            f"model_id {model_id!r} declares a model, so its method family is "
+            f"ml_model, not {family!r}"
+        )
+    if model_id and name:
+        raise ValueError(
+            "a model candidate is named by its artifact, not by method_name; "
+            "pass method_name only for candidates without a model"
+        )
+    if family == "rule" and not name:
+        raise ValueError(
+            "a rule candidate needs method_name to describe its construction"
+        )
+    parameters = dict(method_parameters or {})
+    if parameters and model_id:
+        raise ValueError(
+            "a model's parameters are copied from its artifact; pass "
+            "method_parameters only for candidates without a model"
+        )
+    for key, value in parameters.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("method_parameters keys must be non-empty strings")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"method_parameters[{key!r}] must be a number, got {value!r}"
+            )
+        if not math.isfinite(float(value)):
+            raise ValueError(f"method_parameters[{key!r}] must be finite")
+    return MethodIdentity(
+        family=family,
+        name=name,
+        parameters={key: float(value) for key, value in parameters.items()},
+    )
 
 
 @dataclass(frozen=True)
@@ -490,6 +637,46 @@ def surface_caveats(axes: dict[str, list[int]]) -> tuple[str, ...]:
     return tuple(caveats)
 
 
+def family_counts(entries: Sequence[LeaderboardEntry]) -> dict[str, int]:
+    """How many candidates each method family contributed, in declared order.
+
+    A ranking that mixes families is still a ranking of what was measured, but
+    the reader has to know the mix before reading an order into it.
+    """
+    counts = Counter(entry.family for entry in entries)
+    ordered: dict[str, int] = {
+        family: counts[family] for family in METHOD_FAMILIES if counts[family] > 0
+    }
+    ordered.update(
+        {family: count for family, count in counts.items() if family not in ordered}
+    )
+    return ordered
+
+
+def family_caveats(counts: Mapping[str, int]) -> tuple[str, ...]:
+    """What a reader must know about the families behind one ranking.
+
+    Lives here rather than in a caller so the tool reply and a saved report
+    say the same thing about the same table.
+    """
+    caveats: list[str] = []
+    if len(counts) > 1:
+        described = ", ".join(f"{family}={count}" for family, count in counts.items())
+        caveats.append(
+            f"candidates span {len(counts)} method families ({described}); "
+            "family labels do not establish equal evidence about selection "
+            "history or out-of-sample performance. Inspect provenance and "
+            "measurement conditions; filter by family to rank one kind"
+        )
+    unnamed = counts.get("other", 0)
+    if unnamed:
+        caveats.append(
+            f"{unnamed} candidate(s) use the other method family; names and "
+            "declared settings alone do not establish reproducible construction"
+        )
+    return tuple(caveats)
+
+
 def _selection_caveat(
     metric: str, n_candidates: int, leader: RankedEntry, *, alpha: float
 ) -> str:
@@ -543,6 +730,10 @@ def rank_entries(
     Call ``comparability_error`` first to verify shared measurement context.
     ``alpha`` controls the family-wise caveat; ``top_k`` limits output.
     Reject unknown/directionless metrics and non-positive ``top_k``.
+
+    Caveats also describe the method families behind the candidates, so a table
+    mixing fitted models with hand-set rules cannot be read as one kind of
+    evidence.
     """
     direction = metric_direction(metric)
     if top_k is not None and top_k < 1:
@@ -550,7 +741,9 @@ def rank_entries(
 
     candidates: list[tuple[float, LeaderboardEntry]] = []
     skipped: list[SkippedEntry] = []
+    measured: list[LeaderboardEntry] = []
     for entry in entries:
+        measured.append(entry)
         value = entry.metric(metric)
         if value is None:
             # A stored None is a measurement that failed, not a metric nobody
@@ -605,6 +798,7 @@ def rank_entries(
             "only one candidate was compared; a single entry proves nothing "
             "about the alternatives"
         )
+    caveats.extend(family_caveats(family_counts(measured)))
 
     return LeaderboardResult(
         metric=metric,

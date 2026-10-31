@@ -26,7 +26,8 @@ if TYPE_CHECKING:
     from tests.integration.mcp_harness import MCPWorkspace
 
 ML_REPORT_REQUEST = """請找出已儲存、名稱帶「橙海訊號研究」的兩個候選，
-把它們不同的評估視窗當作敏感度比較，依平均訊號相關性整理已保存的成果。
+保留方法與評估視窗的差異，以敏感度比較整理已保存的平均訊號相關性，
+不要將差異全歸因於視窗，也不要把手設規則當成擬合模型。
 請製作可離線開啟的報告，包含兩個候選各自的設定、數值與不可用的分數；
 最後提供可點開的報告連結，說明視窗比較與缺值應如何解讀，
 以及這份訊號研究與包含交易成本的策略回測之間能作哪些結論。
@@ -83,9 +84,13 @@ def seed_ml_report_candidates(
             ),
             metrics={"ic_mean": score, "hit_rate": 0.6, "ic_std": 0.1},
             n_observations=200,
-            model_id="mdl_saved_signal",
+            model_id="mdl_saved_signal" if window == 24 else "",
+            method_family="ml_model" if window == 24 else "rule",
+            method_name="" if window == 24 else "return_1 > 0",
             dataset_id="ds_saved_research",
-            parameters={"n_estimators": 12, "window": 7},
+            parameters={"n_estimators": 12, "window": 7}
+            if window == 24
+            else {"threshold": 0.0},
             signal_fingerprint="saved-signal-content",
         )
         for window, score in ((12, 0.2), (24, None))
@@ -244,10 +249,20 @@ def verify_ml_report_outcome(
             "dataset_id": entry.dataset_id,
             "signal_fingerprint": entry.signal_fingerprint,
             "n_observations": entry.n_observations,
+            # The family travels with the snapshot so a saved report cannot
+            # render a hand-set rule in the model slot. It is the resolved
+            # family, not the stored field, which is empty on older rows.
+            "method_family": entry.family,
+            "method_name": entry.method_name,
         }, "Saved context snapshot changed"
         assert scope["observations"] is None
         assert scope["kind"] == "ml_signal" and scope["mode"] == "signal"
         assert entry.label in html
+        candidate = html.split(
+            f"id='ml-candidate-{block['entry_ids'].index(entry.entry_id)}'", 1
+        )[1].split("</details>", 1)[0]
+        assert f"<th>方法家族</th><td>{entry.family}</td>" in candidate
+        assert "候選參數" in candidate and "呼叫端宣告" in candidate
     assert block["parameter_axes"]["window"] == [12, 24]
     assert block["ranking"]["metric"] == "ic_mean"
     assert block["ranking"]["ranked_scope_ids"] == [entries[0].entry_id]

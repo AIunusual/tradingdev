@@ -146,6 +146,23 @@ def test_download_preserves_large_integer_parameters_as_original_json_bytes() ->
     )
 
 
+def test_rule_report_displays_declared_method_and_parameter_origin() -> None:
+    entry = replace(
+        _entry(ic_mean=0.2),
+        model_id="",
+        method_family="rule",
+        method_name="rsi_14 < 30",
+        parameters={"threshold": 30.0},
+    )
+    body = _body(render_report(_payload(entry), "rule-report"))
+    candidate = body.split("id='ml-candidate-0'", 1)[1].split("</details>", 1)[0]
+    assert "<th>方法家族</th><td>rule</td>" in candidate
+    assert "<th>方法名稱</th><td>rsi_14 &lt; 30</td>" in candidate
+    assert "<th>threshold</th><td>30.0</td>" in candidate
+    assert "候選參數" in candidate and "呼叫端宣告" in candidate
+    assert "模型擬合參數" not in candidate
+
+
 @pytest.mark.parametrize("has_runs", [False, True])
 def test_sample_provenance_is_unknown_even_with_saved_model_identity(
     has_runs: bool,
