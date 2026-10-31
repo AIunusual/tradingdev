@@ -274,6 +274,38 @@ def test_start_optimization_creates_job_and_spawns_worker(tmp_path: Path) -> Non
     assert reloaded == manifest
 
 
+def test_invalid_parallel_overhead_rejected_before_optimization_starts(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "strategy.yaml"
+    config_path.write_text(
+        "strategy:\n  id: fixture\nbacktest:\n  symbol: BTC/USDT\n"
+        "  timeframe: 1h\n  start_date: '2024-01-01'\n"
+        "  end_date: '2024-12-31'\n  init_cash: 10000\n  periods_per_year: 365\n"
+        "parallel:\n  overhead_multiplier: 0\n",
+        encoding="utf-8",
+    )
+    service, store, runner = _service(
+        tmp_path, metadata={"status": "runnable", "config_path": str(config_path)}
+    )
+    response = service.start_optimization(
+        strategy_id="fixture",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        param_ranges={"window": [10]},
+        optimization_metric="sharpe_ratio",
+        train_start="2024-01-01",
+        train_end="2024-02-01",
+        test_start="2024-02-02",
+        test_end="2024-03-01",
+    )
+    assert response["code"] == "invalid_optimization_request"
+    assert "parallel.overhead_multiplier" in response["message"]
+    assert store.list_all_jobs() == []
+    assert list(store.workspace.runs.iterdir()) == []
+    assert runner.calls == []
+
+
 @pytest.mark.parametrize(
     ("metric", "mode", "annualization", "timeframe", "message"),
     [
