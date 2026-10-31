@@ -197,17 +197,14 @@
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="12" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
-<h2 id="%E4%B8%80%E5%80%8B%E4%BA%A4%E6%98%93%E6%83%B3%E6%B3%95">一個交易想法</h2>
-<blockquote>
-<p>「短期平均價格高於長期平均價格時買進。」</p>
-</blockquote>
-<p>這個想法還需要補上明確規則：</p>
+<h2 id="mcp-%E7%9A%84%E6%8F%90%E7%A4%BA%E8%A9%9E%E5%BC%95%E5%B0%8E">MCP 的提示詞引導</h2>
+<p>TradingDev 透過 MCP，引導前端 LLM 與使用者協作：</p>
 <ul>
-<li>平均多久的價格？何時賣出？</li>
-<li>每次投入多少？是否允許做空？</li>
-<li>使用哪段行情？手續費與滑價如何計算？</li>
+<li><strong>缺項時追問</strong>：補齊構想、標的、回測期間與 K 棒頻率。</li>
+<li><strong>將策略具體化</strong>：釐清進出場規則與參數，撰寫可驗證的策略。</li>
+<li><strong>執行前確認</strong>：核對本金或交易規模、手續費與滑價，同意後才回測。</li>
 </ul>
-<p><em>這是說明流程的假設例子，沒有宣稱已測得績效。</em></p>
+<p><em>本金與成本可採模擬預設，仍須在回測前呈現確認。</em></p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="13" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
@@ -941,7 +938,12 @@ QuantConnect 已提供專案回測、結果管理與 ML 研究；Agents 能依�
 TradingDev 不內建對話模型。這些能力是研究後端的現有基礎，不代表已提供多人權限或完整執行隔離。
 研究指引來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 tools/strategy.py 的按需契約。</p></div><div class="bespoke-marp-note" data-index="10" tabindex="0"><p>研究不是泛稱投資分析。此處具體指策略程式的建立、檢查、歷史回測、參數實驗、時序驗證與結果查詢。
 指引由後端提供，推理與互動由使用者選擇的 AI 客戶端承擔。直接在 Codex 開發策略時，Codex 就是這個角色，不需要另建一套助手服務。實際呈現與指引採用方式由客戶端決定，不能把提示詞當成所有客戶端必然遵循的保證。
-來源：src/tradingdev/mcp/prompts.py、server.py 與 tools/strategy.py。</p></div><div class="bespoke-marp-note" data-index="11" tabindex="0"><p>讓一般聽眾看到，口頭想法和可執行策略之間還有許多選擇。助手的任務之一是協助釐清，而不是替使用者悄悄決定。</p></div><div class="bespoke-marp-note" data-index="12" tabindex="0"><p>可以用「歷史實驗」解釋回測。資料、費用、成交假設和選取期間都會影響答案，不把漂亮結果視為未來保證。</p></div><div class="bespoke-marp-note" data-index="13" tabindex="0"><p>讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 客戶端角色；TradingDev 不限定對話介面，也不內建對話模型。
+來源：src/tradingdev/mcp/prompts.py、server.py 與 tools/strategy.py。</p></div><div class="bespoke-marp-note" data-index="11" tabindex="0"><p>提示詞引導由 TradingDev 的 server instructions、工具說明與按需策略契約提供；此處不是指另行註冊的 MCP prompts，也不是固定問卷。實際問句與互動由 Codex 等客戶端的 LLM 組織。
+建立新研究前，構想、標的、回測期間與 K 棒頻率缺項時須追問，不能從範例猜出選擇。只有明確要求沿用已選定研究時，才可繼承其設定。
+策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
+本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現後端產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
+提示詞要求不保證所有客戶端一定遵循；後端另檢查必要欄位、設定與執行狀態，但不能證明輸入或同意真的來自使用者。
+來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。</p></div><div class="bespoke-marp-note" data-index="12" tabindex="0"><p>可以用「歷史實驗」解釋回測。資料、費用、成交假設和選取期間都會影響答案，不把漂亮結果視為未來保證。</p></div><div class="bespoke-marp-note" data-index="13" tabindex="0"><p>讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 客戶端角色；TradingDev 不限定對話介面，也不內建對話模型。
 TradingDev 以 server instructions、工具描述與按需契約提供研究指引，並由後端強制檢查可機械驗證的輸入與執行條件。客戶端決定互動與推理方式，提示詞不能保證模型遵循，也不能證明使用者真的閱讀或同意。
 來源：src/tradingdev/mcp/server.py、prompts.py、tools/strategy.py，以及 ARCHITECTURE.md。</p></div><div class="bespoke-marp-note" data-index="14" tabindex="0"><p>新策略會保存版本，通過驗證及 dry-run 後才取得執行資格；其中的訊號檢查使用固定合成資料，並非歷史回測。準備確認單時只做離線程式與設定檢查，以及適用的合成訊號檢查。單次準備的內建策略不在此時執行訊號；固定參數比較則對每組候選（包含內建策略）執行 80 與 240 根合成 K 棒的訊號檢查。確認前不取得真實行情、不訓練模型、不執行歷史回測；行情、訓練及績效須同意後才開始驗證。
 這些步驟已有 SERVER_INSTRUCTIONS 引導，並搭配工具說明及 get_strategy_contract 的按需內容。缺少必要研究選擇時須追問；保存研究筆記須有保存或分享需求。客戶端可安排自己的互動方式，但工具仍會檢查契約與執行狀態。
