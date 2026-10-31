@@ -7,11 +7,14 @@ Feature matrices can be reused across label horizons; the store owns I/O.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
+import talib
 
 from tradingdev.domain.ml.features.registry import list_feature_sets
 
@@ -75,42 +78,55 @@ def feature_cache_key(
 
 
 def _package_sources() -> list[tuple[str, bytes]]:
-    """Read relative paths and bytes for every Python file in the feature package.
-
-    Include helpers as well as builders so either kind of change invalidates
-    cached matrices.
-    """
+    """Read feature builders, helpers and their shared project indicator sources."""
+    from tradingdev.domain import indicators
     from tradingdev.domain.ml import features as features_package  # local: circular
 
-    roots = list(getattr(features_package, "__path__", ()))
-    if not roots:
-        raise ValueError(
-            "cannot locate the feature package source; pass a code_fingerprint "
-            "explicitly instead"
-        )
     sources: list[tuple[str, bytes]] = []
-    for root in roots:
-        directory = Path(root)
-        for path in directory.rglob("*.py"):
-            try:
-                relative = path.relative_to(directory).as_posix()
-                sources.append((relative, path.read_bytes()))
-            except OSError as error:  # pragma: no cover - unreadable install
-                raise ValueError(
-                    f"cannot read feature source {path}: {error}"
-                ) from error
-    if not sources:
-        raise ValueError(
-            "the feature package has no readable source; pass a "
-            "code_fingerprint explicitly instead"
-        )
+    for name, package in (("feature", features_package), ("indicator", indicators)):
+        roots = list(getattr(package, "__path__", ()))
+        if not roots:
+            raise ValueError(
+                f"cannot locate the {name} package source; pass a code_fingerprint "
+                "explicitly instead"
+            )
+        package_sources: list[tuple[str, bytes]] = []
+        for root in roots:
+            directory = Path(root)
+            for path in directory.rglob("*.py"):
+                try:
+                    relative = path.relative_to(directory).as_posix()
+                    package_sources.append((f"{name}/{relative}", path.read_bytes()))
+                except OSError as error:  # pragma: no cover - unreadable install
+                    raise ValueError(
+                        f"cannot read {name} source {path}: {error}"
+                    ) from error
+        if not package_sources:
+            raise ValueError(
+                f"the {name} package has no readable source; pass a "
+                "code_fingerprint explicitly instead"
+            )
+        sources.extend(package_sources)
     return sorted(sources)
+
+
+def _dependency_versions() -> dict[str, str]:
+    """Versions of the numerical libraries used by the registered builders."""
+    ta_version = getattr(talib, "__ta_version__", None)
+    if not isinstance(ta_version, bytes) or not ta_version:
+        raise ValueError("cannot read the TA-Lib C library version")
+    return {
+        "numpy": str(np.__version__),
+        "pandas": str(pd.__version__),
+        "TA-Lib": str(talib.__version__),
+        "TA-Lib-C": ta_version.decode("ascii"),
+    }
 
 
 def feature_code_fingerprint(
     feature_sets: Sequence[object] | None = None,
 ) -> str:
-    """Hash feature-package source and declared columns into 16 hexadecimal digits.
+    """Hash feature/indicator sources, numerical versions and declared columns.
 
     Use all registered sets unless supplied. Relative source paths make the
     identity independent of install location and Git. Unreadable source raises
@@ -120,7 +136,8 @@ def feature_code_fingerprint(
         list_feature_sets() if feature_sets is None else feature_sets
     )
     digest = hashlib.sha256()
-    digest.update(b"feature-package-v1")
+    digest.update(b"feature-computation-v2")
+    digest.update(json.dumps(_dependency_versions(), sort_keys=True).encode("utf-8"))
     for relative, source in _package_sources():
         digest.update(relative.encode("utf-8"))
         digest.update(source)

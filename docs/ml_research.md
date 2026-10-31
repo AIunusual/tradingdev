@@ -488,9 +488,14 @@ use time. Labels are constructed after the cache lookup, so changing the label
 horizon can reuse the same feature computation.
 
 The cache key includes bar values, symbol, timeframe, feature set and feature
-code. The default code fingerprint hashes the feature package's relative source
-paths, source bytes and registered column declarations; it does not depend on
-the installation's absolute path or a Git checkout. An application caller may
+code. The default code fingerprint hashes relative source paths and bytes from
+both `domain/ml/features/` and `domain/indicators/`, registered column declarations,
+and the loaded NumPy, pandas, TA-Lib Python and TA-Lib C library version strings.
+It does not depend on the installation's absolute path or a Git checkout. Changes
+to these sources or versions produce a different cache identity; previous files
+are retained but are not reused for the new computation. Version strings do not
+detect local binary patches that keep the same version, or arbitrary changes to
+third-party runtime configuration. An application caller may
 explicitly supply that fingerprint. Dataset manifests retain the fingerprint
 used at build time, so later evaluation does not substitute the currently
 installed feature code's identity.
