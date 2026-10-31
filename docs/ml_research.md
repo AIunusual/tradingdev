@@ -209,10 +209,15 @@ distinguishes the final artifact from the fold models. `leakage_audit_clean`
 describes the implemented split and label-overlap checks only; it cannot prove
 that features, research choices or external inputs are free of future knowledge.
 
-MCP `evaluate_signal(dataset_id, model_id, window=60, n_quantiles=5, record=False)`
-evaluates a verified saved model on the complete single-symbol dataset. Omitting
-`model_id` evaluates a threshold rule instead, described under method families
-below. The backend produces the signal, obtains saved forward returns in the same
+MCP `evaluate_signal` accepts `dataset_id`, optional `model_id`, `column`,
+`threshold`, `direction="above"`, `window=60`, `n_quantiles=5` and `record=False`.
+Supply either `model_id` for a verified saved model or both `column` and
+`threshold` for a rule. Combining `model_id` with either rule input is rejected.
+Rules accept `direction="above"` (default) or `"below"`; the condition is strict,
+so a value equal to the threshold produces `-1`. Direction is unused for model
+evaluation. Only `record=True` saves or replaces the same candidate's evaluation.
+See method families below for rule restrictions. The backend evaluates the
+complete single-symbol dataset, obtains saved forward returns in the same
 row order and adopts the dataset horizon; the MCP input does not accept arrays or
 a caller-selected horizon. A preview's `offset` or `limit` never restricts
 evaluation. There must be enough observations for the chosen IC `window` and

@@ -69,11 +69,10 @@ def register(mcp: MCPServer, service: MLService) -> None:
         n_quantiles: int = 5,
         record: bool = False,
     ) -> PredictionEvaluationResponse | RuleEvaluationResponse | ErrorResponse:
-        """Evaluate a saved dataset with a model or a threshold rule.
+        """Evaluate every saved row using model_id or a column+threshold rule.
 
-        model_id evaluates every row with that model; without it, column+threshold
-        build a rule signal and record it as a rule candidate. record=True adds
-        the result to the leaderboard. Read get_ml_contract guidance.
+        Only record=True saves or replaces that candidate on the leaderboard.
+        Read get_ml_contract for input and interpretation guidance.
         """
         try:
             if model_id is not None:

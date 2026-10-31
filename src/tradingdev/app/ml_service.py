@@ -174,7 +174,7 @@ _ML_GUIDANCE = {
         "retrain_interval and lookback."
     ),
     "evaluation": (
-        "evaluate_signal loads the verified model and single-symbol dataset by ID "
+        "With model_id, evaluate_signal loads the verified model and dataset by ID "
         "and evaluates every saved row internally, independent of predict previews. "
         "Row order, realised returns and horizon come from that dataset. Window "
         "must be at least 2, quantiles 2..10, with enough finite observations. "
