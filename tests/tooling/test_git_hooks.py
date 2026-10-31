@@ -59,7 +59,7 @@ if mode != 'docs':
 with Path(os.environ['HOOK_TEST_RECORD']).open('a') as stream:
     stream.write(json.dumps(record) + '\\n')
 failure = os.environ.get('HOOK_TEST_FAIL')
-if (mode in {'full', 'markdown', 'presentations'}
+if (mode in {'full', 'tooling', 'markdown', 'presentations'}
         and failure in {'mutation', 'staged_mutation'}):
     (root / 'src/app.py').write_text("VALUE = 'modified by checker'\\n")
     if os.environ['HOOK_TEST_FAIL'] == 'staged_mutation':
@@ -166,6 +166,7 @@ def _repository(primary: str = "main") -> Generator[GitRepository]:
         for profile, mode in (
             ("fast", "fast"),
             ("full", "full"),
+            ("tooling", "tooling"),
             ("docs", "markdown"),
             ("presentations", "presentations"),
         ):
@@ -199,6 +200,54 @@ def test_primary_branch_rejects_direct_commit_without_losing_staged_changes() ->
         assert repo.git("diff", "--cached", "--name-only") == "src/app.py"
         assert not repo.events("full")
         assert not repo.events("docs")
+
+
+def test_tooling_commit_keeps_fast_snapshot_without_pytest_or_model() -> None:
+    with _repository() as repo:
+        repo.start_task()
+        repo.write("AGENTS.md", "# Development policy\n")
+        repo.run("scripts/git-flow-commit.sh", "chore: update policy", "AGENTS.md")
+        assert len(repo.events("fast")) == 1
+        assert not repo.events("tooling")
+        assert not repo.events("full")
+        assert not repo.events("docs")
+
+
+@pytest.mark.parametrize("fast_exit", [0, 7])
+def test_tooling_script_runs_quality_then_only_complete_tooling_suite(
+    fast_exit: int,
+) -> None:
+    with TemporaryDirectory(prefix="tradingdev-tooling-script-") as directory:
+        root = Path(directory)
+        (root / "scripts").mkdir()
+        shutil.copy2(
+            _PROJECT / "scripts/check-tooling.sh", root / "scripts/check-tooling.sh"
+        )
+        fast = root / "scripts/check-fast.sh"
+        fast.write_text(f"#!/usr/bin/env bash\nexit {fast_exit}\n")
+        fast.chmod(0o755)
+        interpreter = root / "interpreter"
+        interpreter.write_text(
+            f"#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\n"
+            "Path('arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        interpreter.chmod(0o755)
+        result = run_captured(
+            ["bash", "scripts/check-tooling.sh"],
+            cwd=root,
+            env={**os.environ, "TRADINGDEV_CHECK_PYTHON": str(interpreter)},
+            timeout=10,
+        )
+        assert result.returncode == fast_exit
+        if fast_exit:
+            assert not (root / "arguments.json").exists()
+        else:
+            assert json.loads((root / "arguments.json").read_text()) == [
+                "-m",
+                "pytest",
+                "tests/tooling",
+            ]
+    assert not root.exists()
 
 
 def test_whitespace_failure_reports_the_file_and_preserves_the_index() -> None:
@@ -350,7 +399,12 @@ def test_snapshot_head_contains_staged_candidate_and_is_reproducible() -> None:
 
 @pytest.mark.parametrize(
     "profile, mode",
-    [("full", "full"), ("docs", "markdown"), ("presentations", "presentations")],
+    [
+        ("full", "full"),
+        ("tooling", "tooling"),
+        ("docs", "markdown"),
+        ("presentations", "presentations"),
+    ],
 )
 @pytest.mark.parametrize("failure", ["rejection", "mutation", "staged_mutation"])
 def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
@@ -388,6 +442,7 @@ def test_full_snapshot_failure_cleans_temporary_files_and_preserves_checkout(
                 "docs": "# Test repository\n",
                 "presentations": "# Initial slides\n",
                 "full": "VALUE = 'initial'\n",
+                "tooling": "VALUE = 'initial'\n",
             }[profile]
         )
         assert not Path(str(events[0]["root"])).parent.exists()

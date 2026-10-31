@@ -119,6 +119,8 @@
   MCP 契約探索／上下文預算檢查。
   手動執行 `scripts/check-full.sh` 一律執行快速檢查及完整離線 pytest，
   不因工作樹只有文件變更而縮減範圍。
+- `scripts/check-tooling.sh` 執行快速檢查及完整 `tests/tooling`，不執行產品
+  測試套件或呼叫模型；適用範圍由下方 Git 分流規則決定。
 - 不依賴系統全域安裝的品質工具，不使用代理專屬 Stop hooks 重複執行檢查。
 - Python 版本、依賴與 project version 以 `pyproject.toml` 為準；不要直接移植
   其他 repository 的版本或 dependency audit 政策。
@@ -159,8 +161,10 @@
 
 - 每個開發階段完成時，執行受影響行為及其使用端的相關測試；資料或回覆
   契約變更須涵蓋 CLI、MCP 等呼叫端，不只依修改檔案挑選同名測試。
-- 涉及開發政策、程式行為、依賴或測試基礎設施的任務，交付前執行一次
-  `scripts/check-full.sh`。代理須主動執行，不將發現錯誤的責任留給使用者 push。
+- 交付前依下方 Git 分流規則選擇檢查：純開發政策／已登錄開發工具變更執行
+  `scripts/check-tooling.sh`；產品程式、依賴、共用測試設定／fixtures／程序設施、
+  未知或混合產品變更執行 `scripts/check-full.sh`。開發工具分流仍須完整跑完
+  `tests/tooling`，不得只選同名測試。代理主動執行，不留給使用者 push 才發現錯誤。
 - 符合下方 Git 分流規則的一般文件變更只需文件品質檢查；簡報變更執行簡報
   專項檢查。兩者不因新增 HTML、CSS 或受限編輯工作而執行完整 Python 測試。
   一般程式註解或格式變更仍需快速品質檢查。可由 commit hook 完成，不必在 commit 前額外手動
@@ -280,11 +284,17 @@
   頂層只允許 `version` 與 `tasks`；額外的 `options`、`inputs` 等設定即使
   未變，也走程式分流，避免全域設定覆寫簡報工作的執行方式。
   不以工作名稱或 `.json` 副檔名放行任意命令、環境覆寫或動態替換。
-- `AGENTS.md`、產品程式、依賴與 lock、建置工具、檢查程式、未知設定、
-  可執行檔、符號連結、包含這些檔案的混合變更、空差異與無法確認的變更，
-  均走程式分流。不得為讓某次變更通過而擴大白名單或偽造分類。
+- 開發工具分流接受 `AGENTS.md`、`CLAUDE.md`、已登錄的開發工具與腳本，
+  以及 `tests/tooling/test_*.py`；可混合一般文件與合格簡報變更。登錄來源為
+  [change_scope.py](tooling/git/change_scope.py)，不概括放行整個 `scripts/` 或
+  `tooling/`。一般檔案兩側仍須為 `100644`，只有已登錄的腳本允許 `100755`。
+  新工具須審查使用端與測試責任後才登錄，不依名稱猜測產品影響。
+- 產品程式、依賴與 lock、共用測試設定／fixtures／程序設施、未登錄工具、未知設定、
+  未獲允許的可執行檔、符號連結、混合產品變更、空差異與無法確認的變更，
+  均走完整程式分流。不得為讓某次變更通過而擴大白名單或偽造分類。
 - 每次 commit 都執行提交格式檢查；一般文件執行 `check-docs.sh`，簡報專項
-  執行 `check-presentations.sh`，程式分流執行 `check-fast.sh`。各路徑都驗證
+  執行 `check-presentations.sh`，開發工具與完整程式分流均執行 `check-fast.sh`。
+  Commit 不因開發工具分流而新增 pytest 或模型呼叫。各路徑都驗證
   暫存內容的獨立 snapshot，核對暫存 tree 未變，不以未暫存修正掩蓋錯誤。
   文件與簡報專項不執行 Ruff、Mypy、自動 Codex 審查或完整 pytest。
 - 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
@@ -292,26 +302,27 @@
   不能攔截 GitHub 網頁合併，也不能攔截不建立 commit 的本機 fast-forward。
   不得把 hook 描述為遠端強制門禁。
 - 準備決定合併的審閱者，明確執行 `scripts/check-pr.sh <PR編號>`。
-  不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR；程式分流另需
+  不自動猜測開發完成時機。使用本機 GitHub CLI 讀取 PR；開發工具與完整程式分流另需
   已登入的 Codex CLI。檢查本身不建立 PR、發送評論、push 或合併。
 - PR 檢查 fetch 主線與 PR head 至獨立臨時 Git repository，計算合併候選
   tree；不切換或更新開發者的分支。衝突或讀取版本不一致直接失敗。
 - PR 與本機合併候選依相對主線 tree 的差異採相同分類。一般文件只執行文件
   snapshot；簡報專項執行簡報 snapshot，不呼叫 Codex、不跑 Python 全套。
   差異審閱仍須確認語意、命令、讀者用途與必要的視覺／操作行為。
-- 程式候選若涉及簡報、其編譯模組／scripts 或 `tooling/marp/`，先執行簡報
-  snapshot；失敗即停止，不進入 Codex 或完整 pytest。其後由 Codex 比對程式
-  與既有架構／契約／操作文件及讀者用途，再執行 `scripts/check-full.sh`。
+- 開發工具與完整程式候選若涉及簡報、其編譯模組／scripts 或 `tooling/marp/`，
+  先執行簡報 snapshot；失敗即停止，不進入 Codex 或 pytest。其後由 Codex
+  比對程式與既有架構／契約／操作文件及讀者用途；開發工具候選再執行
+  `scripts/check-tooling.sh`，完整程式候選執行 `scripts/check-full.sh`。
   所有分流保留候選不可變性、base／head／tree 核對及程序、檔案清理。
 - 真實模型策略測試由審閱者依變更明確執行；文件與簡報不要求此測試。
-  程式分流的 Codex 文件審查仍會呼叫模型。每次明確執行候選檢查都重新
+  開發工具與完整程式分流的 Codex 文件審查仍會呼叫模型。每次明確執行候選檢查都重新
   驗證，不重用舊版檢查 receipt。
 - Codex 文件審查使用唯讀、無工具的執行，僅傳入 Git 版本的程式與文件，
   不修改 repository。過時文件、執行失敗、逾時或無效回覆皆令檢查失敗。
   讀者與內容歸屬不符也須回報具體問題及合適位置；不要求無關的既存文件整理。
   修正文件後正常分階段提交，再重新檢查。
 - 文件審查範圍由 repository 內的固定規則推導，允許明確增加脈絡，不能用
-  範圍參數漏掉已選取的變更路徑或縮減完整離線測試。納入文字證據的變更
+  範圍參數漏掉已選取的變更路徑或縮減所選分流的測試。納入文字證據的變更
   保留完整候選內容與 diff；未支援類型及 runtime 路徑列明排除原因。
   相關文件使用固定 Git blob 的原文章節；未知內容採保守保留，不由摘要取代。
   多批次另以全部已選取路徑的原始 diff 檢查跨範圍影響。必要來源不足須失敗並指出補充路徑，
