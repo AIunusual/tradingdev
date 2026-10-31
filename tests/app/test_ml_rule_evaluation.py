@@ -10,6 +10,7 @@ import pytest
 from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.ml_service import MLService
 from tradingdev.domain.ml.registry import LeaderboardStore
 
@@ -100,15 +101,56 @@ class TestRecordingARule:
         assert entry.parameters == {"threshold": level}
         assert entry.model_id == ""
 
-    def test_a_rule_is_scored_on_the_dataset_rows(
-        self, service: MLService, workspace: WorkspacePaths
+    @pytest.mark.parametrize(
+        ("values", "horizon", "expected"),
+        [
+            ([0, 1, 0, 1, 0, 1], 1, 0.99 * 1.01 * 0.99 * 1.01 - 1),
+            ([0, 1, 0, 1, 0, 1], 2, 0.99 * 0.99 - 1),
+            ([0, 0, 0, 0, 0, 1], 1, 0.0),
+        ],
+        ids=["warm-up", "holding-grid", "late-switch-no-position"],
+    )
+    def test_rule_uses_shared_signal_simulation(
+        self,
+        service: MLService,
+        workspace: WorkspacePaths,
+        values: list[int],
+        horizon: int,
+        expected: float,
     ) -> None:
-        dataset_id = _build(service)
-
-        result = _record_rule(service, workspace, dataset_id)
-
-        assert result["n_observations"] == int(_frame(workspace, dataset_id).shape[0])
-        assert result["metrics"]["ic_mean"] is not None
+        dates = pd.date_range("2024-01-01", periods=len(values), freq="h", tz="UTC")
+        frame = pd.DataFrame(
+            {
+                "timestamp": dates,
+                "label_end": dates + pd.Timedelta(hours=horizon),
+                "feature": values,
+                "forward_return": 0.01,
+            }
+        )
+        _, manifest = MLDatasetStore(workspace.ml_datasets).save(
+            frame,
+            {
+                "symbol": "BTC/USDT",
+                "timeframe": "1h",
+                "horizon": horizon,
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-02",
+                "feature_set": "test",
+                "feature_columns": ["feature"],
+                "code_fingerprint": "fixed-test-feature",
+            },
+        )
+        result = service.evaluate_rule(
+            dataset_id=manifest["dataset_id"],
+            column="feature",
+            threshold=0.5,
+            window=2,
+            n_quantiles=2,
+            record=True,
+        )
+        assert result["n_observations"] == len(values)
+        assert result["simulated"]["long_short_cumulative"] == pytest.approx(expected)
+        assert len(LeaderboardStore(workspace.ml_leaderboard).entries()) == 1
 
     def test_re_recording_the_same_rule_replaces_it(
         self, service: MLService, workspace: WorkspacePaths

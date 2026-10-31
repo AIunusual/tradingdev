@@ -125,8 +125,8 @@ class SignalEvaluationResponse(ContractModel):
     signal_fingerprint: str
     """Hash of the evaluated signal values in dataset row order.
 
-    Stored separately from entry identity for modelled candidates. Ad-hoc
-    candidates without a model ID also include it in their entry identity.
+    Stored separately from identity for models and named methods. Only unnamed
+    candidates include it in their entry identity.
     """
     n_observations: int
     horizon: int
@@ -166,7 +166,7 @@ class LeaderboardRow(ContractModel):
     """One placed candidate and the headline numbers behind its rank.
 
     The row is self-describing: the evaluation settings it was measured under,
-    the candidate's own hyperparameters and the hash of its signal all travel
+    the candidate's own settings and the hash of its signal all travel
     with the metric, so a parameter surface or a reproduction check needs no
     second lookup.
     """
@@ -184,7 +184,7 @@ class LeaderboardRow(ContractModel):
     window: int
     n_quantiles: int
     parameters: dict[str, JsonValue]
-    """Fitted hyperparameters when available; empty does not imply defaults."""
+    """Artifact or declared method settings; empty does not imply defaults."""
     signal_fingerprint: str
     """Hash of the signal this row was measured on; empty on older records."""
     value: float

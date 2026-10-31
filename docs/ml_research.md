@@ -597,7 +597,7 @@ result without a leaderboard write.
 
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset
-IDs, a display label, the candidate's own fitted hyperparameters, the hash of the
+IDs, a display label, the candidate's saved settings, the hash of the
 signal that was measured, the method family that produced it (`ml_model`, `rule`
 or `other`) with a readable `method_name` for candidates that have no model, and
 an evaluation context: symbol or panel symbols,
@@ -605,8 +605,8 @@ timeframe, requested period, horizon, IC window, quantile count, feature set,
 build-time code fingerprint and dataset content hash. For a model row, the fitted
 parameters are copied from the model artifact, so the row still says how that
 model was configured after the artifact is retrained; a rule row carries the
-settings its caller declared. Ad-hoc signals and records whose model artifact
-cannot be loaded have empty parameters. Older records missing the new fields
+settings its caller declared. Other signals may also declare settings. Records
+without declared settings or a loadable model artifact have empty parameters. Older records missing the new fields
 read as `parameters={}` and `signal_fingerprint=""`; reads do not reconstruct them.
 Empty parameters are not fitted defaults, and an empty fingerprint is not
 reproduction evidence. Re-evaluate and record to obtain that evidence.
@@ -632,12 +632,10 @@ The family is identity, not a measurement condition, so it stays out of
 `EvaluationContext`: rules and models measured on one dataset remain comparable,
 which is the point of putting them in one table. `leaderboard` reports a
 `families` count for the candidates its filters selected, including ones it could
-not rank, and appends a caveat when more than one family is present, because a
-fitted model, a hand-set rule and an unnamed signal were selected differently —
-equal scores are not equal evidence, and the order within a family is more
-informative than the order across families. Pass `family` to rank one kind. A
-table of unnamed candidates also says they cannot be reproduced from the record
-alone.
+not rank, and appends a caveat when more than one family is present. Family
+labels do not establish selection history or out-of-sample validity.
+Inspect provenance and measurement conditions; pass `family` to rank one kind.
+Names and declared parameters alone do not prove reproducible construction.
 
 Named candidates are identified by family, name and full-precision declared
 parameters within the saved dataset and evaluation context. Repeating those
@@ -647,46 +645,22 @@ unnamed-signal fingerprints keep their existing identity encoding.
 
 The `evaluate_signal` tool without `model_id` builds a rule signal from one saved
 feature column: `+1` where the column is above (or below) the threshold and `-1`
-otherwise, so the rule is always in the market rather than being scored as flat.
-The label, the realised outcome and the row bookkeeping (`forward_return`,
-`target`, `timestamp`, `label_end`, `symbol`) are never readable columns, and a
-threshold the column never crosses is refused rather than recorded as a candidate
-whose simulated book has no positions. A threshold sweep is stored as one
+otherwise. These are signal values, not executed positions: the shared
+simulator still requires `n_quantiles` prior observations and both historical
+signal values, and opens positions only on the non-overlapping horizon grid.
+A first switch on the final row can leave every simulated return zero. This
+is signal research, not an always-invested threshold-strategy backtest. The
+label, realised outcome and row bookkeeping (`forward_return`, `target`,
+`timestamp`, `label_end`, `symbol`) are forbidden. Constant signals are
+unsupported by the quantile evaluator; observing both values in the full sample
+does not guarantee a trade. Choosing a threshold after viewing this dataset
+introduces in-sample selection; the backend does not verify selection history.
+A threshold sweep is stored as one
 candidate per level, each carrying its level in `parameters`. It is not reported
 as a parameter surface: `parameter_axes` covers only horizon, IC window and
 quantile count, so the surface, its caveats and the plateau analysis built on
 them do not apply to rule settings yet. Reading a sweep as a surface today would
 compare separate candidates as if they were one measurement.
-
-#### Handover to the statistics modules
-
-`docs/statistics_leaderboard_integration.md` on the `feat/stats-py314` branch
-lists what `src/tradingdev/domain/statistics/` needs from this leaderboard. The
-leaderboard supplies, and this section pins:
-
-- Numeric parameter coordinates per entry (`parameters`), now including declared
-  rule settings rather than only artifact hyperparameters. Grouping rules by one
-  of those settings is still unsupported: `parameter_axes` reports only horizon,
-  IC window and quantile count, so a threshold sweep needs a new axis before
-  `trials_from_metrics` can read it as a grid.
-- Failed candidates kept as entries with the metric stored as an explicit `null`,
-  so a grid keeps the point where a candidate failed.
-- A grouping path that is separate from the ranking gate: `allow_parameter_axes`
-  permits `window`, `horizon` and `n_quantiles` to differ within one research
-  identity, while `comparability_error` still refuses to rank across them.
-- A declared family per entry, so a plateau or bootstrap adapter can tell a fitted
-  model from a hand-set rule without guessing.
-
-Still missing for the paired bootstrap of IC series: the per-bar IC series of each
-candidate on a shared bar index. Rows keep scalar summaries only, and a signal is
-recoverable only through `dataset_id` plus a matching `signal_fingerprint`. Storing
-those series is the next step, and it must land with the statistics package rather
-than beside it: the bootstrap needs `arch`, which this repository does not depend
-on, and the statistics modules stay in that branch instead of being copied here.
-Two multiple-comparison corrections therefore remain separate: the Bonferroni
-t-statistic threshold reported by `leaderboard`, and the deflated Sharpe ratio from
-the statistics package. They answer different questions and are never applied to
-the same number.
 
 The recorded metrics include annualised return, maximum drawdown, Sharpe, alpha
 and beta alongside the signal-quality ones. They describe the simulated
@@ -729,8 +703,8 @@ behaviour; `observations` is present and null, because a signal evaluation
 records no orders and no equity curve. The three tunable settings are reported
 in `metadata`, not merged into `parameters`: a fitted parameter dictionary may
 legitimately contain a key of the same name, and merging would silently
-overwrite one of them, so `parameters` means exactly what the model was fitted
-with. Non-finite scores become `null`, as in leaderboard storage, while absent
+overwrite one of them. `parameters` retains the model artifact settings or
+caller-declared method settings, distinguished by `method_family`. Non-finite scores become `null`, as in leaderboard storage, while absent
 metric keys remain absent. `ml_report_block` collects the whole candidate set,
 including candidates that failed to rank, with block-level definitions, the
 observed parameter axes, the skipped rows and their coordinates, and the ranking
@@ -775,16 +749,14 @@ observed values of each axis and appends a caveat saying so. Every row states it
 own horizon, window and quantile count, so a point on the surface is readable
 without a second lookup.
 
-The entry ID includes the dataset, evaluation context and model ID.
-With no model ID, it also includes a signal fingerprint computed from a
-canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. That fingerprint is now computed for every record and
-stored in its own `signal_fingerprint` field, including records that carry a model
-ID, where it is deliberately kept out of the ID: folding it in would rename every
-existing entry. A re-run reproduces a recorded candidate when its
+Entry identity binds the dataset and evaluation context to the model ID, or
+to a named method's family/name/settings. Only unnamed candidates include a
+signal fingerprint in their entry ID. The fingerprint uses a canonical JSON
+array of finite floating-point values, preserving array and value boundaries;
+every record also stores it separately as `signal_fingerprint`. A re-run reproduces a recorded candidate when its
 `signal_fingerprint` equals the stored one, and no migration is needed. MCP
-evaluation validates the model that generated its
-signal. Existing records and Python array callers may instead use a
+model evaluation validates the model that generated its signal; rule evaluation
+builds the signal from the verified dataset feature and requested threshold. Existing records and Python array callers may instead use a
 caller-declared model label: their ID alone does not prove signal origin. The
 stored format has no provenance discriminator, so a leaderboard must not label
 all historical rows as verified-origin. Neither path proves out-of-sample

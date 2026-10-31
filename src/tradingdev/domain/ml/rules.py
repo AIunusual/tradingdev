@@ -36,12 +36,11 @@ RESERVED_COLUMNS = frozenset(
 
 @dataclass(frozen=True)
 class ThresholdRule:
-    """Long while ``column`` is on one side of ``threshold``, short otherwise.
+    """A binary signal, positive on one side of the threshold, negative otherwise.
 
-    Both legs are always taken, so the evaluation describes a rule that is
-    always in the market rather than one whose flat periods would be scored as
-    zero returns. ``parameters`` holds only the numeric setting, which is the
-    axis a sweep varies; the column and side are part of :attr:`name`.
+    These values are inputs to the shared signal evaluator, not executed
+    positions. Its historical warm-up and holding-interval grid still apply.
+    The column and side are in :attr:`name`; parameters retain the exact level.
     """
 
     column: str
@@ -87,7 +86,7 @@ class ThresholdRule:
 
     @property
     def parameters(self) -> dict[str, float]:
-        """The numeric setting a sweep varies, for a parameter surface."""
+        """The exact numeric setting; threshold surfaces are not supported."""
         return {"threshold": float(self.threshold)}
 
     def signal(
@@ -95,9 +94,9 @@ class ThresholdRule:
     ) -> npt.NDArray[np.float64]:
         """Return +1 where the condition holds and -1 where it does not.
 
-        Refuses a column that never crosses the threshold: that rule is a
-        constant position, whose simulated book has no positions at all and
-        whose scores would describe nothing.
+        Refuses constant signals, which the shared quantile evaluator cannot
+        evaluate. Two values in the full sample do not guarantee a position:
+        both must already be in the history at an eligible decision row.
         """
         series = np.asarray(values, dtype=np.float64)
         if series.ndim != 1 or not len(series):
@@ -116,6 +115,6 @@ class ThresholdRule:
                 f"threshold {self.threshold:g} never changes {self.column!r} "
                 f"({self.direction}); pick a level inside the observed range "
                 f"[{float(series.min()):g}, {float(series.max()):g}] so the rule "
-                "takes both legs"
+                "has both signal values"
             )
         return np.where(long, 1.0, -1.0)

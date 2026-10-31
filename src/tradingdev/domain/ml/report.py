@@ -50,7 +50,8 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
     The three tunable settings are reported in ``metadata`` rather than merged
     into ``parameters``: a fitted parameter dictionary may legitimately contain
     a key of the same name, and merging would silently overwrite one of them.
-    ``parameters`` therefore means exactly "what the model was fitted with".
+    ``parameters`` holds artifact settings for models and caller-declared
+    settings for other methods; family/name preserve that distinction.
     """
     context = entry.context
     return {
@@ -68,8 +69,6 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "dataset_id": entry.dataset_id,
             "n_observations": entry.n_observations,
             "signal_fingerprint": entry.signal_fingerprint,
-            # A report that dropped the family would render a hand-set rule in
-            # the model slot, which is the misreading this field exists to stop.
             "method_family": entry.family,
             "method_name": entry.method_name,
             "horizon": context.horizon,

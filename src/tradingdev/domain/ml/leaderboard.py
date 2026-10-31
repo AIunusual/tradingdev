@@ -28,8 +28,7 @@ from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 Direction = Literal["maximize", "minimize"]
 MethodFamily = Literal["ml_model", "rule", "other"]
 
-# Ordered from most to least provenance: a model is reproduced by its artifact,
-# a rule by its name and parameters, and an unnamed signal by nothing.
+# Stable presentation order; family declarations do not prove provenance.
 METHOD_FAMILIES: tuple[MethodFamily, ...] = ("ml_model", "rule", "other")
 
 _MAX_METHOD_NAME_CHARACTERS = 160
@@ -197,12 +196,7 @@ class LeaderboardEntry:
     model_id: str = ""
     dataset_id: str = ""
     parameters: Mapping[str, Any] = field(default_factory=dict)
-    """The candidate's own hyperparameters as fitted.
-
-    A row that records only ``model_id`` cannot say how that model was
-    configured, so a later parameter study cannot read the settings back.
-    Empty for ad-hoc signals, which have no fitted parameters.
-    """
+    """Artifact settings for models; caller-declared settings for other methods."""
     signal_fingerprint: str = ""
     """Hash of the evaluated signal, kept apart from ``entry_id``.
 
@@ -398,9 +392,8 @@ def resolve_method(
 ) -> MethodIdentity:
     """Validate and complete a candidate's declared method identity.
 
-    Defaults describe what the caller actually supplied: a model ID means a
-    fitted model, and no model ID means an unnamed signal. Declaring a rule
-    requires a name, because an unnamed rule cannot be reported or reproduced.
+    A model ID declares a model, without proving signal origin. A rule requires
+    a name so its declared construction can be reported.
     A model's parameters are copied from its artifact, so caller-declared
     parameters are refused for model candidates rather than silently replacing
     them.
@@ -423,7 +416,7 @@ def resolve_method(
         )
     if model_id and family != "ml_model":
         raise ValueError(
-            f"model_id {model_id!r} is a fitted model, so its method family is "
+            f"model_id {model_id!r} declares a model, so its method family is "
             f"ml_model, not {family!r}"
         )
     if model_id and name:
@@ -433,8 +426,7 @@ def resolve_method(
         )
     if family == "rule" and not name:
         raise ValueError(
-            "a rule candidate needs method_name, so the rule can be reported "
-            "and reproduced instead of becoming another unnamed signal"
+            "a rule candidate needs method_name to describe its construction"
         )
     parameters = dict(method_parameters or {})
     if parameters and model_id:
@@ -671,18 +663,16 @@ def family_caveats(counts: Mapping[str, int]) -> tuple[str, ...]:
     if len(counts) > 1:
         described = ", ".join(f"{family}={count}" for family, count in counts.items())
         caveats.append(
-            f"candidates span {len(counts)} method families ({described}); a "
-            "fitted model, a hand-set rule and an unnamed signal were selected "
-            "differently, so equal scores are not equal evidence and the order "
-            "within a family is more informative than the order across "
-            "families. Filter by family to rank one kind"
+            f"candidates span {len(counts)} method families ({described}); "
+            "family labels do not establish equal evidence about selection "
+            "history or out-of-sample performance. Inspect provenance and "
+            "measurement conditions; filter by family to rank one kind"
         )
     unnamed = counts.get("other", 0)
     if unnamed:
         caveats.append(
-            f"{unnamed} candidate(s) declare no method family (other); what "
-            "built their signal is not recorded, so they cannot be reproduced "
-            "from this table alone"
+            f"{unnamed} candidate(s) use the other method family; names and "
+            "declared settings alone do not establish reproducible construction"
         )
     return tuple(caveats)
 

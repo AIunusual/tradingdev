@@ -271,7 +271,7 @@ class TestFamilyReporting:
     def test_unnamed_candidates_are_reported_on_their_own(self) -> None:
         caveats = family_caveats({"other": 2})
         assert len(caveats) == 1
-        assert "no method family" in caveats[0]
+        assert "other method family" in caveats[0]
 
     def test_a_mixed_table_with_unnamed_candidates_says_both(self) -> None:
         assert len(family_caveats({"rule": 1, "other": 1})) == 2

@@ -197,29 +197,31 @@ _ML_GUIDANCE = {
     "rules": (
         "evaluate_signal without model_id builds a rule signal from one saved "
         "feature column: +1 where the column is above (or below) the threshold, "
-        "-1 otherwise, so the rule is always in the market. A rule has no "
-        "fitting step, which is what lets one table answer whether fitting beat "
-        "a hand-set level; its score is still in-sample for the threshold you "
-        "chose. The label, the realised outcome and the row bookkeeping are "
-        "never readable columns, and a threshold that never changes the signal "
-        "is refused rather than recorded as a candidate with no positions. "
+        "-1 otherwise. These are signal values, not executed positions. The "
+        "shared simulation waits for n_quantiles prior observations and both "
+        "signal values, then uses the non-overlapping horizon grid. A late "
+        "first switch can leave every simulated return zero; this is not an "
+        "always-invested rule backtest. A rule has no fitting step, but its "
+        "selection history is not verified: choosing the threshold after "
+        "viewing these data is in-sample selection. Labels, realised outcomes "
+        "and row bookkeeping are forbidden; constant signals are unsupported. "
         "Sweeping the threshold stores one candidate per level, each with its "
         "level in parameters; parameter_axes covers only horizon, window and "
         "n_quantiles, so a rule sweep is not reported as a parameter surface."
     ),
     "ranking": (
-        "record=True replaces only the same model/dataset/evaluation context. "
+        "record=True replaces the same candidate/settings/dataset/context. "
         "leaderboard metrics have declared directions; never assume higher is "
         "better. Filter by dataset_id to compare one verified dataset version. "
         "Each row reports the method_family that produced it: ml_model (fitted, "
         "parameters copied from the artifact), rule (hand-set, parameters "
-        "declared by the caller) or other (unnamed). A table may mix them, and "
-        "the response counts each family; equal scores are not equal evidence "
-        "across families, so read that mix before the order and pass family to "
+        "declared by the caller) or other (other/unknown construction). A table "
+        "may mix them and counts each family; labels alone do not establish "
+        "equal evidence. Inspect provenance and pass family to "
         "rank one kind. It also reports the window, horizon and n_quantiles it "
-        "was measured under, the candidate's fitted parameters and its "
+        "was measured under, the candidate's saved settings and its "
         "signal_fingerprint; "
-        "comparing that fingerprint with a fresh predict shows whether a re-run "
+        "comparing that fingerprint with a fresh signal shows whether a re-run "
         "reproduced the recorded signal. allow_mixed permits incompatible "
         "contexts but does not make them comparable; allow_parameter_axes "
         "relaxes window, horizon and n_quantiles within the saved identity, "
@@ -341,7 +343,7 @@ class MLService:
         A signal need not come from a model. ``method_family`` says which kind
         of method built it, so a hand-set rule is ranked beside fitted models
         without being mistaken for one; ``method_name`` and
-        ``method_parameters`` then make that rule reproducible. Declaring a
+        ``method_parameters`` record its declared settings, not proof of origin. A
         rule without a name, or a model with a non-model family, is refused
         rather than recorded under a label that misdescribes it.
 
@@ -1237,8 +1239,8 @@ class MLService:
         hand-set level" answerable from one table.
 
         Panel datasets, unknown or reserved columns, a non-finite column and a
-        threshold that never changes the signal are refused rather than
-        evaluated into a row that describes nothing.
+        constant signal are refused. Binary signals still use the shared
+        simulator's historical warm-up and horizon grid, not direct positions.
         """
         frame, manifest = self._load_dataset(dataset_id)
         if manifest.get("kind") == "panel":
