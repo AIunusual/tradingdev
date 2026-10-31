@@ -60,15 +60,18 @@ class DirectionStrategy(BaseStrategy):
 def _opposite_trends() -> pd.DataFrame:
     # Train rises for three days; OOS falls for four days. Both periods have
     # equal open/close prices, so the fee-free hold return can be hand calculated.
-    prices = np.concatenate((np.arange(100.0, 172.0), np.arange(200.0, 104.0, -1)))
+    # Small positive prices expose any lossy worker serialization as zero prices.
+    prices = (
+        np.concatenate((np.arange(100.0, 172.0), np.arange(200.0, 104.0, -1))) * 1e-13
+    )
     return pd.DataFrame(
         {
             "timestamp": pd.date_range(
                 "2024-01-01", periods=len(prices), freq="h", tz="UTC"
             ),
             "open": prices,
-            "high": prices + 0.5,
-            "low": prices - 0.5,
+            "high": prices + 0.5e-13,
+            "low": prices - 0.5e-13,
             "close": prices,
             "volume": np.full(len(prices), 1000.0),
         }
@@ -159,7 +162,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             research=research_input(
                 end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
             ),
-            param_ranges={"direction": [-1, 0, 1]},
+            param_ranges={"direction": [-1, 0, 1, -1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
             train_end="2024-01-03",
@@ -173,6 +176,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
                     "search_1_1": ["/direction"],
                     "search_1_2": ["/direction"],
                     "search_1_3": ["/direction"],
+                    "search_1_4": ["/direction"],
                 },
             ),
         )
@@ -186,7 +190,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             research=research_input(
                 end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
             ),
-            param_ranges={"direction": [-1, 0, 1]},
+            param_ranges={"direction": [-1, 0, 1, -1]},
             optimization_metric="total_return",
             train_start="2024-01-01",
             train_end="2024-01-03",
@@ -200,6 +204,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
                     "search_1_1": ["/direction"],
                     "search_1_2": ["/direction"],
                     "search_1_3": ["/direction"],
+                    "search_1_4": ["/direction"],
                 },
             ),
         )
@@ -232,8 +237,8 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["manifest_hash"] == manifest_hash
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
-        assert completed["total_combinations"] == 3
-        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 3
+        assert completed["total_combinations"] == 4
+        assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 4
         # warmup=2 is a captured constructor default, not a grid parameter.
         # The engine enters one
         # bar later (index 3), and training must include the entire last day.
@@ -265,6 +270,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             "trial/0/train",
             "trial/1/train",
             "trial/2/train",
+            "trial/3/train",
             "test",
         }
         assert "daily_pnl_median" in run["available_metric_ids"]
@@ -304,6 +310,14 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert losing["parameters"] == {"direction": -1}
         assert losing["metrics"]["total_return"] < 0
         assert losing["metrics"]["daily_pnl_median"] < 0
+        repeated_trial = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/3/train",
+            metric_ids=["total_return", "daily_pnl_median"],
+        )
+        assert repeated_trial["parameters"] == losing["parameters"]
+        assert repeated_trial["metrics"] == losing["metrics"]
         flat = await client.call(
             "get_run_metrics",
             run_id=job_id,
@@ -328,7 +342,7 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         }
         search = manifest.optimization
         assert search is not None
-        assert search.param_ranges == {"direction": [-1, 0, 1]}
+        assert search.param_ranges == {"direction": [-1, 0, 1, -1]}
         assert search.optimization_metric == "total_return"
         assert search.train_start.isoformat() == "2024-01-01"
         assert search.train_end.isoformat() == "2024-01-03"
@@ -355,13 +369,23 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         observations = json.loads(original_observations)
         assert observations["manifest_hash"] == manifest_hash
         assert set(observations["scopes"]) == set(run["available_scopes"])
-        for scope_id in ["trial/0/train", "trial/1/train", "trial/2/train"]:
+        for scope_id in [
+            "trial/0/train",
+            "trial/1/train",
+            "trial/2/train",
+            "trial/3/train",
+        ]:
             raw = observations["scopes"][scope_id]
             assert (
                 len(raw["equity_curve"])
                 == len(raw["returns"])
                 == len(raw["timestamps"])
                 == 72
+            )
+        for field in ("equity_curve", "returns"):
+            assert (
+                observations["scopes"]["trial/0/train"][field]
+                == observations["scopes"]["trial/3/train"][field]
             )
         assert observations["scopes"]["trial/1/train"]["trades"] == []
         assert observations["scopes"]["trial/2/train"]["trades"][0][
