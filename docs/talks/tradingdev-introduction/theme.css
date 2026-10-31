@@ -51,6 +51,17 @@ section table th, section table td {
 section table th { color: #087f79; font-weight: 650; }
 section table tr { background: transparent; }
 section code { background: #e5eeea; color: #16343c; font-size: 0.85em; }
+section header {
+  position: absolute;
+  top: 24px;
+  left: 80px;
+  right: 80px;
+  color: #567076;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+}
 section footer {
   position: absolute;
   left: 80px;
@@ -64,18 +75,19 @@ section footer a { color: inherit; }
 section p:has(> em:only-child) { font-size: 21px; color: #567076; margin-top: 20px; }
 section p > em:only-child { font-style: normal; }
 section::after { right: 38px; bottom: 25px; color: #567076; font-size: 17px; }
-section.cover, section.chapter {
+section.cover, section.chapter, section.closing {
   background: #16343c;
   color: #f8f7f3;
 }
-section.cover h1, section.chapter h2 { color: #f8f7f3; }
-section.cover strong, section.chapter strong { color: #80d8c4; }
+section.cover h1, section.chapter h2, section.closing h2 { color: #f8f7f3; }
+section.cover strong, section.chapter strong, section.closing strong { color: #80d8c4; }
 section.cover h1 { margin-bottom: 20px; }
 section.cover p { font-size: 34px; }
-section.cover p:has(> em:only-child), section.chapter p:has(> em:only-child) { color: #b7cfcc; }
-section.cover::after, section.chapter::after { color: #b7cfcc; }
-section.chapter h2 { font-size: 58px; max-width: 1000px; }
-section.chapter p { font-size: 34px; max-width: 1030px; }
+section.cover p:has(> em:only-child), section.chapter p:has(> em:only-child), section.closing p:has(> em:only-child) { color: #b7cfcc; }
+section.cover::after, section.chapter::after, section.closing::after { color: #b7cfcc; }
+section.chapter header, section.closing header { color: #b7cfcc; }
+section.chapter h2, section.closing h2 { font-size: 58px; max-width: 1000px; }
+section.chapter p, section.closing p { font-size: 34px; max-width: 1030px; }
 section.statement blockquote { font-size: 42px; line-height: 1.5; }
 section.compact { font-size: 27px; }
 section.compact table { font-size: 23px; }

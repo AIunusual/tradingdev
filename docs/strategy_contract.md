@@ -49,6 +49,9 @@ Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+`parallel.overhead_multiplier` defaults to `3.0` and must be finite and strictly
+positive. Invalid values fail configuration validation before training or search;
+direct calls to the worker-count estimator enforce the same numeric restriction.
 
 `list_data_sources` returns registered source descriptions, including asset classes,
 symbol examples, local timeframe choices, applicable `data.market_type` values and
@@ -604,6 +607,22 @@ and automatic `train_ratio` must be finite and strictly between zero and one.
 Previously saved result manifests remain readable without rewriting their settings
 or hashes; executing an old configuration requires preparing valid new settings.
 
+Automatic `train_ratio` means the initial training window divided by that window
+plus one test window, before integer rounding. For `n` rows, `k` folds and ratio
+`r`, the initial training size is `floor(n * r / (r + k * (1 - r)))`, evaluated
+exactly from the decimal ratio saved in JSON before flooring. The remaining
+rows form `k` consecutive, nonoverlapping test windows through the last loaded
+row; boundaries divide those rows proportionally with integer floor, so test
+sizes differ by at most one. Rolling windows retain the initial training size;
+expanding windows retain training start at row zero. Each training window ends
+immediately before its test window. If any training or test window would be
+empty, splitting fails rather than dropping folds or unused tail rows.
+For 100 rows, 5 folds and ratio 0.8, training initially uses rows `[0, 44)` and
+tests cover `[44, 55)`, `[55, 66)`, `[66, 77)`, `[77, 88)`, `[88, 100)`.
+Re-running automatic configurations may change results compared with older
+versions that omitted the tail or rounded an integer boundary incorrectly;
+saved historical results are not rewritten.
+
 Explicit dates are converted to UTC (naive dates mean UTC), then their time of day
 is discarded. Their UTC days must satisfy
 `train_start <= train_end < test_start <= test_end`. All four dates are required.
@@ -931,9 +950,19 @@ Static-policy or quality-gate errors stop validation before generated code is
 imported or executed.
 
 This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
-still import and execute generated Python to check class loading, constructor
-behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
-dataframe output.
+import and execute generated Python in a supervised subprocess to check class
+loading, constructor behavior, BaseStrategy inheritance, input immutability,
+signal values, and smoke dataframe output. Each runtime check has a 60-second
+budget, excluding earlier static/quality checks and subsequent process cleanup;
+direct application callers may set `StrategyService(contract_timeout_seconds=...)`.
+An exception, abnormal exit such as `SystemExit`, or timeout produces failure
+diagnostics instead of ending or indefinitely blocking the calling service.
+Successful evidence must match the selected revision and fixture request.
+Temporary files are removed only after the supervisor's owned process group stops;
+unverified cleanup retains the directory and reports its path. Cleanup failure
+never produces passing validation/dry-run evidence. As with MCP preparation, this
+POSIX process-group guarantee excludes descendants that create a separate session
+and external forced termination of the supervisor; it is not an OS isolation boundary.
 
 Preparation is another code-execution boundary. MCP preparation runs under a
 supervised subprocess with a 60-second budget covering imports, constructor/default
@@ -947,8 +976,8 @@ signals, engines or performance calculations. Module-level code can execute more
 can have effects even when preparation fails without creating a formal job.
 
 The supervised timeout and process cleanup bound the program checks; they do not
-isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
-preparation continue to execute generated Python in their calling process. A
+isolate filesystem or network access. Direct Python/CLI preparation continues
+to execute generated Python in its calling process. A
 workspace path is an output location, not a security boundary.
 
 For scheduled jobs, workers later repeat the generated execution-contract checks,

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -19,8 +20,6 @@ from tests.integration.execution_fixtures import (
 )
 
 if TYPE_CHECKING:
-    import pandas as pd
-
     from tests.integration.mcp_harness import MCPClient, MCPWorkspace
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
@@ -637,6 +636,20 @@ async def test_walk_forward_runs_through_real_worker(
         )
         assert fold["kind"] == "backtest" and fold["split"] == "test"
         assert isinstance(fold["metrics"]["total_pnl"], float)
+        if validation["mode"] == "automatic":
+            final_fold = await client.call(
+                "get_run_metrics",
+                run_id=completed["run_id"],
+                scope=f"fold/{fold_count - 1}/test",
+            )
+            expected_end = min(
+                sample_ohlcv_with_kd.timestamp.iloc[-1],
+                pd.Timestamp(RUN_ARGUMENTS["end_date"], tz="UTC"),
+            )
+            assert (
+                pd.Timestamp(final_fold["metadata"]["observations"]["end_date"])
+                == expected_end
+            )
         if fold_count == 1:
             assert fold["metadata"]["observations"]["bar_count"] == 48
             assert fold["metadata"]["observations"]["start_date"].startswith(

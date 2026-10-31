@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -39,9 +41,71 @@ from tradingdev.mcp.tools import (
 )
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-HTTP_TRANSPORT_SECURITY = TransportSecuritySettings(
-    enable_dns_rebinding_protection=False,
-)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+def http_transport_security(
+    port: int = 8000,
+    *,
+    allowed_hosts: Sequence[str] = (),
+    allowed_origins: Sequence[str] = (),
+) -> TransportSecuritySettings:
+    """Allow local HTTP names and explicitly configured exact proxy values."""
+    if not 1 <= port <= 65535:
+        raise ValueError("HTTP port must be between 1 and 65535")
+    for host in allowed_hosts:
+        parsed = urlsplit(f"//{host}")
+        if (
+            not parsed.hostname
+            or parsed.netloc != host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or "*" in host
+            or "\\" in host
+            or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in host)
+        ):
+            raise ValueError(f"Allowed Host must be an exact hostname[:port]: {host!r}")
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError(f"Invalid allowed Host port: {host!r}")
+    for origin in allowed_origins:
+        parsed = urlsplit(origin)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or f"{parsed.scheme}://{parsed.netloc}" != origin
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or "*" in origin
+            or "\\" in origin
+            or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in origin)
+        ):
+            raise ValueError(
+                f"Allowed Origin must be an exact http(s)://host[:port]: {origin!r}"
+            )
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError(f"Invalid allowed Origin port: {origin!r}")
+    hosts = ["127.0.0.1", "localhost", "[::1]"]
+    hosts += [f"{host}:{port}" for host in hosts.copy()]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(dict.fromkeys([*hosts, *allowed_hosts])),
+        allowed_origins=list(
+            dict.fromkeys(
+                [
+                    *(f"http://{host}" for host in hosts),
+                    *allowed_origins,
+                ]
+            )
+        ),
+    )
 
 
 def create_server(workspace: WorkspacePaths | None = None) -> StrictMCPServer:
@@ -108,22 +172,50 @@ def main(argv: list[str] | None = None) -> None:
         default=8000,
         help="HTTP port when --web is set.",
     )
+    parser.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        help="Additional exact HTTP Host (hostname[:port]); repeat as needed.",
+    )
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="Additional exact Origin (http(s)://host[:port]); repeat as needed.",
+    )
     args = parser.parse_args(argv)
+    if not args.web and (args.allow_host or args.allow_origin):
+        parser.error("--allow-host and --allow-origin require --web")
+    try:
+        security = (
+            http_transport_security(
+                args.port,
+                allowed_hosts=args.allow_host,
+                allowed_origins=args.allow_origin,
+            )
+            if args.web
+            else None
+        )
+    except ValueError as error:
+        parser.error(str(error))
     mcp = create_server(WorkspacePaths(args.workspace))
 
     if args.web and args.transport == "streamable-http":
         mcp.run(
             transport="streamable-http",
+            host="127.0.0.1",
             port=args.port,
             # Preserve SSE streaming for clients using the legacy protocol.
             json_response=False,
-            transport_security=HTTP_TRANSPORT_SECURITY,
+            transport_security=security,
         )
     elif args.web:
         mcp.run(
             transport="sse",
+            host="127.0.0.1",
             port=args.port,
-            transport_security=HTTP_TRANSPORT_SECURITY,
+            transport_security=security,
         )
     else:
         mcp.run()

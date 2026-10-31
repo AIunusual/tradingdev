@@ -109,6 +109,13 @@ def strategy_contract_payload(
                 "and repeats the contract on a longer fixture. Inspect diagnostics, "
                 "signal_analysis and effective_config against the user's request; "
                 "passing checks is not proof of every natural-language requirement.",
+                "Runtime import, construction and signal checks use a supervised "
+                "worker with a 60-second budget. Abnormal exit, timeout or cleanup "
+                "failure produces diagnostics and cannot grant passing evidence. "
+                "Repair in a new revision; unverified process cleanup retains its "
+                "temporary directory for inspection. Cleanup covers the owned "
+                "process group, excluding descendants that leave its session. "
+                "This is not a security sandbox.",
                 "Execution requires runnable or promoted status. Each execution "
                 "fixes effective constructor parameters and checks them again; "
                 "parameter experiments reuse the runnable revision rather than "
@@ -190,6 +197,14 @@ def strategy_contract_payload(
                 "strategy.parameters and bundled strategy.fit are strategy-specific. "
                 "Use validation training/test windows for training-required "
                 "strategies. Capabilities describe requirements, not fitted state.",
+                "Automatic walk-forward uses train_ratio = initial train / "
+                "(initial train + one test window), using the saved decimal ratio "
+                "before integer rounding. "
+                "It rounds initial training rows down and divides all remaining "
+                "rows into consecutive test folds through the final loaded row; "
+                "test sizes differ by at most one. Rolling keeps the initial "
+                "training length; expanding keeps the first row. Empty train/test "
+                "windows are rejected. Explicit and purged modes are unchanged.",
                 "Set backtest.periods_per_year for observed UTC daily returns: "
                 "365 for continuously traded crypto, an appropriate calendar for "
                 "other markets. It is independent of bar timeframe. risk_free_rate "

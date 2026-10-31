@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -129,10 +130,15 @@ class DataSplitter:
         cfg = self._config
         assert isinstance(cfg, AutomaticWalkForwardConfig)
         n = len(df)
-        total_per_split = n // cfg.n_splits
-        train_size = int(total_per_split * cfg.train_ratio)
-        test_size = total_per_split - train_size
-        if train_size < 1 or test_size < 1:
+        # Solve T / (T + S) = ratio with T + n_splits * S = n.
+        # Round the initial training size down, then distribute every remaining
+        # row over contiguous test windows whose sizes differ by at most one.
+        # Interpret the decimal value persisted in JSON, without binary-rounding
+        # errors crossing an integer boundary before floor.
+        ratio = Fraction(str(cfg.train_ratio))
+        train_size = int(n * ratio / (ratio + cfg.n_splits * (1 - ratio)))
+        remaining = n - train_size
+        if train_size < 1 or remaining < cfg.n_splits:
             raise WalkForwardSplitError(
                 "Automatic walk-forward needs nonempty train and test windows; "
                 f"received {n} rows for {cfg.n_splits} folds "
@@ -141,17 +147,10 @@ class DataSplitter:
 
         windows: list[tuple[tuple[int, int], tuple[int, int]]] = []
         for i in range(cfg.n_splits):
-            if cfg.expanding:
-                train_start_idx = 0
-                train_end_idx = train_size + i * test_size
-            else:
-                train_start_idx = i * test_size
-                train_end_idx = train_start_idx + train_size
-            test_start_idx = train_end_idx
-            test_end_idx = test_start_idx + test_size
-
-            if test_end_idx > n:
-                break
+            test_start_idx = train_size + remaining * i // cfg.n_splits
+            test_end_idx = train_size + remaining * (i + 1) // cfg.n_splits
+            train_end_idx = test_start_idx
+            train_start_idx = 0 if cfg.expanding else train_end_idx - train_size
 
             windows.append(
                 ((train_start_idx, train_end_idx), (test_start_idx, test_end_idx))
