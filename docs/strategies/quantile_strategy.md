@@ -144,3 +144,9 @@ artifacts under `workspace/generated_strategies/`.
 - `edge_for_full_size_candidates`: dynamic sizing scale candidates.
 - `retrain_interval` and `train_window`: rolling retrain cadence and context.
 - `target_metric` and `min_monthly_pnl`: optimization objective and guardrail.
+
+An omitted or empty horizon, entry-edge or full-size-edge candidate list uses
+the corresponding single configured value. With `dynamic_sizing: false`, the
+full-size-edge candidate list is ignored and only `edge_for_full_size` is used.
+Defaults therefore evaluate at least one combination; a finite eligible
+objective is still required after evaluation to complete `fit()`.
