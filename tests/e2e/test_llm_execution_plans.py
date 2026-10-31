@@ -96,7 +96,9 @@ def _arguments(kind: PlanKind, revision_id: str | None) -> dict[str, Any]:
     return args
 
 
-async def _seed_walk_forward(client: MCPClient) -> str:
+async def _seed_walk_forward(
+    client: MCPClient, *, validation: dict[str, Any] | None = None
+) -> str:
     """Persist a genuinely validated/runnable fixture before involving the model."""
     contract = (await client.call("get_strategy_contract", section="example"))[
         "content"
@@ -106,7 +108,9 @@ async def _seed_walk_forward(client: MCPClient) -> str:
     config["backtest"].update(
         **_MARKET, **_COSTS, start_date="2024-01-01", end_date="2024-01-08"
     )
-    config["validation"] = _WF_VALIDATION.copy()
+    config["validation"] = (
+        _WF_VALIDATION.copy() if validation is None else validation.copy()
+    )
     config["random_seed"] = 42
     saved = await client.call(
         "save_strategy",

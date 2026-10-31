@@ -604,6 +604,22 @@ and automatic `train_ratio` must be finite and strictly between zero and one.
 Previously saved result manifests remain readable without rewriting their settings
 or hashes; executing an old configuration requires preparing valid new settings.
 
+Automatic `train_ratio` means the initial training window divided by that window
+plus one test window, before integer rounding. For `n` rows, `k` folds and ratio
+`r`, the initial training size is `floor(n * r / (r + k * (1 - r)))`, evaluated
+exactly from the decimal ratio saved in JSON before flooring. The remaining
+rows form `k` consecutive, nonoverlapping test windows through the last loaded
+row; boundaries divide those rows proportionally with integer floor, so test
+sizes differ by at most one. Rolling windows retain the initial training size;
+expanding windows retain training start at row zero. Each training window ends
+immediately before its test window. If any training or test window would be
+empty, splitting fails rather than dropping folds or unused tail rows.
+For 100 rows, 5 folds and ratio 0.8, training initially uses rows `[0, 44)` and
+tests cover `[44, 55)`, `[55, 66)`, `[66, 77)`, `[77, 88)`, `[88, 100)`.
+Re-running automatic configurations may change results compared with older
+versions that omitted the tail or rounded an integer boundary incorrectly;
+saved historical results are not rewritten.
+
 Explicit dates are converted to UTC (naive dates mean UTC), then their time of day
 is discarded. Their UTC days must satisfy
 `train_start <= train_end < test_start <= test_end`. All four dates are required.

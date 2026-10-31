@@ -136,6 +136,9 @@ def test_contract_sections_are_discoverable_and_keep_required_rules(
     ):
         assert rule in monthly_limit["description"]
     assert set(sections["configuration"]) == {"config_schema", "notes"}
+    configuration_notes = " ".join(sections["configuration"]["notes"])
+    assert "consecutive test folds through the final loaded row" in configuration_notes
+    assert "test sizes differ by at most one" in configuration_notes
     example = sections["example"]
     assert set(example) == {"example_strategy_code", "example_yaml_config"}
     assert yaml.safe_load(example["example_yaml_config"])["random_seed"] == 42

@@ -190,6 +190,14 @@ def strategy_contract_payload(
                 "strategy.parameters and bundled strategy.fit are strategy-specific. "
                 "Use validation training/test windows for training-required "
                 "strategies. Capabilities describe requirements, not fitted state.",
+                "Automatic walk-forward uses train_ratio = initial train / "
+                "(initial train + one test window), using the saved decimal ratio "
+                "before integer rounding. "
+                "It rounds initial training rows down and divides all remaining "
+                "rows into consecutive test folds through the final loaded row; "
+                "test sizes differ by at most one. Rolling keeps the initial "
+                "training length; expanding keeps the first row. Empty train/test "
+                "windows are rejected. Explicit and purged modes are unchanged.",
                 "Set backtest.periods_per_year for observed UTC daily returns: "
                 "365 for continuously traded crypto, an appropriate calendar for "
                 "other markets. It is independent of bar timeframe. risk_free_rate "
