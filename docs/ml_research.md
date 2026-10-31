@@ -79,10 +79,15 @@ the configured risk threshold and holding rules; a missing risk feature does not
 unconditionally flatten a position. Threshold search continues to evaluate its
 filtered validation feature rows, unlike Quantile's full-frame gap handling.
 
-The XGBoost and FLAML direction model training APIs require at least one labelled
-training row. A supplied validation frame must also be non-empty. Empty inputs
+The XGBoost, LightGBM, CatBoost and FLAML direction model training APIs require at
+least one labelled training row. A supplied validation frame must also be non-empty. Empty inputs
 raise `ValueError` before model state changes or external training starts,
-preserving any previously fitted model. XGBoost's lookback search requires at
+preserving any previously fitted model. XGBoost, LightGBM and CatBoost also reject
+validation targets whose classes are absent from the training window. Their label
+encoders use training targets only; validation answers are never replaced with
+a known class. A rejected fit preserves the previous model, feature columns and
+class mapping. Select a training window covering the needed classes before retrying.
+XGBoost's lookback search requires at
 least 10 mature training rows and 5 mature validation rows per candidate, after
 feature and label filtering. It skips insufficient candidates and raises
 `ValueError` if none qualifies, without installing a default lookback or refitting
