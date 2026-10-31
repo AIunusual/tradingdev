@@ -8,6 +8,7 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
 from tradingdev.domain.ml.base import BaseModel
+from tradingdev.domain.ml.models.direction_targets import fit_direction_encoder
 from tradingdev.domain.ml.registry import feature_importance_from_gain
 from tradingdev.shared.utils.logger import setup_logger
 
@@ -44,12 +45,11 @@ class CatBoostDirectionModel(BaseModel):
         from catboost import CatBoostClassifier
 
         feature_cols = [c for c in df.columns if c not in _EXCLUDE_COLS]
-        self._feature_names = feature_cols
 
         x_train = df[feature_cols]
 
-        self._label_encoder.fit(df["target"])
-        y_train = self._label_encoder.transform(df["target"])
+        encoder = fit_direction_encoder(df, eval_df)
+        y_train = encoder.transform(df["target"])
 
         clf = CatBoostClassifier(
             n_estimators=self._config.n_estimators,
@@ -70,12 +70,7 @@ class CatBoostDirectionModel(BaseModel):
         fit_kwargs: dict[str, Any] = {}
         if eval_df is not None:
             x_val = eval_df[feature_cols]
-            known = set(self._label_encoder.classes_)
-            y_val_safe = eval_df["target"].where(
-                eval_df["target"].isin(known),
-                self._label_encoder.classes_[0],
-            )
-            y_val = self._label_encoder.transform(y_val_safe)
+            y_val = encoder.transform(eval_df["target"])
             fit_kwargs["eval_set"] = [(x_val, y_val)]
 
         clf.fit(x_train, y_train, **fit_kwargs)
@@ -89,6 +84,8 @@ class CatBoostDirectionModel(BaseModel):
             if key in metadata:
                 del metadata[key]
         self._model = clf
+        self._feature_names = feature_cols
+        self._label_encoder = encoder
 
         logger.info(
             "CatBoost trained: %d samples, %d features",
