@@ -198,6 +198,39 @@ def test_missing_metric_discovery_or_detail_is_rejected(tool: str) -> None:
         assert_workflow(calls, SCENARIOS["repair"])
 
 
+@pytest.mark.parametrize("metrics_before_summary", [False, True])
+def test_natural_runtime_repair_accepts_report_without_artifact_listing(
+    metrics_before_summary: bool,
+) -> None:
+    calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
+    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    if metrics_before_summary:
+        summary = next(call for call in calls if call.name == "get_run")
+        calls.remove(summary)
+        calls.append(summary)
+    report = ToolCall(
+        "generate_report",
+        {"run_ids": ["run"]},
+        {"success": True, "run_ids": ["run"], "artifact_id": "report:html"},
+    )
+    calls.append(report)
+    scenario = replace(SCENARIOS["repair"], runtime_exit=True)
+    assert_workflow(calls, scenario)
+    for result in (
+        {"success": False},
+        {"success": True, "run_ids": ["unrelated"], "artifact_id": "report:html"},
+    ):
+        report.result = result
+        with pytest.raises(AssertionError, match="generate_report"):
+            assert_workflow(calls, scenario)
+
+
+def test_scripted_repair_still_requires_artifact_listing() -> None:
+    calls = [call for call in _repair_evidence() if call.name != "list_artifacts"]
+    with pytest.raises(AssertionError, match="list_artifacts"):
+        assert_workflow(calls, SCENARIOS["repair"])
+
+
 def test_detail_from_another_run_is_rejected() -> None:
     calls = _repair_evidence()
     calls[-1].arguments["run_id"] = "unrelated"

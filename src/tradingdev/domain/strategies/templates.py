@@ -109,6 +109,13 @@ def strategy_contract_payload(
                 "and repeats the contract on a longer fixture. Inspect diagnostics, "
                 "signal_analysis and effective_config against the user's request; "
                 "passing checks is not proof of every natural-language requirement.",
+                "Runtime import, construction and signal checks use a supervised "
+                "worker with a 60-second budget. Abnormal exit, timeout or cleanup "
+                "failure produces diagnostics and cannot grant passing evidence. "
+                "Repair in a new revision; unverified process cleanup retains its "
+                "temporary directory for inspection. Cleanup covers the owned "
+                "process group, excluding descendants that leave its session. "
+                "This is not a security sandbox.",
                 "Execution requires runnable or promoted status. Each execution "
                 "fixes effective constructor parameters and checks them again; "
                 "parameter experiments reuse the runnable revision rather than "

@@ -30,7 +30,8 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 [uv](https://docs.astral.sh/uv/getting-started/installation/)，
 以及支援 MCP stdio 或 Streamable HTTP 的 AI 客戶端。專案使用 Python 3.14；
 鎖定的 Numba／llvmlite 不提供 Intel Mac 預編譯套件，
-原生 Windows 目前不支援背景回測與最佳化。
+原生 Windows 目前不支援生成策略驗證、執行計畫檢查及背景回測與最佳化；
+這些程序監督功能需要 POSIX 環境。
 
 Node.js 不是啟動 MCP 助手或執行離線 pytest 的先決條件。若要**建置或檢查簡報**
 （`scripts/presentations.sh`、`scripts/check-presentations.sh`），另需 Node.js 18

@@ -150,8 +150,10 @@ stateDiagram-v2
     runnable --> promoted: promote_strategy
 ```
 
-驗證先做靜態政策與共用 Ruff／Mypy 檢查，再由 SignalContractChecker 在合成資料上
-檢查建構子、設定與訊號；dry-run 使用較長 fixture。實際執行也套用共用訊號框架檢查，
+驗證先做靜態政策與共用 Ruff／Mypy 檢查，再由 StrategyContractService 透過具期限的
+worker 執行 SignalContractChecker，在合成資料上檢查匯入、建構子、設定與訊號；
+dry-run 使用較長 fixture。回覆綁定原請求，確認 supervisor 持有的程序群組清理後才保存證據；
+異常退出、逾時及清理失敗皆不授予執行資格。實際執行也套用共用訊號框架檢查，
 防止缺列、索引錯位、輸入修改或無效訊號進入引擎。檢查不證明沒有前視或符合自然語言構想。
 
 BacktestService 在提交及執行時重新核對資格與來源完整性。明選 revision 不存在時
@@ -391,8 +393,9 @@ ProcessRunner 先核對 supervisor 身分，再建立 worker 程序群組。Supe
 執行中的 job 取得清理確認後才能標記 cancelled；尚未啟動的 queued job 可直接取消。
 
 監督依賴 POSIX process groups 與 `waitid(WNOWAIT)`，以尚未回收的直屬 child 維持身分。
-MCP preflight 受此監督；獨立驗證、dry-run 及直接 service／CLI 內執行的策略不因此
-受到監督。外部強殺 supervisor 或後代自行脫離 session 不在清理保證內。
+策略 validate／dry-run（含直接 StrategyService 呼叫）及 MCP preflight 受此監督；
+直接 Python API／CLI 的執行設定捕捉不因此受到監督。外部強殺 supervisor 或後代
+自行脫離 session 不在清理保證內。
 控制檔案與證據見[Workspace Layout](docs/run_artifacts.md#workspace-layout)。
 
 ### 可重現性與策略執行安全

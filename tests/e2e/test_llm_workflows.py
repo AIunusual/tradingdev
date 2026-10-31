@@ -21,6 +21,7 @@ from tests.e2e.workflow_research import assert_research_reused
 from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.domain.preflight import PreflightReceipt
+from tradingdev.domain.presentation.reports import REPORT_RECIPES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,11 +39,19 @@ async def seed_broken_draft(workspace: MCPWorkspace, scenario: Scenario) -> None
         contract = (await client.call("get_strategy_contract", section="example"))[
             "content"
         ]
-        code = contract["example_strategy_code"].replace(
-            "        return result",
-            '        result["signal"] = np.nan\n        return result',
-        )
-        assert 'result["signal"] = np.nan' in code
+        if scenario.runtime_exit:
+            code = contract["example_strategy_code"].replace(
+                "        result = df.copy()",
+                "        if len(df):\n            raise SystemExit(7)\n"
+                "        result = df.copy()",
+            )
+            assert "raise SystemExit(7)" in code
+        else:
+            code = contract["example_strategy_code"].replace(
+                "        return result",
+                '        result["signal"] = np.nan\n        return result',
+            )
+            assert 'result["signal"] = np.nan' in code
         config = yaml.safe_load(contract["example_yaml_config"])
         config["strategy"]["parameters"] = scenario.parameters
         config["backtest"].update(
@@ -106,7 +115,7 @@ async def seed_legacy_strategy(
 
 
 def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
-    """Require actual successful tool results in order, not a model's summary."""
+    """Check successful evidence and necessary revision/execution ordering."""
     calls = effective_workflow_calls(calls)
     target = f"strategy_id={scenario.strategy_id!r}"
 
@@ -374,19 +383,37 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         f"get_run(run_id={run_id!r}) belongs to "
         f"strategy_id={queried.result['run']['strategy_id']!r}, expected {target}"
     )
-    require_index(
-        f"list_artifacts(run_id={run_id!r}) returning a nonempty result "
-        f"after get_job_status reported done for {target}",
-        (
-            index
-            for index, call in enumerate(calls)
-            if index > done_index
-            and call.name == "list_artifacts"
-            and isinstance(call.result, dict)
-            and call.result.get("items")
-            and call.arguments.get("run_id") == run_id
-        ),
-    )
+    if scenario.runtime_exit:
+        # A natural request may obtain artifact IDs directly from the report
+        # result. The outer verifier checks the delivered file, hash, sections
+        # and saved analysis before the temporary workspace is removed.
+        require_index(
+            f"generate_report returning a report for run_id={run_id!r}",
+            (
+                index
+                for index, call in enumerate(calls)
+                if index > done_index
+                and call.name == "generate_report"
+                and call.result
+                and call.result.get("success") is True
+                and call.result.get("run_ids") == [run_id]
+                and call.result.get("artifact_id")
+            ),
+        )
+    else:
+        require_index(
+            f"list_artifacts(run_id={run_id!r}) returning a nonempty result "
+            f"after get_job_status reported done for {target}",
+            (
+                index
+                for index, call in enumerate(calls)
+                if index > done_index
+                and call.name == "list_artifacts"
+                and isinstance(call.result, dict)
+                and call.result.get("items")
+                and call.arguments.get("run_id") == run_id
+            ),
+        )
     catalog_index = require_index(
         "get_metric_catalog returning the additional metrics",
         (
@@ -404,7 +431,12 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         (
             index
             for index, call in enumerate(calls)
-            if index > max(queried_index, catalog_index)
+            if index
+            > (
+                done_index
+                if scenario.runtime_exit
+                else max(queried_index, catalog_index)
+            )
             and call.name == "get_run_metrics"
             and call.arguments.get("run_id") == run_id
             and call.result
@@ -464,6 +496,11 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         assert sum(call.name == "prepare_backtest" for call in calls) == 1
         assert sum(call.name == "submit_execution_decision" for call in calls) == 1
     if scenario.repair:
+        failure_code = (
+            "strategy_check_failed"
+            if scenario.runtime_exit
+            else "invalid_signal_values"
+        )
         read_index = require_index(
             f"get_strategy({target}) returning success=True before repairing the draft",
             (
@@ -477,7 +514,7 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         )
         failure_index = require_index(
             f"validate_strategy({target}) returning success=False with "
-            "diagnostic code='invalid_signal_values' before repairing the draft",
+            f"diagnostic code='{failure_code}' before repairing the draft",
             (
                 index
                 for index, call in enumerate(calls)
@@ -486,14 +523,14 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.result
                 and call.result.get("success") is False
                 and any(
-                    diagnostic.get("code") == "invalid_signal_values"
+                    diagnostic.get("code") == failure_code
                     for diagnostic in call.result.get("diagnostics", [])
                 )
             ),
         )
         assert read_index < failure_index < save_index, (
             f"Invalid MCP repair order for {target}: successful get_strategy must "
-            "precede validate_strategy with invalid_signal_values, which must "
+            f"precede validate_strategy with {failure_code}, which must "
             f"precede successful save_strategy (events {read_index}, "
             f"{failure_index}, {save_index})"
         )
@@ -529,6 +566,13 @@ def test_llm_authors_backtests_and_queries_results(
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
             }
+            if scenario.runtime_exit:
+                async with workspace.connect() as client:
+                    names = [
+                        tool.name for tool in (await client.session.list_tools()).tools
+                    ]
+                    assert all(name not in scenario.prompt for name in names)
+                    options["tool_names"] = names
             if provider == "codex":
                 calls = codex_calls(
                     await run_codex(
@@ -569,6 +613,19 @@ def test_llm_authors_backtests_and_queries_results(
             persisted = saved["scopes"][detail.result["scope"]]["values"]
             for metric_id in DETAIL_METRIC_IDS:
                 assert detail.result["metrics"][metric_id] == persisted[metric_id]
+            if scenario.runtime_exit:
+                verify_report_delivery(
+                    WorkspacePaths(workspace.workspace),
+                    user.turns[-1],
+                    detail.arguments["run_id"],
+                    expected_sections=list(REPORT_RECIPES["standard"]),
+                    expected_commentary=None,
+                    required_analysis_refs={(detail.arguments["run_id"], "full")},
+                )
+                print(
+                    "[runtime-repair] Final model reply:\n" + user.turns[-1].text,
+                    flush=True,
+                )
             if scenario.history:
                 print(
                     "[history] Final model reply (test evidence; temporary links "

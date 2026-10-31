@@ -89,6 +89,23 @@ Comparison snapshots and receipts are published only after approval and data
 loading. A failed or cancelled comparison may have neither `snapshot.parquet`
 nor `receipt.json` if it stopped before data publication.
 
+Strategy validation and dry-run use a separate system temporary directory named
+`tradingdev-strategy-check-*`, outside the source workspace. It contains
+`request.json`, the worker's `result.json` when available, `.workers/<launch_token>`
+supervisor controls, and isolated `tmp`, `numba`, `matplotlib` and `mypy` paths as
+needed. The request identifies the source workspace, fixed revision metadata and
+fixture size; the response binds its evidence to the request's SHA-256 digest.
+These files are runtime-check artifacts, not saved research runs or reports.
+
+The directory is removed after the supervisor confirms its owned process group
+has stopped, on both success and failure. If shutdown cannot be verified, the
+directory is retained and its path is included in failure diagnostics. Failure
+to remove the directory also returns a cleanup diagnostic with its path; neither
+case grants passing validation or dry-run evidence. The process-group guarantee
+excludes descendants that create a separate session and external forced
+termination of the supervisor, as described in the
+[strategy security model](strategy_contract.md#security-model).
+
 ## Research Evidence Records
 
 `ResearchEvidenceService` saves client-authored explanations without fetching

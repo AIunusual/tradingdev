@@ -950,9 +950,19 @@ Static-policy or quality-gate errors stop validation before generated code is
 imported or executed.
 
 This is not a full process sandbox. `validate_strategy` and `dry_run_strategy`
-still import and execute generated Python to check class loading, constructor
-behavior, BaseStrategy inheritance, input immutability, signal values, and smoke
-dataframe output.
+import and execute generated Python in a supervised subprocess to check class
+loading, constructor behavior, BaseStrategy inheritance, input immutability,
+signal values, and smoke dataframe output. Each runtime check has a 60-second
+budget, excluding earlier static/quality checks and subsequent process cleanup;
+direct application callers may set `StrategyService(contract_timeout_seconds=...)`.
+An exception, abnormal exit such as `SystemExit`, or timeout produces failure
+diagnostics instead of ending or indefinitely blocking the calling service.
+Successful evidence must match the selected revision and fixture request.
+Temporary files are removed only after the supervisor's owned process group stops;
+unverified cleanup retains the directory and reports its path. Cleanup failure
+never produces passing validation/dry-run evidence. As with MCP preparation, this
+POSIX process-group guarantee excludes descendants that create a separate session
+and external forced termination of the supervisor; it is not an OS isolation boundary.
 
 Preparation is another code-execution boundary. MCP preparation runs under a
 supervised subprocess with a 60-second budget covering imports, constructor/default
@@ -966,8 +976,8 @@ signals, engines or performance calculations. Module-level code can execute more
 can have effects even when preparation fails without creating a formal job.
 
 The supervised timeout and process cleanup bound the program checks; they do not
-isolate filesystem or network access. Validation, dry-run, and direct Python/CLI
-preparation continue to execute generated Python in their calling process. A
+isolate filesystem or network access. Direct Python/CLI preparation continues
+to execute generated Python in its calling process. A
 workspace path is an output location, not a security boundary.
 
 For scheduled jobs, workers later repeat the generated execution-contract checks,
