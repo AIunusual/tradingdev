@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import platform
 import subprocess
@@ -66,16 +67,24 @@ def estimate_n_jobs(
     Args:
         df: The DataFrame that will be distributed to workers.
         safety_factor: Fraction of available RAM to use (0–1).
-        overhead_multiplier: Estimated memory multiplier per worker.
+        overhead_multiplier: Finite positive memory multiplier per worker.
         reserve_cores: Number of cores to reserve for the OS and other
             processes.  Subtracted from the detected core count.
 
     Returns:
         Number of workers (>= 1, <= performance_cores - reserve_cores).
+
+    Raises:
+        ValueError: If overhead_multiplier is not finite and positive.
     """
-    per_worker_bytes = int(df.memory_usage(deep=True).sum() * overhead_multiplier)
+    if not math.isfinite(overhead_multiplier) or overhead_multiplier <= 0:
+        raise ValueError("overhead_multiplier must be finite and positive")
+    frame_bytes = int(df.memory_usage(deep=True).sum())
+    # A finite multiplier can overflow when multiplied by the frame size.
+    # Infinite memory demand still has the conservative one-worker fallback.
+    per_worker_bytes = max(1.0, frame_bytes * overhead_multiplier)
     available_bytes = int(psutil.virtual_memory().available * safety_factor)
-    max_by_memory = max(1, available_bytes // max(per_worker_bytes, 1))
+    max_by_memory = max(1, int(available_bytes // per_worker_bytes))
 
     perf_cores = _get_performance_core_count()
     max_by_cpu = max(1, perf_cores - reserve_cores)
@@ -85,7 +94,7 @@ def estimate_n_jobs(
     logger.info(
         "Parallel estimate: df=%.1f MB, available=%.1f MB, "
         "n_jobs=%d (mem_limit=%d, perf_cores=%d, reserve=%d)",
-        per_worker_bytes / overhead_multiplier / 1e6,
+        frame_bytes / 1e6,
         available_bytes / 1e6,
         n_jobs,
         max_by_memory,

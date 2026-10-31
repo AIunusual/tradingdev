@@ -49,6 +49,9 @@ Validation and dry-run validate this same run configuration before strategy code
 executes and return `effective_config` for checking the request against defaults.
 A valid configuration does not by itself prove that every natural-language
 requirement has been fulfilled.
+`parallel.overhead_multiplier` defaults to `3.0` and must be finite and strictly
+positive. Invalid values fail configuration validation before training or search;
+direct calls to the worker-count estimator enforce the same numeric restriction.
 
 `list_data_sources` returns registered source descriptions, including asset classes,
 symbol examples, local timeframe choices, applicable `data.market_type` values and

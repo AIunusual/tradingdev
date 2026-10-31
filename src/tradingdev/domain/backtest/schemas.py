@@ -91,7 +91,7 @@ class ParallelConfig(BaseModel):
 
     reserve_cores: int = 2
     safety_factor: float = 0.6
-    overhead_multiplier: float = 3.0
+    overhead_multiplier: float = Field(default=3.0, gt=0, allow_inf_nan=False)
 
     @field_validator("reserve_cores")
     @classmethod
