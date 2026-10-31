@@ -121,7 +121,24 @@ uv run --locked tradingdev-mcp \
 這是 MCP 工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
 
 `127.0.0.1` 指向發起連線的設備本身，另一台設備不能直接用這個網址連到你的主機。
-跨設備測試需另行設定網路轉送及存取控制；目前啟動命令未提供 `--host` 參數。
+服務固定綁定 loopback。MCP HTTP 端點預設僅接受本機 `127.0.0.1`、`localhost`、`[::1]` 的 Host，
+包括指定連接埠；瀏覽器 Origin 也須為對應的本機 HTTP 來源。沒有 Origin 的原生客戶端
+仍可連線，不可信 Host／Origin 分別收到 HTTP 421／403。
+跨設備連線須使用具驗證與存取控制的反向代理或網路轉送，並保護後端 loopback 端點。
+若代理保留公開 Host，或瀏覽器使用不同來源，明確增加對應的完整值，例如：
+
+```bash
+uv run --locked tradingdev-mcp \
+  --workspace /absolute/path/to/tradingdev-workspace --web --port 8000 \
+  --allow-host research.example.com \
+  --allow-origin https://research.example.com
+```
+
+兩個允許選項可重複指定；值須精確符合請求（含非預設連接埠），不接受萬用字元。
+允許清單檢查適用於 Streamable HTTP 與 SSE 的 MCP 端點；研究封存下載端點仍依簽章網址
+驗證，不使用此允許清單。允許清單不是登入驗證，也不授予跨來源瀏覽器讀取權限。
+代理須另行處理使用者驗證、TLS 及所需的瀏覽器跨來源政策。
+stdio 不使用這些 HTTP 設定。
 只支援雲端 URL 的客戶端也無法透過這個本機位址連接。
 
 HTTP 客戶端須支援 Streamable HTTP 的 SSE 串流回覆；若經過代理轉送，也須保留串流。
