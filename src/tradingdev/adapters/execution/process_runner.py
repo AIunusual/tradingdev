@@ -249,7 +249,13 @@ class ProcessRunner:
                 ) from None
             raise
 
-    def run_module(self, module: str, *args: str, timeout_seconds: float) -> None:
+    def run_module(
+        self,
+        module: str,
+        *args: str,
+        timeout_seconds: float,
+        operation: str = "preflight",
+    ) -> None:
         """Wait for one supervised module and verify cleanup on every outcome."""
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("Worker timeout must be finite and positive")
@@ -258,8 +264,8 @@ class ProcessRunner:
             handle = self.spawn_module(module, *args)
         except BaseException as error:
             raise BoundedWorkerError(
-                "preflight_start_failed",
-                f"Preflight worker could not start: {error}",
+                f"{operation}_start_failed",
+                f"{operation} worker could not start: {error}",
                 cleanup_verified=not isinstance(error, BaseExceptionGroup),
             ) from error
         directory = self._workspace.root / ".workers" / handle.control_id
@@ -268,7 +274,7 @@ class ProcessRunner:
         try:
             while True:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Preflight exceeded its total time budget")
+                    raise TimeoutError(f"{operation} exceeded its total time budget")
                 completion = _read_control(directory / "finished.json")
                 if completion is not None:
                     break
@@ -279,15 +285,15 @@ class ProcessRunner:
             request_worker_stop(self._workspace.root, handle, timeout=15)
         except BaseException as error:
             raise BoundedWorkerError(
-                "preflight_cleanup_failed",
-                f"Preflight cleanup could not be verified: {error}",
+                f"{operation}_cleanup_failed",
+                f"{operation} cleanup could not be verified: {error}",
                 cleanup_verified=False,
             ) from error
         if failure is not None:
             raise BoundedWorkerError(
-                "preflight_timeout"
+                f"{operation}_timeout"
                 if isinstance(failure, TimeoutError)
-                else "preflight_failed",
+                else f"{operation}_failed",
                 str(failure),
                 cleanup_verified=True,
             ) from failure
@@ -297,7 +303,7 @@ class ProcessRunner:
             or completion.get("error")
         ):
             raise BoundedWorkerError(
-                "preflight_failed",
-                f"Preflight worker failed: {completion}",
+                f"{operation}_failed",
+                f"{operation} worker failed: {completion}",
                 cleanup_verified=True,
             )
