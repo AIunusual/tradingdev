@@ -254,6 +254,9 @@ def verify_ml_report_outcome(
             # family, not the stored field, which is empty on older rows.
             "method_family": entry.family,
             "method_name": entry.method_name,
+            # The dataset the model was trained on, so a reader can tell an
+            # in-sample score from a held-out one. Empty means unknown.
+            "training_dataset_id": entry.training_dataset_id,
         }, "Saved context snapshot changed"
         assert scope["observations"] is None
         assert scope["kind"] == "ml_signal" and scope["mode"] == "signal"

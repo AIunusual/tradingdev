@@ -608,7 +608,9 @@ class MLService:
             elif isinstance(value, (int, float)):
                 number = float(value)
                 stored_metrics[key] = number if math.isfinite(number) else None
-        label, parameters = self._candidate_identity(model_id, fingerprint, identity)
+        label, parameters, training_dataset_id = self._candidate_identity(
+            model_id, fingerprint, identity
+        )
         entry = LeaderboardEntry(
             entry_id=build_entry_id(
                 model_id=model_id or "",
@@ -631,6 +633,7 @@ class MLService:
             signal_fingerprint=fingerprint,
             method_family=identity.family,
             method_name=identity.name,
+            training_dataset_id=training_dataset_id,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -642,6 +645,7 @@ class MLService:
             "signal_fingerprint": fingerprint,
             "method_family": identity.family,
             "method_name": identity.name,
+            "training_dataset_id": training_dataset_id,
         }
 
     @staticmethod
@@ -655,27 +659,33 @@ class MLService:
 
     def _candidate_identity(
         self, model_id: str | None, fingerprint: str, identity: MethodIdentity
-    ) -> tuple[str, dict[str, Any]]:
-        """A readable name for a recorded candidate and its settings.
+    ) -> tuple[str, dict[str, Any], str]:
+        """A readable name, its settings, and the dataset the model was trained on.
 
         The parameters come from the artifact itself, so a row describes the
         model that produced it even if the artifact is later retrained. A
         candidate without a model has no artifact to read, so its declared name
         and settings are used instead of a bare hash: an unnamed signal keeps
         the hash in its label, which is all that distinguishes it.
+
+        The training dataset comes from the artifact as well. An artifact that
+        predates the binding, or one that cannot be loaded at all, yields an
+        empty id: the row then says the training data is unknown rather than
+        implying the evaluation dataset trained the model.
         """
         if not model_id:
             label = identity.name or (
                 f"ad-hoc signal ({fingerprint[:8]})" if fingerprint else "ad-hoc signal"
             )
-            return label, dict(identity.parameters)
+            return label, dict(identity.parameters), ""
         try:
             artifact = ModelArtifactStore(self._workspace.models).load(model_id)
         except FileNotFoundError, ValueError:
-            return model_id, {}
+            return model_id, {}, ""
         return (
             f"{artifact.model_name} ({artifact.framework})",
             dict(artifact.parameters),
+            artifact.training_dataset_id,
         )
 
     def leaderboard(
@@ -766,6 +776,7 @@ class MLService:
                 "dataset_id": item.entry.dataset_id,
                 "method_family": item.entry.family,
                 "method_name": item.entry.method_name,
+                "training_dataset_id": item.entry.training_dataset_id,
                 "horizon": item.entry.context.horizon,
                 "window": item.entry.context.window,
                 "n_quantiles": item.entry.context.n_quantiles,
@@ -803,6 +814,7 @@ class MLService:
                     "label": item.entry.label,
                     "method_family": item.entry.family,
                     "method_name": item.entry.method_name,
+                    "training_dataset_id": item.entry.training_dataset_id,
                     "reason": item.reason,
                     # A candidate with no score is still a point on the grid:
                     # without these coordinates a failed run leaves a hole that

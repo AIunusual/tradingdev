@@ -297,11 +297,13 @@ does not prove a model-to-run relationship or persist missing time series. Full
 selection, visibility and retention semantics are in the
 [report contract](reports.md#composable-offline-reports).
 
-Leaderboard records do not retain the training/evaluation split or establish
-whether evaluated rows participated in fitting or selection. A report built only
-from those records therefore establishes neither in-sample nor out-of-sample
-status. Describe the saved evaluation sample and keep that provenance unknown;
-model IDs, dataset IDs and a `full` scope are not split evidence.
+Leaderboard records carry the training dataset when the model artifact records one,
+so an entry whose `training_dataset_id` equals its `dataset_id` was scored on the
+rows its model was fitted on. That equality is the only conclusion the record
+supports: a different value does not establish a holdout, and an empty one leaves
+the relationship unknown, including on every record written before the binding
+existed. Describe the saved evaluation sample, and do not infer a training
+relationship from model IDs, dataset IDs or a `full` scope alone.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -539,10 +541,11 @@ already contain the computed features.
 
 ### Trained Models
 
-`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
-pickled model wrapper. Metadata records model name, framework, kind, effective
-parameters, ordered features, training-row count, available feature importance
-and full blob SHA-256. At build time, the ID is computed as a 16-character
+`models/<model_id>.json` holds schema 2 metadata; the matching `.bin` holds the
+pickled model wrapper. Schema 1 records still load. Metadata records model name,
+framework, kind, effective parameters, ordered features, training-row count,
+available feature importance, the dataset the final artifact was fitted on and
+full blob SHA-256. At build time, the ID is computed as a 16-character
 SHA-256 prefix over name, parameters, ordered features and blob hash. It
 identifies model content, not a training execution or saved validation result.
 
@@ -553,6 +556,18 @@ to those fields may still go undetected. Metadata is not compared with the
 serialized estimator, and the ID neither authenticates publishers nor proves all
 metadata unchanged. Prediction checks exact ordered dataset features and unpickles
 the same bytes that passed hash verification.
+
+Schema 2 adds `training_dataset_id`, the dataset the final artifact was fitted on.
+The dataset ID is derived from the dataset manifest, so it identifies the rows, the
+request that built them and the code that did it. It is deliberately absent from the
+model ID: recording it must not rename a model that already exists. Schema 1 records
+read with an empty value, which stays unknown and is never inferred from the model,
+its metrics or the current dataset registry. An empty value is not "trained on
+nothing".
+
+The field records where the artifact was fitted. It does not make any evaluation
+held out; [Recorded Signal Evaluations](#recorded-signal-evaluations) states how a
+leaderboard record compares it with the dataset that record scored.
 
 Writers for one model ID hold `.<model_id>.lock`. A new blob is staged beside its
 destination and atomically published; an existing blob must have the same hash and
@@ -604,7 +619,8 @@ result without a leaderboard write.
 by ID. Each record preserves finite metrics, observation count, model and dataset
 IDs, a display label, the candidate's saved settings, the hash of the
 signal that was measured, the method family that produced it (`ml_model`, `rule`
-or `other`) with a readable `method_name` for candidates that have no model, and
+or `other`) with a readable `method_name` for candidates that have no model, the
+dataset its model was trained on when the artifact records one, and
 an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
 build-time code fingerprint and dataset content hash. For a model row, the fitted
@@ -617,6 +633,16 @@ Empty parameters are not fitted defaults, and an empty fingerprint is not
 reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
+
+`training_dataset_id` is empty when the artifact predates schema 2, could not be
+loaded, or no model produced the signal. Equality with `dataset_id` means the
+recorded score is in-sample. Inequality proves nothing about the rows: a dataset
+identity also covers the requested period and the build-time code fingerprint, so
+identical rows can carry two identities, and genuinely different versions can
+still cover overlapping periods. A training window and an evaluation window that
+share dates produce two identities and no holdout. Older records are not
+backfilled, and a reader must not substitute the evaluation dataset for a missing
+training one.
 
 #### Method families
 

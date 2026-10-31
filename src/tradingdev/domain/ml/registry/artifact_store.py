@@ -54,6 +54,10 @@ class ModelArtifactStore:
 
         Writers for one ID serialize validation and publication. Readers need
         no lock: metadata becomes visible only after its immutable blob exists.
+        A second save of the same content may fill in an unknown training
+        dataset, but it may not replace one that was already recorded: rows
+        written earlier kept that value, so silently changing it here would
+        leave the artifact disagreeing with its own evaluations.
         """
         model_id = artifact.model_id
         self._verify_identity(artifact, model_id)
@@ -81,6 +85,16 @@ class ModelArtifactStore:
                     or existing.content_hash != artifact.content_hash
                 ):
                     raise ValueError(f"model identity collision for id: {model_id}")
+                if (
+                    existing.training_dataset_id
+                    and existing.training_dataset_id != artifact.training_dataset_id
+                ):
+                    raise ValueError(
+                        f"model {model_id} is already recorded as fitted on "
+                        f"{existing.training_dataset_id}, so identical model "
+                        f"content from {artifact.training_dataset_id} cannot "
+                        "replace that provenance"
+                    )
             elif blob_path.exists():
                 # An interrupted first publication may leave a complete blob.
                 # Reuse it only if it belongs to this exact content.

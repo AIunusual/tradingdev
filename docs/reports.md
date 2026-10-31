@@ -38,10 +38,12 @@ also require semantic review. Single-run delivery still identifies its run ID.
 `app/report_ml.py` reads one complete leaderboard file generation; missing IDs,
 corrupt records and duplicate stored identities fail without publishing a partial
 report. It does not load model pickle, retrain, rerun predictions or download data.
-Leaderboard records do not save training/evaluation split evidence. Their model
-and dataset identities and `full` scope do not establish either in-sample or
-out-of-sample status. The ML view discloses this uncertainty; report commentary
-and final interpretation must retain it rather than infer a training relationship.
+Leaderboard records carry the training dataset when the model artifact records one.
+An entry whose training dataset equals its evaluation dataset was scored on the
+rows its model was fitted on; a different value does not establish a holdout, and
+an empty one leaves the relationship unknown. The ML view discloses that condition;
+report commentary and final interpretation must state it rather than infer a
+training relationship from model or dataset identities alone.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and
@@ -145,6 +147,9 @@ Candidate details show the saved method family and name. Parameters come from
 the model artifact or, for rules and other signals, the caller's declaration;
 rule thresholds are not described as fitted model parameters. Family labels do
 not establish training/selection history or out-of-sample validity.
+The candidate's training dataset is shown when the artifact records one. A rule
+says training data does not apply, and an older model record says the training
+dataset is unknown, so neither is left blank and neither is inferred.
 
 Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
 eligible scalar scope. It uses saved bar returns grouped by observed UTC date,

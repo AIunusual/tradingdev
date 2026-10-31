@@ -171,8 +171,8 @@ def test_sample_provenance_is_unknown_even_with_saved_model_identity(
     body = render_ml_report(block, has_runs=has_runs)
     introduction = body.split("<h3>研究範圍與參數座標</h3>", 1)[0]
     assert f"<p class='notice'>{escape(ML_SAMPLE_PROVENANCE_NOTE)}</p>" in introduction
-    assert "未保存訓練／評估資料的切分證據" in introduction
-    assert "無法判定這些評估結果屬於樣本內或樣本外" in introduction
+    assert "若與評估資料集相同，則該分數為樣本內" in introduction
+    assert "訓練與評估的關係仍未知" in introduction
     assert "<details" not in introduction
 
 
@@ -319,3 +319,34 @@ def test_report_without_ml_pins_interpretation_template_bytes() -> None:
     )
     assert "data-ml-download" not in document
     assert "#ml .ml-candidate" not in document
+
+
+def _candidate_html(entry: LeaderboardEntry, name: str = "binding-report") -> str:
+    body = _body(render_report(_payload(entry), name))
+    return body.split("id='ml-candidate-0'", 1)[1].split("</details>", 1)[0]
+
+
+def test_a_model_candidate_shows_the_dataset_it_was_trained_on() -> None:
+    trained = replace(_entry(ic_mean=0.2), training_dataset_id="ds_training")
+    candidate = _candidate_html(trained)
+    assert "<th>訓練資料集</th><td>ds_training</td>" in candidate
+
+
+def test_a_rule_candidate_says_training_data_does_not_apply() -> None:
+    rule = replace(
+        _entry(ic_mean=0.2),
+        model_id="",
+        method_family="rule",
+        method_name="rsi_14 < 30",
+        parameters={"threshold": 30.0},
+    )
+    candidate = _candidate_html(rule)
+    assert "不適用（無訓練模型）" in candidate
+    assert "未知（此紀錄未保存）" not in candidate
+
+
+def test_an_older_model_candidate_says_the_training_dataset_is_unknown() -> None:
+    """A blank cell would read the same for "never trained" and "not saved"."""
+    candidate = _candidate_html(_entry(ic_mean=0.2))
+    assert "未知（此紀錄未保存）" in candidate
+    assert "不適用（無訓練模型）" not in candidate

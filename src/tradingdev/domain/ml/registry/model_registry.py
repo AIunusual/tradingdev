@@ -11,6 +11,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+# Schema 1 predates the training-dataset binding; both are readable so an
+# existing model is not rejected merely for being older than the field.
+_READABLE_SCHEMAS = frozenset({1, 2})
+
 
 @dataclass(frozen=True)
 class ModelArtifact:
@@ -26,6 +30,14 @@ class ModelArtifact:
     kind: str = "classifier"
     n_train_samples: int = 0
     feature_importance: tuple[tuple[str, float], ...] = field(default_factory=tuple)
+    training_dataset_id: str = ""
+    """Dataset the final artifact was fitted on; ``""`` on records older than it.
+
+    The dataset id is derived from the dataset manifest, so it identifies the
+    rows and their content. It is deliberately absent from ``model_id``: adding
+    it must not rename a model that already exists. An empty value is unknown,
+    never "trained on nothing", and must not be reconstructed by guessing.
+    """
 
     @property
     def n_features(self) -> int:
@@ -45,6 +57,7 @@ class ModelArtifact:
             "n_train_samples": self.n_train_samples,
             "parameters": self.parameters,
             "content_hash": self.content_hash,
+            "training_dataset_id": self.training_dataset_id,
             "feature_importance": [
                 {"feature": name, "importance": value}
                 for name, value in self.feature_importance
@@ -53,11 +66,15 @@ class ModelArtifact:
 
     @classmethod
     def from_metadata(cls, payload: dict[str, Any]) -> ModelArtifact:
-        """Rebuild a record from stored metadata, validating its shape."""
-        if payload.get("schema_version") != cls._CURRENT_SCHEMA:
-            raise ValueError(
-                f"unsupported model schema_version: {payload.get('schema_version')}"
-            )
+        """Rebuild a record from stored metadata, validating its shape.
+
+        Schema 1 predates the training-dataset binding; its rows read with an
+        empty ``training_dataset_id``, which stays unknown rather than being
+        inferred from the model, the metrics or the current registry.
+        """
+        version = payload.get("schema_version")
+        if version not in _READABLE_SCHEMAS:
+            raise ValueError(f"unsupported model schema_version: {version}")
         importance = tuple(
             (item["feature"], float(item["importance"]))
             for item in payload.get("feature_importance", [])
@@ -65,7 +82,7 @@ class ModelArtifact:
         return cls(
             model_id=str(payload["model_id"]),
             model_name=str(payload["model_name"]),
-            schema_version=int(payload["schema_version"]),
+            schema_version=int(version),
             framework=str(payload.get("framework", "")),
             kind=str(payload.get("kind", "classifier")),
             feature_names=tuple(payload.get("feature_names", [])),
@@ -73,9 +90,12 @@ class ModelArtifact:
             parameters=dict(payload.get("parameters", {})),
             content_hash=str(payload.get("content_hash", "")),
             feature_importance=importance,
+            # ``or ""`` rather than a default: a stored null means the same
+            # unknown as a missing key, and str(None) would read as "None".
+            training_dataset_id=str(payload.get("training_dataset_id") or ""),
         )
 
-    _CURRENT_SCHEMA: int = field(default=1, init=False, repr=False)
+    _CURRENT_SCHEMA: int = field(default=2, init=False, repr=False)
 
 
 def _stable_json(value: dict[str, Any]) -> str:
@@ -114,9 +134,17 @@ def build_model_artifact(
     feature_names: tuple[str, ...],
     content_hash: str,
     n_train_samples: int,
+    training_dataset_id: str,
     feature_importance: tuple[tuple[str, float], ...] | None = None,
 ) -> ModelArtifact:
-    """Assemble a :class:`ModelArtifact`, computing its deterministic id."""
+    """Assemble a :class:`ModelArtifact`, computing its deterministic id.
+
+    ``training_dataset_id`` is required rather than defaulted: a model whose
+    training data is unknown would look the same as one trained on nothing, and
+    an in-sample evaluation could then never be told apart from a held-out one.
+    """
+    if not training_dataset_id:
+        raise ValueError("a model artifact requires the dataset it was trained on")
     model_id = compute_model_id(
         model_name=model_name,
         parameters=parameters,
@@ -133,6 +161,7 @@ def build_model_artifact(
         parameters=dict(parameters),
         content_hash=content_hash,
         n_train_samples=n_train_samples,
+        training_dataset_id=training_dataset_id,
         feature_importance=tuple(feature_importance or ()),
     )
 

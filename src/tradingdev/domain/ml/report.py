@@ -39,8 +39,9 @@ ML_REPORT_SCHEMA_VERSION = 1
 ML_SIGNAL_KIND = "ml_signal"
 ML_SIGNAL_MODE = "signal"
 ML_SAMPLE_PROVENANCE_NOTE = (
-    "排行榜紀錄未保存訓練／評估資料的切分證據，"
-    "因此無法判定這些評估結果屬於樣本內或樣本外。"
+    "排行榜紀錄會保存模型訓練資料集：若與評估資料集相同，則該分數為樣本內；"
+    "不同不代表樣本外，兩個資料集版本仍可能涵蓋重疊期間。"
+    "沒有模型或未保存此欄位的紀錄，訓練與評估的關係仍未知。"
 )
 
 
@@ -71,6 +72,7 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "signal_fingerprint": entry.signal_fingerprint,
             "method_family": entry.family,
             "method_name": entry.method_name,
+            "training_dataset_id": entry.training_dataset_id,
             "horizon": context.horizon,
             "window": context.window,
             "n_quantiles": context.n_quantiles,

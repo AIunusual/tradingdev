@@ -55,10 +55,11 @@ def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
         assert json.loads(json.dumps(params, allow_nan=False)) == params
 
 
-def test_report_guidance_retains_unknown_sample_provenance(service: MLService) -> None:
+def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
-    assert "無法判定" in guidance and "樣本內或樣本外" in guidance
+    assert "若與評估資料集相同，則該分數為樣本內" in guidance
+    assert "訓練與評估的關係仍未知" in guidance
 
 
 def test_evaluate_signal_on_a_perfectly_monotonic_signal(service: MLService) -> None:

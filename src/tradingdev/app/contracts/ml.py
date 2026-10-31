@@ -115,6 +115,13 @@ class RecordedEvaluation(ContractModel):
     """Which kind of method produced the signal."""
     method_name: str
     """Readable rule name; empty for a model and for an unnamed signal."""
+    training_dataset_id: str
+    """Dataset the model was fitted on; empty when unknown or for no model.
+
+    Equality with the evaluation dataset means the score is in-sample.
+    Inequality proves nothing: a dataset identity also covers the requested
+    period and the code fingerprint, and different versions can still overlap.
+    """
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -180,6 +187,8 @@ class LeaderboardRow(ContractModel):
     """Which kind of method produced this signal: ml_model, rule or other."""
     method_name: str
     """The rule's readable name; empty for a model and for an unnamed signal."""
+    training_dataset_id: str
+    """Dataset the model was fitted on; empty when unknown or for no model."""
     horizon: int
     window: int
     n_quantiles: int
@@ -208,6 +217,8 @@ class LeaderboardSkipped(ContractModel):
     method_family: str
     """Which kind of method produced this signal, so a failed rule stays a rule."""
     method_name: str
+    training_dataset_id: str
+    """Dataset the model was fitted on; empty when unknown or for no model."""
     reason: str
     horizon: int
     window: int

@@ -212,6 +212,17 @@ class LeaderboardEntry:
     """
     method_name: str = ""
     """Readable name of a non-model candidate, such as a rule's settings."""
+    training_dataset_id: str = ""
+    """Dataset the candidate's model was fitted on; ``""`` when unknown.
+
+    Recorded so a reader can compare it with ``dataset_id``, the dataset the
+    evaluation ran on. Equality means the score is in-sample. Inequality proves
+    nothing about the rows: a dataset identity also covers the requested period
+    and the build-time code fingerprint, and genuinely different versions can
+    still cover overlapping periods. An empty value is unknown, including on
+    every row written before the binding existed; it is never reconstructed from
+    the model, the metrics or the current registry.
+    """
 
     @property
     def family(self) -> MethodFamily:
@@ -247,6 +258,7 @@ class LeaderboardEntry:
             "signal_fingerprint": self.signal_fingerprint,
             "method_family": self.method_family,
             "method_name": self.method_name,
+            "training_dataset_id": self.training_dataset_id,
             "n_observations": self.n_observations,
             "metrics": {
                 key: _stored_metric(value) for key, value in self.metrics.items()
@@ -308,6 +320,7 @@ class LeaderboardEntry:
             # row never carried. ``family`` performs the inference on access.
             method_family=family,
             method_name=str(record.get("method_name", "")),
+            training_dataset_id=str(record.get("training_dataset_id") or ""),
             n_observations=int(record.get("n_observations", 0)),
             # A stored null is a measured-and-failed score, not a missing key,
             # so it must come back as None instead of being converted or dropped.
