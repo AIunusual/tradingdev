@@ -3,6 +3,7 @@
 from typing import Any
 
 import pandas as pd
+import pytest
 
 from tradingdev.domain.backtest.signal_engine import (
     SignalBacktestEngine,
@@ -114,14 +115,24 @@ class TestWalkForwardValidator:
         results = validator.validate(strategy, walk_forward_ohlcv_df)
         assert "k_period" in results[0].strategy_params
 
-    def test_auto_split_rolling(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
+    @pytest.mark.parametrize("expanding", [False, True])
+    def test_auto_split_reaches_last_observation(
+        self, walk_forward_ohlcv_df: pd.DataFrame, expanding: bool
+    ) -> None:
         config = AutomaticWalkForwardConfig(
-            mode="automatic", n_splits=2, train_ratio=0.7, expanding=False
+            mode="automatic", n_splits=2, train_ratio=0.7, expanding=expanding
         )
         strategy = KDStrategy(config=KDStrategyConfig())
         validator = WalkForwardValidator(config=config, engine=self.engine)
         results = validator.validate(strategy, walk_forward_ohlcv_df)
         assert len(results) == 2
+        assert results[-1].test_end == walk_forward_ohlcv_df.timestamp.iloc[-1]
+        assert results[-1].test_backtest is not None
+        assert results[-1].test_backtest.timestamps is not None
+        assert (
+            pd.Timestamp(results[-1].test_backtest.timestamps[-1])
+            == walk_forward_ohlcv_df.timestamp.iloc[-1]
+        )
 
     def test_summary_aggregation(self, walk_forward_ohlcv_df: pd.DataFrame) -> None:
         config = AutomaticWalkForwardConfig(

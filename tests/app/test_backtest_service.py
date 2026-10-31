@@ -253,7 +253,15 @@ def test_run_raw_config_walk_forward_uses_validation_section(tmp_path: Path) -> 
     assert run.pipeline.mode == "walk_forward"
     assert len(run.pipeline.fold_results) == 2
     assert run.metrics["n_folds"] == 2
-    assert strategy.fit_lengths == [10, 10]
+    # Forty rows split into an initial 13-row train and 13/14-row test windows.
+    assert strategy.fit_lengths == [13, 13]
+    assert [fold.test_start for fold in run.pipeline.fold_results] == [
+        pd.Timestamp("2024-01-01 13:00", tz="UTC"),
+        pd.Timestamp("2024-01-02 02:00", tz="UTC"),
+    ]
+    assert run.pipeline.fold_results[-1].test_end == pd.Timestamp(
+        "2024-01-02 15:00", tz="UTC"
+    )
 
 
 def _gate_service(tmp_path: Path) -> StrategyService:
