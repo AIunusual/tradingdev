@@ -42,8 +42,9 @@ class LeaderboardStore:
         timeframe: str | None = None,
         horizon: int | None = None,
         feature_set: str | None = None,
+        family: str | None = None,
     ) -> tuple[LeaderboardEntry, ...]:
-        """Filter stored candidates by dataset and measurement conditions.
+        """Filter stored candidates by dataset, conditions and method family.
 
         Corrupt records raise ValueError; skipping them would distort candidate
         counts and the reported significance threshold.
@@ -52,6 +53,7 @@ class LeaderboardStore:
             entry
             for entry in self._read()
             if (dataset_id is None or entry.dataset_id == dataset_id)
+            and (family is None or entry.family == family)
             and entry.context.matches(
                 symbol=symbol,
                 timeframe=timeframe,

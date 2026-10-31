@@ -403,3 +403,71 @@ def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
     assert {row.window for row in board.ranked} == {20, 30}
     assert all(row.signal_fingerprint for row in board.ranked)
     assert any("surface" in text for text in board.caveats)
+
+
+def test_leaderboard_family_filter_reaches_the_service(
+    mcp: MCPServer, recorded: str
+) -> None:
+    rejected = _dispatch(mcp, "leaderboard", {"metric": "icir", "family": "ensemble"})
+    assert rejected["success"] is False
+    assert rejected["code"] == "invalid_leaderboard_request"
+
+    board = LeaderboardPageResponse.model_validate(
+        _dispatch(mcp, "leaderboard", {"metric": "icir", "family": "ml_model"})
+    )
+    assert board.families == {"ml_model": 2}
+    assert {row.method_family for row in board.ranked} == {"ml_model"}
+
+
+def test_evaluate_signal_records_a_rule_without_a_model(
+    mcp: MCPServer, workspace: WorkspacePaths
+) -> None:
+    built = _dispatch(
+        mcp,
+        "build_dataset",
+        {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "feature_set": "technical",
+        },
+    )
+    dataset_id = built["dataset"]["dataset_id"]
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    level = float(frame["rsi_14"].median())
+
+    result = _dispatch(
+        mcp,
+        "evaluate_signal",
+        {
+            "dataset_id": dataset_id,
+            "column": "rsi_14",
+            "threshold": level,
+            "direction": "below",
+            "window": 20,
+            "record": True,
+        },
+    )
+
+    assert result["success"] is True
+    assert result["recorded"]["method_family"] == "rule"
+    assert result["recorded"]["method_name"] == f"rsi_14 < {level:g}"
+    assert "model_id" not in result
+
+
+def test_evaluate_signal_refuses_a_model_and_a_rule_together(
+    mcp: MCPServer, recorded: str
+) -> None:
+    rejected = _dispatch(
+        mcp,
+        "evaluate_signal",
+        {
+            "dataset_id": recorded,
+            "model_id": _GOOD_MODEL,
+            "column": "rsi_14",
+            "threshold": 50.0,
+        },
+    )
+    assert rejected["success"] is False
+    assert rejected["code"] == "invalid_signal"

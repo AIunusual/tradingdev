@@ -68,6 +68,10 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "dataset_id": entry.dataset_id,
             "n_observations": entry.n_observations,
             "signal_fingerprint": entry.signal_fingerprint,
+            # A report that dropped the family would render a hand-set rule in
+            # the model slot, which is the misreading this field exists to stop.
+            "method_family": entry.family,
+            "method_name": entry.method_name,
             "horizon": context.horizon,
             "window": context.window,
             "n_quantiles": context.n_quantiles,

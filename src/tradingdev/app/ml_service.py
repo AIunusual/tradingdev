@@ -52,13 +52,17 @@ from tradingdev.domain.ml.features.registry import (
     get_feature_set,
 )
 from tradingdev.domain.ml.leaderboard import (
+    METHOD_FAMILIES,
     EvaluationContext,
     LeaderboardEntry,
+    MethodIdentity,
     build_entry_id,
     comparability_error,
+    family_counts,
     parameter_axes,
     rank_entries,
     rankable_metrics,
+    resolve_method,
     signal_fingerprint,
     surface_caveats,
 )
@@ -85,6 +89,7 @@ from tradingdev.domain.ml.rolling_gen import (
     get_rolling_scheme,
     rolling_scheme_names,
 )
+from tradingdev.domain.ml.rules import ThresholdRule
 from tradingdev.domain.ml.validation import (
     get_validation_scheme,
     validation_scheme_names,
@@ -92,7 +97,7 @@ from tradingdev.domain.ml.validation import (
 from tradingdev.domain.performance.sampling import bar_duration_ns
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from tradingdev.domain.ml.calendar import PanelAlignment
 
@@ -189,12 +194,31 @@ _ML_GUIDANCE = {
         "and are holding-interval outcomes, not mark-to-market bar returns. "
         "Quantile strata describe the entire sample and do not drive positions."
     ),
+    "rules": (
+        "evaluate_signal without model_id builds a rule signal from one saved "
+        "feature column: +1 where the column is above (or below) the threshold, "
+        "-1 otherwise, so the rule is always in the market. A rule has no "
+        "fitting step, which is what lets one table answer whether fitting beat "
+        "a hand-set level; its score is still in-sample for the threshold you "
+        "chose. The label, the realised outcome and the row bookkeeping are "
+        "never readable columns, and a threshold that never changes the signal "
+        "is refused rather than recorded as a candidate with no positions. "
+        "Sweeping the threshold stores one candidate per level, each with its "
+        "level in parameters; parameter_axes covers only horizon, window and "
+        "n_quantiles, so a rule sweep is not reported as a parameter surface."
+    ),
     "ranking": (
         "record=True replaces only the same model/dataset/evaluation context. "
         "leaderboard metrics have declared directions; never assume higher is "
         "better. Filter by dataset_id to compare one verified dataset version. "
-        "Each row reports the window, horizon and n_quantiles it was measured "
-        "under, the candidate's fitted parameters and its signal_fingerprint; "
+        "Each row reports the method_family that produced it: ml_model (fitted, "
+        "parameters copied from the artifact), rule (hand-set, parameters "
+        "declared by the caller) or other (unnamed). A table may mix them, and "
+        "the response counts each family; equal scores are not equal evidence "
+        "across families, so read that mix before the order and pass family to "
+        "rank one kind. It also reports the window, horizon and n_quantiles it "
+        "was measured under, the candidate's fitted parameters and its "
+        "signal_fingerprint; "
         "comparing that fingerprint with a fresh predict shows whether a re-run "
         "reproduced the recorded signal. allow_mixed permits incompatible "
         "contexts but does not make them comparable; allow_parameter_axes "
@@ -287,6 +311,7 @@ class MLService:
             "calendar_modes": [mode.value for mode in CalendarMode],
             "missing_policies": [policy.value for policy in MissingPolicy],
             "leaderboard_metrics": list(rankable_metrics()),
+            "method_families": list(METHOD_FAMILIES),
             "guidance": dict(_ML_GUIDANCE),
         }
 
@@ -301,6 +326,9 @@ class MLService:
         record: bool = False,
         model_id: str | None = None,
         dataset_id: str | None = None,
+        method_family: str | None = None,
+        method_name: str | None = None,
+        method_parameters: Mapping[str, float] | None = None,
     ) -> dict[str, Any]:
         """Evaluate one asset's chronological predictions against forward returns.
 
@@ -310,9 +338,21 @@ class MLService:
         adopts the saved value, or one bar without a dataset. Recording requires
         a dataset ID. ``model_id`` is a caller label, not proof of signal origin.
 
-        Returns a ``SignalEvaluationResponse`` payload; invalid inputs raise
-        ``ValueError``.
+        A signal need not come from a model. ``method_family`` says which kind
+        of method built it, so a hand-set rule is ranked beside fitted models
+        without being mistaken for one; ``method_name`` and
+        ``method_parameters`` then make that rule reproducible. Declaring a
+        rule without a name, or a model with a non-model family, is refused
+        rather than recorded under a label that misdescribes it.
+
+        Returns an evaluation payload; invalid inputs raise ``ValueError``.
         """
+        identity = resolve_method(
+            model_id=model_id,
+            method_family=method_family,
+            method_name=method_name,
+            method_parameters=method_parameters,
+        )
         if len(signal) != len(forward_returns):
             raise ValueError(
                 "signal and forward_returns must have equal length "
@@ -421,6 +461,7 @@ class MLService:
                 n_quantiles=n_quantiles,
                 model_id=model_id,
                 dataset_id=dataset_id,
+                identity=identity,
             )
         return payload
 
@@ -525,6 +566,7 @@ class MLService:
         n_quantiles: int,
         model_id: str | None,
         dataset_id: str | None,
+        identity: MethodIdentity,
     ) -> dict[str, Any]:
         """Store one evaluation so it can be ranked against its peers."""
         if not dataset_id:
@@ -564,7 +606,7 @@ class MLService:
             elif isinstance(value, (int, float)):
                 number = float(value)
                 stored_metrics[key] = number if math.isfinite(number) else None
-        label, parameters = self._candidate_identity(model_id, fingerprint)
+        label, parameters = self._candidate_identity(model_id, fingerprint, identity)
         entry = LeaderboardEntry(
             entry_id=build_entry_id(
                 model_id=model_id or "",
@@ -572,9 +614,13 @@ class MLService:
                 context=context,
                 # A model ID already names the candidate, so folding the hash
                 # in would change every existing entry_id. It is stored in its
-                # own field instead. Without a model ID the hash is the only
-                # thing separating two ad-hoc signals on the same dataset.
-                signal_fingerprint="" if model_id else fingerprint,
+                # own field instead. A named rule is identified the same way,
+                # by its name: re-running it after a dataset-independent change
+                # replaces the row instead of adding a second candidate that
+                # the name claims to be the same one. Without either, the hash
+                # is the only thing separating two ad-hoc signals.
+                signal_fingerprint="" if (model_id or identity.name) else fingerprint,
+                method_name=identity.name,
             ),
             label=label,
             context=context,
@@ -584,6 +630,8 @@ class MLService:
             dataset_id=dataset_id,
             parameters=parameters,
             signal_fingerprint=fingerprint,
+            method_family=identity.family,
+            method_name=identity.name,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -593,6 +641,8 @@ class MLService:
             "context": context.describe(),
             "n_candidates": len(store.entries()),
             "signal_fingerprint": fingerprint,
+            "method_family": identity.family,
+            "method_name": identity.name,
         }
 
     @staticmethod
@@ -605,18 +655,21 @@ class MLService:
         return ",".join(str(item) for item in symbols)
 
     def _candidate_identity(
-        self, model_id: str | None, fingerprint: str
+        self, model_id: str | None, fingerprint: str, identity: MethodIdentity
     ) -> tuple[str, dict[str, Any]]:
-        """A readable name for a recorded candidate and its fitted settings.
+        """A readable name for a recorded candidate and its settings.
 
         The parameters come from the artifact itself, so a row describes the
-        model that produced it even if the artifact is later retrained.
+        model that produced it even if the artifact is later retrained. A
+        candidate without a model has no artifact to read, so its declared name
+        and settings are used instead of a bare hash: an unnamed signal keeps
+        the hash in its label, which is all that distinguishes it.
         """
         if not model_id:
-            label = (
+            label = identity.name or (
                 f"ad-hoc signal ({fingerprint[:8]})" if fingerprint else "ad-hoc signal"
             )
-            return label, {}
+            return label, dict(identity.parameters)
         try:
             artifact = ModelArtifactStore(self._workspace.models).load(model_id)
         except FileNotFoundError, ValueError:
@@ -635,21 +688,32 @@ class MLService:
         timeframe: str | None = None,
         horizon: int | None = None,
         feature_set: str | None = None,
+        family: str | None = None,
         top_k: int | None = None,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
     ) -> dict[str, Any]:
         """Rank recorded evaluations using the metric's declared direction.
 
-        Filters narrow candidates by dataset or measurement conditions. A
-        supplied dataset is verified against its records. Mixed contexts raise
-        ``ValueError`` unless ``allow_mixed`` is enabled; that opt-in does not
-        make their measurements comparable. ``allow_parameter_axes`` permits
-        the sweepable settings (window, horizon, n_quantiles) to differ within
-        the saved identity; cross-horizon source-bar equivalence is unverified.
-        Invalid metrics, datasets or empty results also fail.
-        Returns a ``LeaderboardResponse`` payload.
+        Filters narrow candidates by dataset, measurement conditions or method
+        family. A supplied dataset is verified against its records. Mixed
+        contexts raise ``ValueError`` unless ``allow_mixed`` is enabled; that
+        opt-in does not make their measurements comparable.
+        ``allow_parameter_axes`` permits the sweepable settings (window,
+        horizon, n_quantiles) to differ within the saved identity;
+        cross-horizon source-bar equivalence is unverified. Invalid metrics,
+        datasets, families or empty results also fail. Returns a
+        ``LeaderboardResponse`` payload.
+
+        ``family`` selects one kind of method, such as every hand-set rule.
+        Omitting it ranks whatever was recorded and reports the mix, because a
+        fitted model and a rule chosen by hand are not equal evidence for the
+        same score.
         """
+        if family is not None and family not in METHOD_FAMILIES:
+            raise ValueError(
+                f"family must be one of {list(METHOD_FAMILIES)}, got {family!r}"
+            )
         manifest = self._load_dataset(dataset_id)[1] if dataset_id is not None else None
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         entries = store.entries(
@@ -658,6 +722,7 @@ class MLService:
             timeframe=timeframe,
             horizon=horizon,
             feature_set=feature_set,
+            family=family,
         )
         if manifest is not None:
             for entry in entries:
@@ -700,6 +765,8 @@ class MLService:
                 "label": item.entry.label,
                 "model_id": item.entry.model_id,
                 "dataset_id": item.entry.dataset_id,
+                "method_family": item.entry.family,
+                "method_name": item.entry.method_name,
                 "horizon": item.entry.context.horizon,
                 "window": item.entry.context.window,
                 "n_quantiles": item.entry.context.n_quantiles,
@@ -728,12 +795,15 @@ class MLService:
             "n_candidates": len(entries),
             "n_ranked": len(result.ranked),
             "context": contexts[0] if len(contexts) == 1 else "mixed",
+            "families": family_counts(entries),
             "parameter_axes": axes,
             "ranked": ranked,
             "skipped": [
                 {
                     "entry_id": item.entry.entry_id,
                     "label": item.entry.label,
+                    "method_family": item.entry.family,
+                    "method_name": item.entry.method_name,
                     "reason": item.reason,
                     # A candidate with no score is still a point on the grid:
                     # without these coordinates a failed run leaves a hole that
@@ -756,6 +826,7 @@ class MLService:
         timeframe: str | None = None,
         horizon: int | None = None,
         feature_set: str | None = None,
+        family: str | None = None,
         offset: int = 0,
         limit: int = 20,
         allow_mixed: bool = False,
@@ -773,6 +844,7 @@ class MLService:
             timeframe=timeframe,
             horizon=horizon,
             feature_set=feature_set,
+            family=family,
             allow_mixed=allow_mixed,
             allow_parameter_axes=allow_parameter_axes,
         )
@@ -1147,6 +1219,60 @@ class MLService:
             dataset_id=dataset_id,
         )
         return {**result, "model_id": model_id, "dataset_id": dataset_id}
+
+    def evaluate_rule(
+        self,
+        *,
+        dataset_id: str,
+        column: str,
+        threshold: float,
+        direction: str = "above",
+        window: int = 60,
+        n_quantiles: int = 5,
+        record: bool = False,
+    ) -> dict[str, Any]:
+        """Evaluate one threshold rule on a saved dataset, with no model involved.
+
+        The rule reads a feature column of the dataset, so it is scored on the
+        same rows and realised returns as every model trained on that version.
+        Recording it with ``record=True`` places it on the same leaderboard
+        under the ``rule`` family, which is what makes "did fitting beat a
+        hand-set level" answerable from one table.
+
+        Panel datasets, unknown or reserved columns, a non-finite column and a
+        threshold that never changes the signal are refused rather than
+        evaluated into a row that describes nothing.
+        """
+        frame, manifest = self._load_dataset(dataset_id)
+        if manifest.get("kind") == "panel":
+            raise ValueError(
+                "evaluate_rule requires a single-symbol dataset; a rule has no "
+                "cross-sectional notion of a signal"
+            )
+        features = [str(name) for name in manifest.get("feature_columns") or []]
+        if column not in features:
+            raise ValueError(
+                f"unknown rule column {column!r}; this dataset supplies "
+                f"{features}. Reserved names such as forward_return or target "
+                "are never readable"
+            )
+        rule = ThresholdRule.create(
+            column=column, threshold=threshold, direction=direction
+        )
+        signal = rule.signal(frame[column].to_numpy(dtype=float))
+        result = self.evaluate_signal(
+            [float(value) for value in signal],
+            frame["forward_return"].to_numpy(dtype=float).tolist(),
+            horizon=int(manifest["horizon"]),
+            window=window,
+            n_quantiles=n_quantiles,
+            record=record,
+            dataset_id=dataset_id,
+            method_family="rule",
+            method_name=rule.name,
+            method_parameters=rule.parameters,
+        )
+        return {**result, "dataset_id": dataset_id, "rule": rule.name}
 
     def _load_dataset(self, dataset_id: str) -> tuple[pd.DataFrame, dict[str, Any]]:
         """Read the exact verified bytes of an immutable dataset version."""

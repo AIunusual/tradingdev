@@ -204,10 +204,11 @@ distinguishes the final artifact from the fold models. `leakage_audit_clean`
 describes the implemented split and label-overlap checks only; it cannot prove
 that features, research choices or external inputs are free of future knowledge.
 
-MCP `evaluate_signal(model_id, dataset_id, window=60, n_quantiles=5, record=False)`
-evaluates a verified saved model on the complete single-symbol dataset. The
-backend produces the signal, obtains saved forward returns in the same row
-order and adopts the dataset horizon; the MCP input does not accept arrays or
+MCP `evaluate_signal(dataset_id, model_id, window=60, n_quantiles=5, record=False)`
+evaluates a verified saved model on the complete single-symbol dataset. Omitting
+`model_id` evaluates a threshold rule instead, described under method families
+below. The backend produces the signal, obtains saved forward returns in the same
+row order and adopts the dataset horizon; the MCP input does not accept arrays or
 a caller-selected horizon. A preview's `offset` or `limit` never restricts
 evaluation. There must be enough observations for the chosen IC `window` and
 `n_quantiles` (2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
@@ -568,11 +569,13 @@ its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
+MCP `evaluate_signal(dataset_id, model_id, record=True)` generates the complete
 signal from a verified saved model and single-symbol dataset, then records its
-evaluation. Preview pages are not persisted prediction artifacts and are never
-the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
-arrays and requires a verified dataset when recording.
+evaluation. Without `model_id` it records a threshold rule instead, from one
+feature column of that dataset. Preview pages are not persisted prediction
+artifacts and are never the evaluation's input. The separate Python
+`MLService.evaluate_signal` accepts arrays and requires a verified dataset when
+recording; `MLService.evaluate_rule` is the rule equivalent.
 Whenever `dataset_id` is supplied, including without recording, the signal must
 cover all its rows, the supplied forward returns must exactly match the saved
 `forward_return` values in row order, and an explicit horizon must equal the
@@ -585,17 +588,89 @@ result without a leaderboard write.
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset
 IDs, a display label, the candidate's own fitted hyperparameters, the hash of the
-signal that was measured, and an evaluation context: symbol or panel symbols,
+signal that was measured, the method family that produced it (`ml_model`, `rule`
+or `other`) with a readable `method_name` for candidates that have no model, and
+an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
-build-time code fingerprint and dataset content hash. The fitted parameters are
-copied from the model artifact, so a row still says how that model was configured
-after the artifact is retrained. Ad-hoc signals and records whose model artifact
+build-time code fingerprint and dataset content hash. For a model row, the fitted
+parameters are copied from the model artifact, so the row still says how that
+model was configured after the artifact is retrained; a rule row carries the
+settings its caller declared. Ad-hoc signals and records whose model artifact
 cannot be loaded have empty parameters. Older records missing the new fields
 read as `parameters={}` and `signal_fingerprint=""`; reads do not reconstruct them.
 Empty parameters are not fitted defaults, and an empty fingerprint is not
 reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
+
+#### Method families
+
+Not every candidate is a model. `method_family` says what produced the signal, so
+a hand-set rule can be ranked beside a fitted model without being mistaken for
+one:
+
+- `ml_model`: a saved model. Its `parameters` are copied from the artifact, and a
+  caller may not supply them.
+- `rule`: a hand-set method with no fitting step. It must carry a `method_name`,
+  and its `parameters` are declared by the caller, not read from an artifact.
+- `other`: a signal whose construction is not declared, including every row
+  written before families existed that carries no model ID. Rows that carry a
+  model ID read as `ml_model`, because that ID is the caller's declaration of a
+  fitted model; it is a label, not proof of what produced the signal.
+
+The family is identity, not a measurement condition, so it stays out of
+`EvaluationContext`: rules and models measured on one dataset remain comparable,
+which is the point of putting them in one table. `leaderboard` reports a
+`families` count for the candidates its filters selected, including ones it could
+not rank, and appends a caveat when more than one family is present, because a
+fitted model, a hand-set rule and an unnamed signal were selected differently —
+equal scores are not equal evidence, and the order within a family is more
+informative than the order across families. Pass `family` to rank one kind. A
+table of unnamed candidates also says they cannot be reproduced from the record
+alone.
+
+The `evaluate_signal` tool without `model_id` builds a rule signal from one saved
+feature column: `+1` where the column is above (or below) the threshold and `-1`
+otherwise, so the rule is always in the market rather than being scored as flat.
+The label, the realised outcome and the row bookkeeping (`forward_return`,
+`target`, `timestamp`, `label_end`, `symbol`) are never readable columns, and a
+threshold the column never crosses is refused rather than recorded as a candidate
+whose simulated book has no positions. A threshold sweep is stored as one
+candidate per level, each carrying its level in `parameters`. It is not reported
+as a parameter surface: `parameter_axes` covers only horizon, IC window and
+quantile count, so the surface, its caveats and the plateau analysis built on
+them do not apply to rule settings yet. Reading a sweep as a surface today would
+compare separate candidates as if they were one measurement.
+
+#### Handover to the statistics modules
+
+`docs/statistics_leaderboard_integration.md` on the `feat/stats-py314` branch
+lists what `src/tradingdev/domain/statistics/` needs from this leaderboard. The
+leaderboard supplies, and this section pins:
+
+- Numeric parameter coordinates per entry (`parameters`), now including declared
+  rule settings rather than only artifact hyperparameters. Grouping rules by one
+  of those settings is still unsupported: `parameter_axes` reports only horizon,
+  IC window and quantile count, so a threshold sweep needs a new axis before
+  `trials_from_metrics` can read it as a grid.
+- Failed candidates kept as entries with the metric stored as an explicit `null`,
+  so a grid keeps the point where a candidate failed.
+- A grouping path that is separate from the ranking gate: `allow_parameter_axes`
+  permits `window`, `horizon` and `n_quantiles` to differ within one research
+  identity, while `comparability_error` still refuses to rank across them.
+- A declared family per entry, so a plateau or bootstrap adapter can tell a fitted
+  model from a hand-set rule without guessing.
+
+Still missing for the paired bootstrap of IC series: the per-bar IC series of each
+candidate on a shared bar index. Rows keep scalar summaries only, and a signal is
+recoverable only through `dataset_id` plus a matching `signal_fingerprint`. Storing
+those series is the next step, and it must land with the statistics package rather
+than beside it: the bootstrap needs `arch`, which this repository does not depend
+on, and the statistics modules stay in that branch instead of being copied here.
+Two multiple-comparison corrections therefore remain separate: the Bonferroni
+t-statistic threshold reported by `leaderboard`, and the deflated Sharpe ratio from
+the statistics package. They answer different questions and are never applied to
+the same number.
 
 The recorded metrics include annualised return, maximum drawdown, Sharpe, alpha
 and beta alongside the signal-quality ones. They describe the simulated

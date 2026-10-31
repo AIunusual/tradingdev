@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from mcp_types import ToolAnnotations
 
@@ -15,6 +15,7 @@ from tradingdev.app.contracts.ml import (
     MlContractResponse,
     PredictionEvaluationResponse,
     PredictionResponse,
+    RuleEvaluationResponse,
     TrainModelResponse,
 )
 
@@ -59,32 +60,58 @@ def register(mcp: MCPServer, service: MLService) -> None:
 
     @mcp.tool(annotations=write_artifact)
     def evaluate_signal(
-        model_id: str,
         dataset_id: str,
+        model_id: str | None = None,
+        column: str | None = None,
+        threshold: float | None = None,
+        direction: Literal["above", "below"] = "above",
         window: int = 60,
         n_quantiles: int = 5,
         record: bool = False,
-    ) -> PredictionEvaluationResponse | ErrorResponse:
-        """Evaluate every saved dataset row with a verified model, without array relay.
+    ) -> PredictionEvaluationResponse | RuleEvaluationResponse | ErrorResponse:
+        """Evaluate a saved dataset with a model or a threshold rule.
 
-        Requires a single-symbol dataset; its horizon and returns are fixed.
-        A prior predict preview is optional. record=True replaces the same
-        candidate/context for leaderboard. Training rows remain in-sample;
-        diagnostics are not a cost-adjusted backtest. Read get_ml_contract guidance.
+        model_id evaluates every row with that model; without it, column+threshold
+        build a rule signal and record it as a rule candidate. record=True adds
+        the result to the leaderboard. Read get_ml_contract guidance.
         """
         try:
-            result = service.evaluate_prediction(
-                model_id=model_id,
-                dataset_id=dataset_id,
-                window=window,
-                n_quantiles=n_quantiles,
-                record=record,
-            )
+            if model_id is not None:
+                if column is not None or threshold is not None:
+                    raise ValueError(
+                        "a model evaluation cannot also declare a rule column or "
+                        "threshold; pass model_id alone, or column and threshold "
+                        "alone for a rule"
+                    )
+                result = service.evaluate_prediction(
+                    model_id=model_id,
+                    dataset_id=dataset_id,
+                    window=window,
+                    n_quantiles=n_quantiles,
+                    record=record,
+                )
+            elif column is not None and threshold is not None:
+                result = service.evaluate_rule(
+                    dataset_id=dataset_id,
+                    column=column,
+                    threshold=threshold,
+                    direction=direction,
+                    window=window,
+                    n_quantiles=n_quantiles,
+                    record=record,
+                )
+            else:
+                raise ValueError(
+                    "pass model_id to evaluate a saved model, or column and "
+                    "threshold to evaluate a rule"
+                )
         except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
             return ErrorResponse(success=False, error=str(exc), code="invalid_signal")
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)
-        return PredictionEvaluationResponse.model_validate(result)
+        if model_id is not None:
+            return PredictionEvaluationResponse.model_validate(result)
+        return RuleEvaluationResponse.model_validate(result)
 
     @mcp.tool(annotations=write_artifact)
     def build_dataset(
@@ -232,6 +259,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         timeframe: str | None = None,
         horizon: int | None = None,
         feature_set: str | None = None,
+        family: str | None = None,
         offset: int = 0,
         limit: int = 20,
         allow_mixed: bool = False,
@@ -239,13 +267,9 @@ def register(mcp: MCPServer, service: MLService) -> None:
     ) -> LeaderboardPageResponse | ErrorResponse:
         """Page recorded evaluations ranked with the metric's declared direction.
 
-        Choose metric from get_ml_contract. dataset_id filters one verified version;
-        allow_mixed does not make incompatible contexts comparable. limit is 1..100.
-        allow_parameter_axes ranks one research identity across
-        window, horizon and n_quantiles, which is a sensitivity surface rather
-        than one comparable measurement. Each page slices ranked and skipped
-        independently at the same offset; counts and caveats cover all
-        candidates. Follow next_offset; inspect caveats.
+        Choose the metric and filters from get_ml_contract guidance. Omitting
+        family ranks every method together and reports the mix. Follow
+        next_offset; inspect caveats.
         """
         try:
             result = service.leaderboard_page(
@@ -255,6 +279,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 timeframe=timeframe,
                 horizon=horizon,
                 feature_set=feature_set,
+                family=family,
                 offset=offset,
                 limit=limit,
                 allow_mixed=allow_mixed,

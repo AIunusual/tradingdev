@@ -213,6 +213,14 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
 }
 
 
+# Subsections the ML document added to the recorded-evaluations contract. They
+# describe the same saved evidence, so they inherit its review scopes instead of
+# being retained as unknown content in every scope.
+_RECORDED_EVALUATIONS_SCOPES = _DOC_HEADINGS["docs/run_artifacts.md"][
+    "Recorded Signal Evaluations"
+]
+
+
 # Relocated contracts keep their original section responsibilities. Unknown
 # headings still widen coverage; moving a file must not hide new contracts.
 _DOC_HEADINGS.update(
@@ -237,6 +245,11 @@ _DOC_HEADINGS.update(
                     "Recorded Signal Evaluations",
                 )
             },
+            # Subsections of the recorded-evaluations contract.
+            **dict.fromkeys(
+                ("Method families", "Handover to the statistics modules"),
+                _RECORDED_EVALUATIONS_SCOPES,
+            ),
         },
         **{
             path: {
