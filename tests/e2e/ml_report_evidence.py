@@ -374,6 +374,9 @@ _GENERIC_EVALUATION_SUBJECT = re.compile(
     r"(?:評估|測試|驗證|檢驗)"
 )
 _TRAILING_PARTICLE = re.compile(r"(?:都|即|均|則|就|也|亦|皆|便|仍|一律)+$")
+_REPORTING_VERB = re.compile(
+    r"(?:說明|指出|表示|載明|記載|寫明|提到|註明)(?:了|的是|：)?"
+)
 _SUBJECT_QUOTES = "「」『』（）()《》〈〉\"'"
 _SUBJECT_SEPARATORS = "，,；;：: \t"
 _CLAUSE_BREAK = re.compile(r"[，,；;：:。！？!?]")
@@ -405,25 +408,42 @@ def _subject_before_claim(before: str) -> str:
     return _CLAUSE_BREAK.split(tail)[-1].strip()
 
 
+def _reported_subject(subject: str) -> str:
+    """Drop a reporting frame such as "工具一般規則說明" before the category.
+
+    A report may quote the product rule instead of stating it directly. Only the
+    words before the verb are removed; what follows must still be the bare
+    category, so "工具說明這些結果屬於樣本內" stays a claim about the rows.
+    """
+    last = None
+    for match in _REPORTING_VERB.finditer(subject):
+        last = match
+    return "" if last is None else subject[last.end() :]
+
+
 def _states_training_data_definition(before: str, match: re.Match[str]) -> bool:
     """Recognize the product's definition instead of a claim about the rows.
 
     ``ml_service`` states that training-data evaluation remains in-sample and
     that the saved artifact is fitted on all dataset rows, so a sentence whose
     subject is that bare category — "在訓練資料上做的評估" — states the
-    definition. Naming the reported records anywhere in the clause ("兩個候選",
-    "模型", "視窗 12", "報告中", or a topic phrase like "對這兩個候選而言") or
-    merely wrapping the claim in rule framing ("依一般規則") keeps it a claim
-    about the candidate, which this guard still rejects. Only the documented
-    in-sample direction is exempt, so an inverted rule and the separate-dataset
-    direction stay rejected for human review.
+    definition, whether it is asserted directly or quoted through a reporting
+    frame ("工具一般規則說明…"). Naming the reported records anywhere in the
+    clause ("兩個候選", "模型", "視窗 12", "報告中", or a topic phrase like
+    "對這兩個候選而言") or merely wrapping the claim in rule framing
+    ("依一般規則") keeps it a claim about the candidate, which this guard still
+    rejects. Only the documented in-sample direction is exempt, so an inverted
+    rule and the separate-dataset direction stay rejected for human review.
     """
     if not _IN_SAMPLE_DEFINITION.fullmatch(match.group()):
         return False
     if _SAVED_ROW_REFERENCE.search(before):
         return False
     subject = _subject_before_claim(before)
-    return bool(_GENERIC_EVALUATION_SUBJECT.fullmatch(subject.strip(_SUBJECT_QUOTES)))
+    for candidate in (subject, _reported_subject(subject)):
+        if _GENERIC_EVALUATION_SUBJECT.fullmatch(candidate.strip(_SUBJECT_QUOTES)):
+            return True
+    return False
 
 
 def _repeats_definition_for_saved_rows(remainder: str, following: list[str]) -> bool:

@@ -347,6 +347,9 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
         "在訓練資料上做的評估是樣本內。這是定義。兩個候選的結果亦然。",
         "在訓練資料上做的評估是樣本內；這對兩個候選也成立。",
         "在訓練資料上做的評估是樣本內；兩個候選亦復如此。",
+        # A reporting frame does not excuse a claim about the saved rows.
+        "工具說明這些結果屬於樣本內。",
+        "報告指出兩個候選在訓練資料上做的評估屬於樣本內。",
         # Only the product's definition is exempt: training-data evaluation is
         # in-sample. The opposite rule stays rejected as an inverted claim.
         "訓練資料上的評估是樣本外。",
@@ -388,6 +391,11 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "凡在訓練資料上做的評估，都屬於樣本內；候選是否如此仍未知。",
         "至於訓練資料上的評估，屬於樣本內；這些結果的切分證據沒有保存。",
         "在訓練資料上做的評估是樣本內；候選結果是否亦然未知。",
+        # Reported rule: the model quotes the product rule instead of stating it.
+        "工具一般規則說明訓練資料上的評估屬於樣本內，"
+        "但不能由一般規則推定這兩筆實際屬於樣本內；同樣也不能宣稱樣本外。",
+        "契約說明在訓練資料上做的評估是樣本內；這些結果的切分證據沒有保存。",
+        "工具文件指出訓練資料上的評估屬於樣本內。",
     ],
 )
 def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
