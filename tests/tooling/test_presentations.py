@@ -348,6 +348,47 @@ def test_missing_dependency_fails_without_implicit_install(
         presentations.check_presentations(tmp_path)
 
 
+def test_missing_node_directs_to_installing_node_before_setup(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _deck(tmp_path)
+    monkeypatch.setattr(presentations, "_toolchain", lambda root: root)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    with pytest.raises(presentations.PresentationError) as error:
+        presentations.build(tmp_path)
+
+    message = str(error.value)
+    assert "Node.js 18" in message
+    assert "npm" in message
+    assert "scripts/presentations.sh setup" in message
+    assert message.index("Node.js 18") < message.index("scripts/presentations.sh")
+
+
+@pytest.mark.parametrize(
+    ("present", "node_step_required"),
+    [(set(), True), ({"node"}, True), ({"npm"}, True), ({"node", "npm"}, False)],
+)
+def test_missing_toolchain_reports_the_install_step_that_can_succeed(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    present: set[str],
+    node_step_required: bool,
+) -> None:
+    _deck(tmp_path)
+    monkeypatch.delenv("TRADINGDEV_PRESENTATION_TOOLCHAIN", raising=False)
+    monkeypatch.setattr(
+        shutil, "which", lambda name: f"/usr/bin/{name}" if name in present else None
+    )
+
+    with pytest.raises(presentations.PresentationError) as error:
+        presentations.build(tmp_path)
+
+    message = str(error.value)
+    assert "Locked presentation dependencies are unavailable" in message
+    assert ("Node.js 18" in message) is node_step_required
+
+
 def test_build_command_cannot_load_candidate_config_or_local_engine(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
