@@ -171,6 +171,58 @@ class TestRecordingARule:
 
 
 class TestNamedCandidates:
+    def test_nearby_thresholds_keep_distinct_candidates(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        column = _frame(workspace, dataset_id)["rsi_14"]
+        middle = float(column.sort_values().iloc[len(column) // 2])
+        levels = [float(np.nextafter(middle, side)) for side in (-np.inf, np.inf)]
+        assert f"{levels[0]:g}" == f"{levels[1]:g}"
+        results = [
+            service.evaluate_rule(
+                dataset_id=dataset_id,
+                column="rsi_14",
+                threshold=level,
+                window=20,
+                record=True,
+            )
+            for level in levels
+        ]
+        assert results[0]["signal_fingerprint"] != results[1]["signal_fingerprint"]
+        assert all(not result["recorded"]["replaced"] for result in results)
+        entries = LeaderboardStore(workspace.ml_leaderboard).entries()
+        assert len(entries) == 2
+        assert {entry.parameters["threshold"] for entry in entries} == set(levels)
+
+    def test_family_and_parameters_are_part_of_named_candidate_identity(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        realized = _frame(workspace, dataset_id)["forward_return"].tolist()
+        model_id = "a" * 16
+        declarations: list[dict[str, Any]] = [{"model_id": model_id}] + [
+            {
+                "method_family": family,
+                "method_name": model_id,
+                "method_parameters": {"threshold": threshold},
+            }
+            for family, threshold in [("rule", 1.0), ("rule", 2.0), ("other", 2.0)]
+        ]
+        for declaration in declarations:
+            result = service.evaluate_signal(
+                realized,
+                realized,
+                dataset_id=dataset_id,
+                window=20,
+                record=True,
+                **declaration,
+            )
+            assert not result["recorded"]["replaced"]
+        entries = LeaderboardStore(workspace.ml_leaderboard).entries()
+        assert len(entries) == 4
+        assert {entry.family for entry in entries} == {"ml_model", "rule", "other"}
+
     def test_a_named_candidate_replaces_instead_of_inflating_the_field(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:

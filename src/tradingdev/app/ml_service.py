@@ -612,15 +612,12 @@ class MLService:
                 model_id=model_id or "",
                 dataset_id=dataset_id,
                 context=context,
-                # A model ID already names the candidate, so folding the hash
-                # in would change every existing entry_id. It is stored in its
-                # own field instead. A named rule is identified the same way,
-                # by its name: re-running it after a dataset-independent change
-                # replaces the row instead of adding a second candidate that
-                # the name claims to be the same one. Without either, the hash
-                # is the only thing separating two ad-hoc signals.
+                # Named methods use family/name/settings; anonymous signals
+                # need the fingerprint to distinguish candidates.
                 signal_fingerprint="" if (model_id or identity.name) else fingerprint,
                 method_name=identity.name,
+                method_family=identity.family,
+                method_parameters=identity.parameters,
             ),
             label=label,
             context=context,

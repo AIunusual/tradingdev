@@ -639,6 +639,12 @@ informative than the order across families. Pass `family` to rank one kind. A
 table of unnamed candidates also says they cannot be reproduced from the record
 alone.
 
+Named candidates are identified by family, name and full-precision declared
+parameters within the saved dataset and evaluation context. Repeating those
+settings replaces that candidate; changing a parameter creates another entry,
+even when rounded display names or resulting signals match. Model IDs and
+unnamed-signal fingerprints keep their existing identity encoding.
+
 The `evaluate_signal` tool without `model_id` builds a rule signal from one saved
 feature column: `+1` where the column is above (or below) the threshold and `-1`
 otherwise, so the rule is always in the market rather than being scored as flat.

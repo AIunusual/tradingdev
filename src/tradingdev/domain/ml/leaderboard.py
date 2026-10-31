@@ -332,6 +332,8 @@ def build_entry_id(
     context: EvaluationContext,
     signal_fingerprint: str = "",
     method_name: str = "",
+    method_family: MethodFamily = "other",
+    method_parameters: Mapping[str, float] | None = None,
 ) -> str:
     """Identify one candidate within a dataset and measurement context.
 
@@ -339,16 +341,26 @@ def build_entry_id(
     Use ``signal_fingerprint`` when model_id is absent so distinct ad-hoc
     signals remain distinct. A supplied model ID is a caller-declared label.
 
-    ``method_name`` names the candidate only when there is no model ID, so a
-    named rule is identified by what it is rather than by the hash of its
-    output: re-tuning the threshold then records a new candidate instead of
-    replacing the old one under a name that no longer describes it. Rows with a
-    model ID or with no name at all hash exactly as before, so existing entry
-    IDs do not move.
+    Named methods use their family, name and full-precision declared parameters,
+    independent of the signal they produced. Display-name rounding cannot merge
+    different settings, and different families cannot overwrite one another.
+    Existing model and unnamed-signal identities retain their encoding.
     """
-    payload = "|".join(
-        (model_id or method_name, dataset_id, context.key, signal_fingerprint)
-    )
+    if method_name and not model_id:
+        payload = json.dumps(
+            [
+                method_family,
+                method_name,
+                dict(method_parameters or {}),
+                dataset_id,
+                context.key,
+            ],
+            sort_keys=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+    else:
+        payload = "|".join((model_id, dataset_id, context.key, signal_fingerprint))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
