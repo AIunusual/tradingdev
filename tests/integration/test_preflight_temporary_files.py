@@ -290,12 +290,14 @@ def test_probe_teardown_stops_processes_when_preflight_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     identities: list[ProcessIdentity] = []
-    monkeypatch.setattr(
-        "tradingdev.adapters.execution.process_runner.request_worker_stop",
-        _fail_worker_stop,
-    )
     with pytest.raises(PreflightError) as caught, _temporary_probe_workspace() as root:
         workspace, request = _configure_probe(root, monkeypatch, "timeout")
+        # Fixture validation also uses ProcessRunner; fail only the preflight
+        # operation whose cleanup and teardown are under test.
+        monkeypatch.setattr(
+            "tradingdev.adapters.execution.process_runner.request_worker_stop",
+            _fail_worker_stop,
+        )
         try:
             PreflightService(workspace, timeout_seconds=3).prepare(request)
         except PreflightError:

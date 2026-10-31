@@ -14,7 +14,7 @@ import pytest
 from mcp_types import CallToolResult
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.mcp.server import HTTP_TRANSPORT_SECURITY, create_server, main
+from tradingdev.mcp.server import create_server, http_transport_security, main
 from tradingdev.mcp.strict_server import StrictMCPServer
 
 if TYPE_CHECKING:
@@ -61,11 +61,48 @@ def test_main_passes_selected_transport_and_port_to_sdk(
     expected: dict[str, Any] = {"transport": transport}
     if transport != "stdio":
         arguments.extend(["--web", "--transport", transport, "--port", "18765"])
-        expected.update(port=18765, transport_security=HTTP_TRANSPORT_SECURITY)
+        expected.update(
+            host="127.0.0.1",
+            port=18765,
+            transport_security=http_transport_security(18765),
+        )
     if transport == "streamable-http":
         expected["json_response"] = False
     main(arguments)
     assert calls == [expected]
+
+
+def test_main_passes_explicit_proxy_allowlists(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    options: dict[str, Any] = {}
+
+    def run(_server: StrictMCPServer, **kwargs: Any) -> None:
+        options.update(kwargs)
+
+    monkeypatch.setattr(StrictMCPServer, "run", run)
+    main(
+        [
+            "--workspace",
+            str(runtime_root / "workspace"),
+            "--web",
+            "--allow-host",
+            "research.example",
+            "--allow-host",
+            "research.example:9443",
+            "--allow-origin",
+            "https://research.example",
+            "--allow-origin",
+            "https://portal.example:8443",
+        ]
+    )
+    security = options["transport_security"]
+    assert security.enable_dns_rebinding_protection is True
+    assert {"research.example", "research.example:9443"} <= set(security.allowed_hosts)
+    assert {"https://research.example", "https://portal.example:8443"} <= set(
+        security.allowed_origins
+    )
+    assert options["host"] == "127.0.0.1"
 
 
 def test_server_instances_keep_generated_strategies_in_their_workspace(

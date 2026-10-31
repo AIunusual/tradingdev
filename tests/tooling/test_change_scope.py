@@ -41,8 +41,8 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("ARCHITECTURE.md", "docs"),
         ("docs/guide.md", "docs"),
         ("docs/nested/中文 guide\nnotes.md", "docs"),
-        ("AGENTS.md", "code"),
-        ("CLAUDE.md", "code"),
+        ("AGENTS.md", "tooling"),
+        ("CLAUDE.md", "tooling"),
         ("OTHER.md", "code"),
         (".agents/policy.md", "code"),
         ("docs/config.yaml", "code"),
@@ -50,11 +50,28 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("src/README.md", "code"),
         ("pyproject.toml", "code"),
         ("uv.lock", "code"),
-        (".githooks/pre-commit", "code"),
+        (".githooks/pre-commit", "tooling"),
         ("tests/test_app.py", "code"),
+        ("tooling/git/claim_issue.py", "tooling"),
+        ("tooling/git/change_scope.py", "tooling"),
+        ("tooling/review_scope.py", "tooling"),
+        ("tests/tooling/test_new_tool.py", "tooling"),
+        ("scripts/check-tooling.sh", "tooling"),
+        ("tests/conftest.py", "code"),
+        ("tests/tooling/conftest.py", "code"),
+        ("tests/llm_plugin.py", "code"),
+        ("tooling/prompt_contracts.py", "code"),
+        ("tooling/context_budget.py", "code"),
+        ("tooling/codex_binary.py", "code"),
+        ("tooling/process_guard.py", "code"),
+        ("tooling/new_tool.py", "code"),
+        ("scripts/unknown.sh", "code"),
+        ("scripts/check-full.sh", "code"),
+        ("scripts/check-llm.sh", "code"),
+        ("scripts/rebuild-env.sh", "code"),
     ],
 )
-def test_documentation_allowlist(
+def test_conservative_path_routing(
     repository: tuple[Path, str], name: str, expected: str
 ) -> None:
     root, base = repository
@@ -158,8 +175,58 @@ def test_mixed_changes_retain_presentation_validation(
     (root / other).write_text("changed\n")
     _git(root, "add", ".")
     scope = classify_changes(root, base, _git(root, "write-tree"))
-    assert scope.kind == ("presentations" if other == "README.md" else "code")
+    assert (
+        scope.kind
+        == {"README.md": "presentations", "AGENTS.md": "tooling", "app.py": "code"}[
+            other
+        ]
+    )
     assert scope.presentations_changed
+
+
+@pytest.mark.parametrize(
+    "change", ["executable", "symlink", "delete", "product_rename"]
+)
+def test_registered_tool_modes_and_rename_source_are_checked(
+    repository: tuple[Path, str], change: str
+) -> None:
+    root, base = repository
+    name = "scripts/claim-issue.sh"
+    target = root / name
+    target.parent.mkdir()
+    if change == "product_rename":
+        _git(root, "mv", "app.py", name)
+    elif change == "symlink":
+        target.symlink_to("../app.py")
+        _git(root, "add", name)
+    else:
+        target.write_text("#!/usr/bin/env bash\nexit 0\n")
+        target.chmod(0o755)
+        _git(root, "add", name)
+        if change == "delete":
+            base = _git(root, "write-tree")
+            target.unlink()
+            _git(root, "add", "--update", name)
+    assert classify_changes(root, base, _git(root, "write-tree")).kind == (
+        "tooling" if change in {"executable", "delete"} else "code"
+    )
+
+
+@pytest.mark.parametrize("other", ["README.md", "src/app.py", "uv.lock"])
+def test_tooling_mixed_with_product_or_dependencies_uses_full_scope(
+    repository: tuple[Path, str], other: str
+) -> None:
+    root, base = repository
+    (root / "AGENTS.md").write_text("# Changed policy\n")
+    target = root / other
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("changed\n")
+    _git(root, "add", ".")
+    tree = _git(root, "write-tree")
+    target.write_text("unstaged content must not affect routing\n")
+    assert classify_changes(root, base, tree).kind == (
+        "tooling" if other == "README.md" else "code"
+    )
 
 
 @pytest.mark.parametrize("change", ["executable", "symlink", "remove_executable"])

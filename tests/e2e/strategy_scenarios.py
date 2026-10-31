@@ -15,6 +15,7 @@ class Scenario:
     overrides: dict[str, int]
     requirement: str
     repair: bool = False
+    runtime_exit: bool = False
     legacy: bool = False
     experiment: bool = False
     history: bool = False
@@ -45,6 +46,17 @@ class Scenario:
 
     @property
     def prompt(self) -> str:
+        if self.runtime_exit:
+            return (
+                f"請實際檢查現有策略草稿 {self.strategy_id} 的失敗原因，再修正；"
+                "不要只閱讀程式推測失敗。我的構想是用5根與20根收盤均線："
+                "短線較高持續做多、較低持續做空，相等或不足20根時空手，"
+                "不能使用未來資料。保留可調整的快慢週期，沿用這個草稿已保存的"
+                "標的、期間、成本與其他研究設定。確認修正可用後，先讓我檢視"
+                "正式回測設定，等我同意才執行。行情已在本機快取，請勿下載。"
+                "完成後查詢並說明每日平均損益、交易量及觀察天數，"
+                "提供結果識別碼與可開啟的完整報告。"
+            )
         if self.legacy:
             preparation = (
                 f"後端已有舊格式策略 {self.legacy_strategy_id}。"
@@ -184,6 +196,14 @@ SCENARIOS = {
         {"fast_period": 3, "slow_period": 8},
         _SMA_REQUIREMENT,
         repair=True,
+    ),
+    "runtime_exit_repair": Scenario(
+        "runtime_exit_repair",
+        {"fast_period": 5, "slow_period": 20},
+        {"fast_period": 3, "slow_period": 8},
+        _SMA_REQUIREMENT,
+        repair=True,
+        runtime_exit=True,
     ),
     "legacy": Scenario(
         "legacy",

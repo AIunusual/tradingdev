@@ -15,6 +15,28 @@ from tooling.review_scope import (
 )
 
 
+@pytest.mark.parametrize(
+    ("path", "headings"),
+    [
+        ("AGENTS.md", "# AGENTS.md\n\n## Issue 接手與指派\n"),
+        (
+            "docs/development.md",
+            "# 開發指南\n\n## 接手 issue\n",
+        ),
+    ],
+)
+def test_issue_claim_guidance_is_retained_in_development_review(
+    path: str, headings: str
+) -> None:
+    text = headings + "Claim policy evidence.\n"
+    assert "Claim policy evidence." in "".join(
+        section.text for section in sections_for_scope("tooling", path, text)
+    )
+    assert "Claim policy evidence." not in "".join(
+        section.text for section in sections_for_scope("results", path, text)
+    )
+
+
 def test_sections_partition_unicode_text_without_rewriting() -> None:
     text = (
         "前言\u2028仍是同一行\n\n"

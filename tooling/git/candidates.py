@@ -280,7 +280,7 @@ def verify_candidate(
     validate_documentation_timeout(documentation_timeout_seconds)
     print(f"Snapshot timeout: {snapshot_timeout_seconds} seconds", flush=True)
     scope = classify_changes(candidate.repository, candidate.base, candidate.tree)
-    if scope.kind != "code":
+    if scope.kind in {"docs", "presentations"}:
         label = "Documentation-only" if scope.kind == "docs" else "Presentation"
         print(
             f"{label} candidate: running {scope.kind} snapshot checks. "
@@ -296,7 +296,7 @@ def verify_candidate(
         print(f"{label} checks passed.", flush=True)
         return
     if scope.presentations_changed:
-        print("Code candidate also changes presentations: checking slides.", flush=True)
+        print("Candidate also changes presentations: checking slides.", flush=True)
         check_snapshot(
             candidate.tree,
             "presentations",
@@ -338,10 +338,12 @@ def verify_candidate(
             900, documentation_timeout_seconds + _DOCUMENTATION_CLEANUP_SECONDS
         ),
     )
+    profile = "tooling" if scope.kind == "tooling" else "full"
+    print(f"Candidate test profile: {profile}", flush=True)
     check_snapshot(
         candidate.tree,
-        "full",
+        profile,
         repo=candidate.repository,
         timeout_seconds=snapshot_timeout_seconds,
     )
-    print("Codex documentation review and full pytest passed.", flush=True)
+    print(f"Codex documentation review and {profile} pytest passed.", flush=True)

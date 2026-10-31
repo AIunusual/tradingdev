@@ -7,7 +7,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from tradingdev.domain.backtest.schemas import BacktestConfig, BacktestRunConfig
+from tradingdev.domain.backtest.schemas import (
+    BacktestConfig,
+    BacktestRunConfig,
+    ParallelConfig,
+)
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.strategies.execution import StrategyExecution
 
@@ -24,6 +28,36 @@ def _config() -> dict[str, Any]:
             "init_cash": 10000.0,
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("multiplier", "config_message"),
+    [
+        (0.0, r"parallel.overhead_multiplier"),
+        (-1.0, r"parallel.overhead_multiplier"),
+        (float("nan"), "finite"),
+        (float("inf"), "finite"),
+        (-float("inf"), "finite"),
+    ],
+)
+def test_parallel_overhead_rejected_at_configuration_boundary(
+    multiplier: float,
+    config_message: str,
+) -> None:
+    with pytest.raises(ValidationError, match="overhead_multiplier") as error:
+        ParallelConfig(overhead_multiplier=multiplier)
+    assert error.value.errors()[0]["loc"] == ("overhead_multiplier",)
+    config = {**_config(), "parallel": {"overhead_multiplier": multiplier}}
+    # Raw nonfinite JSON is rejected by the enclosing run contract first.
+    with pytest.raises(ValidationError, match=config_message):
+        BacktestRunConfig.model_validate(config)
+
+
+@pytest.mark.parametrize("multiplier", [0.5, 3.0, 1e308])
+def test_parallel_overhead_accepts_finite_positive_values(multiplier: float) -> None:
+    assert (
+        ParallelConfig(overhead_multiplier=multiplier).overhead_multiplier == multiplier
+    )
 
 
 def test_backtest_run_config_accepts_only_root_random_seed() -> None:

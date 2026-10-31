@@ -310,7 +310,7 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
         strategy_config,
         execution,
         config.model_dump(),
-        frame.to_json(orient="split"),
+        frame,
         {"d_period": 7},
         "total_return",
         parallel.model_dump(),
@@ -332,6 +332,61 @@ def test_optimization_evaluations_keep_unsearched_strategy_defaults(
     np.testing.assert_array_equal(
         restored.result.equity_curve, observed_result.equity_curve
     )
+
+
+def test_optimization_preserves_frame_values_types_and_index_across_phases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _ = _queued_job(tmp_path, monkeypatch)
+    timestamps = pd.date_range("2024-01-01", periods=7, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "timestamp": timestamps + pd.Timedelta(nanoseconds=123),
+            "close": np.arange(1, 8, dtype=float) * 1.23456789012345e-11,
+            "feature": np.full(7, np.nextafter(1.0, 2.0)),
+            "float32_feature": np.arange(7, dtype=np.float32),
+            "nullable_feature": pd.array([1, None, 3, 4, 5, 6, 7], dtype="Int64"),
+            "flag": pd.array(
+                [True, False, None, True, False, True, False], dtype="boolean"
+            ),
+        },
+        index=pd.DatetimeIndex(timestamps.tz_convert("Asia/Taipei"), name="bar_time"),
+    )
+    received: list[pd.DataFrame] = []
+
+    def evaluate(
+        strategy_cfg: dict[str, Any],
+        strategy_execution: StrategyExecution,
+        bt_cfg: BacktestConfig,
+        data: pd.DataFrame,
+        params: dict[str, Any],
+        metric: str,
+        parallel_cfg: ParallelConfig,
+        random_seed: int | None,
+    ) -> ComboEvaluation:
+        received.append(data.copy(deep=True))
+        return _evaluation(params, metric, 1.0, data, bt_cfg)
+
+    monkeypatch.setattr(BacktestService, "prepare_strategy", _prepared_strategy)
+    monkeypatch.setattr(
+        DataService,
+        "load",
+        lambda *args: LoadedDataset(
+            frame=frame,
+            processed_path=tmp_path / "unused.parquet",
+            dataset_id="precise-frame",
+        ),
+    )
+    monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
+    monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
+    _run_optimization("fixture")
+    job = store.get_job("fixture")
+    assert job is not None and job["status"] == "done", job
+    assert len(received) == 3
+    for actual, expected in zip(
+        received, [frame.iloc[:3], frame.iloc[:3], frame.iloc[3:]], strict=True
+    ):
+        pd.testing.assert_frame_equal(actual, expected, check_exact=True)
 
 
 @pytest.mark.parametrize(

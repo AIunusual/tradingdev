@@ -269,6 +269,103 @@ def test_lightweight_pr_still_rejects_version_changes(
     _assert_cleaned(scenario)
 
 
+@pytest.mark.parametrize("runner", ["pr", "full"])
+@pytest.mark.parametrize(
+    ("failure", "slides"),
+    [
+        (None, False),
+        ("rejection", False),
+        ("mutation", False),
+        ("refs", False),
+        (None, True),
+        ("slides", True),
+    ],
+)
+def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
+    scenario: Scenario,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+    runner: str,
+    failure: str | None,
+    slides: bool,
+) -> None:
+    _git(
+        scenario.source,
+        "switch",
+        "--quiet",
+        "-c",
+        "feature/tooling",
+        f"{scenario.request.base_sha}^",
+    )
+    head = _commit(scenario.source, "AGENTS.md", "# Development policy\n")
+    if slides:
+        name = "docs/talks/tradingdev-introduction/slides.md"
+        (scenario.source / name).parent.mkdir(parents=True)
+        head = _commit(scenario.source, name, "# Slides\n")
+    _git(scenario.source, "update-ref", "refs/pull/7/head", head)
+    request = replace(scenario.request, head_sha=head, head_ref="feature/tooling")
+    monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: request)
+    before = _source_state(scenario.source)
+    calls: list[str] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        timeout: int = 900,
+        temporary_root: Path | None = None,
+    ) -> None:
+        if command[0] != "bash":
+            assert command[:3] == [sys.executable, "-m", "tooling.review_docs"]
+            calls.append("review")
+            return
+        profile = command[1]
+        calls.append(profile)
+        assert profile in {"scripts/check-tooling.sh", "scripts/check-presentations.sh"}
+        assert timeout == 30
+        assert (cwd / "base.txt").read_text() == "new main behavior\n"
+        assert (cwd / "AGENTS.md").read_text() == "# Development policy\n"
+        if profile == "scripts/check-presentations.sh":
+            if failure == "slides":
+                raise subprocess.CalledProcessError(1, command)
+            return
+        if failure == "rejection":
+            raise subprocess.CalledProcessError(1, command)
+        if failure == "mutation":
+            (cwd / "AGENTS.md").write_text("checker changed candidate\n")
+        if failure == "refs":
+            _git(scenario.source, "update-ref", "refs/heads/main", head)
+
+    monkeypatch.setattr(candidates, "run", run)
+
+    def check() -> None:
+        if runner == "pr":
+            check_pr.check_pr(7, snapshot_timeout_seconds=30)
+        else:
+            gate.check_full("main", "feature/tooling", snapshot_timeout_seconds=30)
+
+    if failure in {"rejection", "slides"}:
+        with pytest.raises(subprocess.CalledProcessError):
+            check()
+    elif failure:
+        with pytest.raises(RuntimeError, match="modified.*snapshot|refs changed"):
+            check()
+    else:
+        check()
+    expected = ["scripts/check-presentations.sh"] if slides else []
+    if failure != "slides":
+        expected.extend(["review", "scripts/check-tooling.sh"])
+    assert calls == expected
+    output = capsys.readouterr().out
+    assert "full pytest passed" not in output
+    assert ("PR checks passed:" in output or "Candidate checks passed." in output) is (
+        failure is None
+    )
+    if failure != "refs":
+        assert _source_state(scenario.source) == before
+    _assert_cleaned(scenario)
+
+
 def _forbid_check_side_effects(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
         check_pr, "get_pull_request", lambda *_: pytest.fail("PR API called")
@@ -1227,7 +1324,7 @@ def test_timeout_option_is_rejected_for_other_git_actions(
     assert "only valid for full checks" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("profile", ["full", "docs", "presentations"])
+@pytest.mark.parametrize("profile", ["full", "tooling", "docs", "presentations"])
 def test_snapshot_timeout_stops_children_and_removes_snapshot(
     scenario: Scenario, monkeypatch: MonkeyPatch, profile: str
 ) -> None:

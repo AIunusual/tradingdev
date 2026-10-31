@@ -128,7 +128,7 @@ def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
         strategy,
         execution,
         config.model_dump(),
-        data.dataset.frame.to_json(orient="split"),
+        data.dataset.frame,
         {},
         "total_return",
         ParallelConfig().model_dump(),

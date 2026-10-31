@@ -31,8 +31,10 @@ uv sync --locked --all-extras --python 3.14
 | `scripts/check-presentations.sh` | 文件品質、簡報重建一致性、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
+| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策與已登錄開發工具；分類來源為 `tooling/git/change_scope.py`。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
+| `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
 Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.githooks/)，
@@ -41,7 +43,9 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 測試案例、測資與斷言以測試程式為準，不在本指南逐項重述。
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
-`check-full.sh` 一律跑完整離線套件；提交與 PR 的檢查分流見下方流程。
+`check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
+`check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。
+提交與 PR 的檢查分流見下方流程。
 
 ### 依賴相容性限制
 
@@ -108,8 +112,9 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 審查，但未知章節保守保留，拆檔本身不代表減少上下文。量測應分開報告文件閱讀量、
 審查輸入與產品 MCP；不把 bytes 當成 tokens。
 
-一般文件只走文件檢查；已登錄簡報走簡報專項；政策、程式、依賴或檢查工具變更走
-程式檢查。完整分類規則見 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
+一般文件只走文件檢查；已登錄簡報走簡報專項；開發政策與已登錄開發工具走工具
+檢查，其餘程式／依賴或未知變更走完整檢查。分類規則見
+[AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
 
 ### 簡報的編輯與輸出
@@ -248,6 +253,23 @@ CLI 參數以 `codex review --help` 核對。已由獨立 reviewer 涵蓋且無�
 可沿用審查結果。程式碼審查、離線測試、文件一致性與真實模型流程驗證各有用途，
 不能互相替代；一般 commit／push 不會自動執行模型 code review。
 
+## 接手 issue
+
+決定負責某個 issue 時，將自己的 GitHub 帳號加入 **Assignees**，讓協作者知道
+由誰接手；僅閱讀或分析不算接手。AI 協作的判斷與授權依
+[Issue 接手與指派政策](../AGENTS.md#issue-接手與指派)。
+
+準備好 repository 的 `.venv` 與已登入本人帳號的 GitHub CLI（`gh`），代入實際值：
+
+```bash
+./scripts/claim-issue.sh 123 --repo OWNER/REPO --user YOUR_LOGIN
+```
+
+腳本僅支援 `github.com` 的開啟 issue，核對 `YOUR_LOGIN` 與登入帳號相符，
+只新增本人、保留其他 assignees，並讀回確認；已指派時不重複變更。
+若失敗或結果未確認，依輸出的 issue 連結查看 **Assignees**，必要時手動設定；
+已授權的本機工作可繼續。參數說明可用 `./scripts/claim-issue.sh --help` 查看。
+
 ## 從開發到合併
 
 以下以 `origin`、`main`、`feature/my-task` 示範，請代入實際名稱。
@@ -280,9 +302,14 @@ git push -u origin feature/my-task
 | --- | --- |
 | 一般文件 | 文件格式與連結。 |
 | 已登錄簡報 | 文件與簡報專項；視覺操作仍須人工確認。 |
-| 程式／政策／工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
+| 開發政策／已登錄開發工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
+| 產品／依賴／共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
-真實模型策略測試另依變更選取。程式候選的文件審查需要 Codex 登入與額度；
+PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
+依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
+開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
+
+真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
 這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
 `TRADINGDEV_CODEX_MODEL` 指定，例如：
 
@@ -324,7 +351,7 @@ uv run --no-sync python -m tooling.review_docs \
 ```
 
 請以實際規劃的 scope／檔案代換。預設值與其他選項以 `scripts/check-pr.sh --help`
-為準。範圍選取不縮減離線測試；變更檔案保留完整內容與 diff，相關文件按責任取原文。
+為準。文件審查範圍選取不縮減所選分流的測試；變更檔案保留完整內容與 diff，相關文件按責任取原文。
 缺少必要證據、容量不足、finding 或逾時均須修正後重查，不能截斷內容或忽略失敗。
 
 Codex 非零退出時，檢查會連同批次身分回報退出碼、stderr 尾端及 JSON

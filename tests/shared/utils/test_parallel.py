@@ -6,11 +6,35 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tradingdev.shared.utils.parallel import (
     _get_performance_core_count,
     estimate_n_jobs,
 )
+
+
+@pytest.mark.parametrize(
+    "multiplier", [0.0, -1.0, float("nan"), float("inf"), -float("inf")]
+)
+def test_invalid_overhead_fails_before_resource_estimation(multiplier: float) -> None:
+    with (
+        patch("tradingdev.shared.utils.parallel.psutil.virtual_memory") as memory,
+        pytest.raises(ValueError, match="overhead_multiplier.*finite.*positive"),
+    ):
+        estimate_n_jobs(
+            pd.DataFrame({"close": [100.0, 101.0]}), overhead_multiplier=multiplier
+        )
+    memory.assert_not_called()
+
+
+def test_large_finite_overhead_limits_workers_without_overflow() -> None:
+    assert (
+        estimate_n_jobs(
+            pd.DataFrame({"close": [100.0, 101.0]}), overhead_multiplier=1e308
+        )
+        == 1
+    )
 
 
 class TestGetPerformanceCoreCount:

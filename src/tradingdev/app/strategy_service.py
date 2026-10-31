@@ -36,13 +36,13 @@ from tradingdev.app.contracts.strategy import (
 from tradingdev.app.pagination import paginate
 from tradingdev.app.quality_policy import quality_config_path
 from tradingdev.app.research import SelectedResearchRevision, build_research_config
+from tradingdev.app.strategy_contract_service import StrategyContractService
 from tradingdev.domain.research import ResearchSpec  # noqa: TC001
 from tradingdev.domain.strategies.capabilities import StrategyCapabilities
 from tradingdev.domain.strategies.catalog import BundledStrategyCatalog
 from tradingdev.domain.strategies.contract import (
     DRY_RUN_FIXTURE_ROWS,
     VALIDATE_FIXTURE_ROWS,
-    SignalContractChecker,
 )
 from tradingdev.domain.strategies.loader import StrategyLoader
 from tradingdev.domain.strategies.schemas import (
@@ -88,6 +88,8 @@ class StrategyService:
         self,
         workspace: WorkspacePaths | None = None,
         store: SQLiteStore | None = None,
+        *,
+        contract_timeout_seconds: float = 60,
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._catalog = BundledStrategyCatalog()
@@ -96,7 +98,9 @@ class StrategyService:
             catalog=self._catalog,
         )
         self._validator = StrategyValidator()
-        self._contract_checker = SignalContractChecker(self._loader)
+        self._contract_checker = StrategyContractService(
+            self._workspace, timeout_seconds=contract_timeout_seconds
+        )
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
         self._revisions = StrategyRevisionStore(self._workspace)
