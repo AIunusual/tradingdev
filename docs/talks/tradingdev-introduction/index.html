@@ -226,14 +226,40 @@
 </table>
 <p><em>示意對話，問法依情境調整；整理成確認單後，使用者同意才回測。</em></p>
 </section>
-</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="13" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="13" data-paginate="true" data-header="02　策略研究" data-class="compact" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" class="compact" data-marpit-pagination="13" style="--paginate:true;--header:02　策略研究;--class:compact;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
-<h2 id="%E5%9B%9E%E6%B8%AC%E6%8F%90%E4%BE%9B%E7%9A%84%E8%AD%89%E6%93%9A">回測提供的證據</h2>
-<p>用過去的行情，模擬規則在當時會如何運作。</p>
-<p>觀察收益之外，也要看<strong>損失、交易成本與失敗期間</strong>。</p>
+
+<h2 id="%E5%9B%9E%E6%B8%AC%E8%AD%89%E6%93%9A%E8%88%87-ai-%E8%A7%A3%E8%AE%80%E5%9D%87%E7%B7%9A%E7%AD%96%E7%95%A5%E6%A1%88%E4%BE%8B">回測證據與 AI 解讀：均線策略案例</h2>
 <blockquote>
-<p>過去的結果，支持我們檢查假說。未來是否仍有效，需要繼續驗證。</p>
+<p><strong>使用者</strong>：「這個均線策略為什麼虧損？該改哪裡？」</p>
 </blockquote>
+<table>
+<thead>
+<tr>
+<th>TradingDev 的機制</th>
+<th>前端 AI 可能如何回應</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>查詢實驗證據</strong></td>
+<td>「先核對這次的期間與成本，再查回撤和虧損交易。」</td>
+</tr>
+<tr>
+<td><strong>規則式診斷</strong></td>
+<td>「若回撤觸發診斷提示，我會先檢查那段期間的交易。」</td>
+</tr>
+<tr>
+<td><strong>引導 AI 分析</strong></td>
+<td>「先區分觀察與假說，再提議用相同期間與成本，比較一種出場規則。」</td>
+</tr>
+<tr>
+<td><strong>保存報告與引用</strong></td>
+<td>「把分析與對應的回測結果存入報告，方便你繼續追問。」</td>
+</tr>
+</tbody>
+</table>
+<p><em>示意情境；診斷建議與 AI 假說仍須驗證，新實驗須另行確認。</em></p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="14" data-paginate="true" data-header="02　策略研究" data-theme="tradingdev" data-lang="zh-Hant" lang="zh-Hant" data-marpit-pagination="14" style="--paginate:true;--header:02　策略研究;--theme:tradingdev;--lang:zh-Hant;" data-marpit-pagination-total="57" data-size="16:9">
 <header>02　策略研究</header>
@@ -964,7 +990,12 @@ TradingDev 不內建對話模型。這些能力是研究後端的現有基礎，
 策略具體化包含整理進場、持有、出場與交易方向，確認參數並形成可驗證的程式。模型可提出有說明依據的方案，不能把自己的假設冒充使用者要求。
 本金與成本未指定時可依共用模擬政策解析，明示有效值優先。前端須呈現後端產生的確認摘要與 HTML，待使用者明確同意該方案才提交執行。這些是歷史回測假設，不是即時費率或真實下單設定；本金與交易規模依執行模式適用。
 提示詞要求不保證所有客戶端一定遵循；後端另檢查必要欄位、設定與執行狀態，但不能證明輸入或同意真的來自使用者。
-來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。</p></div><div class="bespoke-marp-note" data-index="12" tabindex="0"><p>可以用「歷史實驗」解釋回測。資料、費用、成交假設和選取期間都會影響答案，不把漂亮結果視為未來保證。</p></div><div class="bespoke-marp-note" data-index="13" tabindex="0"><p>讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 客戶端角色；TradingDev 不限定對話介面，也不內建對話模型。
+來源：src/tradingdev/mcp/prompts.py 的 SERVER_INSTRUCTIONS、server.py 的 instructions 註冊，以及 src/tradingdev/domain/strategies/templates.py 的 research 契約與 src/tradingdev/domain/research_policy.py。</p></div><div class="bespoke-marp-note" data-index="12" tabindex="0"><p>承接上一頁的均線策略，假設使用者已確認並完成一次歷史回測，再詢問虧損與修改方向。對話是依實作編寫的情境示意，不是真實模型逐字紀錄，也沒有宣稱本例已測得虧損、回撤或改善效果。
+查詢證據：get_run_metrics 回傳保存的指標、定義、有效設定及不可用原因；get_run_trades、get_run_equity 等工具讀取對應執行範圍的原始紀錄。TradeHistoryService 與 PerformanceStore 核對保存資料的身分與完整性，查詢不會重新執行策略。缺少資料須保留原因，不能當成零或由模型猜測。
+規則式診斷：DiagnosticService 讀取保存的結果，交給可替換的 DiagnosticProvider。目前的 MaverickDiagnostics 依六項固定門檻提供數值依據、建議檢查及限制。例如 signal 模式的最大回撤超過 0.25，會提示先檢查回撤期間的交易，再以原策略為基準比較明確的出場或風控變體。門檻不是使用者風險上限，也不證明出場規則就是虧損原因；診斷沒有直接找出虧損期間或完成市場情境、波動敏感度的因果分析。
+AI 分析指引：SERVER_INSTRUCTIONS 要求先讀診斷，涉及特定虧損期間時再查交易或權益資料；解讀須包含 summary、observations、hypotheses_and_limits、next_steps 與精確的 run_id/scope 引用。文字推理由前端 LLM 完成，後端沒有自行呼叫另一個模型產生評語。新比較須另提可確認的方案，研究建議不授權自動執行。
+報告保存：generate_report 接收模型的結構化分析，ReportService 核對引用是否屬於所選報告結果，將分析與規則式診斷保存在 HTML 及 manifest。計算證據與 LLM 解讀分開呈現，沒有解讀時明確標示；引用檢查不等於證明文字推論正確。歷史結果只支持檢驗假說，不保證未來有效。
+來源：src/tradingdev/mcp/prompts.py、mcp/tools/runs.py、mcp/tools/history.py、app/diagnostic_service.py、adapters/reporting/maverick_diagnostics.py、app/contracts/reports.py、app/report_service.py，以及 docs/reports.md「Research interpretation and diagnostic providers」。</p></div><div class="bespoke-marp-note" data-index="13" tabindex="0"><p>讀作 MCP，不是 MPC。表中列的是責任，不是要求使用者部署三套系統。直接在 Codex 中開發策略時，Codex 承擔 AI 客戶端角色；TradingDev 不限定對話介面，也不內建對話模型。
 TradingDev 以 server instructions、工具描述與按需契約提供研究指引，並由後端強制檢查可機械驗證的輸入與執行條件。客戶端決定互動與推理方式，提示詞不能保證模型遵循，也不能證明使用者真的閱讀或同意。
 來源：src/tradingdev/mcp/server.py、prompts.py、tools/strategy.py，以及 ARCHITECTURE.md。</p></div><div class="bespoke-marp-note" data-index="14" tabindex="0"><p>新策略會保存版本，通過驗證及 dry-run 後才取得執行資格；其中的訊號檢查使用固定合成資料，並非歷史回測。準備確認單時只做離線程式與設定檢查，以及適用的合成訊號檢查。單次準備的內建策略不在此時執行訊號；固定參數比較則對每組候選（包含內建策略）執行 80 與 240 根合成 K 棒的訊號檢查。確認前不取得真實行情、不訓練模型、不執行歷史回測；行情、訓練及績效須同意後才開始驗證。
 這些步驟已有 SERVER_INSTRUCTIONS 引導，並搭配工具說明及 get_strategy_contract 的按需內容。缺少必要研究選擇時須追問；保存研究筆記須有保存或分享需求。客戶端可安排自己的互動方式，但工具仍會檢查契約與執行狀態。

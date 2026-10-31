@@ -242,16 +242,28 @@ TradingDev 透過 MCP 提供**研究流程指引與檢查規則**，
 
 ---
 
-## 回測提供的證據
+<!-- _class: compact -->
 
-用過去的行情，模擬規則在當時會如何運作。
+## 回測證據與 AI 解讀：均線策略案例
 
-觀察收益之外，也要看**損失、交易成本與失敗期間**。
+> **使用者**：「這個均線策略為什麼虧損？該改哪裡？」
 
-> 過去的結果，支持我們檢查假說。未來是否仍有效，需要繼續驗證。
+| TradingDev 的機制 | 前端 AI 可能如何回應 |
+| --- | --- |
+| **查詢實驗證據** | 「先核對這次的期間與成本，再查回撤和虧損交易。」 |
+| **規則式診斷** | 「若回撤觸發診斷提示，我會先檢查那段期間的交易。」 |
+| **引導 AI 分析** | 「先區分觀察與假說，再提議用相同期間與成本，比較一種出場規則。」 |
+| **保存報告與引用** | 「把分析與對應的回測結果存入報告，方便你繼續追問。」 |
+
+*示意情境；診斷建議與 AI 假說仍須驗證，新實驗須另行確認。*
 
 <!--
-可以用「歷史實驗」解釋回測。資料、費用、成交假設和選取期間都會影響答案，不把漂亮結果視為未來保證。
+承接上一頁的均線策略，假設使用者已確認並完成一次歷史回測，再詢問虧損與修改方向。對話是依實作編寫的情境示意，不是真實模型逐字紀錄，也沒有宣稱本例已測得虧損、回撤或改善效果。
+查詢證據：get_run_metrics 回傳保存的指標、定義、有效設定及不可用原因；get_run_trades、get_run_equity 等工具讀取對應執行範圍的原始紀錄。TradeHistoryService 與 PerformanceStore 核對保存資料的身分與完整性，查詢不會重新執行策略。缺少資料須保留原因，不能當成零或由模型猜測。
+規則式診斷：DiagnosticService 讀取保存的結果，交給可替換的 DiagnosticProvider。目前的 MaverickDiagnostics 依六項固定門檻提供數值依據、建議檢查及限制。例如 signal 模式的最大回撤超過 0.25，會提示先檢查回撤期間的交易，再以原策略為基準比較明確的出場或風控變體。門檻不是使用者風險上限，也不證明出場規則就是虧損原因；診斷沒有直接找出虧損期間或完成市場情境、波動敏感度的因果分析。
+AI 分析指引：SERVER_INSTRUCTIONS 要求先讀診斷，涉及特定虧損期間時再查交易或權益資料；解讀須包含 summary、observations、hypotheses_and_limits、next_steps 與精確的 run_id/scope 引用。文字推理由前端 LLM 完成，後端沒有自行呼叫另一個模型產生評語。新比較須另提可確認的方案，研究建議不授權自動執行。
+報告保存：generate_report 接收模型的結構化分析，ReportService 核對引用是否屬於所選報告結果，將分析與規則式診斷保存在 HTML 及 manifest。計算證據與 LLM 解讀分開呈現，沒有解讀時明確標示；引用檢查不等於證明文字推論正確。歷史結果只支持檢驗假說，不保證未來有效。
+來源：src/tradingdev/mcp/prompts.py、mcp/tools/runs.py、mcp/tools/history.py、app/diagnostic_service.py、adapters/reporting/maverick_diagnostics.py、app/contracts/reports.py、app/report_service.py，以及 docs/reports.md「Research interpretation and diagnostic providers」。
 -->
 
 ---
