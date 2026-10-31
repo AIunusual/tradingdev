@@ -239,6 +239,9 @@ _DOC_HEADINGS.update(
                     "Recorded Signal Evaluations",
                 )
             },
+            "Method families": _DOC_HEADINGS["docs/run_artifacts.md"][
+                "Recorded Signal Evaluations"
+            ],
         },
         **{
             path: {

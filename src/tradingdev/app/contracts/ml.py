@@ -71,6 +71,8 @@ class MlContractResponse(ContractModel):
     missing_policies: list[str]
     leaderboard_metrics: list[str]
     """Metrics a leaderboard may rank on; each declares a direction."""
+    method_families: list[str]
+    """Kinds of method a candidate can declare, from fitted model to unnamed."""
     guidance: dict[str, str]
     """On-demand interpretation and workflow details for the advertised tools."""
 
@@ -109,6 +111,10 @@ class RecordedEvaluation(ContractModel):
     """How many candidates are now recorded; the size of the comparison."""
     signal_fingerprint: str
     """Hash of the evaluated signal; compare it with a re-run to check reproduction."""
+    method_family: str
+    """Which kind of method produced the signal."""
+    method_name: str
+    """Readable rule name; empty for a model and for an unnamed signal."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -119,8 +125,8 @@ class SignalEvaluationResponse(ContractModel):
     signal_fingerprint: str
     """Hash of the evaluated signal values in dataset row order.
 
-    Stored separately from entry identity for modelled candidates. Ad-hoc
-    candidates without a model ID also include it in their entry identity.
+    Stored separately from identity for models and named methods. Only unnamed
+    candidates include it in their entry identity.
     """
     n_observations: int
     horizon: int
@@ -144,11 +150,23 @@ class PredictionEvaluationResponse(SignalEvaluationResponse):
     dataset_id: str
 
 
+class RuleEvaluationResponse(SignalEvaluationResponse):
+    """Evaluation of a hand-set threshold rule on a saved dataset.
+
+    Carries the dataset and the readable rule name instead of a model ID,
+    because no model was involved and the rule is what must be reproducible.
+    """
+
+    dataset_id: str
+    rule: str
+    """Readable rule identity, such as ``rsi_14 < 30``."""
+
+
 class LeaderboardRow(ContractModel):
     """One placed candidate and the headline numbers behind its rank.
 
     The row is self-describing: the evaluation settings it was measured under,
-    the candidate's own hyperparameters and the hash of its signal all travel
+    the candidate's own settings and the hash of its signal all travel
     with the metric, so a parameter surface or a reproduction check needs no
     second lookup.
     """
@@ -158,11 +176,15 @@ class LeaderboardRow(ContractModel):
     label: str
     model_id: str
     dataset_id: str
+    method_family: str
+    """Which kind of method produced this signal: ml_model, rule or other."""
+    method_name: str
+    """The rule's readable name; empty for a model and for an unnamed signal."""
     horizon: int
     window: int
     n_quantiles: int
     parameters: dict[str, JsonValue]
-    """Fitted hyperparameters when available; empty does not imply defaults."""
+    """Artifact or declared method settings; empty does not imply defaults."""
     signal_fingerprint: str
     """Hash of the signal this row was measured on; empty on older records."""
     value: float
@@ -183,6 +205,9 @@ class LeaderboardSkipped(ContractModel):
 
     entry_id: str
     label: str
+    method_family: str
+    """Which kind of method produced this signal, so a failed rule stays a rule."""
+    method_name: str
     reason: str
     horizon: int
     window: int
@@ -211,6 +236,12 @@ class LeaderboardResponse(ContractModel):
     n_ranked: int
     """Candidates actually placed; the size of the comparison that decided."""
     context: str
+    families: dict[str, int]
+    """How many candidates each method family contributed.
+
+    A ranking that mixes fitted models with hand-set rules is not one kind of
+    evidence, so the mix travels with the order.
+    """
     parameter_axes: dict[str, list[int]]
     """Every observed value of horizon, window and n_quantiles.
 

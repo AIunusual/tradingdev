@@ -53,6 +53,8 @@ _METRIC_LABELS = {
 }
 
 _CONTEXT_LABELS = {
+    "method_family": "方法家族",
+    "method_name": "方法名稱",
     "model_id": "模型識別碼",
     "dataset_id": "資料集識別碼",
     "signal_fingerprint": "訊號指紋",
@@ -272,14 +274,15 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
             + _pairs(
                 {label: metadata.get(key) for key, label in _CONTEXT_LABELS.items()}
             )
-            + "<h4>模型擬合參數</h4>"
+            + "<h4>候選參數</h4>"
             + (
                 _pairs(scope["parameters"])
                 if scope["parameters"]
-                else "<p>沒有保存擬合參數；不由模型識別碼推測。</p>"
+                else "<p>沒有保存候選參數；不由名稱或識別碼推測。</p>"
             )
-            + "<p class='muted'>模型擬合參數與上方評估座標各自保存，"
-            "同名參數不會互相覆寫。</p></details>"
+            + "<p class='muted'>模型參數取自保存的 artifact；規則與其他訊號參數由"
+            "呼叫端宣告。候選參數與上方評估座標各自保存，同名參數不會互相覆寫。"
+            "名稱、家族與參數本身不證明可重現性或樣本外有效性。</p></details>"
         )
     axes = block["parameter_axes"]
     return (
@@ -318,7 +321,7 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
         + _metrics_table(block, block["hidden_metrics"])
         + "</details>"
         + _definitions(block)
-        + "<h3>候選身分、資料與模型參數</h3>"
+        + "<h3>候選身分、資料與參數</h3>"
         + "".join(candidates)
         + "<div class='ml-evidence'><h3>完整證據</h3>"
         + _pairs(

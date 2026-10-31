@@ -209,10 +209,16 @@ distinguishes the final artifact from the fold models. `leakage_audit_clean`
 describes the implemented split and label-overlap checks only; it cannot prove
 that features, research choices or external inputs are free of future knowledge.
 
-MCP `evaluate_signal(model_id, dataset_id, window=60, n_quantiles=5, record=False)`
-evaluates a verified saved model on the complete single-symbol dataset. The
-backend produces the signal, obtains saved forward returns in the same row
-order and adopts the dataset horizon; the MCP input does not accept arrays or
+MCP `evaluate_signal` accepts `dataset_id`, optional `model_id`, `column`,
+`threshold`, `direction="above"`, `window=60`, `n_quantiles=5` and `record=False`.
+Supply either `model_id` for a verified saved model or both `column` and
+`threshold` for a rule. Combining `model_id` with either rule input is rejected.
+Rules accept `direction="above"` (default) or `"below"`; the condition is strict,
+so a value equal to the threshold produces `-1`. Direction is unused for model
+evaluation. Only `record=True` saves or replaces the same candidate's evaluation.
+See method families below for rule restrictions. The backend evaluates the
+complete single-symbol dataset, obtains saved forward returns in the same
+row order and adopts the dataset horizon; the MCP input does not accept arrays or
 a caller-selected horizon. A preview's `offset` or `limit` never restricts
 evaluation. There must be enough observations for the chosen IC `window` and
 `n_quantiles` (2–10). It returns Pearson and Spearman IC statistics, hit rate, turnover,
@@ -578,11 +584,13 @@ its ID or predictions on those rows do not establish out-of-sample evidence.
 
 ### Recorded Signal Evaluations
 
-MCP `evaluate_signal(model_id, dataset_id, record=True)` generates the complete
+MCP `evaluate_signal(dataset_id, model_id, record=True)` generates the complete
 signal from a verified saved model and single-symbol dataset, then records its
-evaluation. Preview pages are not persisted prediction artifacts and are never
-the evaluation's input. The separate Python `MLService.evaluate_signal` accepts
-arrays and requires a verified dataset when recording.
+evaluation. Without `model_id` it records a threshold rule instead, from one
+feature column of that dataset. Preview pages are not persisted prediction
+artifacts and are never the evaluation's input. The separate Python
+`MLService.evaluate_signal` accepts arrays and requires a verified dataset when
+recording; `MLService.evaluate_rule` is the rule equivalent.
 Whenever `dataset_id` is supplied, including without recording, the signal must
 cover all its rows, the supplied forward returns must exactly match the saved
 `forward_return` values in row order, and an explicit horizon must equal the
@@ -594,18 +602,82 @@ result without a leaderboard write.
 
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset
-IDs, a display label, the candidate's own fitted hyperparameters, the hash of the
-signal that was measured, and an evaluation context: symbol or panel symbols,
+IDs, a display label, the candidate's saved settings, the hash of the
+signal that was measured, the method family that produced it (`ml_model`, `rule`
+or `other`) with a readable `method_name` for candidates that have no model, and
+an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
-build-time code fingerprint and dataset content hash. The fitted parameters are
-copied from the model artifact, so a row still says how that model was configured
-after the artifact is retrained. Ad-hoc signals and records whose model artifact
-cannot be loaded have empty parameters. Older records missing the new fields
+build-time code fingerprint and dataset content hash. For a model row, the fitted
+parameters are copied from the model artifact, so the row still says how that
+model was configured after the artifact is retrained; a rule row carries the
+settings its caller declared. Other signals may also declare settings. Records
+without declared settings or a loadable model artifact have empty parameters. Older records missing the new fields
 read as `parameters={}` and `signal_fingerprint=""`; reads do not reconstruct them.
 Empty parameters are not fitted defaults, and an empty fingerprint is not
 reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
+
+#### Method families
+
+Not every candidate is a model. `method_family` says what produced the signal, so
+a hand-set rule can be ranked beside a fitted model without being mistaken for
+one:
+
+- `ml_model`: a saved model. Its `parameters` are copied from the artifact, and a
+  caller may not supply them.
+- `rule`: a hand-set method with no fitting step. It must carry a `method_name`,
+  and its `parameters` are declared by the caller, not read from an artifact.
+- `other`: a signal whose construction is not declared, including every row
+  written before families existed that carries no model ID. Rows that carry a
+  model ID read as `ml_model`, because that ID is the caller's declaration of a
+  fitted model; it is a label, not proof of what produced the signal.
+
+The Python `MLService.evaluate_signal` array API accepts `method_family`,
+`method_name` and `method_parameters`. Omitting the family uses `ml_model` when
+a model ID is supplied, otherwise `other`; unknown families are rejected.
+Names are trimmed and limited to 160 characters. A `rule` requires a nonblank
+name. Declared parameter keys must be nonblank strings and values must be finite
+numbers, excluding booleans; values are normalized to floats. Model candidates
+require a model ID and reject a non-model family, a nonblank method name or
+nonempty declared parameters: their settings come from the artifact. These
+declarations describe the caller's claim, not verified signal provenance.
+MCP accepts the narrower model-or-threshold inputs described above; it does not
+accept arbitrary method declarations or signal arrays.
+
+The family is identity, not a measurement condition, so it stays out of
+`EvaluationContext`: rules and models measured on one dataset remain comparable,
+which is the point of putting them in one table. `leaderboard` reports a
+`families` count for the candidates its filters selected, including ones it could
+not rank, and appends a caveat when more than one family is present. Family
+labels do not establish selection history or out-of-sample validity.
+Inspect provenance and measurement conditions; pass `family` to rank one kind.
+Names and declared parameters alone do not prove reproducible construction.
+
+Named candidates are identified by family, name and full-precision declared
+parameters within the saved dataset and evaluation context. Repeating those
+settings replaces that candidate; changing a parameter creates another entry,
+even when rounded display names or resulting signals match. Model IDs and
+unnamed-signal fingerprints keep their existing identity encoding.
+
+The `evaluate_signal` tool without `model_id` builds a rule signal from one saved
+feature column: `+1` where the column is above (or below) the threshold and `-1`
+otherwise. These are signal values, not executed positions: the shared
+simulator still requires `n_quantiles` prior observations and both historical
+signal values, and opens positions only on the non-overlapping horizon grid.
+A first switch on the final row can leave every simulated return zero. This
+is signal research, not an always-invested threshold-strategy backtest. The
+label, realised outcome and row bookkeeping (`forward_return`, `target`,
+`timestamp`, `label_end`, `symbol`) are forbidden. Constant signals are
+unsupported by the quantile evaluator; observing both values in the full sample
+does not guarantee a trade. Choosing a threshold after viewing this dataset
+introduces in-sample selection; the backend does not verify selection history.
+A threshold sweep is stored as one
+candidate per level, each carrying its level in `parameters`. It is not reported
+as a parameter surface: `parameter_axes` covers only horizon, IC window and
+quantile count, so the surface, its caveats and the plateau analysis built on
+them do not apply to rule settings yet. Reading a sweep as a surface today would
+compare separate candidates as if they were one measurement.
 
 The recorded metrics include annualised return, maximum drawdown, Sharpe, alpha
 and beta alongside the signal-quality ones. They describe the simulated
@@ -648,8 +720,8 @@ behaviour; `observations` is present and null, because a signal evaluation
 records no orders and no equity curve. The three tunable settings are reported
 in `metadata`, not merged into `parameters`: a fitted parameter dictionary may
 legitimately contain a key of the same name, and merging would silently
-overwrite one of them, so `parameters` means exactly what the model was fitted
-with. Non-finite scores become `null`, as in leaderboard storage, while absent
+overwrite one of them. `parameters` retains the model artifact settings or
+caller-declared method settings, distinguished by `method_family`. Non-finite scores become `null`, as in leaderboard storage, while absent
 metric keys remain absent. `ml_report_block` collects the whole candidate set,
 including candidates that failed to rank, with block-level definitions, the
 observed parameter axes, the skipped rows and their coordinates, and the ranking
@@ -694,16 +766,14 @@ observed values of each axis and appends a caveat saying so. Every row states it
 own horizon, window and quantile count, so a point on the surface is readable
 without a second lookup.
 
-The entry ID includes the dataset, evaluation context and model ID.
-With no model ID, it also includes a signal fingerprint computed from a
-canonical JSON array of finite floating-point values; array boundaries and value
-boundaries are preserved. That fingerprint is now computed for every record and
-stored in its own `signal_fingerprint` field, including records that carry a model
-ID, where it is deliberately kept out of the ID: folding it in would rename every
-existing entry. A re-run reproduces a recorded candidate when its
+Entry identity binds the dataset and evaluation context to the model ID, or
+to a named method's family/name/settings. Only unnamed candidates include a
+signal fingerprint in their entry ID. The fingerprint uses a canonical JSON
+array of finite floating-point values, preserving array and value boundaries;
+every record also stores it separately as `signal_fingerprint`. A re-run reproduces a recorded candidate when its
 `signal_fingerprint` equals the stored one, and no migration is needed. MCP
-evaluation validates the model that generated its
-signal. Existing records and Python array callers may instead use a
+model evaluation validates the model that generated its signal; rule evaluation
+builds the signal from the verified dataset feature and requested threshold. Existing records and Python array callers may instead use a
 caller-declared model label: their ID alone does not prove signal origin. The
 stored format has no provenance discriminator, so a leaderboard must not label
 all historical rows as verified-origin. Neither path proves out-of-sample

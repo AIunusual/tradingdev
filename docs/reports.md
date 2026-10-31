@@ -141,6 +141,10 @@ using each metric's saved definition. The backtest tables' two-decimal and
 percentage formatting rules and precision controls do not apply to ML tables.
 ML JSON downloads use pre-encoded UTF-8 bytes, preserving numeric precision
 without a browser JSON parse/stringify round trip.
+Candidate details show the saved method family and name. Parameters come from
+the model artifact or, for rules and other signals, the caller's declaration;
+rule thresholds are not described as fitted model parameters. Family labels do
+not establish training/selection history or out-of-sample validity.
 
 Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
 eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
