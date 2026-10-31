@@ -633,6 +633,18 @@ one:
   model ID read as `ml_model`, because that ID is the caller's declaration of a
   fitted model; it is a label, not proof of what produced the signal.
 
+The Python `MLService.evaluate_signal` array API accepts `method_family`,
+`method_name` and `method_parameters`. Omitting the family uses `ml_model` when
+a model ID is supplied, otherwise `other`; unknown families are rejected.
+Names are trimmed and limited to 160 characters. A `rule` requires a nonblank
+name. Declared parameter keys must be nonblank strings and values must be finite
+numbers, excluding booleans; values are normalized to floats. Model candidates
+require a model ID and reject a non-model family, a nonblank method name or
+nonempty declared parameters: their settings come from the artifact. These
+declarations describe the caller's claim, not verified signal provenance.
+MCP accepts the narrower model-or-threshold inputs described above; it does not
+accept arbitrary method declarations or signal arrays.
+
 The family is identity, not a measurement condition, so it stays out of
 `EvaluationContext`: rules and models measured on one dataset remain comparable,
 which is the point of putting them in one table. `leaderboard` reports a
