@@ -55,6 +55,13 @@ def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
         assert json.loads(json.dumps(params, allow_nan=False)) == params
 
 
+def test_ranking_guidance_describes_the_training_dataset(service: MLService) -> None:
+    """MCP clients read the contract, not the docs, so the field must be there."""
+    guidance = service.get_contract()["guidance"]["ranking"]
+    assert "training_dataset_id" in guidance
+    assert "equality with dataset_id means" in guidance
+
+
 def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
