@@ -668,11 +668,12 @@ class MLService:
         bare hash: an unnamed signal keeps the hash in its label, which is all that
         distinguishes it.
 
-        The training dataset comes from the artifact as well. An artifact that
-        predates the binding, is missing, or fails identity or hash verification
-        yields an empty id: the row then says the training data is unknown rather
-        than implying the evaluation dataset trained the model. Any other storage
-        error propagates, so the recording fails instead of losing that silently.
+        The training dataset comes from the artifact as well. A missing artifact, or
+        one whose metadata cannot be read as a valid record — unreadable JSON, an
+        unsupported schema version, or an identity or hash mismatch — yields an
+        empty id: the row then says the training data is unknown rather than
+        implying the evaluation dataset trained the model. Any other storage error
+        propagates, so the recording fails instead of losing that silently.
         """
         if not model_id:
             label = identity.name or (

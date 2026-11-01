@@ -645,17 +645,20 @@ reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
 
-`training_dataset_id` is empty when the artifact predates schema 2, is missing or
-fails identity or hash verification, or no model produced the signal. Those cases
-read as unknown; any other storage error while reading the artifact propagates and
-the recording fails, so no entry is written. Equality with `dataset_id` means the
-recorded score is in-sample only when the backend produced the signal from that
-artifact. A caller-supplied signal under a declared `model_id` records where that
-artifact was fitted without establishing that it produced the signal, and the fields
-alone do not separate the two cases. Re-running the model and matching
-`signal_fingerprint` shows that the recorded values are reproducible from that
-model; it does not show that the original signal came from it, because the
-fingerprint covers signal values only and a caller can supply the same values.
+`training_dataset_id` is empty when no model produced the signal, and when the
+artifact cannot be read as a valid record: it is absent (`FileNotFoundError`), or
+`load` raises `ValueError`, which covers unreadable JSON, an unsupported schema
+version, and an identity or hash mismatch. Those cases are recorded as unknown; any
+other error propagates, so the recording fails and no entry is written. Equality with
+`dataset_id` means the recorded score is in-sample only when the backend produced
+the signal from that artifact, as the MCP `evaluate_signal(model_id, dataset_id)`
+tool does by calling `evaluate_prediction`. A caller-supplied signal under a
+declared `model_id` records where that artifact was fitted without establishing
+that it produced the signal, and the fields alone do not separate the two cases.
+Re-running the model and matching `signal_fingerprint` shows that the recorded
+values are reproducible from that model; it does not show that the original signal
+came from it, because the fingerprint covers signal values only and a caller can
+supply the same values.
 Inequality proves nothing about the rows: a dataset identity also covers the
 requested period and the build-time code fingerprint, so identical rows can carry
 two identities, and genuinely different versions can still cover overlapping
