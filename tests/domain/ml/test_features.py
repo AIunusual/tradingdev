@@ -131,6 +131,21 @@ class TestContextRows:
 
         assert fe.transform(window, include_target=False).empty
 
+    def test_one_row_short_of_the_deepest_lag_leaves_no_row(
+        self, large_ohlcv_df: pd.DataFrame
+    ) -> None:
+        """The lag term is exact in both directions, not just a lower bound.
+
+        ``lookback=168`` asks for 170 rows, so 169 must still leave nothing: a
+        requirement that were merely inflated would otherwise pass unnoticed.
+        """
+        fe = FeatureEngineer(lookback=168)
+        assert fe.context_rows == 168 + 2
+
+        assert fe.transform(
+            large_ohlcv_df.iloc[: fe.context_rows - 1], include_target=False
+        ).empty
+
     def test_a_bare_warmup_keeps_the_bar_but_not_its_values(
         self, large_ohlcv_df: pd.DataFrame
     ) -> None:
