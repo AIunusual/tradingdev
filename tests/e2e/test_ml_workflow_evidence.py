@@ -14,8 +14,11 @@ from tests.e2e.test_llm_ml import (
     DATASET_ARGUMENTS,
     PREDICTION_ARGUMENTS,
     TRAINING_ARGUMENTS,
+    TrainingProvenanceCase,
     assert_ml_artifacts,
     assert_ml_workflow,
+    assert_training_provenance,
+    prepare_training_provenance,
     seed_ml_markets,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
@@ -88,6 +91,116 @@ def test_ml_requires_every_successful_step(calls: list[ToolCall], event: int) ->
     calls[event].result["success"] = False
     with pytest.raises(AssertionError, match="Missing successful ordered ML step"):
         assert_ml_workflow(calls)
+
+
+@pytest.mark.parametrize("event", [4, 5])
+def test_ml_rejects_lost_training_binding(calls: list[ToolCall], event: int) -> None:
+    result = calls[event].result
+    payload = result["recorded"] if event == 4 else result["ranked"][0]
+    payload["training_dataset_id"] = "ds_unrelated"
+    with pytest.raises(AssertionError):
+        assert_ml_workflow(calls)
+
+
+@pytest.fixture(scope="module")
+def provenance_workflow() -> Iterator[
+    tuple[MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]]
+]:
+    with temporary_mcp_workspace() as workspace:
+        case = asyncio.run(prepare_training_provenance(workspace))
+
+        async def run() -> tuple[list[ToolCall], set[str]]:
+            calls: list[ToolCall] = []
+            async with workspace.connect() as client:
+                product_tools = (await client.session.list_tools()).tools
+                readonly = {
+                    tool.name
+                    for tool in product_tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                }
+                for name, args in [
+                    ("get_ml_contract", {}),
+                    *(
+                        (
+                            "evaluate_signal",
+                            {
+                                "dataset_id": dataset_id,
+                                "model_id": case.model_id,
+                                "record": True,
+                            },
+                        )
+                        for dataset_id in (
+                            case.training_dataset_id,
+                            case.overlapping_dataset_id,
+                        )
+                    ),
+                    (
+                        "leaderboard",
+                        {
+                            "metric": "hit_rate",
+                            "allow_mixed": True,
+                        },
+                    ),
+                ]:
+                    result = await client.call(name, **args)
+                    assert result["success"], result
+                    calls.append(ToolCall(name, args, result))
+            return calls, readonly
+
+        calls, readonly = asyncio.run(run())
+        first, second = (
+            call.result["recorded"]["entry_id"]
+            for call in calls
+            if call.name == "evaluate_signal"
+        )
+        rule, unknown = case.historical
+        reply = (
+            "| 候選 | 判讀 |\n| --- | --- |\n"
+            f"| {first} | 後端用訓練資料評估，屬樣本內。 |\n"
+            f"| {second} | ID 不同不代表樣本外，資料仍可能重疊。 |\n"
+            f"| {rule.entry_id} | 模型訓練不適用；"
+            "規則的選擇過程未記錄，無法證明樣本外。 |\n"
+            f"| {unknown.entry_id} | 訓練來源未知，無法確認與評估資料的關係。 |"
+        )
+        yield workspace, case, calls, reply, readonly
+    assert not workspace.root.exists()
+
+
+def test_real_mcp_training_provenance_evidence(
+    provenance_workflow: tuple[
+        MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]
+    ],
+) -> None:
+    assert_training_provenance(*provenance_workflow)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "wrong_binding",
+        "missing_evaluation",
+        "unrequested_training",
+        "missing_explanation",
+    ],
+)
+def test_provenance_evidence_rejects_broken_workflows(
+    provenance_workflow: tuple[
+        MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]
+    ],
+    fault: str,
+) -> None:
+    workspace, case, original, reply, readonly = provenance_workflow
+    calls = deepcopy(original)
+    if fault == "wrong_binding":
+        calls[2].result["recorded"]["training_dataset_id"] = case.overlapping_dataset_id
+    elif fault == "missing_evaluation":
+        calls.pop(2)
+    elif fault == "unrequested_training":
+        calls.append(ToolCall("train_model", {}, {"success": False}))
+    else:
+        reply = "\n".join(reply.splitlines()[:-1])
+    with pytest.raises(AssertionError):
+        assert_training_provenance(workspace, case, calls, reply, readonly)
 
 
 def test_ml_requires_contract_before_building(calls: list[ToolCall]) -> None:
