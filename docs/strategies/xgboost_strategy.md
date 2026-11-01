@@ -58,9 +58,11 @@ designed for research on market-making volume targets, not live execution.
   `retrain_interval`.
 - A bar with unavailable features emits no entry signal; it does not reuse the
   preceding bar's prediction. A scored frame in which no bar can be scored fails
-  instead of returning an all-flat result. Cooldown counts all source bars,
-  including gaps, and threshold selection uses the same timing. See
-  the [dataset and model input contract](../ml_research.md#dataset-and-model-inputs).
+  instead of returning an all-flat result; the [rolling
+  rules](../ml_research.md#rolling-retraining-schemes) cover the context it needs
+  and the error it reports. Cooldown counts all source bars, including gaps, and
+  threshold selection uses the same timing. See the
+  [dataset and model input contract](../ml_research.md#dataset-and-model-inputs).
 - Scored data must carry chronological timestamps. The
   [training contract](../strategy_contract.md#training-before-scoring) covers the
   accepted input, the exception and the empty-frame rules.
