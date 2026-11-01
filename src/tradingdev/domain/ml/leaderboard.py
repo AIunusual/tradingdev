@@ -216,12 +216,14 @@ class LeaderboardEntry:
     """Dataset the candidate's model was fitted on; ``""`` when unknown.
 
     Recorded so a reader can compare it with ``dataset_id``, the dataset the
-    evaluation ran on. Equality means the score is in-sample. Inequality proves
-    nothing about the rows: a dataset identity also covers the requested period
-    and the build-time code fingerprint, and genuinely different versions can
-    still cover overlapping periods. An empty value is unknown, including on
-    every row written before the binding existed; it is never reconstructed from
-    the model, the metrics or the current registry.
+    evaluation ran on. Equality means the score is in-sample when the backend
+    produced the signal from that artifact; under a caller-supplied signal it
+    says only where the named artifact was fitted. Inequality proves nothing
+    about the rows: a dataset identity also covers the requested period and the
+    build-time code fingerprint, and genuinely different versions can still cover
+    overlapping periods. An empty value is unknown, including on every row written
+    before the binding existed; it is never reconstructed from the model, the
+    metrics or the current registry.
     """
 
     @property

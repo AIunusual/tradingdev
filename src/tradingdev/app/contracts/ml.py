@@ -118,9 +118,11 @@ class RecordedEvaluation(ContractModel):
     training_dataset_id: str
     """Dataset the model was fitted on; empty when unknown or for no model.
 
-    Equality with the evaluation dataset means the score is in-sample.
-    Inequality proves nothing: a dataset identity also covers the requested
-    period and the code fingerprint, and different versions can still overlap.
+    Equality with the evaluation dataset means the score is in-sample when the
+    backend produced the signal from that artifact; under a caller-supplied
+    signal it says only where the named artifact was fitted. Inequality proves
+    nothing: a dataset identity also covers the requested period and the code
+    fingerprint, and different versions can still overlap.
     """
 
 

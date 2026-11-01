@@ -297,13 +297,17 @@ does not prove a model-to-run relationship or persist missing time series. Full
 selection, visibility and retention semantics are in the
 [report contract](reports.md#composable-offline-reports).
 
-Leaderboard records carry the training dataset when the model artifact records one,
-so an entry whose `training_dataset_id` equals its `dataset_id` was scored on the
-rows its model was fitted on. That equality is the only conclusion the record
-supports: a different value does not establish a holdout, and an empty one leaves
-the relationship unknown, including on every record written before the binding
-existed. Describe the saved evaluation sample, and do not infer a training
-relationship from model IDs, dataset IDs or a `full` scope alone.
+Leaderboard records carry the training dataset of the artifact they name, when that
+artifact records one. Equality with the evaluation `dataset_id` means the score is
+in-sample only when the backend produced the signal from that artifact, which is
+what the MCP `evaluate_signal(model_id, dataset_id)` path does. When a caller
+supplied the array and declared a `model_id`, the same equality says only that the
+named artifact was fitted on the evaluation dataset; nothing verifies that it
+produced the signal, and the record does not say which case it is. A different
+value does not establish a holdout either way, and an empty one leaves the
+relationship unknown, including on every record written before the binding existed.
+Describe the saved evaluation sample, and do not infer a training relationship from
+model IDs, dataset IDs or a `full` scope alone.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -578,6 +582,13 @@ lock file is retained. A failed first publication removes its newly created blob
 if no metadata was published. This is not a crash or power-loss transaction:
 an interrupted, unpublished blob can be recovered by retrying the same content.
 
+Because the binding is not part of the model ID, a repeated save of the same content
+may update it: an existing artifact whose training dataset is unknown gains the one
+now supplied, including a schema 1 record read as unknown. Once recorded it is
+immutable — a save that would name a different dataset for the same content is
+rejected instead of overwriting, because leaderboard rows already written kept the
+old value.
+
 The schema 1 filenames remain unchanged. `ModelArtifactStore.load_with_bytes`
 returns the verified metadata and bytes together; `load` returns only metadata.
 Saving no longer accepts an alternate `model_id`, and the unchecked
@@ -634,13 +645,19 @@ reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
 
-`training_dataset_id` is empty when the artifact predates schema 2, could not be
-loaded, or no model produced the signal. Equality with `dataset_id` means the
-recorded score is in-sample. Inequality proves nothing about the rows: a dataset
-identity also covers the requested period and the build-time code fingerprint, so
-identical rows can carry two identities, and genuinely different versions can
-still cover overlapping periods. A training window and an evaluation window that
-share dates produce two identities and no holdout. Older records are not
+`training_dataset_id` is empty when the artifact predates schema 2, is missing or
+fails identity or hash verification, or no model produced the signal. Those cases
+read as unknown; any other storage error while reading the artifact propagates and
+the recording fails, so no entry is written. Equality with `dataset_id` means the
+recorded score is in-sample only when the backend produced the signal from that
+artifact. A caller-supplied signal under a declared `model_id` records where that
+artifact was fitted without establishing that it produced the signal, and the fields
+alone do not separate the two cases; re-running the model and comparing
+`signal_fingerprint` is what distinguishes them. Inequality proves nothing about the
+rows: a dataset identity also covers the requested period and the build-time code
+fingerprint, so identical rows can carry two identities, and genuinely different
+versions can still cover overlapping periods. A training window and an evaluation
+window that share dates produce two identities and no holdout. Older records are not
 backfilled, and a reader must not substitute the evaluation dataset for a missing
 training one.
 

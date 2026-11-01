@@ -38,12 +38,15 @@ also require semantic review. Single-run delivery still identifies its run ID.
 `app/report_ml.py` reads one complete leaderboard file generation; missing IDs,
 corrupt records and duplicate stored identities fail without publishing a partial
 report. It does not load model pickle, retrain, rerun predictions or download data.
-Leaderboard records carry the training dataset when the model artifact records one.
-An entry whose training dataset equals its evaluation dataset was scored on the
-rows its model was fitted on; a different value does not establish a holdout, and
-an empty one leaves the relationship unknown. The ML view discloses that condition;
-report commentary and final interpretation must state it rather than infer a
-training relationship from model or dataset identities alone.
+Leaderboard records carry the training dataset of the artifact they name, when it
+records one. Equality with the evaluation dataset means the score is in-sample only
+when the backend produced the signal from that artifact; under a caller-supplied
+signal it says only where the named artifact was fitted. A different value does not
+establish a holdout. A model entry with an empty value leaves the relationship
+unknown, and a rule entry has no training model at all, so the ML view labels that
+not applicable rather than unknown. Report commentary and final interpretation must
+state that condition rather than infer a training relationship from model or dataset
+identities alone.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and

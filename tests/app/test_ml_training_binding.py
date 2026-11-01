@@ -96,8 +96,9 @@ class TestTrainingDatasetBinding:
         recorded = result["recorded"]
         assert recorded["training_dataset_id"] == dataset_id
         entry = _recorded_entry(workspace, recorded["entry_id"])
-        # Equal ids mean the score is in-sample; the record says which dataset
-        # rather than implying it, so a reader can see it without the artifact.
+        # This is the verified path: the backend generated the signal from this
+        # artifact, so equal ids mean the score is in-sample. The record names the
+        # dataset rather than implying it, so a reader sees it without the artifact.
         assert entry.dataset_id == entry.training_dataset_id == dataset_id
 
     def test_scoring_on_another_dataset_keeps_both_identities(

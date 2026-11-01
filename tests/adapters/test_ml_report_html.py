@@ -171,7 +171,7 @@ def test_sample_provenance_is_unknown_even_with_saved_model_identity(
     body = render_ml_report(block, has_runs=has_runs)
     introduction = body.split("<h3>研究範圍與參數座標</h3>", 1)[0]
     assert f"<p class='notice'>{escape(ML_SAMPLE_PROVENANCE_NOTE)}</p>" in introduction
-    assert "若與評估資料集相同，則該分數為樣本內" in introduction
+    assert "若與評估資料集相同，且訊號由該模型產生" in introduction
     assert "訓練與評估的關係仍未知" in introduction
     assert "<details" not in introduction
 

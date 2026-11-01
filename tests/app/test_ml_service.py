@@ -58,7 +58,7 @@ def test_get_contract_model_defaults_are_json_safe(service: MLService) -> None:
 def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
-    assert "若與評估資料集相同，則該分數為樣本內" in guidance
+    assert "若與評估資料集相同，且訊號由該模型產生" in guidance
     assert "訓練與評估的關係仍未知" in guidance
 
 
