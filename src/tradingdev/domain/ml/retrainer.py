@@ -121,12 +121,21 @@ class RollingRetrainer:
                 last_trade_bar = i
 
         if total_bars and not scored_bars:
+            needed = fe.context_rows
+            available = len(combined)
             msg = (
                 f"rolling prediction scored none of {total_bars} bars: the "
-                f"feature engineer needs {fe.context_rows} rows for a complete "
-                "feature row, but the history and the scored frame hold "
-                f"{len(combined)}; provide more history before the scored window"
+                f"feature engineer needs {needed} rows for a complete feature "
+                f"row, and the history plus the scored frame hold {available}"
             )
+            if available < needed:
+                msg += "; provide more history before the scored window"
+            else:
+                msg += (
+                    "; that is enough history, so the features are incomplete "
+                    "for another reason (a flat price series leaves the "
+                    "Bollinger width undefined, for example)"
+                )
             raise ValueError(msg)
 
         elapsed = time.monotonic() - t_start

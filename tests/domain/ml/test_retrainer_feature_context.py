@@ -232,7 +232,7 @@ def test_a_frame_that_never_completes_a_feature_row_fails() -> None:
     frame = _market_frame(30)
     model = _CountingModel()
 
-    with pytest.raises(ValueError, match="scored none of 20 bars"):
+    with pytest.raises(ValueError, match="scored none of 20 bars") as rejected:
         RollingRetrainer(
             XGBoostModelConfig(),
             retrain_interval=10_000,
@@ -241,6 +241,33 @@ def test_a_frame_that_never_completes_a_feature_row_fails() -> None:
             lookback=12,
         ).run(frame.iloc[10:], frame.iloc[:10], model, FeatureEngineer(lookback=12))
 
+    assert "provide more history" in str(rejected.value)
+    assert model.frames == []
+
+
+def test_a_complete_history_that_still_yields_no_row_does_not_blame_it() -> None:
+    """Enough rows is not the same as a complete row.
+
+    Equal closes leave the Bollinger width at zero, which the feature engineer
+    replaces with NaN, so no row survives however much history is supplied. The
+    message must not send the caller looking for more history it already has.
+    """
+    frame = _market_frame(200)
+    for column in ("open", "high", "low", "close"):
+        frame[column] = 100.0
+    frame["volume"] = 1000.0
+    model = _CountingModel()
+
+    with pytest.raises(ValueError, match="incomplete for another reason") as rejected:
+        RollingRetrainer(
+            XGBoostModelConfig(),
+            retrain_interval=10_000,
+            threshold=0.55,
+            cooldown=1,
+            lookback=12,
+        ).run(frame.iloc[150:], frame.iloc[:150], model, FeatureEngineer(lookback=12))
+
+    assert "provide more history" not in str(rejected.value)
     assert model.frames == []
 
 
