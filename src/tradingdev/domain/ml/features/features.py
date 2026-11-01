@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from tradingdev.domain.ml.features.technical_features import (
+    TA_SETTLED_CONTEXT_ROWS,
     compute_sma_ratios,
     compute_ta_indicators,
     compute_volume_features,
@@ -59,6 +60,25 @@ class FeatureEngineer:
     @property
     def target_horizon(self) -> int:
         return self._target_horizon
+
+    @property
+    def context_rows(self) -> int:
+        """Rows a scoring slice must hold, including the bar, to be usable.
+
+        The requirement belongs to the features, not to ``lookback``: the fixed
+        indicators need the same number of rows whatever the lookback is, while
+        the lagged returns scale with the deepest sampled lag.  The fixed part
+        covers more than the rows in which the indicators merely appear, because
+        the exponential ones are seeded from the start of the window they are
+        given: a shorter slice would report values that disagree with a full
+        history.  A subclass that computes other features must override this.
+        """
+        # ``ret_lag_L`` reads the log return of the previous bar, so the bar
+        # itself needs one row for the return and one for the shift.
+        lagged_rows = max(_sampled_lags(self._lookback)) + 2
+        rolling_rows = max(_ROLL_WINDOWS) + 1
+        sma_rows = max(_SMA_WINDOWS)
+        return max(lagged_rows, rolling_rows, sma_rows, TA_SETTLED_CONTEXT_ROWS)
 
     def transform(
         self,
