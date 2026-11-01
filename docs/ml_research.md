@@ -652,14 +652,16 @@ the recording fails, so no entry is written. Equality with `dataset_id` means th
 recorded score is in-sample only when the backend produced the signal from that
 artifact. A caller-supplied signal under a declared `model_id` records where that
 artifact was fitted without establishing that it produced the signal, and the fields
-alone do not separate the two cases; re-running the model and comparing
-`signal_fingerprint` is what distinguishes them. Inequality proves nothing about the
-rows: a dataset identity also covers the requested period and the build-time code
-fingerprint, so identical rows can carry two identities, and genuinely different
-versions can still cover overlapping periods. A training window and an evaluation
-window that share dates produce two identities and no holdout. Older records are not
-backfilled, and a reader must not substitute the evaluation dataset for a missing
-training one.
+alone do not separate the two cases. Re-running the model and matching
+`signal_fingerprint` shows that the recorded values are reproducible from that
+model; it does not show that the original signal came from it, because the
+fingerprint covers signal values only and a caller can supply the same values.
+Inequality proves nothing about the rows: a dataset identity also covers the
+requested period and the build-time code fingerprint, so identical rows can carry
+two identities, and genuinely different versions can still cover overlapping
+periods. A training window and an evaluation window that share dates produce two
+identities and no holdout. Older records are not backfilled, and a reader must not
+substitute the evaluation dataset for a missing training one.
 
 #### Method families
 

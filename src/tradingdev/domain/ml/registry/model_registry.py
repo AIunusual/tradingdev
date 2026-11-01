@@ -34,9 +34,10 @@ class ModelArtifact:
     """Dataset the final artifact was fitted on; ``""`` on records older than it.
 
     The dataset id is derived from the dataset manifest, so it identifies the
-    rows and their content. It is deliberately absent from ``model_id``: adding
-    it must not rename a model that already exists. An empty value is unknown,
-    never "trained on nothing", and must not be reconstructed by guessing.
+    rows, the request that built them and the code that did it. It is deliberately
+    absent from ``model_id``: adding it must not rename a model that already
+    exists. An empty value is unknown, never "trained on nothing", and must not be
+    reconstructed by guessing.
     """
 
     @property
@@ -140,8 +141,8 @@ def build_model_artifact(
     """Assemble a :class:`ModelArtifact`, computing its deterministic id.
 
     ``training_dataset_id`` is required rather than defaulted: a model whose
-    training data is unknown would look the same as one trained on nothing, and
-    an in-sample evaluation could then never be told apart from a held-out one.
+    training data is unknown would look the same as one trained on nothing, and no
+    evaluation could then be identified as in-sample.
     """
     if not training_dataset_id:
         raise ValueError("a model artifact requires the dataset it was trained on")

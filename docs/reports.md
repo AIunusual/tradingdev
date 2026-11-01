@@ -43,7 +43,8 @@ records one. Equality with the evaluation dataset means the score is in-sample o
 when the backend produced the signal from that artifact; under a caller-supplied
 signal it says only where the named artifact was fitted. A different value does not
 establish a holdout. A model entry with an empty value leaves the relationship
-unknown, and a rule entry has no training model at all, so the ML view labels that
+unknown. A candidate that is not a model — a rule, or any other declared or unnamed
+signal — has no training model at all, so the ML view labels its training dataset
 not applicable rather than unknown. Report commentary and final interpretation must
 state that condition rather than infer a training relationship from model or dataset
 identities alone.

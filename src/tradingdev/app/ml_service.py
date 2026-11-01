@@ -662,16 +662,17 @@ class MLService:
     ) -> tuple[str, dict[str, Any], str]:
         """A readable name, its settings, and the dataset the model was trained on.
 
-        The parameters come from the artifact itself, so a row describes the
-        model that produced it even if the artifact is later retrained. A
-        candidate without a model has no artifact to read, so its declared name
-        and settings are used instead of a bare hash: an unnamed signal keeps
-        the hash in its label, which is all that distinguishes it.
+        The parameters are copied from the artifact at record time, so a row keeps
+        the settings it was recorded with. A candidate without a model has no
+        artifact to read, so its declared name and settings are used instead of a
+        bare hash: an unnamed signal keeps the hash in its label, which is all that
+        distinguishes it.
 
         The training dataset comes from the artifact as well. An artifact that
-        predates the binding, or one that cannot be loaded at all, yields an
-        empty id: the row then says the training data is unknown rather than
-        implying the evaluation dataset trained the model.
+        predates the binding, is missing, or fails identity or hash verification
+        yields an empty id: the row then says the training data is unknown rather
+        than implying the evaluation dataset trained the model. Any other storage
+        error propagates, so the recording fails instead of losing that silently.
         """
         if not model_id:
             label = identity.name or (
