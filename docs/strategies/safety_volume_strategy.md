@@ -87,6 +87,13 @@ SMA，為 true 時用 ML，不沿用前一次 `fit()` 留在策略上的模型�
 所以連續 `fit()` 或 walk-forward 跨 fold 重複使用同一策略物件時，不會沿用上一個
 fold 的模型或門檻。
 
+搜尋要評分的驗證列會先被 Risk Gate 的特徵暖機濾掉一部分，方向必須依索引標籤
+對回原本的 bar，因此這條路徑要求 `fit()` 輸入的索引標籤唯一；重複標籤無法唯一
+對應時，`fit()` 以 `ValueError` 停止，不會挑一個較寬鬆的門檻繼續。以
+`reset_index(drop=True)` 或任何唯一索引提供資料即可。只有實際執行搜尋時才有
+這項要求（設定 `risk_threshold_candidates` 且 lookback 搜尋找到合格風險模型）；
+沒有搜尋的 `fit()` 不受影響。
+
 ### Direction
 
 | 參數 | 預設值 | 說明 |
