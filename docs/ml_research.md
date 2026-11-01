@@ -299,15 +299,15 @@ selection, visibility and retention semantics are in the
 
 Leaderboard records carry the training dataset of the artifact they name, when that
 artifact records one. Equality with the evaluation `dataset_id` means the score is
-in-sample only when the backend produced the signal from that artifact, which is
-what the MCP `evaluate_signal(model_id, dataset_id)` path does. When a caller
-supplied the array and declared a `model_id`, the same equality says only that the
-named artifact was fitted on the evaluation dataset; nothing verifies that it
-produced the signal, and the record does not say which case it is. A different
-value does not establish a holdout either way, and an empty one leaves the
-relationship unknown, including on every record written before the binding existed.
-Describe the saved evaluation sample, and do not infer a training relationship from
-model IDs, dataset IDs or a `full` scope alone.
+in-sample only when the backend generated the signal from that artifact, which
+`MLService.evaluate_prediction` does. `MLService.evaluate_signal` evaluates the array
+the caller passes, so a record it writes under a declared `model_id` says only that
+the named artifact was fitted on the evaluation dataset; nothing verifies that it
+produced those values, and the row's fields do not say which entry point wrote it.
+A different value does not establish a holdout either way, and an empty one leaves
+the relationship unknown, including on every record written before the binding
+existed. Describe the saved evaluation sample, and do not infer a training
+relationship from model IDs, dataset IDs or a `full` scope alone.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -650,11 +650,11 @@ artifact cannot be read as a valid record: it is absent (`FileNotFoundError`), o
 `load` raises `ValueError`, which covers unreadable JSON, an unsupported schema
 version, and an identity or hash mismatch. Those cases are recorded as unknown; any
 other error propagates, so the recording fails and no entry is written. Equality with
-`dataset_id` means the recorded score is in-sample only when the backend produced
-the signal from that artifact, as the MCP `evaluate_signal(model_id, dataset_id)`
-tool does by calling `evaluate_prediction`. A caller-supplied signal under a
-declared `model_id` records where that artifact was fitted without establishing
-that it produced the signal, and the fields alone do not separate the two cases.
+`dataset_id` means the recorded score is in-sample only when the signal came from
+that artifact — the MCP path above — and not when `MLService.evaluate_signal`
+evaluated an array the caller supplied. Such a record under a declared `model_id`
+says where that artifact was fitted without establishing that it produced the
+signal, and the fields alone do not separate the two cases.
 Re-running the model and matching `signal_fingerprint` shows that the recorded
 values are reproducible from that model; it does not show that the original signal
 came from it, because the fingerprint covers signal values only and a caller can
