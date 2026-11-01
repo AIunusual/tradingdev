@@ -395,8 +395,8 @@ set it explicitly. For the direction strategy, whose feature engineer declares
 scored bar on top. The SafetyVolume risk gate passes a different engineer to the
 same engine, and `RiskFeatureEngineer` declares no equivalent, so its geometry has
 to be sized from that engineer's own windows — its 60-bar volatility window alone
-needs 61 rows before the bar. The engine adds one rule of its own: a training row
-whose
+needs 60 preceding bars, or 61 rows including the scored one. The engine adds one
+rule of its own: a training row whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter
 — it relies on the engineer leaving that tail unlabelled for `dropna` to remove
