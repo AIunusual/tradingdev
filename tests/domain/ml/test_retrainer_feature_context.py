@@ -10,7 +10,8 @@ Expected values here are arithmetic on the feature definitions and on the
 fixture's bar offsets, never copied from a run: a bar's features first exist once
 it has ``26 + 9 - 1 = 34`` rows behind it (TA-Lib's MACD histogram starts at
 ``slow + signal - 2``), and a seeded indicator agrees with an unlimited history
-after a further ``ceil(ln(1e-3) / ln(1 - 2/27)) = 90`` bars.
+to within the documented settling tolerance after a further
+``ceil(ln(1e-3) / ln(1 - 2/27)) = 90`` bars.
 """
 
 from __future__ import annotations
