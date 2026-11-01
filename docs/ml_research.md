@@ -390,7 +390,8 @@ whether a model was available: the feature-context failure names
 `predict_lookback` and the field to raise, while a replay that never obtained a
 causal model reports the model-availability error described above, which does not
 name that field. A lookback short enough to need `predict_lookback` raised must
-set it explicitly. The
+set it explicitly, to at least `context_rows - 1` prior bars: the engine adds the
+scored bar on top, so that is the value that yields a complete, settled row. The
 engine adds one rule of its own: a training row whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter

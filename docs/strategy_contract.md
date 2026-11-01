@@ -276,12 +276,13 @@ behavior, read its
 [signal logic](strategies/quantile_strategy.md#signal-logic).
 
 Direction scoring that leaves a non-empty scored frame with no scored bar fails
-with `ValueError` rather than returning all-zero signals: `RollingRetrainer` and
-the `rolling_gen` engine both refuse. A single bar without a complete feature row
-is still skipped, and the SafetyVolume Risk Gate keeps its neutral `P(safe)`
-instead of failing. [Rolling
-retraining](ml_research.md#rolling-retraining-schemes) covers which error each path
-reports.
+with `ValueError` rather than returning all-zero signals: `RollingRetrainer`, and
+the `rolling_gen` engine whichever strategy runs it, both refuse. A single bar
+without a complete feature row is still skipped. The SafetyVolume Risk Gate keeps
+its neutral `P(safe)` per bar, so only its classic loop can finish such a frame;
+with `rolling_gen` enabled it runs the same engine and inherits the failure.
+[Rolling retraining](ml_research.md#rolling-retraining-schemes) covers which error
+each path reports.
 
 When implementing or debugging Quantile alignment and model output, read
 [`QuantileStrategy.generate_signals`](../src/tradingdev/domain/strategies/bundled/quantile_strategy/strategy.py)
