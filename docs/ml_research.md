@@ -374,14 +374,19 @@ scores, the scored frame is never concatenated in front of itself, and a bar
 whose features are unavailable is not scored rather than reusing the previous
 bar's value. Those are the same rules the classic retrainer follows in its own
 loop. The classic loop sizes its scoring context from the feature engineer's
-declared `context_rows`, which covers both the rows the fixed indicators appear
-in and the rows their exponential seeds need to decay, so a lookback shorter
-than the warm-up still gets a feature row that agrees with a full history;
-`2 x lookback + 1` rows remain a floor, so a lookback that already covered the
-requirement keeps the context, and the seeded values, it had. The engine keeps
-the geometry described above — `predict_lookback` still follows the lookback —
-and a geometry shorter than the warm-up fails with the field to raise rather
-than scoring nothing. The engine adds one rule of its own: a training row whose
+declared `context_rows` — an engineer that computes other features must override
+it, or scoring would hand it less history than those features need. The declared
+count covers both the rows the fixed indicators appear in and the rows their
+exponential seeds need to decay, so a lookback shorter than the warm-up still
+gets a feature row that agrees with a full history; `2 x lookback + 1` rows
+remain a floor, so a lookback that already covered the requirement keeps the
+context, and the seeded values, it had. The engine keeps the geometry described
+above: `predict_lookback` still follows the lookback, and resolution only
+requires it to cover `lookback + 1`. A scheme whose geometry leaves no bar with a
+complete feature row is therefore not rejected up front — scoring runs to the end
+and fails, naming `predict_lookback`, instead of returning all-zero signals. A
+lookback short enough to need that field raised must set it explicitly. The
+engine adds one rule of its own: a training row whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter
 — it relies on the engineer leaving that tail unlabelled for `dropna` to remove
