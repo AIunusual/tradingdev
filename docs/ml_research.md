@@ -378,14 +378,19 @@ declared `context_rows` — an engineer that computes other features must overri
 it, or scoring would hand it less history than those features need. The declared
 count covers both the rows the fixed indicators appear in and the rows their
 exponential seeds need to decay, so a lookback shorter than the warm-up still
-gets a feature row that agrees with a full history; `2 x lookback + 1` rows
+gets a feature row whose seeded indicators agree with a full history to within
+that settling tolerance rather than exactly; `2 x lookback + 1` rows
 remain a floor, so a lookback that already covered the requirement keeps the
 context, and the seeded values, it had. The engine keeps the geometry described
 above: `predict_lookback` still follows the lookback, and resolution only
 requires it to cover `lookback + 1`. A scheme whose geometry leaves no bar with a
 complete feature row is therefore not rejected up front — scoring runs to the end
-and fails, naming `predict_lookback`, instead of returning all-zero signals. A
-lookback short enough to need that field raised must set it explicitly. The
+and fails instead of returning all-zero signals. Which error that is depends on
+whether a model was available: the feature-context failure names
+`predict_lookback` and the field to raise, while a replay that never obtained a
+causal model reports the model-availability error described above, which does not
+name that field. A lookback short enough to need `predict_lookback` raised must
+set it explicitly. The
 engine adds one rule of its own: a training row whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter
