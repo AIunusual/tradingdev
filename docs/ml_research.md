@@ -390,9 +390,13 @@ whether a model was available: the feature-context failure names
 `predict_lookback` and the field to raise, while a replay that never obtained a
 causal model reports the model-availability error described above, which does not
 name that field. A lookback short enough to need `predict_lookback` raised must
-set it explicitly, to at least `context_rows - 1` prior bars: the engine adds the
-scored bar on top, so that is the value that yields a complete, settled row. The
-engine adds one rule of its own: a training row whose
+set it explicitly. For the direction strategy, whose feature engineer declares
+`context_rows`, that is at least `context_rows - 1` prior bars: the engine adds the
+scored bar on top. The SafetyVolume risk gate passes a different engineer to the
+same engine, and `RiskFeatureEngineer` declares no equivalent, so its geometry has
+to be sized from that engineer's own windows — its 60-bar volatility window alone
+needs 61 rows before the bar. The engine adds one rule of its own: a training row
+whose
 label reads past the last bar of the training window is dropped before fitting,
 whatever the feature engineer returned. The classic retrainer has no such filter
 — it relies on the engineer leaving that tail unlabelled for `dropna` to remove
