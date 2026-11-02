@@ -564,10 +564,10 @@ the same bytes that passed hash verification.
 Schema 2 adds `training_dataset_id`, the dataset the final artifact was fitted on.
 The dataset ID is derived from the dataset manifest, so it identifies the rows, the
 request that built them and the code that did it. It is deliberately absent from the
-model ID: recording it must not rename a model that already exists. Schema 1 records
-read with an empty value, which stays unknown and is never inferred from the model,
-its metrics or the current dataset registry. An empty value is not "trained on
-nothing".
+model ID: recording it must not rename a model that already exists. Legacy records
+without this field read with an empty value, which stays unknown and is never inferred
+from the model, its metrics or the current dataset registry. Either supported schema
+preserves an explicit stored binding. An empty value is not "trained on nothing".
 
 The field records where the artifact was fitted. It does not make any evaluation
 held out; [Recorded Signal Evaluations](#recorded-signal-evaluations) states how a

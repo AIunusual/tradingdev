@@ -69,9 +69,10 @@ class ModelArtifact:
     def from_metadata(cls, payload: dict[str, Any]) -> ModelArtifact:
         """Rebuild a record from stored metadata, validating its shape.
 
-        Schema 1 predates the training-dataset binding; its rows read with an
-        empty ``training_dataset_id``, which stays unknown rather than being
-        inferred from the model, the metrics or the current registry.
+        Schema 1 predates the training-dataset binding. Records without a saved
+        binding read with an empty ``training_dataset_id``; it is never inferred
+        from the model, the metrics or the current registry. Explicit bindings
+        are preserved in either supported schema.
         """
         version = payload.get("schema_version")
         if (
