@@ -38,6 +38,7 @@ def _sample_artifact(
         feature_names=feature_names,
         content_hash=content_hash,
         n_train_samples=120,
+        training_dataset_id="ds_training",
         feature_importance=(("f2", 0.6), ("f1", 0.3), ("f3", 0.1)),
     )
 
@@ -114,9 +115,10 @@ def test_metadata_round_trip_preserves_fields() -> None:
     assert restored.n_features == 3
 
 
-def test_from_metadata_rejects_unknown_schema() -> None:
+@pytest.mark.parametrize("version", [999, [], {}, None, True, 2.0, "2"])
+def test_from_metadata_rejects_unknown_schema(version: object) -> None:
     payload = _sample_artifact("a" * 64).to_metadata()
-    payload["schema_version"] = 999
+    payload["schema_version"] = version
     with pytest.raises(ValueError, match="unsupported model schema_version"):
         ModelArtifact.from_metadata(payload)
 
@@ -201,6 +203,20 @@ def test_store_list_returns_all_metadata(tmp_path: Path) -> None:
     assert {item.model_id for item in listed} == set(seen)
 
 
+def test_store_list_skips_invalid_schema_without_losing_valid_models(
+    tmp_path: Path,
+) -> None:
+    store = ModelArtifactStore(tmp_path)
+    blob = _sample_blob({"model": "weights"})
+    artifact = _sample_artifact(content_sha256(blob))
+    store.save(model_bytes=blob, artifact=artifact)
+    invalid = artifact.to_metadata()
+    invalid["schema_version"] = []
+    (tmp_path / "invalid.json").write_text(json.dumps(invalid), encoding="utf-8")
+
+    assert store.list() == [artifact]
+
+
 def test_save_rejects_a_forged_identity_before_writing(tmp_path: Path) -> None:
     blob = _sample_blob({"model": "weights"})
     artifact = replace(_sample_artifact(content_sha256(blob)), model_id="0" * 16)
@@ -255,3 +271,65 @@ def test_load_rejects_a_missing_blob_for_published_metadata(tmp_path: Path) -> N
     store.path_for(artifact.model_id).unlink()
     with pytest.raises(FileNotFoundError, match="model blob missing"):
         store.load_with_bytes(artifact.model_id)
+
+
+class TestTrainingDatasetBinding:
+    """The artifact names the data it was fitted on, without renaming models."""
+
+    def test_the_artifact_keeps_the_training_dataset_through_a_round_trip(self) -> None:
+        artifact = _sample_artifact(content_sha256(_sample_blob({"w": 1})))
+        assert artifact.training_dataset_id == "ds_training"
+        restored = ModelArtifact.from_metadata(artifact.to_metadata())
+        assert restored.training_dataset_id == "ds_training"
+        assert restored == artifact
+
+    def test_a_schema_one_record_reads_without_a_training_dataset(self) -> None:
+        payload = _sample_artifact(content_sha256(_sample_blob({"w": 1}))).to_metadata()
+        payload["schema_version"] = 1
+        del payload["training_dataset_id"]
+        restored = ModelArtifact.from_metadata(payload)
+        assert restored.training_dataset_id == ""
+        assert restored.schema_version == 1
+
+    def test_a_stored_null_reads_as_unknown_not_as_text(self) -> None:
+        """A null must not become the string "None", which is a fake dataset ID."""
+        payload = _sample_artifact(content_sha256(_sample_blob({"w": 1}))).to_metadata()
+        payload["training_dataset_id"] = None
+        assert ModelArtifact.from_metadata(payload).training_dataset_id == ""
+
+    def test_an_unreadable_schema_is_still_refused(self) -> None:
+        payload = _sample_artifact(content_sha256(_sample_blob({"w": 1}))).to_metadata()
+        payload["schema_version"] = 3
+        with pytest.raises(ValueError, match="schema_version"):
+            ModelArtifact.from_metadata(payload)
+
+    def test_the_training_dataset_does_not_change_the_model_id(self) -> None:
+        """Recording where a model was fitted must not rename it."""
+        digest = content_sha256(_sample_blob({"w": 1}))
+        artifact = _sample_artifact(digest)
+        same_model_other_data = build_model_artifact(
+            model_name="xgb_direction",
+            framework="xgboost",
+            kind="classifier",
+            parameters={"max_depth": 3, "learning_rate": 0.1},
+            feature_names=("f1", "f2", "f3"),
+            content_hash=digest,
+            n_train_samples=120,
+            training_dataset_id="ds_other_training",
+            feature_importance=(("f2", 0.6), ("f1", 0.3), ("f3", 0.1)),
+        )
+        assert same_model_other_data.model_id == artifact.model_id
+
+    def test_an_empty_training_dataset_is_refused(self) -> None:
+        """A model with unknown training data would look like one trained on nothing."""
+        with pytest.raises(ValueError, match="dataset it was trained on"):
+            build_model_artifact(
+                model_name="xgb_direction",
+                framework="xgboost",
+                kind="classifier",
+                parameters={"max_depth": 3},
+                feature_names=("f1",),
+                content_hash=content_sha256(_sample_blob({"w": 1})),
+                n_train_samples=10,
+                training_dataset_id="",
+            )

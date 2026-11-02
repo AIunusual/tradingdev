@@ -108,6 +108,7 @@ class MLTrainingService:
             feature_names=tuple(feature_columns),
             content_hash=content_sha256(blob),
             n_train_samples=int(len(frame)),
+            training_dataset_id=dataset_id,
             feature_importance=model.feature_importance(),
         )
         store = ModelArtifactStore(self._workspace.models)

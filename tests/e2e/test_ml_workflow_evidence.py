@@ -14,8 +14,11 @@ from tests.e2e.test_llm_ml import (
     DATASET_ARGUMENTS,
     PREDICTION_ARGUMENTS,
     TRAINING_ARGUMENTS,
+    TrainingProvenanceCase,
     assert_ml_artifacts,
     assert_ml_workflow,
+    assert_training_provenance,
+    prepare_training_provenance,
     seed_ml_markets,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
@@ -88,6 +91,150 @@ def test_ml_requires_every_successful_step(calls: list[ToolCall], event: int) ->
     calls[event].result["success"] = False
     with pytest.raises(AssertionError, match="Missing successful ordered ML step"):
         assert_ml_workflow(calls)
+
+
+@pytest.mark.parametrize("event", [4, 5])
+def test_ml_rejects_lost_training_binding(calls: list[ToolCall], event: int) -> None:
+    result = calls[event].result
+    payload = result["recorded"] if event == 4 else result["ranked"][0]
+    payload["training_dataset_id"] = "ds_unrelated"
+    with pytest.raises(AssertionError):
+        assert_ml_workflow(calls)
+
+
+@pytest.fixture(scope="module")
+def provenance_workflow() -> Iterator[
+    tuple[MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]]
+]:
+    with temporary_mcp_workspace() as workspace:
+        case = asyncio.run(prepare_training_provenance(workspace))
+
+        async def run() -> tuple[list[ToolCall], set[str]]:
+            calls: list[ToolCall] = []
+            async with workspace.connect() as client:
+                product_tools = (await client.session.list_tools()).tools
+                readonly = {
+                    tool.name
+                    for tool in product_tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                }
+                for name, args in [
+                    ("get_ml_contract", {}),
+                    *(
+                        (
+                            "evaluate_signal",
+                            {
+                                "dataset_id": dataset_id,
+                                "model_id": case.model_id,
+                                "record": True,
+                            },
+                        )
+                        for dataset_id in (
+                            case.training_dataset_id,
+                            case.overlapping_dataset_id,
+                        )
+                    ),
+                    (
+                        "leaderboard",
+                        {
+                            "metric": "hit_rate",
+                            "allow_mixed": True,
+                        },
+                    ),
+                ]:
+                    result = await client.call(name, **args)
+                    assert result["success"], result
+                    calls.append(ToolCall(name, args, result))
+                for evaluation in calls[1:3]:
+                    args = {"ml_entry_ids": [evaluation.result["recorded"]["entry_id"]]}
+                    result = await client.call("generate_report", **args)
+                    assert result["success"], result
+                    calls.append(ToolCall("generate_report", args, result))
+                assert calls[-1].result["path"] != calls[-2].result["path"]
+            return calls, readonly
+
+        calls, readonly = asyncio.run(run())
+        first, second = (
+            call.result["recorded"]["entry_id"]
+            for call in calls
+            if call.name == "evaluate_signal"
+        )
+        rule, unknown, undeclared = case.historical
+        reply = (
+            "| 候選 | 訓練來源 | 評估來源 | 判讀 |\n| --- | --- | --- | --- |\n"
+            f"| {first} | {case.training_dataset_id} | {case.training_dataset_id} | "
+            "後端用訓練資料評估，屬樣本內。 |\n"
+            f"| {second} | {case.training_dataset_id} | "
+            f"{case.overlapping_dataset_id} | "
+            "ID 不同不代表樣本外，資料仍可能重疊。 |\n"
+            f"| {rule.entry_id} | 不適用 | {rule.dataset_id} | 模型訓練不適用；"
+            "規則的選擇過程未記錄，無法證明樣本外。 |\n"
+            f"| {unknown.entry_id} | 未知 | {unknown.dataset_id} | "
+            "訓練來源未知，無法確認與評估資料的關係。 |\n"
+            f"| {undeclared.entry_id} | 未知 | {undeclared.dataset_id} | "
+            "未宣告訊號來源，無法判定是否曾訓練。 |"
+        )
+        reply += "\n" + calls[-1].result["navigation_instructions"]
+        yield workspace, case, calls, reply, readonly
+    assert not workspace.root.exists()
+
+
+def test_real_mcp_training_provenance_evidence(
+    provenance_workflow: tuple[
+        MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]
+    ],
+) -> None:
+    assert_training_provenance(*provenance_workflow)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "wrong_binding",
+        "missing_evaluation",
+        "unrequested_training",
+        "missing_explanation",
+        "wrong_training_source",
+        "wrong_evaluation_source",
+        "single_report_claim",
+    ],
+)
+def test_provenance_evidence_rejects_broken_workflows(
+    provenance_workflow: tuple[
+        MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]
+    ],
+    fault: str,
+) -> None:
+    workspace, case, original, reply, readonly = provenance_workflow
+    calls = deepcopy(original)
+    expected_error = None
+    if fault == "wrong_binding":
+        calls[2].result["recorded"]["training_dataset_id"] = case.overlapping_dataset_id
+    elif fault == "missing_evaluation":
+        calls.pop(2)
+    elif fault == "unrequested_training":
+        calls.append(ToolCall("train_model", {}, {"success": False}))
+    elif fault == "wrong_training_source":
+        entry_id = calls[2].result["recorded"]["entry_id"]
+        reply = reply.replace(
+            f"| {entry_id} | {case.training_dataset_id} |",
+            f"| {entry_id} | ds_WRONG_TRAIN |",
+        )
+        expected_error = "Missing or incorrect training dataset"
+    elif fault == "wrong_evaluation_source":
+        reply = reply.replace(case.overlapping_dataset_id, "ds_WRONG_EVAL")
+        expected_error = "Missing or incorrect evaluation dataset"
+    elif fault == "single_report_claim":
+        reply += "\n所有內容保存在同一份離線 HTML。"
+        expected_error = "Multiple report files"
+    else:
+        reply = "\n".join(
+            line
+            for line in reply.splitlines()
+            if case.historical[-1].entry_id not in line
+        )
+    with pytest.raises(AssertionError, match=expected_error):
+        assert_training_provenance(workspace, case, calls, reply, readonly)
 
 
 def test_ml_requires_contract_before_building(calls: list[ToolCall]) -> None:

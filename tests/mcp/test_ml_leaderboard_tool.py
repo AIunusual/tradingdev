@@ -471,3 +471,19 @@ def test_evaluate_signal_refuses_a_model_and_a_rule_together(
     )
     assert rejected["success"] is False
     assert rejected["code"] == "invalid_signal"
+
+
+def test_leaderboard_rows_expose_the_training_dataset_field(
+    mcp: MCPServer, recorded: str
+) -> None:
+    """Every row carries the key, so a client never has to guess its presence.
+
+    The fixture records hand-built signals under caller-declared model IDs, so no
+    artifact exists to read a training dataset from and the value stays unknown.
+    What the value is when an artifact does exist is pinned by the service-level
+    tests, not here.
+    """
+    payload = _dispatch(mcp, "leaderboard", {"metric": "icir"})
+    rows = [row for group in ("ranked", "skipped") for row in payload[group]]
+    assert rows, "fixture must rank at least one candidate"
+    assert all(row["training_dataset_id"] == "" for row in rows)
