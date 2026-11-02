@@ -645,7 +645,7 @@ reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
 
-`training_dataset_id` is empty when no model produced the signal, and when the
+`training_dataset_id` is empty when no model is named, and when the
 artifact cannot be read as a valid record: it is absent (`FileNotFoundError`), or
 `load` raises `ValueError`, which covers unreadable JSON, an unsupported schema
 version, and an identity or hash mismatch. Those cases are recorded as unknown; any
