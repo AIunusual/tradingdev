@@ -18,6 +18,7 @@ import pytest
 from tests.app.test_run_metrics import _publish, _scope
 from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex
+from tests.e2e.conversation import visible_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.ml_report_evidence import (
     ML_REPORT_REQUEST,
@@ -391,7 +392,15 @@ def assert_training_provenance(
             if line.lstrip().startswith("|") and entry_id in line
         ]
         assert len(matches) == 1, f"Missing candidate explanation row: {entry_id}"
-        rows[entry_id] = matches[0]
+        rows[entry_id] = visible_text(matches[0])
+        entry = stored[entry_id]
+        assert entry.dataset_id in rows[entry_id], (
+            f"Missing or incorrect evaluation dataset for {entry_id}"
+        )
+        if entry.training_dataset_id:
+            assert entry.training_dataset_id in rows[entry_id], (
+                f"Missing or incorrect training dataset for {entry_id}"
+            )
     same_id = evaluations[case.training_dataset_id]["recorded"]["entry_id"]
     assert re.search(r"樣本內|in.sample", rows[same_id], re.IGNORECASE)
     other_id = evaluations[case.overlapping_dataset_id]["recorded"]["entry_id"]

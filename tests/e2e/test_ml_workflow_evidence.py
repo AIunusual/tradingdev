@@ -155,12 +155,16 @@ def provenance_workflow() -> Iterator[
         )
         rule, unknown = case.historical
         reply = (
-            "| 候選 | 判讀 |\n| --- | --- |\n"
-            f"| {first} | 後端用訓練資料評估，屬樣本內。 |\n"
-            f"| {second} | ID 不同不代表樣本外，資料仍可能重疊。 |\n"
-            f"| {rule.entry_id} | 模型訓練不適用；"
+            "| 候選 | 訓練來源 | 評估來源 | 判讀 |\n| --- | --- | --- | --- |\n"
+            f"| {first} | {case.training_dataset_id} | {case.training_dataset_id} | "
+            "後端用訓練資料評估，屬樣本內。 |\n"
+            f"| {second} | {case.training_dataset_id} | "
+            f"{case.overlapping_dataset_id} | "
+            "ID 不同不代表樣本外，資料仍可能重疊。 |\n"
+            f"| {rule.entry_id} | 不適用 | {rule.dataset_id} | 模型訓練不適用；"
             "規則的選擇過程未記錄，無法證明樣本外。 |\n"
-            f"| {unknown.entry_id} | 訓練來源未知，無法確認與評估資料的關係。 |"
+            f"| {unknown.entry_id} | 未知 | {unknown.dataset_id} | "
+            "訓練來源未知，無法確認與評估資料的關係。 |"
         )
         yield workspace, case, calls, reply, readonly
     assert not workspace.root.exists()
@@ -181,6 +185,8 @@ def test_real_mcp_training_provenance_evidence(
         "missing_evaluation",
         "unrequested_training",
         "missing_explanation",
+        "wrong_training_source",
+        "wrong_evaluation_source",
     ],
 )
 def test_provenance_evidence_rejects_broken_workflows(
@@ -191,15 +197,26 @@ def test_provenance_evidence_rejects_broken_workflows(
 ) -> None:
     workspace, case, original, reply, readonly = provenance_workflow
     calls = deepcopy(original)
+    expected_error = None
     if fault == "wrong_binding":
         calls[2].result["recorded"]["training_dataset_id"] = case.overlapping_dataset_id
     elif fault == "missing_evaluation":
         calls.pop(2)
     elif fault == "unrequested_training":
         calls.append(ToolCall("train_model", {}, {"success": False}))
+    elif fault == "wrong_training_source":
+        entry_id = calls[2].result["recorded"]["entry_id"]
+        reply = reply.replace(
+            f"| {entry_id} | {case.training_dataset_id} |",
+            f"| {entry_id} | ds_WRONG_TRAIN |",
+        )
+        expected_error = "Missing or incorrect training dataset"
+    elif fault == "wrong_evaluation_source":
+        reply = reply.replace(case.overlapping_dataset_id, "ds_WRONG_EVAL")
+        expected_error = "Missing or incorrect evaluation dataset"
     else:
         reply = "\n".join(reply.splitlines()[:-1])
-    with pytest.raises(AssertionError):
+    with pytest.raises(AssertionError, match=expected_error):
         assert_training_provenance(workspace, case, calls, reply, readonly)
 
 
