@@ -357,6 +357,39 @@ class TestPublishedRuns:
             ("window-10", 0.4),
         ]
         assert result["ranked_total"] == 2
+        # Identity is run-level: both scopes report the manifest's submitted
+        # parameters, not the parameters each scope was executed with. The scope
+        # names here differ from the manifest on purpose, so a future change that
+        # starts overlaying trial parameters would fail this assertion.
+        assert {row["parameters"]["window"] for row in result["ranked"]} == {20}
+        assert len({row["conditions"]["symbol"] for row in result["ranked"]}) == 1
+
+    def test_near_equal_values_share_a_rank_but_keep_numeric_order(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """A shared rank is not a promise of candidate-id order.
+
+        ``rank_candidates`` sorts by value and uses ``math.isclose`` only to
+        assign ranks, so two values inside the tolerance share a rank while the
+        larger one still comes first. The ids are assigned so that numeric order
+        and id order disagree: a tie-break by id would put ``alpha`` first.
+        """
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        _publish_run(
+            workspace, store, "beta", scopes={"full": {SHARPE: 1.000000000001}}
+        )
+
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("alpha", "full"), ("beta", "full")]
+        )
+
+        assert [
+            (row["run_id"], row["rank"], row["tied"]) for row in result["ranked"]
+        ] == [
+            ("beta", 1, 2),
+            ("alpha", 1, 2),
+        ]
 
     def test_top_k_limits_the_page_but_reports_the_full_total(
         self, storage: tuple[WorkspacePaths, SQLiteStore]
