@@ -39,8 +39,11 @@ RUN_GROUP = "run"
 
 Different instruments, frequencies, periods and costs do not make two backtests
 incomparable: they make the comparison conditional, and the conditions travel with
-each candidate so a reader can see them. What must match is the metric definition,
-and a source-qualified metric id already guarantees that.
+each candidate so a reader can see them. A source-qualified metric id guarantees
+only that both sides were asked for the same catalogued metric. Each run's saved
+definition snapshot, including its provider and package version, is not compared,
+so a historical run can still be ranked beside one measured under a newer
+definition.
 """
 
 

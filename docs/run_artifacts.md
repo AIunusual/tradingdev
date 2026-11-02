@@ -726,6 +726,49 @@ date rules, returning availability, accounting and valuation/time semantics.
 unavailable status with zero rows, never reconstructed history. Records remain
 aligned to their original bar indices after filtering and paging.
 
+## Ranking Saved Run Scopes
+
+`RankingService.rank_run_scopes` orders saved scopes by one metric a run already
+recorded. It is an application service: no MCP tool or CLI command exposes it yet,
+so the behaviour below is a library contract rather than a tool response.
+
+Each `(run_id, scope)` pair is one candidate, so several parameter sets of a single
+run are compared side by side. The metric id is source-qualified (`run.<name>`) and
+must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
+with a declared optimization direction; a `signal.` id is refused because signal
+figures are ranked through the leaderboard, and an id without a direction cannot
+order candidates.
+
+Values come from the saved performance bundle; nothing is recomputed. Before a
+value is used, the manifest recorded on the run is loaded and verified against the
+hash stored with that run, and the trading conditions are read from it. A pair
+whose run, bundle, manifest or conditions cannot be read is skipped with that
+reason: an unknown run, a bundle that never recorded the metric, a run with no
+recorded manifest, an unreadable manifest, or a manifest that no longer matches
+its hash. A skipped candidate keeps its place in the report and is never zero
+filled, so a failed measurement cannot look like a low one.
+
+Ordering, shared ranks for ties, the missing-value rule, the returned slice and the
+base caveats all come from `rank_candidates`; `top_k` limits only the returned
+page, while `ranked_total` counts every candidate that had a usable value. Equal
+values within a tolerance share a rank, and the tie order follows the candidate id
+rather than the order the pairs were requested in.
+
+Trading conditions travel beside every ranked row: symbol, timeframe, the resolved
+start and end timestamps, fees and slippage. Different conditions do not make two
+results incomparable, but they do not establish a controlled comparison either — a
+ranking across instruments, periods or cost models describes a conditional
+ordering, and a reader must check the conditions before reading a difference as an
+effect. See [Performance Artifacts](performance_artifacts.md#metric-interpretation)
+for metric meanings, units and the provider behind each value.
+
+Ranking orders by the current catalogue direction. Each run's saved definition
+snapshot, including its provider and package version, is not compared across
+candidates, so a historical run measured under an older definition can be ranked
+beside one measured under today's. The ranking therefore does not establish that
+two values share a definition; treat a mixed-provider selection as conditional in
+the same way as mixed conditions.
+
 ## Research Notes and Archives
 
 Editable research summaries live in the SQLite `research_notes` table. Versioned
