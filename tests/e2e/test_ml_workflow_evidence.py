@@ -145,6 +145,12 @@ def provenance_workflow() -> Iterator[
                     result = await client.call(name, **args)
                     assert result["success"], result
                     calls.append(ToolCall(name, args, result))
+                for evaluation in calls[1:3]:
+                    args = {"ml_entry_ids": [evaluation.result["recorded"]["entry_id"]]}
+                    result = await client.call("generate_report", **args)
+                    assert result["success"], result
+                    calls.append(ToolCall("generate_report", args, result))
+                assert calls[-1].result["path"] != calls[-2].result["path"]
             return calls, readonly
 
         calls, readonly = asyncio.run(run())
@@ -166,6 +172,7 @@ def provenance_workflow() -> Iterator[
             f"| {unknown.entry_id} | 未知 | {unknown.dataset_id} | "
             "訓練來源未知，無法確認與評估資料的關係。 |"
         )
+        reply += "\n" + calls[-1].result["navigation_instructions"]
         yield workspace, case, calls, reply, readonly
     assert not workspace.root.exists()
 
@@ -187,6 +194,7 @@ def test_real_mcp_training_provenance_evidence(
         "missing_explanation",
         "wrong_training_source",
         "wrong_evaluation_source",
+        "single_report_claim",
     ],
 )
 def test_provenance_evidence_rejects_broken_workflows(
@@ -214,8 +222,15 @@ def test_provenance_evidence_rejects_broken_workflows(
     elif fault == "wrong_evaluation_source":
         reply = reply.replace(case.overlapping_dataset_id, "ds_WRONG_EVAL")
         expected_error = "Missing or incorrect evaluation dataset"
+    elif fault == "single_report_claim":
+        reply += "\n所有內容保存在同一份離線 HTML。"
+        expected_error = "Multiple report files"
     else:
-        reply = "\n".join(reply.splitlines()[:-1])
+        reply = "\n".join(
+            line
+            for line in reply.splitlines()
+            if case.historical[-1].entry_id not in line
+        )
     with pytest.raises(AssertionError, match=expected_error):
         assert_training_provenance(workspace, case, calls, reply, readonly)
 

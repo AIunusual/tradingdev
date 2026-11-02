@@ -353,6 +353,14 @@ def assert_training_provenance(
         for call in calls
         if isinstance(call.result, dict) and call.result.get("success") is True
     ]
+    report_paths = {
+        call.result["path"] for call in successful if call.name == "generate_report"
+    }
+    if len(report_paths) > 1:
+        # Catch the observed cross-report claim; other wording still needs review.
+        assert "所有內容保存在同一份" not in visible_text(final_text), (
+            "Multiple report files must not be described as one file"
+        )
     assert any(call.name == "get_ml_contract" for call in successful)
     evaluations = {
         call.arguments["dataset_id"]: call.result
