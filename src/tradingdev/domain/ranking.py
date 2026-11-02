@@ -96,6 +96,28 @@ def signal_candidate_id(entry_id: str) -> str:
     return f"signal:{entry_id}"
 
 
+def run_candidate_id(run_id: str, scope: str) -> str:
+    """The ranking id of one scope of a saved run."""
+    return f"run:{run_id}#{scope}"
+
+
+def signal_metric_id(metric: str) -> str:
+    """The ranking id of a signal metric.
+
+    Metric ids are source-qualified because two catalogues can name the same thing
+    differently. ``annual_return`` and ``max_drawdown`` exist on both sides with
+    different definitions — a cost-free simulated book on one, an executed backtest
+    on the other — so an unqualified id would let them share a column and be read
+    as one measurement.
+    """
+    return f"signal.{metric}"
+
+
+def run_metric_id(metric: str) -> str:
+    """The ranking id of a saved backtest metric; see :func:`signal_metric_id`."""
+    return f"run.{metric}"
+
+
 def rank_candidates[T](
     candidates: Iterable[Candidate[T]],
     definition: MetricDefinition,
