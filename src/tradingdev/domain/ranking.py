@@ -6,12 +6,12 @@ live in one place and both candidate sources call them.
 
 Nothing here knows what a candidate is. The payload is carried through untouched,
 the comparison group is an opaque key, and the direction comes from the caller's
-metric definition. Signal evaluation and saved backtest results therefore order
-by the same code without sharing a data model.
+metric definition. Signal ranking is the first caller; a saved backtest candidate
+is expected to reuse the same rules without sharing a data model.
 
-Candidate ids are strings with a fixed grammar so the tie-break is deterministic
-across sources: ``signal:<entry_id>`` for a recorded evaluation, and
-``run:<run_id>#<scope>`` for one scope of a saved run.
+Candidate ids are strings with a fixed grammar so the tie-break stays
+deterministic: ``signal:<entry_id>`` for a recorded evaluation, and
+``run:<run_id>#<scope>`` reserved for the saved-run source.
 """
 
 from __future__ import annotations
