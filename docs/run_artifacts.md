@@ -784,11 +784,12 @@ difference as an effect. See
 meanings, units and the provider behind each value.
 
 Ranking orders by the current catalogue direction. Each run's saved definition
-snapshot, including its provider and package version, is not compared across
-candidates, so a historical run measured under an older definition can be ranked
-beside one measured under today's. The ranking therefore does not establish that
-two values share a definition; treat a mixed-provider selection as conditional in
-the same way as mixed conditions.
+snapshot records a provider name but no package version, and neither that snapshot
+nor the versions a scope records in `metadata.providers` are compared across
+candidates. A historical run measured under an older definition, or under an older
+package version, can therefore be ranked beside one measured under today's. The
+ranking does not establish that two values share a definition; treat a
+mixed-provider selection as conditional in the same way as mixed conditions.
 
 ## Research Notes and Archives
 
