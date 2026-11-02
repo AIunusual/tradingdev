@@ -272,14 +272,15 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
             label: metadata.get(key) for key, label in _CONTEXT_LABELS.items()
         }
         if not context_rows.get("訓練資料集"):
-            # A blank cell would read as "no data" for both cases below, and the
-            # two are different: a rule never had training rows, an older model
-            # record simply did not save them.
-            context_rows["訓練資料集"] = (
-                "不適用（無訓練模型）"
-                if metadata.get("method_family") != "ml_model"
-                else "未知（此紀錄未保存）"
-            )
+            # Only a declared rule establishes a method without model fitting.
+            # An undeclared signal could have come from an external fitted model.
+            family = metadata.get("method_family")
+            if family == "rule":
+                context_rows["訓練資料集"] = "不適用（無訓練模型）"
+            elif family == "ml_model":
+                context_rows["訓練資料集"] = "未知（此紀錄未保存）"
+            else:
+                context_rows["訓練資料集"] = "未知（未宣告訊號來源）"
         candidates.append(
             f"<details class='ml-candidate' id='ml-candidate-{index}'><summary>"
             + escape(metadata["label"] or scope["scope_id"])

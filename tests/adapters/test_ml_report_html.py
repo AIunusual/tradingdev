@@ -350,3 +350,11 @@ def test_an_older_model_candidate_says_the_training_dataset_is_unknown() -> None
     candidate = _candidate_html(_entry(ic_mean=0.2))
     assert "未知（此紀錄未保存）" in candidate
     assert "不適用（無訓練模型）" not in candidate
+
+
+@pytest.mark.parametrize("family", ["", "other"])
+def test_undeclared_signal_keeps_training_history_unknown(family: str) -> None:
+    entry = replace(_entry(ic_mean=0.2), model_id="", method_family=family)
+    candidate = _candidate_html(entry)
+    assert "未知（未宣告訊號來源）" in candidate
+    assert "不適用（無訓練模型）" not in candidate

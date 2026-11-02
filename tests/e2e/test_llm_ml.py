@@ -7,7 +7,7 @@ import hashlib
 import json
 import pickle
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -288,7 +288,8 @@ class TrainingProvenanceCase:
             f"請用已保存的模型 {self.model_id}，分別對資料集 "
             f"{self.training_dataset_id}、{self.overlapping_dataset_id} "
             "做訊號評估並保存結果。再查詢既有候選 "
-            f"{ids}，一起判斷這四筆結果能否支持未見資料上的表現，說明理由。"
+            f"{ids}，一起判斷這 {len(self.historical) + 2} 筆結果能否支持"
+            "未見資料上的表現，說明理由。"
             "請以表格每個候選一列，列出完整候選識別碼、訓練及評估資料來源，"
             "以及你對證據的判讀。這次只評估既有模型及解讀研究，"
             "不要重新取得行情、訓練模型、執行回測或改寫既有候選。"
@@ -318,11 +319,21 @@ async def prepare_training_provenance(
     train_frame, _ = datasets.load(dataset_id)
     other_frame, _ = datasets.load(other_id)
     assert set(other_frame["timestamp"]) < set(train_frame["timestamp"])
+    historical = seed_ml_report_candidates(paths)
+    undeclared = replace(
+        historical[0],
+        entry_id="purple-signal-3",
+        label="紫杉訊號研究",
+        method_family="other",
+        method_name="",
+        parameters={},
+    )
+    assert not LeaderboardStore(paths.ml_leaderboard).record(undeclared)
     return TrainingProvenanceCase(
         trained["model"]["model_id"],
         dataset_id,
         other_id,
-        seed_ml_report_candidates(paths),
+        (*historical, undeclared),
     )
 
 
@@ -416,7 +427,7 @@ def assert_training_provenance(
     for entry in case.historical:
         pattern = (
             r"未知|不明|未記錄|未保存|無法"
-            if entry.model_id
+            if entry.family != "rule"
             else r"不適用|未擬合|未訓練|沒有.*(?:訓練|擬合)|無.*(?:訓練|擬合)"
         )
         assert re.search(pattern, rows[entry.entry_id]), (

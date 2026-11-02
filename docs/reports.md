@@ -43,9 +43,10 @@ records one. Equality with the evaluation dataset means the score is in-sample o
 when the backend produced the signal from that artifact; under a caller-supplied
 signal it says only where the named artifact was fitted. A different value does not
 establish a holdout. A model entry with an empty value leaves the relationship
-unknown. A candidate that is not a model — a rule, or any other declared or unnamed
-signal — has no training model at all, so the ML view labels its training dataset
-not applicable rather than unknown. Report commentary and final interpretation must
+unknown. A declared hand-set rule has no model fitting step, so the ML view labels
+its training dataset not applicable. Other or undeclared signals have no recorded
+model binding; their training history remains unknown, including whether an external
+model produced them. Report commentary and final interpretation must
 state that condition rather than infer a training relationship from model or dataset
 identities alone.
 The selected candidates must satisfy the
@@ -152,8 +153,8 @@ the model artifact or, for rules and other signals, the caller's declaration;
 rule thresholds are not described as fitted model parameters. Family labels do
 not establish training/selection history or out-of-sample validity.
 The candidate's training dataset is shown when the artifact records one. A rule
-says training data does not apply, and an older model record says the training
-dataset is unknown, so neither is left blank and neither is inferred.
+says model training does not apply; an older model record or a signal with undeclared
+construction keeps its training history unknown. No missing source is inferred.
 
 Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
 eligible scalar scope. It uses saved bar returns grouped by observed UTC date,

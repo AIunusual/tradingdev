@@ -159,7 +159,7 @@ def provenance_workflow() -> Iterator[
             for call in calls
             if call.name == "evaluate_signal"
         )
-        rule, unknown = case.historical
+        rule, unknown, undeclared = case.historical
         reply = (
             "| 候選 | 訓練來源 | 評估來源 | 判讀 |\n| --- | --- | --- | --- |\n"
             f"| {first} | {case.training_dataset_id} | {case.training_dataset_id} | "
@@ -170,7 +170,9 @@ def provenance_workflow() -> Iterator[
             f"| {rule.entry_id} | 不適用 | {rule.dataset_id} | 模型訓練不適用；"
             "規則的選擇過程未記錄，無法證明樣本外。 |\n"
             f"| {unknown.entry_id} | 未知 | {unknown.dataset_id} | "
-            "訓練來源未知，無法確認與評估資料的關係。 |"
+            "訓練來源未知，無法確認與評估資料的關係。 |\n"
+            f"| {undeclared.entry_id} | 未知 | {undeclared.dataset_id} | "
+            "未宣告訊號來源，無法判定是否曾訓練。 |"
         )
         reply += "\n" + calls[-1].result["navigation_instructions"]
         yield workspace, case, calls, reply, readonly
