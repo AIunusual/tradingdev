@@ -74,7 +74,11 @@ class ModelArtifact:
         inferred from the model, the metrics or the current registry.
         """
         version = payload.get("schema_version")
-        if version not in _READABLE_SCHEMAS:
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version not in _READABLE_SCHEMAS
+        ):
             raise ValueError(f"unsupported model schema_version: {version}")
         importance = tuple(
             (item["feature"], float(item["importance"]))

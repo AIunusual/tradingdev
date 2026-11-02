@@ -115,9 +115,10 @@ def test_metadata_round_trip_preserves_fields() -> None:
     assert restored.n_features == 3
 
 
-def test_from_metadata_rejects_unknown_schema() -> None:
+@pytest.mark.parametrize("version", [999, [], {}, None, True, 2.0, "2"])
+def test_from_metadata_rejects_unknown_schema(version: object) -> None:
     payload = _sample_artifact("a" * 64).to_metadata()
-    payload["schema_version"] = 999
+    payload["schema_version"] = version
     with pytest.raises(ValueError, match="unsupported model schema_version"):
         ModelArtifact.from_metadata(payload)
 
@@ -200,6 +201,20 @@ def test_store_list_returns_all_metadata(tmp_path: Path) -> None:
         seen.append(artifact.model_id)
     listed = store.list()
     assert {item.model_id for item in listed} == set(seen)
+
+
+def test_store_list_skips_invalid_schema_without_losing_valid_models(
+    tmp_path: Path,
+) -> None:
+    store = ModelArtifactStore(tmp_path)
+    blob = _sample_blob({"model": "weights"})
+    artifact = _sample_artifact(content_sha256(blob))
+    store.save(model_bytes=blob, artifact=artifact)
+    invalid = artifact.to_metadata()
+    invalid["schema_version"] = []
+    (tmp_path / "invalid.json").write_text(json.dumps(invalid), encoding="utf-8")
+
+    assert store.list() == [artifact]
 
 
 def test_save_rejects_a_forged_identity_before_writing(tmp_path: Path) -> None:

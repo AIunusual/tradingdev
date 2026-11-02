@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -140,21 +141,31 @@ class TestTrainingDatasetBinding:
         assert entry.training_dataset_id == ""
         assert entry.dataset_id == dataset_id
 
+    @pytest.mark.parametrize("artifact_state", ["missing", "invalid_schema"])
     def test_an_unloadable_artifact_records_no_training_dataset(
-        self, service: MLService, workspace: WorkspacePaths
+        self, service: MLService, workspace: WorkspacePaths, artifact_state: str
     ) -> None:
-        """A missing artifact leaves the training data unknown, never guessed."""
+        """An absent or invalid artifact leaves training data unknown."""
         dataset_id = _build(service, _TRAIN)
         frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+        model_id = "c" * 16
+        if artifact_state == "invalid_schema":
+            model_id = _train(service, dataset_id)
+            path = workspace.models / f"{model_id}.json"
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            metadata["schema_version"] = []
+            path.write_text(json.dumps(metadata), encoding="utf-8")
 
         result = service.evaluate_signal(
             frame["forward_return"].astype(float).tolist(),
             frame["forward_return"].astype(float).tolist(),
             window=20,
             record=True,
-            model_id="c" * 16,
+            model_id=model_id,
             dataset_id=dataset_id,
         )
 
         assert result["recorded"]["training_dataset_id"] == ""
         assert result["recorded"]["method_family"] == "ml_model"
+        entry = _recorded_entry(workspace, result["recorded"]["entry_id"])
+        assert entry.model_id == model_id and entry.training_dataset_id == ""
