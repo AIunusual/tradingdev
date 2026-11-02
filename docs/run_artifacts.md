@@ -739,6 +739,14 @@ with a declared optimization direction; a `signal.` id is refused because signal
 figures are ranked through the leaderboard, and an id without a direction cannot
 order candidates.
 
+A scope must hold scalar values. Scalar backtest scopes, including numbered
+walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries are
+not: a walk-forward run defaults to `test_summary`, whose metrics are `FoldStats`
+objects. `get_run_metrics` returns those as dictionaries, the ranking core calls
+`float()` on every value, and the resulting `TypeError` is not a skip reason — the
+whole call fails instead of returning a skipped row. Select a numbered fold, or read
+the summary through `get_run_metrics`, until aggregate summaries are rankable.
+
 Identity in a ranked row is run-level, not scope-level. The strategy parameters and
 trading conditions are read from the run's published manifest — the input mapping
 that was submitted — and are therefore the same for every scope of that run.
@@ -754,7 +762,9 @@ hash stored with that run. A pair whose run, bundle, manifest or conditions cann
 be read is skipped with that reason: an unknown run, a bundle that never recorded
 the metric, a run with no recorded manifest, an unreadable manifest, or a manifest
 that no longer matches its hash. A skipped candidate keeps its place in the report
-and is never zero filled, so a failed measurement cannot look like a low one.
+and is never zero filled, so a failed measurement cannot look like a low one. This
+skip path covers unreadable evidence only; a readable scope whose values are not
+scalars fails the call, as described above, rather than producing a skipped row.
 
 Ordering, shared ranks, the missing-value rule, the returned slice and the base
 caveats all come from `rank_candidates`; `top_k` limits only the returned page,
