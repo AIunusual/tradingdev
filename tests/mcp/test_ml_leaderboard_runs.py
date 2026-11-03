@@ -201,3 +201,35 @@ def test_the_advertised_schema_offers_runs_and_a_metric(
     properties = entries["leaderboard"].input_schema["properties"]
     assert "runs" in properties and "metric" in properties
     assert entries["leaderboard"].input_schema["required"] == ["metric"]
+
+
+def test_a_duplicate_selection_is_refused_through_the_tool(
+    mcp: MCPServer, published: list[dict[str, str]]
+) -> None:
+    """Two names for one measurement must not become a two-row ranking."""
+    payload = _dispatch(
+        mcp,
+        "leaderboard",
+        {"metric": "run.sharpe_ratio", "runs": [published[0], published[0]]},
+    )
+
+    assert payload["success"] is False
+    assert payload["code"] == "duplicate_selections"
+    assert "alpha" in payload["error"]
+
+
+def test_an_omitted_scope_that_resolves_to_a_selected_one_is_refused(
+    mcp: MCPServer, published: list[dict[str, str]]
+) -> None:
+    """The inputs differ; the resolved measurement does not."""
+    payload = _dispatch(
+        mcp,
+        "leaderboard",
+        {
+            "metric": "run.sharpe_ratio",
+            "runs": [{"run_id": "alpha"}, {"run_id": "alpha", "scope": "full"}],
+        },
+    )
+
+    assert payload["success"] is False
+    assert payload["code"] == "duplicate_selections"
