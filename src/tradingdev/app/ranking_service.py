@@ -28,8 +28,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tradingdev.adapters.storage.sqlite import SQLiteStore
+    from tradingdev.app.ml_service import MLService
 
 _RUN_PREFIX = "run."
+_SIGNAL_PREFIX = "signal."
 
 
 def resolve_metric(metric: str) -> MetricDefinition:
@@ -66,23 +68,94 @@ class RankingService:
         *,
         workspace: WorkspacePaths | None = None,
         store: SQLiteStore | None = None,
+        ml_service: MLService | None = None,
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
         self._runs = RunService(workspace=self._workspace, store=store)
+        self._ml = ml_service
+
+    def rank_candidates(
+        self,
+        metric: str,
+        *,
+        runs: Sequence[tuple[str, str | None]] | None = None,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        horizon: int | None = None,
+        feature_set: str | None = None,
+        family: str | None = None,
+        top_k: int | None = 20,
+        allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
+    ) -> dict[str, Any]:
+        """Rank one source, chosen by the metric id's prefix.
+
+        ``signal.`` reads recorded evaluations and selects them with filters;
+        ``run.`` reads saved scopes named as ``(run_id, scope)`` pairs. The two
+        cannot share a table because they do not share a metric definition, so
+        arguments belonging to the other source are refused rather than ignored:
+        a half-filled table would look like a ranking of two things.
+        """
+        filters = (dataset_id, symbol, timeframe, horizon, feature_set, family)
+        if metric.startswith(_SIGNAL_PREFIX):
+            if runs is not None:
+                raise ValueError(
+                    "signal ranking selects recorded evaluations with filters, "
+                    "not run selections"
+                )
+            if self._ml is None:
+                raise RuntimeError(
+                    "signal ranking requires an ML service; construct RankingService "
+                    "with ml_service="
+                )
+            result = self._ml.rank_signal_candidates(
+                metric[len(_SIGNAL_PREFIX) :],
+                dataset_id=dataset_id,
+                symbol=symbol,
+                timeframe=timeframe,
+                horizon=horizon,
+                feature_set=feature_set,
+                family=family,
+                top_k=top_k,
+                allow_mixed=allow_mixed,
+                allow_parameter_axes=allow_parameter_axes,
+            )
+            result["metric"] = metric
+            return result
+        if metric.startswith(_RUN_PREFIX):
+            if any(value is not None for value in filters) or allow_parameter_axes:
+                raise ValueError(
+                    "backtest ranking selects saved scopes with runs, "
+                    "not signal filters"
+                )
+            if not runs:
+                raise ValueError("backtest ranking requires at least one run selection")
+            result = self.rank_run_scopes(metric, runs, top_k=top_k)
+            return {
+                **result,
+                "source": "run",
+                "ranked": [{**row, "source": "run"} for row in result["ranked"]],
+                "skipped": [{**row, "source": "run"} for row in result["skipped"]],
+            }
+        raise ValueError(
+            f"metric id needs a 'signal.' or 'run.' prefix, not {metric!r}"
+        )
 
     def rank_run_scopes(
         self,
         metric: str,
-        selections: Sequence[tuple[str, str]],
+        selections: Sequence[tuple[str, str | None]],
         *,
         top_k: int | None = None,
     ) -> dict[str, Any]:
         """Rank ``(run_id, scope)`` pairs by one stored backtest metric.
 
         Each pair is one candidate, so several parameter sets of a single run can be
-        compared side by side. A pair whose run, bundle, manifest or trading
-        conditions cannot be read is skipped with that reason; the rest are ranked.
+        compared side by side. A null scope selects that run's default. A pair whose
+        run, bundle, manifest or trading conditions cannot be read is skipped with
+        that reason; the rest are ranked.
         """
         definition = resolve_metric(metric)
         candidates = []
@@ -92,7 +165,10 @@ class RankingService:
                 candidate = self._load_candidate(run_id, scope)
             except ValueError as exc:
                 skipped.append(
-                    {"candidate_id": f"run:{run_id}#{scope}", "reason": str(exc)}
+                    {
+                        "candidate_id": f"run:{run_id}#{scope or 'default'}",
+                        "reason": str(exc),
+                    }
                 )
                 continue
             candidates.append(candidate)
@@ -139,7 +215,9 @@ class RankingService:
             "caveats": list(result.caveats),
         }
 
-    def _load_candidate(self, run_id: str, scope: str) -> Candidate[RunCandidate]:
+    def _load_candidate(
+        self, run_id: str, scope: str | None
+    ) -> Candidate[RunCandidate]:
         """Build one candidate from stored values; raise ValueError with the reason."""
         run_payload = self._runs.get_run(run_id)
         if run_payload.get("success") is False:
@@ -148,9 +226,12 @@ class RankingService:
         metrics_payload = self._runs.get_run_metrics(run_id, scope=scope)
         if metrics_payload.get("success") is False:
             raise ValueError(
-                f"{run_id} {scope}: "
+                f"{run_id} {scope or 'default'}: "
                 f"{metrics_payload.get('error') or metrics_payload.get('code')}"
             )
+        # A null request resolves to the run's default, and the row must name the
+        # scope it was actually read from rather than the request that found it.
+        resolved_scope = str(metrics_payload["scope"])
         values = metrics_payload["metrics"]
         if any(isinstance(value, dict) for value in values.values()):
             # A fold summary aggregates over folds, so its values are statistics
@@ -158,7 +239,7 @@ class RankingService:
             # here, where a reason becomes a skipped row, instead of letting
             # float() raise a TypeError that would abort the whole call.
             raise ValueError(
-                f"{run_id} {metrics_payload['scope']}: fold summary cannot be "
+                f"{run_id} {resolved_scope}: fold summary cannot be "
                 "ranked; select a fold scope"
             )
         manifest_hash = run.get("manifest_hash")
@@ -189,7 +270,7 @@ class RankingService:
             raise ValueError(f"{run_id}: execution manifest has no strategy parameters")
         candidate = build_run_candidate(
             run_id=run_id,
-            scope=scope,
+            scope=resolved_scope,
             strategy_id=str(run["strategy_id"]),
             revision_id=str(run.get("revision_id") or ""),
             parameters=parameters,

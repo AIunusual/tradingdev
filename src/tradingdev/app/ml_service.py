@@ -879,6 +879,53 @@ class MLService:
             "next_offset": end if end < total else None,
         }
 
+    def rank_signal_candidates(
+        self,
+        metric: str,
+        *,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        horizon: int | None = None,
+        feature_set: str | None = None,
+        family: str | None = None,
+        top_k: int | None = None,
+        allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
+    ) -> dict[str, Any]:
+        """Return the shared ranking shape for recorded signal evaluations.
+
+        ``metric`` is the bare signal metric; the caller owns the ``signal.``
+        prefix that identifies the source. Ordering, caveats and refusal rules are
+        exactly the ones :meth:`leaderboard` applies, so the two surfaces cannot
+        disagree about what was measured.
+        """
+        payload = self.leaderboard(
+            metric,
+            dataset_id=dataset_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            horizon=horizon,
+            feature_set=feature_set,
+            family=family,
+            top_k=top_k,
+            allow_mixed=allow_mixed,
+            allow_parameter_axes=allow_parameter_axes,
+        )
+        return {
+            "success": True,
+            "metric": payload["metric"],
+            "direction": payload["direction"],
+            "source": "signal",
+            "ranked_total": payload["n_ranked"],
+            "ranked": [{**row, "source": "signal"} for row in payload["ranked"]],
+            "skipped": [{**row, "source": "signal"} for row in payload["skipped"]],
+            "caveats": payload["caveats"],
+            "context": payload["context"],
+            "families": payload["families"],
+            "parameter_axes": payload["parameter_axes"],
+        }
+
     def build_dataset(
         self,
         *,

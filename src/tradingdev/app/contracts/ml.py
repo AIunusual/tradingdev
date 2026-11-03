@@ -6,9 +6,9 @@ from (``get_ml_contract``) and the structured result of judging a prediction
 stored evaluation can never silently pack a NaN into a JSON boundary.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 
@@ -273,6 +273,89 @@ class LeaderboardPageResponse(LeaderboardResponse):
     offset: int
     limit: int
     next_offset: int | None
+
+
+class RunConditions(ContractModel):
+    """The trading conditions a saved scope was measured under."""
+
+    symbol: str
+    timeframe: str
+    start_date: str
+    end_date: str
+    fees: float
+    slippage: float
+
+
+class RankedSignalRow(LeaderboardRow):
+    """A placed signal evaluation, labelled with the source it came from."""
+
+    source: Literal["signal"]
+
+
+class RankedRunRow(ContractModel):
+    """A placed saved run scope, labelled with the source it came from."""
+
+    source: Literal["run"]
+    rank: int
+    tied: int
+    value: float
+    run_id: str
+    scope: str
+    strategy_id: str
+    revision_id: str
+    parameters: dict[str, JsonValue]
+    conditions: RunConditions
+    metric_source: Literal["bundle", "legacy_summary"]
+    """Whether the value came from the performance bundle or a legacy summary."""
+
+
+class SkippedSignalRow(LeaderboardSkipped):
+    """A recorded signal that could not be ranked, labelled with its source."""
+
+    source: Literal["signal"]
+
+
+class SkippedRunRow(ContractModel):
+    """A selected run scope that could not be ranked, labelled with its source."""
+
+    source: Literal["run"]
+    candidate_id: str
+    run_id: str | None = None
+    scope: str | None = None
+    reason: str
+
+
+type RankedRow = Annotated[
+    RankedSignalRow | RankedRunRow, Field(discriminator="source")
+]
+type SkippedRow = Annotated[
+    SkippedSignalRow | SkippedRunRow, Field(discriminator="source")
+]
+
+
+class RankCandidatesResponse(ContractModel):
+    """One ranking over one source; the metric prefix decides which.
+
+    A signal metric and a backtest metric are different measurements that share
+    no column, so one call ranks either recorded evaluations or saved run
+    scopes. Mixing them is not expressible here rather than merely discouraged.
+    """
+
+    success: Literal[True]
+    metric: str
+    direction: str
+    source: Literal["signal", "run"]
+    ranked_total: int
+    """Candidates with a usable value before ``top_k`` limited the returned slice."""
+    ranked: list[RankedRow]
+    skipped: list[SkippedRow]
+    caveats: list[str]
+    context: str | None = None
+    """Signal only: the shared evaluation context, or ``mixed``."""
+    families: dict[str, int] | None = None
+    """Signal only: how many candidates each method family contributed."""
+    parameter_axes: dict[str, list[int]] | None = None
+    """Signal only: every observed value of the sweepable settings."""
 
 
 class CalendarCoverageEntry(ContractModel):

@@ -14,7 +14,7 @@ the test.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -549,3 +549,62 @@ class TestManifestRefusals:
 
         assert result["ranked"] == []
         assert result["skipped"][0]["reason"] == "no 'run.sharpe_ratio' recorded"
+
+
+class TestCandidateDispatch:
+    """One ranking surface, routed by the metric id's source prefix."""
+
+    def test_a_metric_without_a_source_prefix_is_refused(
+        self, service: RankingService
+    ) -> None:
+        with pytest.raises(ValueError, match="needs a 'signal.' or 'run.' prefix"):
+            service.rank_candidates("sharpe_ratio", runs=[("alpha", "full")])
+
+    def test_run_selections_are_refused_on_the_signal_path(
+        self, service: RankingService
+    ) -> None:
+        """A half-filled table would look like a ranking of two things."""
+        with pytest.raises(ValueError, match="not run selections"):
+            service.rank_candidates("signal.ic_mean", runs=[("alpha", "full")])
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("dataset_id", "d1"),
+            ("symbol", "BTC/USDT"),
+            ("timeframe", "1d"),
+            ("horizon", 1),
+            ("feature_set", "core"),
+            ("family", "rule"),
+        ],
+    )
+    def test_signal_filters_are_refused_on_the_backtest_path(
+        self, service: RankingService, field: str, value: Any
+    ) -> None:
+        with pytest.raises(ValueError, match="not signal filters"):
+            service.rank_candidates(
+                "run.sharpe_ratio", runs=[("alpha", "full")], **{field: value}
+            )
+
+    def test_the_backtest_path_requires_a_selection(
+        self, service: RankingService
+    ) -> None:
+        with pytest.raises(ValueError, match="at least one run selection"):
+            service.rank_candidates("run.sharpe_ratio")
+
+    def test_the_backtest_path_returns_the_shared_shape(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        _publish_run(workspace, store, "beta", scopes={"full": {SHARPE: 2.0}})
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", "full"), ("beta", "full")]
+        )
+
+        assert result["source"] == "run"
+        assert result["metric"] == "run.sharpe_ratio"
+        assert result["ranked_total"] == 2
+        assert [row["run_id"] for row in result["ranked"]] == ["beta", "alpha"]
+        assert {row["source"] for row in result["ranked"]} == {"run"}
