@@ -283,11 +283,12 @@ ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
 is not echoed. The two argument sets are exclusive: a signal ranking refuses
 `runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
 `feature_set`, `family` and `allow_parameter_axes`, because one call ranks one
-source. Selecting the same measurement twice is refused as `duplicate_selections`
-once both selections load, which catches an omitted scope that resolves to a scalar
-scope already named. A selection that cannot be loaded is skipped before that
-comparison, so two spellings of an unloadable scope appear as two skipped rows;
-neither is ranked. A run row carries
+source. Selecting the same measurement twice is refused as `duplicate_selections`,
+in two layers. Identical requested pairs are refused before anything is loaded;
+differently spelled selections are compared after they load and resolve, which
+catches an omitted scope that names a scalar scope already selected. A selection
+that cannot be loaded is skipped before that second comparison, so two spellings of
+an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
 `run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
 and the stored value; `context`, `families` and `parameter_axes` are `null` —
 present but not applicable, because a named selection has no evaluation context or
