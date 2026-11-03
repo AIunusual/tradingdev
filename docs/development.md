@@ -55,6 +55,21 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
 
+### 容器建置與驗證
+
+[Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
+`uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
+ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
+映像建置採 [uv 的多階段安裝方式](https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs)，
+執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+
+容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
+並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
+以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
+結束後先停止並移除該 project 容器，再清理測試資料與專用映像／建置快取；
+不要清理共用 Docker 資源。未實測的 CPU 架構與 NAS 平台須明列限制。
+使用者部署、設定與備份操作統一見 [README](../README.md#使用-docker-部署)。
+
 ## 測試設計與精簡
 
 本節是落實 [AGENTS.md 測試政策](../AGENTS.md#測試與清理) 的本機設計基準。
