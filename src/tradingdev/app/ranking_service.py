@@ -34,6 +34,16 @@ _RUN_PREFIX = "run."
 _SIGNAL_PREFIX = "signal."
 
 
+def _duplicate_error(message: str) -> dict[str, Any]:
+    """Refuse a selection that names the same measurement twice.
+
+    Ranking the same scope twice would return two identical rows, which reads as
+    a comparison of two candidates. ``compare_runs`` already refuses this, and the
+    two surfaces must agree on what a duplicate is.
+    """
+    return {"success": False, "code": "duplicate_selections", "error": message}
+
+
 def resolve_metric(metric: str) -> MetricDefinition:
     """Resolve a source-qualified backtest metric id to its direction and unit.
 
@@ -142,6 +152,8 @@ class RankingService:
             if not runs:
                 raise ValueError("backtest ranking requires at least one run selection")
             result = self.rank_run_scopes(metric, runs)
+            if result.get("success") is False:
+                return result
             ranked = result["ranked"]
             skipped = result["skipped"]
             total = max(len(ranked), len(skipped))
@@ -182,6 +194,13 @@ class RankingService:
         that reason; the rest are ranked.
         """
         definition = resolve_metric(metric)
+        requested: set[tuple[str, str | None]] = set()
+        for run_id, scope in selections:
+            if (run_id, scope) in requested:
+                return _duplicate_error(
+                    f"duplicate selection: {run_id} scope {scope or 'default'}"
+                )
+            requested.add((run_id, scope))
         candidates = []
         skipped: list[dict[str, str]] = []
         for run_id, scope in selections:
@@ -196,6 +215,18 @@ class RankingService:
                 )
                 continue
             candidates.append(candidate)
+
+        # An omitted scope is resolved by the run itself, so (alpha, None) and
+        # (alpha, "full") can be the same measurement while looking different.
+        # The check runs on resolved pairs, not on what the caller typed.
+        seen_resolved: set[tuple[str, str]] = set()
+        for candidate in candidates:
+            pair = (candidate.payload.run_id, candidate.payload.scope)
+            if pair in seen_resolved:
+                return _duplicate_error(
+                    f"duplicate selection: {pair[0]} scope {pair[1]} was selected twice"
+                )
+            seen_resolved.add(pair)
 
         result = rank_candidates(candidates, definition, top_k=top_k)
         return {

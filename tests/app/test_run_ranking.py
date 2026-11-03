@@ -631,3 +631,28 @@ class TestCandidateDispatch:
         )
         assert [row["run_id"] for row in second["ranked"]] == ["run0"]
         assert second["next_offset"] is None
+
+
+class TestDuplicateSelections:
+    """One measurement selected twice is not a comparison of two things."""
+
+    def test_the_same_pair_twice_is_refused(self, service: RankingService) -> None:
+        result = service.rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", "full"), ("alpha", "full")]
+        )
+        assert result["code"] == "duplicate_selections"
+        assert "alpha scope full" in result["error"]
+
+    def test_an_omitted_scope_that_resolves_to_the_same_scope_is_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """The inputs look different; the resolved measurement is the same."""
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", None), ("alpha", "full")]
+        )
+
+        assert result["code"] == "duplicate_selections"
+        assert "selected twice" in result["error"]
