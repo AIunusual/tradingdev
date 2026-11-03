@@ -49,7 +49,7 @@ def test_import_and_help_do_not_create_a_workspace(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
 def test_main_passes_selected_transport_and_port_to_sdk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch, transport: str
 ) -> None:
     calls: list[dict[str, Any]] = []
 
@@ -57,7 +57,7 @@ def test_main_passes_selected_transport_and_port_to_sdk(
         calls.append({"transport": transport, **options})
 
     monkeypatch.setattr(StrictMCPServer, "run", run)
-    arguments = ["--workspace", str(tmp_path / "workspace")]
+    arguments = ["--workspace", str(runtime_root / "workspace")]
     expected: dict[str, Any] = {"transport": transport}
     if transport != "stdio":
         arguments.extend(["--web", "--transport", transport, "--port", "18765"])
@@ -70,6 +70,40 @@ def test_main_passes_selected_transport_and_port_to_sdk(
         expected["json_response"] = False
     main(arguments)
     assert calls == [expected]
+
+
+@pytest.mark.parametrize("transport", ["sse", "streamable-http"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.0.2.10", "::"])
+def test_main_passes_listen_ip_without_expanding_trusted_hosts(
+    runtime_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transport: str,
+    host: str,
+) -> None:
+    options: dict[str, Any] = {}
+
+    def run(_server: StrictMCPServer, **kwargs: Any) -> None:
+        options.update(kwargs)
+
+    monkeypatch.setattr(StrictMCPServer, "run", run)
+    main(
+        [
+            "--workspace",
+            str(runtime_root / "workspace"),
+            "--web",
+            "--transport",
+            transport,
+            "--host",
+            host,
+            "--allow-host",
+            "research.example:9443",
+        ]
+    )
+    assert options["transport"] == transport
+    assert options["host"] == host
+    assert options["transport_security"] == http_transport_security(
+        allowed_hosts=["research.example:9443"]
+    )
 
 
 def test_main_passes_explicit_proxy_allowlists(
