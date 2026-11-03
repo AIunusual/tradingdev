@@ -88,7 +88,12 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
         )
         assert response.run.metrics["details"] == {"folds": [1, 2]}
         comparison = CompareRunsResponse.model_validate(
-            (await call("compare_runs", {"run_ids": ["run_1", "run_2"]}))["result"]
+            (
+                await call(
+                    "compare_runs",
+                    {"selections": [{"run_id": "run_1"}, {"run_id": "run_2"}]},
+                )
+            )["result"]
         )
         assert comparison.runs[0].metrics == {"total_return": 0.1}
 
@@ -112,10 +117,14 @@ def test_research_tools_validate_persisted_records_and_expected_errors(
 
         failures: list[tuple[str, dict[str, object], str]] = [
             ("get_run", {"run_id": "absent"}, "run_not_found"),
-            ("compare_runs", {"run_ids": ["run_1"]}, "insufficient_runs"),
             (
                 "compare_runs",
-                {"run_ids": ["run_1", "absent"]},
+                {"selections": [{"run_id": "run_1"}]},
+                "insufficient_runs",
+            ),
+            (
+                "compare_runs",
+                {"selections": [{"run_id": "run_1"}, {"run_id": "absent"}]},
                 "run_not_found",
             ),
             ("get_artifact", {"artifact_id": "absent"}, "artifact_not_found"),
@@ -180,7 +189,12 @@ def test_research_tool_rejects_service_response_without_success(
     with pytest.raises(
         UnexpectedToolError, match="^Error executing tool compare_runs$"
     ) as caught:
-        asyncio.run(mcp.call_tool("compare_runs", {"run_ids": ["first", "second"]}))
+        asyncio.run(
+            mcp.call_tool(
+                "compare_runs",
+                {"selections": [{"run_id": "first"}, {"run_id": "second"}]},
+            )
+        )
     cause = caught.value.__cause__
     assert isinstance(cause, ValidationError)
     assert any(error["loc"] == ("success",) for error in cause.errors())
