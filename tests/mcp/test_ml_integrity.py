@@ -17,6 +17,7 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
     LeaderboardPageResponse,
+    LeaderboardRow,
     PredictionEvaluationResponse,
 )
 from tradingdev.app.ml_service import MLService
@@ -136,5 +137,6 @@ def test_record_rejects_modified_artifacts_without_overwriting_the_leaderboard(
         _dispatch(server, "leaderboard", {"metric": "rank_ic_mean"})
     )
     assert leaderboard.n_candidates == leaderboard.n_ranked == 1
-    assert leaderboard.ranked[0].entry_id == recorded.recorded.entry_id
-    assert leaderboard.ranked[0].value == recorded.metrics["rank_ic_mean"]
+    (placed,) = [row for row in leaderboard.ranked if isinstance(row, LeaderboardRow)]
+    assert placed.entry_id == recorded.recorded.entry_id
+    assert placed.value == recorded.metrics["rank_ic_mean"]

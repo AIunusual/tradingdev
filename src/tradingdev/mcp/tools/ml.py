@@ -19,10 +19,36 @@ from tradingdev.app.contracts.ml import (
     TrainModelResponse,
 )
 
+# Runtime import on purpose: the MCP schema builder calls get_type_hints on each
+# tool, so a type-checking-only import would fail to resolve `runs` at registration.
+from tradingdev.app.contracts.research import RunScopeSelection  # noqa: TC001
+from tradingdev.app.ranking_service import RankingService
+
 if TYPE_CHECKING:
     from mcp.server import MCPServer
 
     from tradingdev.app.ml_service import MLService
+
+_SIGNAL_PREFIX = "signal."
+_RUN_PREFIX = "run."
+
+
+def _qualify_metric(metric: str) -> str:
+    """Name the source a metric belongs to; a bare name means a signal.
+
+    ``signal.`` and ``run.`` pass through. Anything else without a dot is read
+    as a recorded signal metric, which is the only source the leaderboard had
+    before runs joined it. A dotted id with an unknown prefix is refused here
+    rather than prefixed into a name that does not exist, because the error
+    would then name a metric the caller never asked for.
+    """
+    if metric.startswith((_SIGNAL_PREFIX, _RUN_PREFIX)):
+        return metric
+    if "." in metric:
+        raise ValueError(
+            f"metric id needs a 'signal.' or 'run.' prefix, not {metric!r}"
+        )
+    return f"{_SIGNAL_PREFIX}{metric}"
 
 
 def register(mcp: MCPServer, service: MLService) -> None:
@@ -34,6 +60,11 @@ def register(mcp: MCPServer, service: MLService) -> None:
         idempotent_hint=True,
         open_world_hint=False,
     )
+
+    # One ranking surface serves both sources. It reads recorded evaluations
+    # through this same MLService instance, so a signal ranking can never see a
+    # different store than evaluate_signal writes to.
+    ranking = RankingService(workspace=service.workspace, ml_service=service)
 
     @mcp.tool(annotations=read_only)
     def get_ml_contract() -> MlContractResponse | MlContractError:
@@ -253,6 +284,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
     @mcp.tool(annotations=read_only)
     def leaderboard(
         metric: str,
+        runs: list[RunScopeSelection] | None = None,
         dataset_id: str | None = None,
         symbol: str | None = None,
         timeframe: str | None = None,
@@ -264,15 +296,22 @@ def register(mcp: MCPServer, service: MLService) -> None:
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
-        """Page recorded evaluations ranked with the metric's declared direction.
+        """Rank recorded evaluations or saved run scopes on one metric.
 
-        Choose the metric and filters from get_ml_contract guidance. Omitting
-        family ranks every method together and reports the mix. Follow
-        next_offset; inspect caveats.
+        A bare metric name ranks recorded signal evaluations; prefix it with
+        run. to rank saved backtest scopes instead, and pass runs as
+        (run_id, scope) pairs. Choose metrics and filters from get_ml_contract.
+        Omitting family ranks every method together and reports the mix.
+        Follow next_offset; inspect caveats before believing the first row.
         """
         try:
-            result = service.leaderboard_page(
-                metric,
+            result = ranking.rank_candidates(
+                _qualify_metric(metric),
+                runs=(
+                    None
+                    if runs is None
+                    else [(item.run_id, item.scope) for item in runs]
+                ),
                 dataset_id=dataset_id,
                 symbol=symbol,
                 timeframe=timeframe,

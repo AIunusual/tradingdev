@@ -15,7 +15,12 @@ from tests.data_cache import cached_market_path, seed_market_cache
 from tests.mcp.ml_fixtures import model_pair
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.contracts.ml import LeaderboardPageResponse, MlContractResponse
+from tradingdev.app.contracts.ml import (
+    LeaderboardPageResponse,
+    LeaderboardRow,
+    LeaderboardSkipped,
+    MlContractResponse,
+)
 from tradingdev.app.ml_service import MLService
 from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
 from tradingdev.domain.ml.registry import LeaderboardStore
@@ -72,6 +77,25 @@ def _dispatch(mcp: MCPServer, name: str, arguments: dict[str, Any]) -> dict[str,
         return response
 
     return asyncio.run(call())
+
+
+def _signal_rows(board: LeaderboardPageResponse) -> list[LeaderboardRow]:
+    """The placed rows of a signal fixture, narrowed to their own model.
+
+    One page shape now carries both sources, so a reader that wants
+    ``model_id`` has to say which kind of row it is reading. Every fixture in
+    this module records signal evaluations, so a run row here would mean the
+    tool answered from the wrong source.
+    """
+    rows = [row for row in board.ranked if isinstance(row, LeaderboardRow)]
+    assert len(rows) == len(board.ranked), "signal fixture returned a run row"
+    return rows
+
+
+def _signal_skipped(board: LeaderboardPageResponse) -> list[LeaderboardSkipped]:
+    rows = [row for row in board.skipped if isinstance(row, LeaderboardSkipped)]
+    assert len(rows) == len(board.skipped), "signal fixture returned a run row"
+    return rows
 
 
 @pytest.fixture
@@ -176,11 +200,11 @@ def test_leaderboard_pages_ranked_and_skipped_without_losing_total_counts(
         assert len(board.skipped) == 1 and board.skipped[0].reason
         assert board.next_offset == (offset + 1 if offset < 2 else None)
         assert board.caveats
-        received_skipped.add(board.skipped[0].entry_id)
+        received_skipped.add(_signal_skipped(board)[0].entry_id)
         if offset < 2:
             assert len(board.ranked) == 1
             assert board.ranked[0].rank == offset + 1
-            ranked_models.append(board.ranked[0].model_id)
+            ranked_models.append(_signal_rows(board)[0].model_id)
         else:
             assert board.ranked == []
     assert ranked_models == [_GOOD_MODEL, _BAD_MODEL]
@@ -198,7 +222,7 @@ def test_leaderboard_last_page_and_exact_end_keep_totals(
             {"metric": "ic_mean", "dataset_id": recorded, "offset": offset, "limit": 1},
         )
     )
-    assert [row.model_id for row in board.ranked] == expected_models
+    assert [row.model_id for row in _signal_rows(board)] == expected_models
     assert board.n_candidates == board.n_ranked == 2
     assert board.n_skipped == 0 and board.skipped == []
     assert board.next_offset is None
@@ -229,7 +253,7 @@ def test_leaderboard_ranks_the_recorded_candidates(
     )
     board = LeaderboardPageResponse.model_validate(payload)
     assert board.n_candidates == 2
-    assert [row.model_id for row in board.ranked] == [_GOOD_MODEL, _BAD_MODEL]
+    assert [row.model_id for row in _signal_rows(board)] == [_GOOD_MODEL, _BAD_MODEL]
     assert board.ranked[0].rank == 1
     assert board.offset == 0 and board.limit == 20 and board.next_offset is None
     assert board.n_ranked == 2 and board.n_skipped == 0
@@ -282,8 +306,9 @@ def test_leaderboard_can_query_old_and_rebuilt_dataset_versions(
             )
         )
         assert board.n_candidates == board.n_ranked == 1
-        assert board.ranked[0].dataset_id == dataset_id
-        assert board.ranked[0].entry_id == entry_id
+        placed = _signal_rows(board)[0]
+        assert placed.dataset_id == dataset_id
+        assert placed.entry_id == entry_id
 
 
 @pytest.mark.parametrize("dataset_id", ["", "invalid", "ds_" + "0" * 16])
@@ -312,6 +337,33 @@ def test_leaderboard_reports_an_empty_store(mcp: MCPServer) -> None:
     payload = _dispatch(mcp, "leaderboard", {"metric": "ic_mean"})
     assert payload["success"] is False
     assert "no recorded evaluations" in payload["error"]
+
+
+def test_a_source_qualified_metric_ranks_the_same_rows_as_a_bare_one(
+    mcp: MCPServer, recorded: str
+) -> None:
+    """The prefix names the source; it does not change what is measured."""
+    bare = _dispatch(mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded})
+    qualified = _dispatch(
+        mcp, "leaderboard", {"metric": "signal.ic_mean", "dataset_id": recorded}
+    )
+
+    assert qualified["ranked"] == bare["ranked"]
+    assert qualified["skipped"] == bare["skipped"]
+    assert qualified["n_candidates"] == bare["n_candidates"]
+    # The answer names the source it read, whichever spelling was asked for.
+    assert qualified["metric"] == bare["metric"] == "signal.ic_mean"
+
+
+def test_every_row_states_the_source_it_was_measured_from(
+    mcp: MCPServer, recorded: str
+) -> None:
+    board = LeaderboardPageResponse.model_validate(
+        _dispatch(mcp, "leaderboard", {"metric": "ic_mean", "dataset_id": recorded})
+    )
+
+    assert board.source == "signal"
+    assert {row.source for row in board.ranked} == {"signal"}
 
 
 def test_leaderboard_is_advertised_read_only(mcp: MCPServer) -> None:
@@ -376,7 +428,7 @@ def test_large_mixed_leaderboard_bounds_success_and_rejection(
     )
     assert filtered.n_candidates == filtered.n_ranked == 1
     assert filtered.next_offset is None
-    assert filtered.ranked[0].entry_id == entries[0].entry_id
+    assert _signal_rows(filtered)[0].entry_id == entries[0].entry_id
 
 
 def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
@@ -398,10 +450,12 @@ def test_parameter_surface_opt_in_reaches_service_and_preserves_row_metadata(
     board = LeaderboardPageResponse.model_validate(
         _dispatch(mcp, "leaderboard", {**args, "allow_parameter_axes": True})
     )
+    assert board.parameter_axes is not None
     assert board.parameter_axes["window"] == [20, 30]
     assert board.n_candidates == 3
-    assert {row.window for row in board.ranked} == {20, 30}
-    assert all(row.signal_fingerprint for row in board.ranked)
+    rows = _signal_rows(board)
+    assert {row.window for row in rows} == {20, 30}
+    assert all(row.signal_fingerprint for row in rows)
     assert any("surface" in text for text in board.caveats)
 
 
@@ -416,7 +470,7 @@ def test_leaderboard_family_filter_reaches_the_service(
         _dispatch(mcp, "leaderboard", {"metric": "icir", "family": "ml_model"})
     )
     assert board.families == {"ml_model": 2}
-    assert {row.method_family for row in board.ranked} == {"ml_model"}
+    assert {row.method_family for row in _signal_rows(board)} == {"ml_model"}
 
 
 def test_evaluate_signal_records_a_rule_without_a_model(

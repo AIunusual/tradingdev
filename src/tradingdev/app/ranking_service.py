@@ -102,6 +102,10 @@ class RankingService:
         Both sources page with ``offset``/``limit``. A backtest selection is named
         explicitly and is usually small, so its page is normally the whole list.
         """
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer between 1 and 100")
         filters = (dataset_id, symbol, timeframe, horizon, feature_set, family)
         if metric.startswith(_SIGNAL_PREFIX):
             if runs is not None:

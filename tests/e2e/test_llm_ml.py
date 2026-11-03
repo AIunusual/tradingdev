@@ -200,7 +200,10 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert ranked.arguments.get("metric") == "hit_rate"
     assert ranked.arguments.get("dataset_id") == dataset_id
     leaderboard = ranked.result
-    assert leaderboard["metric"] == "hit_rate"
+    # The echo is source-qualified: one tool ranks two sources now, so the
+    # answer names the one it read instead of restating a bare metric name.
+    assert leaderboard["metric"] == "signal.hit_rate"
+    assert leaderboard["source"] == "signal"
     assert leaderboard["n_candidates"] == leaderboard["n_ranked"] == 1
     assert leaderboard["caveats"], "Leaderboard must retain interpretation caveats"
     row = leaderboard["ranked"][0]

@@ -269,6 +269,11 @@ class MLService:
         # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
 
+    @property
+    def workspace(self) -> WorkspacePaths:
+        """The workspace this service reads; shared, not copied, by ranking."""
+        return self._workspace
+
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
         if self._injected_code_fingerprint is None:
@@ -774,6 +779,7 @@ class MLService:
         result = rank_entries(entries, metric, top_k=top_k)
         ranked = [
             {
+                "source": "signal",
                 "rank": item.rank,
                 "entry_id": item.entry.entry_id,
                 "label": item.entry.label,
@@ -805,6 +811,7 @@ class MLService:
         caveats.extend(surface_caveats(axes))
         return {
             "success": True,
+            "source": "signal",
             "metric": result.metric,
             "direction": result.direction,
             "n_candidates": len(entries),
@@ -815,6 +822,7 @@ class MLService:
             "ranked": ranked,
             "skipped": [
                 {
+                    "source": "signal",
                     "entry_id": item.entry.entry_id,
                     "label": item.entry.label,
                     "method_family": item.entry.family,
