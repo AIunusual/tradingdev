@@ -576,6 +576,7 @@ class TestCandidateDispatch:
             ("horizon", 1),
             ("feature_set", "core"),
             ("family", "rule"),
+            ("allow_parameter_axes", True),
         ],
     )
     def test_signal_filters_are_refused_on_the_backtest_path(

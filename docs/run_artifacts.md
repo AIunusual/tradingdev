@@ -734,7 +734,9 @@ recorded. The MCP `leaderboard` tool exposes it through
 selections is the public form of this contract, and
 [the ML research contract](ml_research.md) documents the shared response shape,
 source selection and paging. The library method differs in one argument — it takes
-`top_k`, while the MCP surface pages with `offset`/`limit`.
+`top_k`, while the MCP surface pages with `offset`/`limit`. Arguments are exclusive
+to a source: a run ranking refuses the signal filters and `allow_parameter_axes`,
+and a signal ranking refuses `runs`.
 
 A null `scope` selects that run's saved default. Selecting the same measurement
 twice — including an omitted scope that resolves to one already named — is refused

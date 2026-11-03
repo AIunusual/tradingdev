@@ -300,8 +300,10 @@ def register(mcp: MCPServer, service: MLService) -> None:
 
         A bare metric name ranks recorded signal evaluations; prefix it with
         run. to rank saved backtest scopes instead, and pass runs as
-        (run_id, scope) pairs. Choose metrics and filters from get_ml_contract.
-        Omitting family ranks every method together and reports the mix.
+        (run_id, scope) pairs. Choose signal metrics and filters from
+        get_ml_contract; choose run metrics and their declared directions from
+        get_metric_catalog, which get_ml_contract does not list. Omitting family
+        ranks every method together and reports the mix.
         Follow next_offset; inspect caveats before believing the first row.
         """
         try:

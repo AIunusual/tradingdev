@@ -278,15 +278,22 @@ trying more candidates increases selection bias.
 The same tool ranks saved backtest scopes. The metric id selects the source: a
 bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
 ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
-`scope` means that run's default. Selecting the same measurement twice is refused
-as `duplicate_selections`, including an omitted scope that resolves to one already
-named. A run row carries `run_id`, `scope`, the trading conditions its manifest
-recorded, `metric_source` and the stored value; `context`, `families` and
-`parameter_axes` are `null` — present but not applicable, because a named selection
-has no evaluation context or method mix to report. An empty value would read as
-measured-and-nothing, which is a different claim. Every row reports `source`, and
-one response never mixes the two: a signal metric and a backtest metric share no
-definition, so they share no column.
+`scope` means that run's default. The response reports the qualified id, so
+`metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
+is not echoed. The two argument sets are exclusive: a signal ranking refuses
+`runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
+`feature_set`, `family` and `allow_parameter_axes`, because one call ranks one
+source. Selecting the same measurement twice is refused as `duplicate_selections`,
+including an omitted scope that resolves to one already named. A run row carries
+`run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
+and the stored value; `context`, `families` and `parameter_axes` are `null` —
+present but not applicable, because a named selection has no evaluation context or
+method mix to report. An empty value would read as measured-and-nothing, which is a
+different claim. Every row reports `source`, and one response never mixes the two: a
+signal metric and a backtest metric share no definition, so they share no column.
+The run-ranking limits — manifest-level parameters, no cross-run condition matching,
+fold summaries skipped — are in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
 `top_k`. The complete filtered candidate set is compared and ranked before
