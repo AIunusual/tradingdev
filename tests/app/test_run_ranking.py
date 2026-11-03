@@ -605,6 +605,29 @@ class TestCandidateDispatch:
 
         assert result["source"] == "run"
         assert result["metric"] == "run.sharpe_ratio"
-        assert result["ranked_total"] == 2
+        assert result["n_ranked"] == 2
         assert [row["run_id"] for row in result["ranked"]] == ["beta", "alpha"]
         assert {row["source"] for row in result["ranked"]} == {"run"}
+
+    def test_the_backtest_path_pages_like_the_signal_path(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """One shape serves both sources, so a run selection pages too."""
+        workspace, store = storage
+        for index, value in enumerate((1.0, 2.0, 3.0)):
+            _publish_run(
+                workspace, store, f"run{index}", scopes={"full": {SHARPE: value}}
+            )
+        service = RankingService(workspace=workspace, store=store)
+        selections = [(f"run{index}", "full") for index in range(3)]
+
+        first = service.rank_candidates("run.sharpe_ratio", runs=selections, limit=2)
+        assert [row["run_id"] for row in first["ranked"]] == ["run2", "run1"]
+        assert first["n_ranked"] == 3
+        assert first["next_offset"] == 2
+
+        second = service.rank_candidates(
+            "run.sharpe_ratio", runs=selections, offset=2, limit=2
+        )
+        assert [row["run_id"] for row in second["ranked"]] == ["run0"]
+        assert second["next_offset"] is None

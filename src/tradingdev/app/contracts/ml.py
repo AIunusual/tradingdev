@@ -334,19 +334,30 @@ type SkippedRow = Annotated[
 
 
 class RankCandidatesResponse(ContractModel):
-    """One ranking over one source; the metric prefix decides which.
+    """One page of one ranking; the metric prefix decides the source.
 
     A signal metric and a backtest metric are different measurements that share
     no column, so one call ranks either recorded evaluations or saved run
     scopes. Mixing them is not expressible here rather than merely discouraged.
+
+    ``offset``/``limit`` page both sources. A backtest selection is named
+    explicitly and usually holds a handful of scopes, so its page is normally
+    the whole list; paging is still carried so one shape serves both.
     """
 
     success: Literal[True]
     metric: str
     direction: str
     source: Literal["signal", "run"]
-    ranked_total: int
-    """Candidates with a usable value before ``top_k`` limited the returned slice."""
+    n_candidates: int
+    """Every selected candidate, including ones that could not be ranked."""
+    n_ranked: int
+    """Candidates placed in the full ranking, before paging."""
+    n_skipped: int
+    offset: int
+    limit: int
+    next_offset: int | None
+    """Where the next page starts, or null when this page ends the ranking."""
     ranked: list[RankedRow]
     skipped: list[SkippedRow]
     caveats: list[str]

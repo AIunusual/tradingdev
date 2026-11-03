@@ -86,7 +86,8 @@ class RankingService:
         horizon: int | None = None,
         feature_set: str | None = None,
         family: str | None = None,
-        top_k: int | None = 20,
+        offset: int = 0,
+        limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
     ) -> dict[str, Any]:
@@ -97,6 +98,9 @@ class RankingService:
         cannot share a table because they do not share a metric definition, so
         arguments belonging to the other source are refused rather than ignored:
         a half-filled table would look like a ranking of two things.
+
+        Both sources page with ``offset``/``limit``. A backtest selection is named
+        explicitly and is usually small, so its page is normally the whole list.
         """
         filters = (dataset_id, symbol, timeframe, horizon, feature_set, family)
         if metric.startswith(_SIGNAL_PREFIX):
@@ -118,7 +122,8 @@ class RankingService:
                 horizon=horizon,
                 feature_set=feature_set,
                 family=family,
-                top_k=top_k,
+                offset=offset,
+                limit=limit,
                 allow_mixed=allow_mixed,
                 allow_parameter_axes=allow_parameter_axes,
             )
@@ -132,12 +137,27 @@ class RankingService:
                 )
             if not runs:
                 raise ValueError("backtest ranking requires at least one run selection")
-            result = self.rank_run_scopes(metric, runs, top_k=top_k)
+            result = self.rank_run_scopes(metric, runs)
+            ranked = result["ranked"]
+            skipped = result["skipped"]
+            total = max(len(ranked), len(skipped))
+            if offset > total:
+                raise ValueError(f"offset exceeds ranked row count ({total})")
+            end = min(offset + limit, total)
             return {
-                **result,
+                "success": True,
+                "metric": result["metric"],
+                "direction": result["direction"],
                 "source": "run",
-                "ranked": [{**row, "source": "run"} for row in result["ranked"]],
-                "skipped": [{**row, "source": "run"} for row in result["skipped"]],
+                "n_candidates": len(ranked) + len(skipped),
+                "n_ranked": len(ranked),
+                "n_skipped": len(skipped),
+                "offset": offset,
+                "limit": limit,
+                "next_offset": end if end < total else None,
+                "ranked": [{**row, "source": "run"} for row in ranked[offset:end]],
+                "skipped": [{**row, "source": "run"} for row in skipped[offset:end]],
+                "caveats": result["caveats"],
             }
         raise ValueError(
             f"metric id needs a 'signal.' or 'run.' prefix, not {metric!r}"
