@@ -322,6 +322,9 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
    交給 `evaluate_signal`；後端會對完整資料集產生訊號並評估，不必在對話中搬運陣列。
 5. 評估時指定 `record=True`，再用 `leaderboard(dataset_id=...)` 分頁查詢該版本的候選。
    查詢預設拒絕混合不同期間、資料或評估條件；先篩選可比較的研究，再解讀排名與限制。
+   回覆的 `metric` 一律帶來源前綴（送 `ic_mean` 回 `signal.ic_mean`）。同一個工具也能排
+   已保存的回測 scope：改用 `run.<指標>` 並以 `runs` 指名 `(run_id, scope)`；參數互斥與
+   限制見 [run scope 排名契約](docs/run_artifacts.md#ranking-saved-run-scopes)。
 6. 請助手為選定的已保存候選產生 ML 訊號研究報告，例如「把剛才記錄的候選做成可離線閱讀的
    比較報告，保留沒有分數的候選並說明限制」。一次可選最多 50 個候選；跨視窗、horizon
    或分位數設定的比較須明確選擇參數曲面模式。
