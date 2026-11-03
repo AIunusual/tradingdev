@@ -738,9 +738,12 @@ source selection and paging. The library method differs in one argument — it t
 to a source: a run ranking refuses the signal filters and `allow_parameter_axes`,
 and a signal ranking refuses `runs`.
 
-A null `scope` selects that run's saved default. Selecting the same measurement
-twice — including an omitted scope that resolves to one already named — is refused
-as `duplicate_selections`.
+A null `scope` selects that run's saved default. A selection that loads is compared
+by its resolved `(run_id, scope)`, so an omitted scope naming the same scalar scope
+as an explicit one is refused as `duplicate_selections`. A selection that cannot be
+loaded — an unknown run, a missing bundle, or an aggregate fold summary — is skipped
+before that comparison, so two spellings of it appear as two skipped rows rather
+than a duplicate error. Neither is ranked, so no comparison is invented either way.
 
 Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
 run can be ranked in one result. The metric id is source-qualified (`run.<name>`)

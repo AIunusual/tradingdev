@@ -657,3 +657,42 @@ class TestDuplicateSelections:
 
         assert result["code"] == "duplicate_selections"
         assert "selected twice" in result["error"]
+
+    def test_an_unloadable_scope_is_skipped_twice_rather_than_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """The duplicate check runs on loaded candidates, not on requests.
+
+        A walk-forward run defaults to an aggregate summary, which fails the
+        fold-summary check before any candidate exists. Both spellings are then
+        skipped; neither is ranked, so no comparison is invented.
+        """
+        workspace, store = storage
+        _publish_run(
+            workspace,
+            store,
+            "wf",
+            scopes={
+                "test_summary": PerformanceScope.model_validate(
+                    {
+                        "kind": "fold_summary",
+                        "mode": "signal",
+                        "split": "test",
+                        "values": {
+                            SHARPE: FoldStats(
+                                mean=1.0, std=0.1, min=0.9, max=1.1, valid_count=3
+                            )
+                        },
+                        "metadata": {},
+                    }
+                )
+            },
+        )
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("wf", None), ("wf", "test_summary")]
+        )
+
+        assert result["success"] is True
+        assert result["n_ranked"] == 0
+        assert len(result["skipped"]) == 2
