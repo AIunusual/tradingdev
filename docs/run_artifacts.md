@@ -729,8 +729,16 @@ aligned to their original bar indices after filtering and paging.
 ## Ranking Saved Run Scopes
 
 `RankingService.rank_run_scopes` orders saved scopes by one metric a run already
-recorded. It is an application service: no MCP tool or CLI command exposes it yet,
-so the behaviour below is a library contract rather than a tool response.
+recorded. The MCP `leaderboard` tool exposes it through
+`RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
+selections is the public form of this contract, and
+[the ML research contract](ml_research.md) documents the shared response shape,
+source selection and paging. The library method differs in one argument — it takes
+`top_k`, while the MCP surface pages with `offset`/`limit`.
+
+A null `scope` selects that run's saved default. Selecting the same measurement
+twice — including an omitted scope that resolves to one already named — is refused
+as `duplicate_selections`.
 
 Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
 run can be ranked in one result. The metric id is source-qualified (`run.<name>`)

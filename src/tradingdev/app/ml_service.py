@@ -215,7 +215,7 @@ _ML_GUIDANCE = {
         "and requires runs as (run_id, scope) pairs, where a null scope means "
         "that run's default. A run row carries run_id, scope, the trading "
         "conditions its manifest recorded, metric_source and the stored value; "
-        "context, families and parameter_axes are absent, because a named "
+        "context, families and parameter_axes are null, because a named "
         "selection has no evaluation context or method mix to report. "
         "record=True replaces the same candidate/settings/dataset/context. "
         "leaderboard metrics have declared directions; never assume higher is "

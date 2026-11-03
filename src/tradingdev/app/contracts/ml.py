@@ -296,8 +296,8 @@ class LeaderboardResponse(ContractModel):
     A signal metric and a backtest metric are different measurements that
     share no column, so a response ranks either recorded evaluations or saved
     run scopes. ``source`` names which, and the row models follow it; the
-    signal-only fields are absent on the run path rather than filled with
-    something that would read as a measurement.
+    signal-only fields are ``null`` on the run path — present but not
+    applicable — rather than empty, which would read as measured-and-nothing.
     """
 
     success: Literal[True]

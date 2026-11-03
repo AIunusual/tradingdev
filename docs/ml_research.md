@@ -282,9 +282,10 @@ ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
 as `duplicate_selections`, including an omitted scope that resolves to one already
 named. A run row carries `run_id`, `scope`, the trading conditions its manifest
 recorded, `metric_source` and the stored value; `context`, `families` and
-`parameter_axes` are absent rather than empty, because a named selection has no
-evaluation context or method mix to report. Every row reports `source`, and one
-response never mixes the two: a signal metric and a backtest metric share no
+`parameter_axes` are `null` — present but not applicable, because a named selection
+has no evaluation context or method mix to report. An empty value would read as
+measured-and-nothing, which is a different claim. Every row reports `source`, and
+one response never mixes the two: a signal metric and a backtest metric share no
 definition, so they share no column.
 
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
