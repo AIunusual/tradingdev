@@ -25,6 +25,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.ranking_service import RankingService, resolve_metric
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
+    FoldStats,
     MetricDefinitionSnapshot,
     ObservationsBundle,
     PerformanceArtifacts,
@@ -126,7 +127,7 @@ def _publish_run(
     store: SQLiteStore,
     run_id: str,
     *,
-    scopes: dict[str, dict[str, float | None]] | None = None,
+    scopes: dict[str, dict[str, float | None] | PerformanceScope] | None = None,
     window: int = 20,
     publish_manifest: bool = True,
     record_manifest_hash: bool = True,
@@ -138,11 +139,18 @@ def _publish_run(
     published manifest, and the performance bundle -- because
     ``PerformanceStore.publish`` refuses a bundle whose identity differs from its
     run. Writing the hash in only one place produces a fixture that cannot exist.
+
+    A scope may be given as plain values or as a built ``PerformanceScope``, which
+    is how a fold summary (``kind: "fold_summary"``) is published.
     """
     scopes = scopes or {"full": {SHARPE: 1.0}}
     manifest = manifest or _manifest(window=window)
     recorded_hash = manifest.manifest_hash if record_manifest_hash else None
-    default_scope = next(iter(scopes))
+    scope_models = {
+        name: values if isinstance(values, PerformanceScope) else _scope(values)
+        for name, values in scopes.items()
+    }
+    default_scope = next(iter(scope_models))
     if publish_manifest:
         ExecutionManifestStore(workspace).publish(run_id, manifest)
     store.create_run(
@@ -151,10 +159,9 @@ def _publish_run(
         strategy_id="fixture",
         revision_id="rev-1",
         artifact_dir=workspace.runs / run_id,
-        metrics=scopes[default_scope],
+        metrics=scope_models[default_scope].model_dump(mode="json")["values"],
         manifest_hash=recorded_hash,
     )
-    scope_models = {name: _scope(values) for name, values in scopes.items()}
     names = {name for scope in scope_models.values() for name in scope.values}
     PerformanceStore(workspace, store).publish(
         PerformanceArtifacts(
@@ -173,7 +180,13 @@ def _publish_run(
             observations=ObservationsBundle(
                 run_id=run_id,
                 manifest_hash=recorded_hash,
-                scopes={name: _observations() for name in scope_models},
+                # Only scalar backtest scopes carry observations; a fold summary
+                # is an aggregate and has none.
+                scopes={
+                    name: _observations()
+                    for name, scope in scope_models.items()
+                    if scope.kind == "backtest"
+                },
             ),
         )
     )
@@ -389,6 +402,53 @@ class TestPublishedRuns:
         ] == [
             ("beta", 1, 2),
             ("alpha", 1, 2),
+        ]
+
+    def test_a_fold_summary_scope_is_skipped_instead_of_raising(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """A walk-forward run defaults to an aggregate, which is not scalar.
+
+        Before this refusal, ``float()`` raised ``TypeError`` inside the ranking
+        core, outside the ``ValueError`` handler, so one aggregate scope aborted
+        the whole call instead of producing a skipped row.
+        """
+        workspace, store = storage
+        _publish_run(
+            workspace,
+            store,
+            "wf",
+            scopes={
+                "test_summary": PerformanceScope.model_validate(
+                    {
+                        "kind": "fold_summary",
+                        "mode": "signal",
+                        "split": "test",
+                        "values": {
+                            SHARPE: FoldStats(
+                                mean=1.2, std=0.3, min=0.9, max=1.5, valid_count=3
+                            )
+                        },
+                        "metadata": {},
+                    }
+                )
+            },
+        )
+
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("wf", "test_summary")]
+        )
+
+        assert result["success"] is True
+        assert result["ranked"] == []
+        assert result["skipped"] == [
+            {
+                "candidate_id": "run:wf#test_summary",
+                "reason": (
+                    "wf test_summary: fold summary cannot be ranked; "
+                    "select a fold scope"
+                ),
+            }
         ]
 
     def test_top_k_limits_the_page_but_reports_the_full_total(

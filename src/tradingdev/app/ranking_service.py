@@ -151,6 +151,16 @@ class RankingService:
                 f"{run_id} {scope}: "
                 f"{metrics_payload.get('error') or metrics_payload.get('code')}"
             )
+        values = metrics_payload["metrics"]
+        if any(isinstance(value, dict) for value in values.values()):
+            # A fold summary aggregates over folds, so its values are statistics
+            # rather than the scalar the ranking core orders. Refuse the scope
+            # here, where a reason becomes a skipped row, instead of letting
+            # float() raise a TypeError that would abort the whole call.
+            raise ValueError(
+                f"{run_id} {metrics_payload['scope']}: fold summary cannot be "
+                "ranked; select a fold scope"
+            )
         manifest_hash = run.get("manifest_hash")
         if not manifest_hash:
             raise ValueError(f"{run_id}: no execution manifest recorded")
@@ -191,4 +201,4 @@ class RankingService:
             slippage=backtest.slippage,
             metric_source="bundle",
         )
-        return to_ranking_candidate(candidate, metrics_payload["metrics"])
+        return to_ranking_candidate(candidate, values)
