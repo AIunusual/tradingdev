@@ -275,11 +275,25 @@ incompatible contexts and must not be presented as a controlled comparison. Reta
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
 
+The same tool ranks saved backtest scopes. The metric id selects the source: a
+bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
+ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
+`scope` means that run's default. Selecting the same measurement twice is refused
+as `duplicate_selections`, including an omitted scope that resolves to one already
+named. A run row carries `run_id`, `scope`, the trading conditions its manifest
+recorded, `metric_source` and the stored value; `context`, `families` and
+`parameter_axes` are absent rather than empty, because a named selection has no
+evaluation context or method mix to report. Every row reports `source`, and one
+response never mixes the two: a signal metric and a backtest metric share no
+definition, so they share no column.
+
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
 `top_k`. The complete filtered candidate set is compared and ranked before
 paging. `ranked` and `skipped` each return at most `limit` entries at the same
 offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
 shared `next_offset` until `null`, even if one list has no entries on a page.
+Both sources page the same way; a run selection is named explicitly and is usually
+small, so its page is normally the whole list.
 Mixed-context rejection reports the full context count, limited examples and
 filter guidance, not every context's text.
 

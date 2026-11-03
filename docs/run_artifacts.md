@@ -735,9 +735,9 @@ so the behaviour below is a library contract rather than a tool response.
 Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
 run can be ranked in one result. The metric id is source-qualified (`run.<name>`)
 and must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
-with a declared optimization direction; a `signal.` id is refused because signal
-figures are ranked through the leaderboard, and an id without a direction cannot
-order candidates.
+with a declared optimization direction; a `signal.` id is refused here because
+recorded signal evaluations are a different measurement, ranked through the
+leaderboard's signal path; an id without a direction cannot order candidates.
 
 A scope must hold scalar values. Scalar backtest scopes, including numbered
 walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries are
