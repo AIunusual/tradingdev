@@ -18,6 +18,7 @@ from tests.e2e.discovery_workflow import (
     verify_discovery_outcome,
     verify_dvol_query_reply,
     verify_market_cache_reply,
+    verify_readonly_attempts,
 )
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.strategy_scenarios import SCENARIOS, market_frame
@@ -221,6 +222,7 @@ def test_natural_request_inspects_separate_market_caches(
             "不要下載、改資料或執行研究。"
         )
         turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
 
         async def user(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -232,9 +234,13 @@ def test_natural_request_inspects_separate_market_caches(
                 "user_reply": user,
             }
             async with workspace.connect() as client:
-                names = [
-                    tool.name for tool in (await client.session.list_tools()).tools
-                ]
+                tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
                 assert all(name not in request for name in names)
                 options["tool_names"] = names
                 if pytestconfig.getoption("llm_provider") == "local":
@@ -252,15 +258,9 @@ def test_natural_request_inspects_separate_market_caches(
         assert turns
         reply = turns[-1].text
         print("[market-cache-inspection] Final model reply:\n" + reply, flush=True)
+        verify_readonly_attempts(calls, readonly_tools)
         observed = {}
         for call in calls:
-            assert call.name in {
-                "inspect_dataset",
-                "list_available_data",
-                "list_data_sources",
-                "get_strategy_contract",
-                "get_ml_contract",
-            }
             if call.name == "inspect_dataset" and call.result.get("market"):
                 market = call.result["market"]
                 assert market["source"] == "binance_vision"
@@ -352,6 +352,7 @@ def test_natural_request_distinguishes_queried_and_unqueried_dvol(
             "只檢查本機，不下載、不執行研究。"
         )
         turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
 
         async def user(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -363,9 +364,13 @@ def test_natural_request_distinguishes_queried_and_unqueried_dvol(
                 "user_reply": user,
             }
             async with workspace.connect() as client:
-                names = [
-                    tool.name for tool in (await client.session.list_tools()).tools
-                ]
+                tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
                 assert all(name not in prompt for name in names)
                 options["tool_names"] = names
                 if pytestconfig.getoption("llm_provider") == "local":
@@ -383,15 +388,9 @@ def test_natural_request_distinguishes_queried_and_unqueried_dvol(
         assert turns
         reply = turns[-1].text
         print("[dvol-query-inspection] Final model reply:\n" + reply, flush=True)
+        verify_readonly_attempts(calls, readonly_tools)
         observations = {}
         for call in calls:
-            assert call.name in {
-                "inspect_dataset",
-                "list_available_data",
-                "list_data_sources",
-                "get_strategy_contract",
-                "get_ml_contract",
-            }
             if (
                 call.name == "inspect_dataset"
                 and call.arguments.get("config_path") in paths
