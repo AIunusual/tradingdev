@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -90,6 +91,6 @@ def test_safety_volume_threshold_selects_highest_pnl_without_capital(
         backtest_engine=engine,
     )
     monkeypatch.setattr(
-        strategy, "_compute_directions", lambda frame: frame["close"].to_numpy() * 0 + 1
+        strategy, "_compute_sma_directions", lambda frame: np.ones(len(frame))
     )
-    assert strategy._search_threshold(frame, model, features, lookback=1) == 0.7
+    assert strategy._search_threshold(frame, frame, model, features, None) == 0.7
