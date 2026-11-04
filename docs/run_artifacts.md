@@ -733,8 +733,9 @@ recorded. The MCP `leaderboard` tool exposes it through
 `RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
 selections is the public form of this contract, and
 [the ML research contract](ml_research.md) documents the shared response shape,
-source selection and paging. The library method differs in one argument — it takes
-`top_k`, while the MCP surface pages with `offset`/`limit`. Arguments are exclusive
+source selection and paging. The Python library accepts `(run_id, scope)` tuples
+and `top_k`; MCP accepts selection objects and pages with `offset`/`limit`.
+Arguments are exclusive
 to a source: a run ranking refuses the signal filters, `allow_mixed=True` and
 `allow_parameter_axes=True`, and a signal ranking refuses `runs`.
 

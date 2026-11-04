@@ -278,8 +278,11 @@ trying more candidates increases selection bias.
 
 The same tool ranks saved backtest scopes. The metric id selects the source: a
 bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
-ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
-`scope` means that run's default. The response reports the qualified id, so
+ranks saved scopes and requires `runs` as a list of selection objects, for example
+`runs=[{"run_id":"example","scope":"full"}]`. An omitted or null `scope` selects
+that run's default. The Python library uses tuples instead, as described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+The response reports the qualified id, so
 `metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
 is not echoed. The two argument sets are exclusive: a signal ranking refuses
 `runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,

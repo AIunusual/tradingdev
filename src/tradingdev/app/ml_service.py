@@ -212,7 +212,8 @@ _ML_GUIDANCE = {
     "ranking": (
         "The metric id selects the source. A bare name or signal.<metric> "
         "ranks recorded evaluations; run.<metric> ranks saved backtest scopes "
-        "and requires runs as (run_id, scope) pairs, where a null scope means "
+        "and requires runs as a list of objects with run_id and scope; "
+        "an omitted or null scope means "
         "that run's default. A run row carries run_id, scope, the trading "
         "conditions its manifest recorded, metric_source and the stored value; "
         "context, families and parameter_axes are null, because a named "
