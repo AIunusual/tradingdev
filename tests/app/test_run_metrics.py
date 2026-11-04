@@ -191,7 +191,9 @@ def test_rolling_trace_queries_are_bounded_and_full_evidence_remains_readable(
     pointer += "fold_metadata/0/fold~10~0test/" if nested else ""
     assert summary["json_pointer"] == pointer + "rolling_trace"
     assert summary["artifact_id"] == "first:performance_json"
-    comparison = service.compare_runs(["first", "second"], metric_ids=[])
+    comparison = service.compare_runs(
+        [("first", None), ("second", None)], metric_ids=[]
+    )
     assert len(json.dumps(comparison)) < 16000
     assert comparison["runs"][0]["metadata"] == result_metadata
     assert (
@@ -313,7 +315,9 @@ def test_quantstats_migration_keeps_historical_provider_and_definitions(
     assert old_providers["empyrical-reloaded"] == "0.5.12"
     assert new.definitions["total_return"].provider == "quantstats"
     comparison = CompareRunsResponse.model_validate(
-        service.compare_runs(["historical", "current"], metric_ids=["total_return"])
+        service.compare_runs(
+            [("historical", None), ("current", None)], metric_ids=["total_return"]
+        )
     )
     reasons = comparison.metric_compatibility["total_return"].reasons
     assert "definition.provider_differs:current" in reasons
@@ -396,7 +400,9 @@ def test_display_uses_historical_units_and_retains_exact_integer_counts(
     }
     assert historical.definitions["annual_return"].unit == "historical_custom_unit"
     compared = CompareRunsResponse.model_validate(
-        service.compare_runs(["current", "historical"], metric_ids=["annual_return"])
+        service.compare_runs(
+            [("current", None), ("historical", None)], metric_ids=["annual_return"]
+        )
     )
     assert not compared.comparable
     assert [row.display_metrics for row in compared.runs] == [
@@ -441,7 +447,9 @@ def test_fold_display_preserves_missing_statistics_and_unscaled_valid_count(
     assert detail.model_dump()["display_metrics"]["annual_return"] == expected
     assert detail.model_dump()["display_metrics"]["total_pnl"]["mean"] == "0.00"
     compared = CompareRunsResponse.model_validate(
-        service.compare_runs(["first", "second"], metric_ids=["annual_return"])
+        service.compare_runs(
+            [("first", None), ("second", None)], metric_ids=["annual_return"]
+        )
     )
     assert all(
         row.model_dump()["display_metrics"] == {"annual_return": expected}
@@ -468,7 +476,7 @@ def test_metric_display_crosses_typed_mcp_boundaries(
             "get_run_metrics", {"run_id": "first", "metric_ids": ["annual_return"]}
         )
         comparison = await server.call_tool(
-            "compare_runs", {"run_ids": ["first", "second"]}
+            "compare_runs", {"selections": [{"run_id": "first"}, {"run_id": "second"}]}
         )
         assert (
             isinstance(summary, CallToolResult)
@@ -537,7 +545,9 @@ def test_fold_scope_summary_preserves_nulls_valid_counts_and_raw_fold(
         default_scope="test_summary",
     )
     comparison = CompareRunsResponse.model_validate(
-        service.compare_runs(["run", "second"], metric_ids=["total_pnl"])
+        service.compare_runs(
+            [("run", None), ("second", None)], metric_ids=["total_pnl"]
+        )
     )
     assert comparison.comparable
     expected = summary.values["total_pnl"]
@@ -566,7 +576,7 @@ def test_legacy_metrics_remain_readable_but_do_not_invent_details(
     assert (
         service.get_run_metrics("old_a")["code"] == "performance_artifact_unavailable"
     )
-    comparison = service.compare_runs(["old_a", "old_b"])
+    comparison = service.compare_runs([("old_a", None), ("old_b", None)])
     assert not comparison["comparable"]
     assert all(row["display_metrics"] == {} for row in comparison["runs"])
     assert (
@@ -591,12 +601,12 @@ def test_default_volume_comparison_uses_only_applicable_summary_metrics(
         _publish(storage, run_id, scopes={"full": scope})
     service = storage[2]
     summary = service.get_run("volume_a")["run"]["metrics"]
-    compared = service.compare_runs(["volume_a", "volume_b"])
+    compared = service.compare_runs([("volume_a", None), ("volume_b", None)])
     assert compared["comparable"]
     assert compared["runs"][0]["metrics"] == summary
     assert set(summary) == {"total_pnl", "max_drawdown_amount"}
     explicit = service.compare_runs(
-        ["volume_a", "volume_b"], metric_ids=["sharpe_ratio"]
+        [("volume_a", None), ("volume_b", None)], metric_ids=["sharpe_ratio"]
     )
     assert explicit["runs"][0]["metrics"] == {"sharpe_ratio": None}
     assert not explicit["comparable"]
@@ -648,7 +658,9 @@ def test_comparison_flags_incompatible_meanings_and_context(
         scope = scope.model_copy(update={"split": "test"})
     scope = scope.model_copy(update={"metadata": metadata})
     _publish(storage, "second", scopes={"full": scope}, snapshot_changes=changes)
-    result = storage[2].compare_runs(["first", "second"], metric_ids=["total_pnl"])
+    result = storage[2].compare_runs(
+        [("first", None), ("second", None)], metric_ids=["total_pnl"]
+    )
     comparison = CompareRunsResponse.model_validate(result)
     assert not comparison.comparable
     assert comparison.metric_compatibility["total_pnl"].reasons
@@ -668,7 +680,9 @@ def test_comparison_preserves_observed_interval_and_sample_count_differences(
         "second",
         scopes={"full": scope.model_copy(update={"metadata": metadata})},
     )
-    comparison = storage[2].compare_runs(["first", "second"], metric_ids=["total_pnl"])
+    comparison = storage[2].compare_runs(
+        [("first", None), ("second", None)], metric_ids=["total_pnl"]
+    )
     assert comparison["context_differences"]["observations.bar_count"] == {
         "first": 2,
         "second": 500,
@@ -764,7 +778,9 @@ def test_unavailable_values_cannot_be_labeled_comparable(
 ) -> None:
     _publish(storage, "first")
     _publish(storage, "second")
-    response = storage[2].compare_runs(["first", "second"], metric_ids=["win_rate"])
+    response = storage[2].compare_runs(
+        [("first", None), ("second", None)], metric_ids=["win_rate"]
+    )
     assert not response["comparable"]
     assert (
         "metric_unavailable:first"
@@ -791,7 +807,9 @@ def test_unavailable_values_cannot_be_labeled_comparable(
         scopes={"test_summary": summary},
         default_scope="test_summary",
     )
-    response = storage[2].compare_runs(["fold_a", "fold_b"], metric_ids=["win_rate"])
+    response = storage[2].compare_runs(
+        [("fold_a", None), ("fold_b", None)], metric_ids=["win_rate"]
+    )
     assert not response["comparable"]
     assert (
         "no_valid_folds:fold_a"
@@ -925,7 +943,10 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
         assert scalar.metrics["total_return"] == pytest.approx(0.3)
         comparison_response = await server.call_tool(
             "compare_runs",
-            {"run_ids": ["weekly_a", "weekly_b"], "metric_ids": ["sharpe_ratio"]},
+            {
+                "selections": [{"run_id": "weekly_a"}, {"run_id": "weekly_b"}],
+                "metric_ids": ["sharpe_ratio"],
+            },
         )
         assert isinstance(comparison_response, CallToolResult)
         assert comparison_response.structured_content is not None
@@ -940,3 +961,106 @@ def test_weekly_engine_results_keep_unavailable_metrics_through_storage_and_mcp(
         )
 
     asyncio.run(check())
+
+
+class TestScopePairComparison:
+    """The comparison key is a (run_id, scope) pair, not a bare run id."""
+
+    def test_two_scopes_of_one_run_are_compared_side_by_side(
+        self, storage: tuple[WorkspacePaths, SQLiteStore, RunService]
+    ) -> None:
+        _publish(
+            storage,
+            "grid",
+            scopes={
+                "trial/0/train": _scope(values={"total_return": 0.1}),
+                "trial/1/train": _scope(values={"total_return": 0.2}),
+            },
+            default_scope="trial/0/train",
+        )
+
+        comparison = CompareRunsResponse.model_validate(
+            storage[2].compare_runs(
+                [("grid", "trial/0/train"), ("grid", "trial/1/train")],
+                metric_ids=["total_return"],
+            )
+        )
+
+        assert [row.scope for row in comparison.runs] == [
+            "trial/0/train",
+            "trial/1/train",
+        ]
+        assert [row.metrics["total_return"] for row in comparison.runs] == [0.1, 0.2]
+        assert [row.metric_source for row in comparison.runs] == ["bundle", "bundle"]
+        assert comparison.comparable
+
+    def test_identical_selections_are_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore, RunService]
+    ) -> None:
+        _publish(storage, "grid", scopes={"full": _scope()})
+        result = storage[2].compare_runs(
+            [("grid", "full"), ("grid", "full")], metric_ids=["total_pnl"]
+        )
+        assert result["code"] == "duplicate_selections"
+        assert "grid scope full" in result["error"]
+
+    def test_an_omitted_scope_that_names_the_same_measurement_is_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore, RunService]
+    ) -> None:
+        """The default and an explicit name for it are one measurement."""
+        _publish(storage, "grid", scopes={"full": _scope()}, default_scope="full")
+        result = storage[2].compare_runs(
+            [("grid", None), ("grid", "full")], metric_ids=["total_pnl"]
+        )
+        assert result["code"] == "duplicate_selections"
+
+    def test_a_legacy_row_reports_the_summary_source(
+        self, storage: tuple[WorkspacePaths, SQLiteStore, RunService]
+    ) -> None:
+        workspace, store, service = storage
+        for run_id in ("old_a", "old_b"):
+            store.create_run(
+                run_id=run_id,
+                job_id=f"job-{run_id}",
+                strategy_id="fixture",
+                artifact_dir=workspace.runs / run_id,
+                metrics={"daily_pnl_mean": 42},
+            )
+        comparison = service.compare_runs([("old_a", None), ("old_b", None)])
+        assert [row["metric_source"] for row in comparison["runs"]] == [
+            "legacy_summary",
+            "legacy_summary",
+        ]
+
+    def test_context_differences_keep_both_scopes_of_one_run(
+        self, storage: tuple[WorkspacePaths, SQLiteStore, RunService]
+    ) -> None:
+        """Keying by run id alone would drop one scope's value silently."""
+
+        def with_bar_count(bars: int) -> PerformanceScope:
+            scope = _scope()
+            metadata = dict(scope.metadata)
+            observations = metadata.get("observations")
+            assert isinstance(observations, dict)
+            metadata["observations"] = {**observations, "bar_count": bars}
+            return scope.model_copy(update={"metadata": metadata})
+
+        _publish(
+            storage,
+            "grid",
+            scopes={
+                "trial/0/train": with_bar_count(2),
+                "trial/1/train": with_bar_count(9),
+            },
+            default_scope="trial/0/train",
+        )
+
+        result = storage[2].compare_runs(
+            [("grid", "trial/0/train"), ("grid", "trial/1/train")],
+            metric_ids=["total_pnl"],
+        )
+
+        assert result["context_differences"]["observations.bar_count"] == {
+            "grid#trial/0/train": 2,
+            "grid#trial/1/train": 9,
+        }
