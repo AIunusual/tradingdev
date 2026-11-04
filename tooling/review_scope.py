@@ -235,6 +235,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "Completed Run Files",
             "Performance Scopes and Provenance",
             "Historical Observation Queries",
+            "Ranking Saved Run Scopes",
             "Research Notes and Archives",
             "Composable Offline Reports",
         ),

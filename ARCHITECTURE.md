@@ -53,7 +53,7 @@ flowchart LR
 | `domain/presentation/`、`adapters/presentation/` | 固定文件內容與章節、白話欄位投影，以及共用文字／HTML 呈現 |
 | `domain/backtest/`、`domain/validation/`、`domain/optimization/` | 回測引擎、walk-forward、參數搜尋與績效計算整合 |
 | `domain/performance/` | 指標定義、適用條件、最佳化方向與具型別的績效產物模型 |
-| `domain/ranking.py` | 候選無關的排序核心：依指標宣告方向排序、同分名次、缺值原因與比較群組。目前只有訊號排名使用；回測候選是預定接入的第二個來源，尚未接上 |
+| `domain/ranking.py` | 候選無關的排序核心：依指標宣告方向排序、同分名次、缺值原因與比較群組。兩個呼叫端共用同一套規則而不共用資料模型：`domain/ml/leaderboard.py` 的訊號排名，以及 `app/ranking_service.py` 的 `RankingService.rank_run_scopes`（已保存 run 的 scope 排名，讀取 run 記錄的指標與 manifest 後轉成候選）。後者是 application service，尚未接上 MCP 工具或 CLI；服務已可用不代表已對外暴露 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 依資產類別固定的基準定義、買進持有計算與基準行情取得 |
 | `domain/data/`、`domain/indicators/`、`domain/ml/` | 行情與特徵資料處理、技術指標、模型及訓練邏輯 |
 | `adapters/storage/`、`adapters/execution/` | SQLite、revision／manifest／績效檔案保存，以及程序啟動與監督 |
@@ -95,6 +95,14 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 `tooling/`、`research/` 不隨產品 wheel 發佈，也不屬於產品 application services。
 操作入口與檢查流程見[開發指南](docs/development.md)，研究原型用法見
 [開發指南的 MAE 研究原型](docs/development.md#mae-研究原型)。
+
+`.agents/skills/research-feedback/SKILL.md` 是外部開發助手的工程回饋流程入口。
+助手讀取明示範圍內的 workspace 策略與證據，評估並整合可重用能力至適當模組，
+同步更新使用端、探索入口、測試及契約。來源 revision 與歷史結果維持唯讀；共用程式
+的改動仍可能影響匯入它的策略，revision 並不凍結全部相依程式。
+此 skill 不屬於產品 MCP 常駐指引或 application services，不自行監看 workspace、
+跨研究檢索或發布更新；多人權限與隔離亦不由 skill 提供。
+來源選擇及操作方式見[研究成果工程回饋](docs/development.md#研究成果工程回饋)。
 
 ## 核心概念與身分
 
