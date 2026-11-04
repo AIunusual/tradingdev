@@ -96,6 +96,14 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 操作入口與檢查流程見[開發指南](docs/development.md)，研究原型用法見
 [開發指南的 MAE 研究原型](docs/development.md#mae-研究原型)。
 
+`.agents/skills/research-feedback/SKILL.md` 是外部開發助手的工程回饋流程入口。
+助手讀取明示範圍內的 workspace 策略與證據，評估並整合可重用能力至適當模組，
+同步更新使用端、探索入口、測試及契約。來源 revision 與歷史結果維持唯讀；共用程式
+的改動仍可能影響匯入它的策略，revision 並不凍結全部相依程式。
+此 skill 不屬於產品 MCP 常駐指引或 application services，不自行監看 workspace、
+跨研究檢索或發布更新；多人權限與隔離亦不由 skill 提供。
+來源選擇及操作方式見[研究成果工程回饋](docs/development.md#研究成果工程回饋)。
+
 ## 核心概念與身分
 
 | 概念 | 意義與責任 |
