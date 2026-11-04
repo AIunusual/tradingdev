@@ -264,10 +264,11 @@ The MCP path verifies which saved model produced the signal; it does not prove
 a held-out evaluation. Python array callers and existing records may use a
 caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
 [artifact contract](ml_research.md#recorded-signal-evaluations).
-`leaderboard` ranks only a metric with a declared direction and, by default,
-only matching measurement contexts. Its optional `dataset_id` filter selects a
-verified dataset version and checks that recorded data context matches its
-manifest; differences in evaluation settings still require compatible context.
+`leaderboard` ranks only a metric with a declared direction. A signal ranking also
+requires, by default, only matching measurement contexts; its optional `dataset_id`
+filter selects a verified dataset version and checks that recorded data context
+matches its manifest; differences in evaluation settings still require compatible
+context.
 `allow_parameter_axes=True` permits window, horizon and quantile-count variations
 under the [parameter-surface rules](ml_research.md#recorded-signal-evaluations);
 it does not make those measurements comparable. `allow_mixed=True` opts into
@@ -300,14 +301,17 @@ fold summaries skipped — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
-`top_k`. The complete filtered candidate set is compared and ranked before
-paging. `ranked` and `skipped` each return at most `limit` entries at the same
+`top_k`. For recorded evaluations the complete filtered candidate set is compared
+and ranked before paging; to rank saved backtest scopes instead, pass
+`run.<metric>` with explicit `runs` selections, and those scopes are ordered by the
+same rules. `ranked` and `skipped` each return at most `limit` entries at the same
 offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
-shared `next_offset` until `null`, even if one list has no entries on a page.
-Both sources page the same way; a run selection is named explicitly and is usually
-small, so its page is normally the whole list.
-Mixed-context rejection reports the full context count, limited examples and
-filter guidance, not every context's text.
+shared `next_offset` until `null`, even if one list has no entries on a page. A run
+selection is named explicitly and is usually small, so its page is normally the
+whole list; the source-specific response fields are described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+On a signal ranking, mixed-context rejection reports the full context count, limited
+examples and filter guidance, not every context's text.
 
 After inspecting saved candidates, discover the `ml` section with
 `get_report_sections` and pass 1–50 distinct entry IDs to
