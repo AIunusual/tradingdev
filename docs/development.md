@@ -201,7 +201,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 [tests/e2e/](../tests/e2e/)，provider 選項定義於 [tests/llm_plugin.py](../tests/llm_plugin.py)。
 
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol --llm-timeout 1800
+./scripts/check-llm.sh codex --llm-timeout 1800
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-timeout 1800
 ```
 
@@ -209,16 +209,23 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
-Codex 測試固定使用 `xhigh` 推理強度，並在啟動模型回合前核對及記錄實際值；
-所選模型須支援此強度。這些情境驗證單一客戶端透過 MCP 操作，不繼承宿主的
-Ultra 自動委派模式，也不允許子代理或其他原生工具代做。設定僅適用於測試程序，
-不修改使用者的全域 Codex 設定。
+Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
+`--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
+`TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
+啟動模型回合前核對及記錄實際模型與推理強度，所選能力不可用或不符即失敗。
+推理強度的可接受值由 [provider 選項](../tests/llm_plugin.py) 的
+`CODEX_REASONING_EFFORTS` 定義；不支援會自動委派的 Ultra。
+這些情境驗證單一客戶端透過 MCP 操作，不允許子代理或其他原生工具代做，
+也不修改使用者的全域 Codex 設定。
+
+此處指定的是受測模型。驗證某個模型的相容性時，明確指定該模型與推理強度；
+其他模型的結果不能代替。此測試不執行程式碼審查或 PR 文件一致性審查。
 
 以 `-k` 選取相關情境，省略時執行全部。可先列出目前可用情境，不呼叫模型：
 
 ```bash
 ./scripts/check-llm.sh codex --collect-only -q
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol -k novice --llm-timeout 1800
+./scripts/check-llm.sh codex -k novice --llm-timeout 1800
 ```
 
 依變更責任選擇與維護測試：
@@ -242,7 +249,8 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 `--llm-timeout` 是每個情境的期限。長流程需要足夠上下文；已驗證的本地 Qwen 配置
 為 64K，但不代表所有模型的最低需求。容量不足須調整服務配置後重跑完整情境。
 Local 可用 `--llm-temperature`、`--llm-reasoning-effort` 覆寫支援的採樣設定；
-這些選項不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
+未指定時使用本地服務預設，不讀取 Codex 測試的專用環境變數。
+`--llm-temperature` 不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
 
 ### 量測模型上下文
 
@@ -352,7 +360,7 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
-文件審查不再使用 `TRADINGDEV_CODEX_MODEL`，請改用上述專用設定。
+舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
 正常 PR 檢查只使用選定配置，失敗不自動切換模型；模型選型比較須獨立執行，
 不能將某個模型的通過結果覆蓋另一個模型的失敗。
 審查程式與來源入口見

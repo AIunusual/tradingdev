@@ -455,6 +455,7 @@ def test_natural_request_interprets_training_provenance(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 24,
             }
@@ -474,7 +475,6 @@ def test_natural_request_interprets_training_provenance(
                         case.request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, case.request, **options))
@@ -505,6 +505,7 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "tool_names": ML_TOOLS,
                 "user_reply": observe_final,
                 "max_tool_calls": 16,
@@ -519,7 +520,6 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
                     ML_PROMPT,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 
@@ -611,6 +611,7 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": reply,
                 "max_tool_calls": 18,
             }
@@ -630,7 +631,6 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
@@ -684,6 +684,7 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 18,
             }
@@ -703,7 +704,6 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                         ML_REPORT_REQUEST,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(
@@ -788,6 +788,7 @@ def test_natural_request_discovers_rolling_evidence(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
             }
             async with workspace.connect() as client:
@@ -807,7 +808,6 @@ def test_natural_request_discovers_rolling_evidence(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))

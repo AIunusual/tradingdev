@@ -117,6 +117,7 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
         async def run() -> Any:
             options = {
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "user_reply": user,
             }
@@ -130,7 +131,6 @@ def test_saved_research_interpretation(pytestconfig: pytest.Config) -> None:
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))

@@ -16,6 +16,7 @@ from tooling.process_guard import process_descendants, process_identity, termina
 
 from tests.e2e.codex_app_server import CodexAppServer
 from tests.integration.mcp_harness import MCPWorkspace
+from tests.llm_plugin import codex_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,8 +26,6 @@ if TYPE_CHECKING:
     from tests.e2e.codex_app_server import ElicitationCallback
     from tests.e2e.conversation import UserReply
     from tests.e2e.llm_client import ToolCall
-
-CODEX_REASONING_EFFORT = "xhigh"
 
 LIFECYCLE_TOOLS = [
     "list_strategies",
@@ -67,7 +66,7 @@ def runtime_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _command(root: Path, model: str | None = None) -> list[str]:
+def _command(root: Path, model: str, reasoning_effort: str) -> list[str]:
     command = [resolve_codex_binary(), "app-server", "--listen", "stdio://"]
     config: dict[str, Any] = {
         "features.shell_tool": False,
@@ -82,7 +81,8 @@ def _command(root: Path, model: str | None = None) -> list[str]:
         "features.code_mode": False,
         "features.js_repl": False,
         "features.skip_host_skill_discovery": True,
-        "model_reasoning_effort": CODEX_REASONING_EFFORT,
+        "model": model,
+        "model_reasoning_effort": reasoning_effort,
         "web_search": "disabled",
         "notify": [],
         "developer_instructions": "",
@@ -91,8 +91,6 @@ def _command(root: Path, model: str | None = None) -> list[str]:
         "log_dir": str(root / "codex_logs"),
         "sqlite_home": str(root / "codex_state"),
     }
-    if model := model or os.environ.get("TRADINGDEV_CODEX_MODEL"):
-        config["model"] = model
     for key, value in config.items():
         command.extend(["-c", f"{key}={json.dumps(value)}"])
     return command
@@ -141,6 +139,7 @@ async def run_codex(
     timeout_seconds: float = 300,
     max_tool_calls: int = 64,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     elicitation_callback: ElicitationCallback | None = None,
     user_reply: UserReply | None = None,
     max_turns: int = 8,
@@ -151,6 +150,7 @@ async def run_codex(
     from tests.e2e.conversation import ModelTurn
     from tests.e2e.llm_client import codex_calls
 
+    model, reasoning_effort = codex_settings(model, reasoning_effort)
     enabled_tools = LIFECYCLE_TOOLS if tool_names is None else tool_names
     turn_number = 0
 
@@ -170,7 +170,7 @@ async def run_codex(
     stderr_path = root / "codex_stderr.log"
     with stderr_path.open("w", encoding="utf-8") as stderr:
         process = await asyncio.create_subprocess_exec(
-            *_command(root, model),
+            *_command(root, model, reasoning_effort),
             cwd=root,
             env={**os.environ, **runtime_environment(root)},
             stdin=asyncio.subprocess.PIPE,
@@ -201,7 +201,7 @@ async def run_codex(
                     prompt,
                     {
                         "cwd": str(root),
-                        "model": model or os.environ.get("TRADINGDEV_CODEX_MODEL"),
+                        "model": model,
                         "ephemeral": True,
                         "sandbox": "read-only",
                         "approvalPolicy": {
@@ -220,7 +220,7 @@ async def run_codex(
                         ),
                     },
                     mcp_config=_mcp_config(root, enabled_tools),
-                    expected_reasoning_effort=CODEX_REASONING_EFFORT,
+                    expected_reasoning_effort=reasoning_effort,
                     user_reply=respond_to_turn if user_reply is not None else None,
                     max_turns=max_turns,
                 )

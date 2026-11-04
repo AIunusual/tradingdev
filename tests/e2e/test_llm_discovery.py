@@ -49,6 +49,7 @@ def test_natural_request_discovers_strategy_and_report(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": user,
             }
             async with workspace.connect() as client:
@@ -67,7 +68,6 @@ def test_natural_request_discovers_strategy_and_report(
                         NATURAL_REQUEST,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(
@@ -118,6 +118,7 @@ def test_natural_request_reads_historical_job_duration(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": user,
             }
             async with workspace.connect() as client:
@@ -132,7 +133,6 @@ def test_natural_request_reads_historical_job_duration(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
@@ -231,6 +231,7 @@ def test_natural_request_inspects_separate_market_caches(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": user,
             }
             async with workspace.connect() as client:
@@ -249,7 +250,6 @@ def test_natural_request_inspects_separate_market_caches(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
@@ -361,6 +361,7 @@ def test_natural_request_distinguishes_queried_and_unqueried_dvol(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": user,
             }
             async with workspace.connect() as client:
@@ -379,7 +380,6 @@ def test_natural_request_distinguishes_queried_and_unqueried_dvol(
                         prompt,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, prompt, **options))
