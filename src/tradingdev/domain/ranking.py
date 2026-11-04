@@ -6,12 +6,13 @@ live in one place and both candidate sources call them.
 
 Nothing here knows what a candidate is. The payload is carried through untouched,
 the comparison group is an opaque key, and the direction comes from the caller's
-metric definition. Signal ranking is the first caller; a saved backtest candidate
-is expected to reuse the same rules without sharing a data model.
+metric definition. Two callers share these rules without sharing a data model:
+signal ranking in ``domain.ml.leaderboard``, and saved run scopes through
+``app.ranking_service.RankingService.rank_run_scopes``.
 
 Candidate ids are strings with a fixed grammar so the tie-break stays
 deterministic: ``signal:<entry_id>`` for a recorded evaluation, and
-``run:<run_id>#<scope>`` reserved for the saved-run source.
+``run:<run_id>#<scope>`` for one scope of a saved run.
 """
 
 from __future__ import annotations
@@ -94,6 +95,28 @@ class RankingResult[T]:
 def signal_candidate_id(entry_id: str) -> str:
     """The ranking id of a recorded signal evaluation."""
     return f"signal:{entry_id}"
+
+
+def run_candidate_id(run_id: str, scope: str) -> str:
+    """The ranking id of one scope of a saved run."""
+    return f"run:{run_id}#{scope}"
+
+
+def signal_metric_id(metric: str) -> str:
+    """The ranking id of a signal metric.
+
+    Metric ids are source-qualified because two catalogues can name the same thing
+    differently. ``annual_return`` and ``max_drawdown`` exist on both sides with
+    different definitions — a cost-free simulated book on one, an executed backtest
+    on the other — so an unqualified id would let them share a column and be read
+    as one measurement.
+    """
+    return f"signal.{metric}"
+
+
+def run_metric_id(metric: str) -> str:
+    """The ranking id of a saved backtest metric; see :func:`signal_metric_id`."""
+    return f"run.{metric}"
 
 
 def rank_candidates[T](

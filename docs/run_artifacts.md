@@ -726,6 +726,73 @@ date rules, returning availability, accounting and valuation/time semantics.
 unavailable status with zero rows, never reconstructed history. Records remain
 aligned to their original bar indices after filtering and paging.
 
+## Ranking Saved Run Scopes
+
+`RankingService.rank_run_scopes` orders saved scopes by one metric a run already
+recorded. It is an application service: no MCP tool or CLI command exposes it yet,
+so the behaviour below is a library contract rather than a tool response.
+
+Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
+run can be ranked in one result. The metric id is source-qualified (`run.<name>`)
+and must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
+with a declared optimization direction; a `signal.` id is refused because signal
+figures are ranked through the leaderboard, and an id without a direction cannot
+order candidates.
+
+A scope must hold scalar values. Scalar backtest scopes, including numbered
+walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries
+such as `test_summary` are skipped with a reason directing the caller to a numbered
+fold; their descriptive statistics are not scalar backtest measurements. Other
+valid selections still rank normally.
+
+Each row's `parameters` is the selected scope's saved mapping: simple and
+walk-forward runs store constructor parameters including captured defaults;
+optimization scopes store trial overrides, not the fully merged constructor.
+Ranking does not reconstruct or merge these settings. Its `metadata` preserves the scope's
+provenance and settings; fitted values remain separately identified by
+`metadata.strategy_parameters` when recorded. Growing rolling traces retain the
+summary and artifact references supplied by `get_run_metrics`.
+
+The trading `conditions` describe the run's submitted manifest and remain the same
+for all scopes of that run. They are not a fold's observed dates: use the scope's
+saved `metadata.observations` for the actual measurement period. Missing metadata
+remains unknown rather than being reconstructed from the run configuration.
+
+Values come from the saved performance bundle; nothing is recomputed. Before a
+value is used, the manifest recorded on the run is loaded and verified against the
+hash stored with that run. A pair whose run, bundle, manifest or conditions cannot
+be read is skipped with that reason: an unknown run, a bundle that never recorded
+the metric, a run with no recorded manifest, an unreadable manifest, or a manifest
+that no longer matches its hash. A skipped candidate keeps its place in the report
+and is never zero filled, so a failed measurement cannot look like a low one. This
+skip path also covers unsupported fold summaries and incompatible saved metric
+definitions; neither invalidates the remaining candidates.
+
+Ordering, shared ranks, the missing-value rule, the returned slice and the base
+caveats all come from `rank_candidates`; `top_k` limits only the returned page,
+while `ranked_total` counts every candidate that had a usable value. Two distinct
+cases share a rank and must not be conflated. Values that are exactly equal are
+ordered by candidate id, not by the order the pairs were requested in. Values that
+are merely close within the core's tolerance also share a rank, but they keep their
+numeric order, so a shared rank does not by itself imply candidate-id ordering.
+
+Each ranked row carries the run's trading conditions: symbol, timeframe, the
+resolved start and end timestamps, fees and slippage. Different conditions do not
+make two results incomparable, but they do not establish a controlled comparison
+either — a ranking across instruments, periods or cost models describes a
+conditional ordering, and a reader must check the conditions before reading a
+difference as an effect. See
+[Performance Artifacts](performance_artifacts.md#metric-interpretation) for metric
+meanings, units and the provider behind each value.
+
+Ranking uses the current catalogue direction and unit only after verifying the
+selected metric's saved definition against the current catalogue. A definition
+mismatch is skipped with the differing fields rather than relabeling historical
+values or silently converting units. No historical values are recomputed.
+Provider package versions and measurement settings remain in each row's saved
+metadata. These can differ even when catalogue definitions match; the response
+always states that ordering is conditional, not proof of a controlled comparison.
+
 ## Research Notes and Archives
 
 Editable research summaries live in the SQLite `research_notes` table. Versioned
