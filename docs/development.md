@@ -433,6 +433,11 @@ stderr 與事件診斷各限制為 4,000 個 Unicode 字元，超量會標示 `[
 錯誤訊息仍可能包含服務回傳的敏感內容，分享日誌前須檢查；檢查器不會自動發布日誌。
 非零退出、零退出但有失敗事件、無效事件或工具呼叫均不算通過，須排除原因後重新檢查。
 
+文件審查及 Git 檢查入口以退出碼 `86` 表示程序清理未確認，外層自動保留相關工作區。
+各失敗邊界的 stderr 輸出 JSON 診斷，包含固定 `code`、`retained_workspaces` 與
+`interrupted` 欄位；欄位定義由 [ProcessCleanupError.payload](../tooling/process_guard.py)
+提供，文字 `message` 僅供顯示，不參與狀態判斷。一般失敗或已確認停止的逾時仍會自動清理。
+
 長時間檢查保留完整日誌，透過[完成通知 skill](../.agents/skills/wait-for-check/SKILL.md)
 等待原執行結束；完成後讀退出碼與摘要，有異常再讀診斷。未確認程序停止前保留臨時目錄。
 
