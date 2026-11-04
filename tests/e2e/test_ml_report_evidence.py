@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -99,6 +101,56 @@ def report(saved_report: MLReportWorkflow) -> MLReportWorkflow:
     return replace(
         saved_report, calls=calls, turn=replace(saved_report.turn, calls=calls)
     )
+
+
+@pytest.mark.parametrize("failure_type", [AssertionError, TimeoutError])
+def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception]
+) -> None:
+    from tests.e2e import test_llm_ml
+
+    roots: list[Path] = []
+    failure = failure_type("model stopped before final delivery")
+    call = ToolCall(
+        "get_artifact",
+        {"artifact_id": "report:saved:html", "offset": 8192},
+        {"content_page": {"next_offset": 16384}},
+    )
+
+    @contextmanager
+    def tracked_workspace() -> Iterator[MCPWorkspace]:
+        with temporary_mcp_workspace() as workspace:
+            roots.append(workspace.root)
+            yield workspace
+
+    async def failing_model(root: Path, prompt: str, **options: Any) -> None:
+        assert root == roots[0] and prompt == ML_REPORT_REQUEST
+        assert options["max_tool_calls"] == 18
+        options["on_tool_call"](call)
+        raise failure
+
+    monkeypatch.setattr(test_llm_ml, "temporary_mcp_workspace", tracked_workspace)
+    monkeypatch.setattr(test_llm_ml, "run_codex", failing_model)
+    options = {
+        "llm_provider": "codex",
+        "llm_timeout": 1800,
+        "llm_model": "test-only-model",
+        "llm_reasoning_effort": "high",
+    }
+    config = cast("pytest.Config", SimpleNamespace(getoption=options.__getitem__))
+    with pytest.raises(failure_type) as caught:
+        test_llm_ml.test_natural_request_discovers_saved_ml_report(config)
+    assert caught.value is failure
+    note = next(
+        note
+        for note in caught.value.__notes__
+        if note.startswith("ML report calls before model failure:\n")
+    )
+    evidence = json.loads(note.split("\n", 1)[1])
+    assert evidence == [
+        {"name": call.name, "arguments": call.arguments, "result": call.result}
+    ]
+    assert len(roots) == 1 and not roots[0].exists()
 
 
 def test_natural_ml_request_does_not_supply_tools_ids_or_schema_answers(

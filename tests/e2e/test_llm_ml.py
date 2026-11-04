@@ -679,6 +679,7 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
     with temporary_mcp_workspace() as workspace:
         entries = seed_ml_report_candidates(WorkspacePaths(workspace.workspace))
         turns: list[ModelTurn] = []
+        observed_calls: list[ToolCall] = []
 
         async def observe_final(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -690,6 +691,7 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                 "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 18,
+                "on_tool_call": observed_calls.append,
             }
             async with workspace.connect() as client:
                 names = list(client.output_schemas)
@@ -713,7 +715,16 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                 await run_codex(workspace.root, ML_REPORT_REQUEST, **options)
             )
 
-        calls = asyncio.run(run())
+        try:
+            calls = asyncio.run(run())
+        except Exception as error:
+            error.add_note(
+                "ML report calls before model failure:\n"
+                + json.dumps(
+                    [asdict(call) for call in observed_calls], ensure_ascii=False
+                )
+            )
+            raise
         transcript = {
             "calls": [asdict(call) for call in calls],
             "turns": [asdict(turn) for turn in turns],
