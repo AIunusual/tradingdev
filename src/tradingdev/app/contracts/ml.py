@@ -6,9 +6,9 @@ from (``get_ml_contract``) and the structured result of judging a prediction
 stored evaluation can never silently pack a NaN into a JSON boundary.
 """
 
-from typing import Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 
@@ -181,6 +181,13 @@ class LeaderboardRow(ContractModel):
     """
 
     rank: int
+    source: Literal["signal"]
+    """Which kind of measurement this row is; a run row carries ``run``.
+
+    Required, not defaulted: a discriminated union reads the tag from the
+    payload, so a default here would be accepted by the type and still fail at
+    the boundary. Every producer states the source it actually measured.
+    """
     entry_id: str
     label: str
     model_id: str
@@ -214,6 +221,8 @@ class LeaderboardRow(ContractModel):
 class LeaderboardSkipped(ContractModel):
     """A recorded candidate that could not be ranked, and why."""
 
+    source: Literal["signal"]
+    """Which kind of measurement this is; a run candidate carries ``run``."""
     entry_id: str
     label: str
     method_family: str
@@ -233,37 +242,110 @@ class LeaderboardSkipped(ContractModel):
     """
 
 
+class RunConditions(ContractModel):
+    """Run-level submitted conditions; scope observations remain in metadata."""
+
+    symbol: str
+    timeframe: str
+    start_date: str
+    end_date: str
+    fees: float
+    slippage: float
+
+
+class RankedRunRow(ContractModel):
+    """A placed saved run scope, labelled with the source it came from."""
+
+    source: Literal["run"]
+    rank: int
+    tied: int
+    value: float
+    run_id: str
+    scope: str
+    strategy_id: str
+    revision_id: str
+    parameters: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+    conditions: RunConditions
+    metric_source: Literal["bundle", "legacy_summary"]
+    """Whether the value came from the performance bundle or a legacy summary."""
+
+
+class SkippedRunRow(ContractModel):
+    """A selected run scope that could not be ranked, labelled with its source."""
+
+    source: Literal["run"]
+    candidate_id: str
+    run_id: str | None = None
+    scope: str | None = None
+    reason: str
+
+
+type RankedRow = Annotated[LeaderboardRow | RankedRunRow, Field(discriminator="source")]
+type SkippedRow = Annotated[
+    LeaderboardSkipped | SkippedRunRow, Field(discriminator="source")
+]
+
+
 class LeaderboardResponse(ContractModel):
-    """Recorded evaluations ranked on one metric.
+    """One ranking on one metric, drawn from exactly one source.
 
     ``caveats`` is part of the answer, not decoration: the winner of a
     comparison is the most optimistic number in it, and the caveats say how
     much evidence would be needed to believe it.
+
+    A signal metric and a backtest metric are different measurements that
+    share no column, so a response ranks either recorded evaluations or saved
+    run scopes. ``source`` names which, and the row models follow it; the
+    signal-only fields are ``null`` on the run path — present but not
+    applicable — rather than empty, which would read as measured-and-nothing.
     """
 
     success: Literal[True]
     metric: str
     direction: str
+    source: Literal["signal", "run"]
+    """Which source this ranking read; the rows carry the same tag.
+
+    Required for the same reason the rows require it: a run ranking that
+    defaulted to ``signal`` would mislabel every row it returned.
+    """
     n_candidates: int
-    """Every stored candidate, including ones that could not be ranked."""
+    """Every selected candidate, including ones that could not be ranked."""
     n_ranked: int
     """Candidates actually placed; the size of the comparison that decided."""
-    context: str
-    families: dict[str, int]
-    """How many candidates each method family contributed.
+    context: str | None = None
+    """Signal only: the shared evaluation context, or ``mixed``."""
+    families: dict[str, int] | None = None
+    """Signal only: how many candidates each method family contributed.
 
     A ranking that mixes fitted models with hand-set rules is not one kind of
     evidence, so the mix travels with the order.
     """
-    parameter_axes: dict[str, list[int]]
-    """Every observed value of horizon, window and n_quantiles.
+    parameter_axes: dict[str, list[int]] | None = None
+    """Signal only: every observed value of horizon, window and n_quantiles.
 
     The grid coordinates behind the ranking: when an axis holds more than one
     value the rows span a parameter surface rather than one measurement.
     """
-    ranked: list[LeaderboardRow]
-    skipped: list[LeaderboardSkipped]
+    ranked: list[RankedRow]
+    skipped: list[SkippedRow]
     caveats: list[str]
+
+    @model_validator(mode="after")
+    def validate_one_source(self) -> Self:
+        """A ranking ranks one source, so a row tagged otherwise is refused.
+
+        The tag on each row is what lets a reader trust the numbers beside it;
+        a response whose header disagrees with its rows would make that tag a
+        decoration instead of a fact.
+        """
+        stray = {row.source for row in [*self.ranked, *self.skipped]} - {self.source}
+        if stray:
+            raise ValueError(
+                f"rows from {sorted(stray)} cannot appear in a {self.source} ranking"
+            )
+        return self
 
 
 class LeaderboardPageResponse(LeaderboardResponse):
@@ -273,6 +355,7 @@ class LeaderboardPageResponse(LeaderboardResponse):
     offset: int
     limit: int
     next_offset: int | None
+    """Where the next page starts, or null when this page ends the ranking."""
 
 
 class CalendarCoverageEntry(ContractModel):

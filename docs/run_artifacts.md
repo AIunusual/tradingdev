@@ -729,15 +729,32 @@ aligned to their original bar indices after filtering and paging.
 ## Ranking Saved Run Scopes
 
 `RankingService.rank_run_scopes` orders saved scopes by one metric a run already
-recorded. It is an application service: no MCP tool or CLI command exposes it yet,
-so the behaviour below is a library contract rather than a tool response.
+recorded. The MCP `leaderboard` tool exposes it through
+`RankingService.rank_candidates`: a `run.<metric>` id with explicit `runs`
+selections is the public form of this contract, and
+[the ML research contract](ml_research.md) documents the shared response shape,
+source selection and paging. The Python library accepts `(run_id, scope)` tuples
+and `top_k`; MCP accepts selection objects and pages with `offset`/`limit`.
+Arguments are exclusive
+to a source: a run ranking refuses the signal filters, `allow_mixed=True` and
+`allow_parameter_axes=True`, and a signal ranking refuses `runs`.
+
+A null `scope` selects that run's saved default. Duplicates are refused in two
+layers. Identical requested pairs are refused before anything is loaded, so a
+repeated unknown run is a `duplicate_selections` error rather than two skipped rows.
+Differently spelled selections are compared only after they load and resolve, which
+is what catches an omitted scope naming the same scalar scope as an explicit one. A
+selection that cannot be loaded — an unknown run, a missing bundle, or an aggregate
+fold summary — is skipped before that second comparison, so two spellings of it
+appear as two skipped rows. Neither is ranked, so no comparison is invented either
+way.
 
 Each `(run_id, scope)` pair is one candidate, so several saved scopes of a single
 run can be ranked in one result. The metric id is source-qualified (`run.<name>`)
 and must exist in [the metric catalog](../src/tradingdev/domain/performance/catalog.py)
-with a declared optimization direction; a `signal.` id is refused because signal
-figures are ranked through the leaderboard, and an id without a direction cannot
-order candidates.
+with a declared optimization direction; a `signal.` id is refused here because
+recorded signal evaluations are a different measurement, ranked through the
+leaderboard's signal path; an id without a direction cannot order candidates.
 
 A scope must hold scalar values. Scalar backtest scopes, including numbered
 walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries

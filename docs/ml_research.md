@@ -264,10 +264,11 @@ The MCP path verifies which saved model produced the signal; it does not prove
 a held-out evaluation. Python array callers and existing records may use a
 caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
 [artifact contract](ml_research.md#recorded-signal-evaluations).
-`leaderboard` ranks only a metric with a declared direction and, by default,
-only matching measurement contexts. Its optional `dataset_id` filter selects a
-verified dataset version and checks that recorded data context matches its
-manifest; differences in evaluation settings still require compatible context.
+`leaderboard` ranks only a metric with a declared direction. A signal ranking also
+requires, by default, only matching measurement contexts; its optional `dataset_id`
+filter selects a verified dataset version and checks that recorded data context
+matches its manifest; differences in evaluation settings still require compatible
+context.
 `allow_parameter_axes=True` permits window, horizon and quantile-count variations
 under the [parameter-surface rules](ml_research.md#recorded-signal-evaluations);
 it does not make those measurements comparable. `allow_mixed=True` opts into
@@ -275,13 +276,46 @@ incompatible contexts and must not be presented as a controlled comparison. Reta
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
 
+The same tool ranks saved backtest scopes. The metric id selects the source: a
+bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
+ranks saved scopes and requires `runs` as a list of selection objects, for example
+`runs=[{"run_id":"example","scope":"full"}]`. An omitted or null `scope` selects
+that run's default. The Python library uses tuples instead, as described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+The response reports the qualified id, so
+`metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
+is not echoed. The two argument sets are exclusive: a signal ranking refuses
+`runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
+`feature_set`, `family`, `allow_mixed=True` and `allow_parameter_axes=True`, because
+one call ranks one
+source. Selecting the same measurement twice is refused as `duplicate_selections`,
+in two layers. Identical requested pairs are refused before anything is loaded;
+differently spelled selections are compared after they load and resolve, which
+catches an omitted scope that names a scalar scope already selected. A selection
+that cannot be loaded is skipped before that second comparison, so two spellings of
+an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
+`run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
+and the stored value; `context`, `families` and `parameter_axes` are `null` —
+present but not applicable, because a named selection has no evaluation context or
+method mix to report. An empty value would read as measured-and-nothing, which is a
+different claim. Every row reports `source`, and one response never mixes the two: a
+signal metric and a backtest metric share no definition, so they share no column.
+The run-ranking semantics — saved scope parameters and metadata, manifest-level
+conditions, definition checks and fold-summary skips — are in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
-`top_k`. The complete filtered candidate set is compared and ranked before
-paging. `ranked` and `skipped` each return at most `limit` entries at the same
+`top_k`. For recorded evaluations the complete filtered candidate set is compared
+and ranked before paging; to rank saved backtest scopes instead, pass
+`run.<metric>` with explicit `runs` selections, and those scopes are ordered by the
+same rules. `ranked` and `skipped` each return at most `limit` entries at the same
 offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
-shared `next_offset` until `null`, even if one list has no entries on a page.
-Mixed-context rejection reports the full context count, limited examples and
-filter guidance, not every context's text.
+shared `next_offset` until `null`, even if one list has no entries on a page. A run
+selection is named explicitly and is usually small, so its page is normally the
+whole list; the source-specific response fields are described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+On a signal ranking, mixed-context rejection reports the full context count, limited
+examples and filter guidance, not every context's text.
 
 After inspecting saved candidates, discover the `ml` section with
 `get_report_sections` and pass 1–50 distinct entry IDs to

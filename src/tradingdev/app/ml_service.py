@@ -210,10 +210,37 @@ _ML_GUIDANCE = {
         "n_quantiles, so a rule sweep is not reported as a parameter surface."
     ),
     "ranking": (
+        "The metric id selects the source. A bare name or signal.<metric> "
+        "ranks recorded evaluations; run.<metric> ranks saved backtest scopes "
+        "and requires runs as a list of objects with run_id and scope; "
+        "an omitted or null scope means "
+        "that run's default. A run row carries run_id, scope, the trading "
+        "conditions its manifest recorded, metric_source and the stored value; "
+        "context, families and parameter_axes are null, because a named "
+        "selection has no evaluation context or method mix to report. "
+        "Run rows retain the selected scope's saved parameters and metadata: "
+        "simple and walk-forward scopes contain constructor parameters including "
+        "captured defaults; optimization scopes contain trial overrides, not a "
+        "reconstructed constructor. Recorded fitted values stay in "
+        "metadata.strategy_parameters. Conditions describe the run's submitted "
+        "manifest, while metadata.observations describes the scope's observed "
+        "period. Saved metric definitions must match the current catalog or the "
+        "candidate is skipped. Provider package versions and settings can still "
+        "differ, so ordering is conditional, not a controlled comparison. Read "
+        "get_run_metrics for full scope evidence and saved definitions, and "
+        "get_metric_catalog for run metric names and directions (this contract "
+        "lists signal metrics only). An aggregate fold summary cannot be ranked, "
+        "so a walk-forward run's default test_summary is skipped; name a numbered "
+        "fold. "
         "record=True replaces the same candidate/settings/dataset/context. "
         "leaderboard metrics have declared directions; never assume higher is "
-        "better. Filter by dataset_id to compare one verified dataset version. "
-        "Each row reports the method_family that produced it: ml_model (fitted, "
+        "better. On a signal ranking, filter by dataset_id to compare one "
+        "verified dataset version; the other filters, allow_mixed and "
+        "allow_parameter_axes apply only there. A run ranking refuses those "
+        "arguments and a signal "
+        "ranking refuses runs, because one call ranks one source. "
+        "On a signal ranking, each row reports the method_family that produced it: "
+        "ml_model (fitted, "
         "parameters copied from the artifact), rule (hand-set, parameters "
         "declared by the caller) or other (other/unknown construction). A table "
         "may mix them and counts each family; labels alone do not establish "
@@ -268,6 +295,11 @@ class MLService:
         )
         # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
+
+    @property
+    def workspace(self) -> WorkspacePaths:
+        """The workspace this service reads; shared, not copied, by ranking."""
+        return self._workspace
 
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
@@ -774,6 +806,7 @@ class MLService:
         result = rank_entries(entries, metric, top_k=top_k)
         ranked = [
             {
+                "source": "signal",
                 "rank": item.rank,
                 "entry_id": item.entry.entry_id,
                 "label": item.entry.label,
@@ -805,6 +838,7 @@ class MLService:
         caveats.extend(surface_caveats(axes))
         return {
             "success": True,
+            "source": "signal",
             "metric": result.metric,
             "direction": result.direction,
             "n_candidates": len(entries),
@@ -815,6 +849,7 @@ class MLService:
             "ranked": ranked,
             "skipped": [
                 {
+                    "source": "signal",
                     "entry_id": item.entry.entry_id,
                     "label": item.entry.label,
                     "method_family": item.entry.family,
@@ -877,6 +912,48 @@ class MLService:
             "offset": offset,
             "limit": limit,
             "next_offset": end if end < total else None,
+        }
+
+    def rank_signal_candidates(
+        self,
+        metric: str,
+        *,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        horizon: int | None = None,
+        feature_set: str | None = None,
+        family: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
+    ) -> dict[str, Any]:
+        """Return the shared ranking shape for recorded signal evaluations.
+
+        ``metric`` is the bare signal metric; the caller owns the ``signal.``
+        prefix that identifies the source. Ordering, caveats, refusal rules and
+        paging are exactly the ones :meth:`leaderboard_page` applies, so the two
+        surfaces cannot disagree about what was measured.
+        """
+        payload = self.leaderboard_page(
+            metric,
+            dataset_id=dataset_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            horizon=horizon,
+            feature_set=feature_set,
+            family=family,
+            offset=offset,
+            limit=limit,
+            allow_mixed=allow_mixed,
+            allow_parameter_axes=allow_parameter_axes,
+        )
+        return {
+            **payload,
+            "source": "signal",
+            "ranked": [{**row, "source": "signal"} for row in payload["ranked"]],
+            "skipped": [{**row, "source": "signal"} for row in payload["skipped"]],
         }
 
     def build_dataset(

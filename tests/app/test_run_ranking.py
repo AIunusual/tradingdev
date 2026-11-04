@@ -14,7 +14,7 @@ the test.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -554,6 +554,154 @@ class TestManifestRefusals:
 
         assert result["ranked"] == []
         assert result["skipped"][0]["reason"] == "no 'run.sharpe_ratio' recorded"
+
+
+class TestCandidateDispatch:
+    """One ranking surface, routed by the metric id's source prefix."""
+
+    def test_a_metric_without_a_source_prefix_is_refused(
+        self, service: RankingService
+    ) -> None:
+        with pytest.raises(ValueError, match="needs a 'signal.' or 'run.' prefix"):
+            service.rank_candidates("sharpe_ratio", runs=[("alpha", "full")])
+
+    def test_run_selections_are_refused_on_the_signal_path(
+        self, service: RankingService
+    ) -> None:
+        """A half-filled table would look like a ranking of two things."""
+        with pytest.raises(ValueError, match="not run selections"):
+            service.rank_candidates("signal.ic_mean", runs=[("alpha", "full")])
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("dataset_id", "d1"),
+            ("symbol", "BTC/USDT"),
+            ("timeframe", "1d"),
+            ("horizon", 1),
+            ("feature_set", "core"),
+            ("family", "rule"),
+            ("allow_parameter_axes", True),
+            ("allow_mixed", True),
+        ],
+    )
+    def test_signal_filters_are_refused_on_the_backtest_path(
+        self, service: RankingService, field: str, value: Any
+    ) -> None:
+        with pytest.raises(ValueError, match="not signal filters"):
+            service.rank_candidates(
+                "run.sharpe_ratio", runs=[("alpha", "full")], **{field: value}
+            )
+
+    def test_the_backtest_path_requires_a_selection(
+        self, service: RankingService
+    ) -> None:
+        with pytest.raises(ValueError, match="at least one run selection"):
+            service.rank_candidates("run.sharpe_ratio")
+
+    def test_the_backtest_path_returns_the_shared_shape(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+        _publish_run(workspace, store, "beta", scopes={"full": {SHARPE: 2.0}})
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", "full"), ("beta", "full")]
+        )
+
+        assert result["source"] == "run"
+        assert result["metric"] == "run.sharpe_ratio"
+        assert result["n_ranked"] == 2
+        assert [row["run_id"] for row in result["ranked"]] == ["beta", "alpha"]
+        assert {row["source"] for row in result["ranked"]} == {"run"}
+
+    def test_the_backtest_path_pages_like_the_signal_path(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """One shape serves both sources, so a run selection pages too."""
+        workspace, store = storage
+        for index, value in enumerate((1.0, 2.0, 3.0)):
+            _publish_run(
+                workspace, store, f"run{index}", scopes={"full": {SHARPE: value}}
+            )
+        service = RankingService(workspace=workspace, store=store)
+        selections = [(f"run{index}", "full") for index in range(3)]
+
+        first = service.rank_candidates("run.sharpe_ratio", runs=selections, limit=2)
+        assert [row["run_id"] for row in first["ranked"]] == ["run2", "run1"]
+        assert first["n_ranked"] == 3
+        assert first["next_offset"] == 2
+
+        second = service.rank_candidates(
+            "run.sharpe_ratio", runs=selections, offset=2, limit=2
+        )
+        assert [row["run_id"] for row in second["ranked"]] == ["run0"]
+        assert second["next_offset"] is None
+
+
+class TestDuplicateSelections:
+    """One measurement selected twice is not a comparison of two things."""
+
+    def test_the_same_pair_twice_is_refused(self, service: RankingService) -> None:
+        result = service.rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", "full"), ("alpha", "full")]
+        )
+        assert result["code"] == "duplicate_selections"
+        assert "alpha scope full" in result["error"]
+
+    def test_an_omitted_scope_that_resolves_to_the_same_scope_is_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """The inputs look different; the resolved measurement is the same."""
+        workspace, store = storage
+        _publish_run(workspace, store, "alpha", scopes={"full": {SHARPE: 1.0}})
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("alpha", None), ("alpha", "full")]
+        )
+
+        assert result["code"] == "duplicate_selections"
+        assert "selected twice" in result["error"]
+
+    def test_an_unloadable_scope_is_skipped_twice_rather_than_refused(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """The duplicate check runs on loaded candidates, not on requests.
+
+        A walk-forward run defaults to an aggregate summary, which fails the
+        fold-summary check before any candidate exists. Both spellings are then
+        skipped; neither is ranked, so no comparison is invented.
+        """
+        workspace, store = storage
+        _publish_run(
+            workspace,
+            store,
+            "wf",
+            scope_models={
+                "test_summary": PerformanceScope.model_validate(
+                    {
+                        "kind": "fold_summary",
+                        "mode": "signal",
+                        "split": "test",
+                        "values": {
+                            SHARPE: FoldStats(
+                                mean=1.0, std=0.1, min=0.9, max=1.1, valid_count=3
+                            )
+                        },
+                        "metadata": {},
+                    }
+                )
+            },
+        )
+
+        result = RankingService(workspace=workspace, store=store).rank_candidates(
+            "run.sharpe_ratio", runs=[("wf", None), ("wf", "test_summary")]
+        )
+
+        assert result["success"] is True
+        assert result["n_ranked"] == 0
+        assert len(result["skipped"]) == 2
 
 
 def test_fold_summary_is_skipped_without_losing_scalar_candidates(
