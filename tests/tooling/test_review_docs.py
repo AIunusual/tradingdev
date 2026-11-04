@@ -131,6 +131,7 @@ def test_review_uses_immutable_candidate_and_removes_temporary_files(
     assert "UNSTAGED" not in record["prompt"]
     assert "ignore-user-config" in " ".join(record["args"])
     assert "features.shell_tool=false" in record["args"]
+    assert "features.sleep_tool=false" in record["args"]
     assert "features.shell_snapshot=false" in record["args"]
     assert 'web_search="disabled"' in record["args"]
     assert "--ephemeral" in record["args"]

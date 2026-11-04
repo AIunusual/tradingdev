@@ -131,6 +131,7 @@ def test_codex_process_config_isolates_effort_and_host_capabilities(
     for feature in (
         "multi_agent",
         "shell_tool",
+        "sleep_tool",
         "shell_snapshot",
         "plugins",
         "remote_plugin",

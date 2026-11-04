@@ -171,6 +171,7 @@ def _command(root: Path) -> list[str]:
     ]
     config: dict[str, Any] = {
         "features.shell_tool": False,
+        "features.sleep_tool": False,
         "features.shell_snapshot": False,
         "web_search": "disabled",
         "history.persistence": "none",

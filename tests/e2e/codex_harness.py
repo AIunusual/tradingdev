@@ -71,6 +71,7 @@ def _command(root: Path, model: str | None = None) -> list[str]:
     command = [resolve_codex_binary(), "app-server", "--listen", "stdio://"]
     config: dict[str, Any] = {
         "features.shell_tool": False,
+        "features.sleep_tool": False,
         "features.shell_snapshot": False,
         "features.plugins": False,
         "features.remote_plugin": False,
