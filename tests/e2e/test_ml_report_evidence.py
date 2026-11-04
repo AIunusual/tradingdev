@@ -311,6 +311,29 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
 
 
 @pytest.mark.parametrize(
+    "explanation",
+    [
+        "這份研究保存的是訊號相關性等指標，沒有交易成本、成交、持倉路徑或帳戶損益；"
+        "因此無法據此推論扣除交易成本後策略是否獲利。",
+        "這只是訊號研究，並不是策略回測。尚未計入交易成本。",
+    ],
+    ids=["no-backtest-keyword", "context-in-previous-sentence"],
+)
+def test_ml_report_accepts_cost_limit_with_context(
+    report: MLReportWorkflow,
+    explanation: str,
+) -> None:
+    path = report.calls[-1].result["path"]
+    text = (
+        f"[報告](<{path}>)\n\n"
+        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
+        + explanation
+        + _UNKNOWN_PROVENANCE_CONTEXT
+    )
+    replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
     "claim",
     [
         "這份研究可支持樣本內訊號關聯的描述。",
@@ -325,6 +348,15 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
         "例如依照上述規則這些結果為樣本內評估。",
         "如上面的規則，這些結果為樣本內評估。",
         "究竟是哪個模型未知，但這些結果是樣本內評估。",
+        "只有另一項研究保存訓練資料，本研究結果為樣本內評估。",
+        "只有訓練與評估資料相同時才可判為樣本內；本研究是樣本內評估。",
+        "只有這份研究的結果才可視為已證實的樣本外評估。",
+        "只有本次結果才可判為樣本內；其他研究尚未確認。",
+        "本研究的訓練與評估資料相同，故結果為樣本內評估。",
+        "training_dataset_id 與 dataset_id 相同，本研究為樣本內評估。",
+        "本研究就是因為 training_dataset_id 與 dataset_id 相同才可據此判為樣本內。",
+        "一般判讀原則是：本研究就是因為 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內。",
     ],
 )
 def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
@@ -349,6 +381,14 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "契約的一般規則是：如評估用於訓練的資料則仍為樣本內；"
         "本次沒有證據可套用為既成事實。",
         "本研究究竟是樣本內、樣本外，或是否完成時間隔離與防洩漏檢查，均未知。",
+        "一般而言，只有保存的訓練資料集與評估資料集相同且訊號確由模型產生時"
+        "才可判為樣本內；不同 ID 也不證明樣本外。此處不符合可判定條件。",
+        "一般而言，模型產生訊號且訓練資料集 ID 等於評估資料集 ID 時為樣本內；"
+        "ID 不同也不保證期間不重疊。本次缺乏此欄位、訓練期間、分割及驗證紀錄，"
+        "不能判定樣本內外或無洩漏。",
+        "一般判讀原則是：由模型產生訊號且 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內；不同 ID 本身亦不證明樣本外。"
+        "本候選缺少訓練 ID，不能套用同集判定。",
     ],
 )
 def test_ml_report_accepts_unknown_or_conditional_sample_provenance(

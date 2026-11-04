@@ -45,6 +45,8 @@ MAX_PROMPT_CHARS = 1_024_000
 MAX_PARALLEL_REVIEWS = 8
 # Per-channel output limits in Unicode characters, not model token budgets.
 MAX_DIAGNOSTIC_CHARS = 4000
+DEFAULT_REVIEW_MODEL = "gpt-6-luna"
+DEFAULT_REVIEW_REASONING_EFFORT = "high"
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -150,11 +152,30 @@ def _stderr_diagnostic(path: Path) -> str:
     return tail
 
 
+def reviewer_settings() -> tuple[str, str]:
+    """Keep evidence review independent of product tests and user CLI defaults."""
+    model = os.environ.get("TRADINGDEV_DOC_REVIEW_MODEL", DEFAULT_REVIEW_MODEL)
+    effort = os.environ.get(
+        "TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", DEFAULT_REVIEW_REASONING_EFFORT
+    )
+    if not model.strip():
+        raise ReviewError("TRADINGDEV_DOC_REVIEW_MODEL must not be empty.")
+    if effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+        raise ReviewError(
+            "TRADINGDEV_DOC_REVIEW_REASONING_EFFORT must be "
+            "none, low, medium, high, xhigh or max."
+        )
+    return model, effort
+
+
 def _command(root: Path) -> list[str]:
+    model, effort = reviewer_settings()
     command = [
         resolve_codex_binary(),
         "exec",
         "--ignore-user-config",
+        "--model",
+        model,
         "--ephemeral",
         "--skip-git-repo-check",
         "--sandbox",
@@ -170,7 +191,9 @@ def _command(root: Path) -> list[str]:
         str(root / "verdict.json"),
     ]
     config: dict[str, Any] = {
+        "model_reasoning_effort": effort,
         "features.shell_tool": False,
+        "features.sleep_tool": False,
         "features.shell_snapshot": False,
         "web_search": "disabled",
         "history.persistence": "none",
@@ -179,8 +202,6 @@ def _command(root: Path) -> list[str]:
     }
     for key, value in config.items():
         command.extend(["-c", f"{key}={json.dumps(value)}"])
-    if model := os.environ.get("TRADINGDEV_CODEX_MODEL"):
-        command.extend(["--model", model])
     return [*command, "-"]
 
 
@@ -387,6 +408,10 @@ def review(
         max_total_prompt_bytes=max_total_prompt_bytes,
     )
     plan.verify()
+    model, effort = reviewer_settings()
+    print(
+        f"Documentation reviewer: model={model}, reasoning_effort={effort}", flush=True
+    )
     prompts = plan.prompts
     print(
         f"Documentation review plan {plan.manifest['plan_hash']}: "

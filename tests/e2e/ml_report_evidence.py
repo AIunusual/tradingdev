@@ -343,7 +343,11 @@ def _verify_interpretation(text: str) -> None:
         re.IGNORECASE,
     )
     sentences = re.split(r"[。！？!?；;\n]|\.(?=\s|$)", visible)
-    assert re.search(r"回測|backtest", visible, re.IGNORECASE) and any(
+    outcome_terms = re.compile(
+        r"回測|獲利|損益|收益|報酬|\b(?:backtests?|profit\w*|returns?|pnl)\b",
+        re.IGNORECASE,
+    )
+    assert outcome_terms.search(visible) and any(
         cost_terms.search(sentence) and limitation_terms.search(sentence)
         for sentence in sentences
     ), "Final reply must discuss signal evidence and cost-aware backtest limits"
@@ -393,6 +397,18 @@ def _reject_unsupported_sample_claims(text: str) -> None:
     conditional = re.compile(
         r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
     )
+    # Only exempt an explicitly general contract condition. Claims that this
+    # research satisfies it still need evidence, even when phrased with "only".
+    general_rule = re.compile(r"一般而言|一般判讀原則|契約的一般規則")
+    asserted_case = re.compile(
+        r"本(?:研究|次|候選)|這(?:份|些)|因為|由於|既然|已(?:確認|證實)"
+    )
+    same_data_condition = re.compile(
+        r"(?=[^，,。；;]*(?:訓練|\btraining_dataset_id\b))"
+        r"(?=[^，,。；;]*(?:評估|\bdataset_id\b))"
+        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*"
+        r"(?:時(?:才(?:可|能))?|才(?:可|能))(?:據此)?(?:判(?:定)?|認定|視)?$"
+    )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
     for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
         for match in claim.finditer(sentence):
@@ -401,6 +417,11 @@ def _reject_unsupported_sample_claims(text: str) -> None:
             if (
                 uncertain.search(before)
                 or conditional.search(before)
+                or (
+                    general_rule.search(before)
+                    and not asserted_case.search(before)
+                    and same_data_condition.search(before)
+                )
                 or unknown_after.search(after)
             ):
                 continue

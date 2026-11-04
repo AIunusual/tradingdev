@@ -65,6 +65,7 @@ async def _run(
     options: dict[str, Any] = {
         "timeout_seconds": pytestconfig.getoption("llm_timeout"),
         "model": pytestconfig.getoption("llm_model"),
+        "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
         "user_reply": user,
         "on_tool_call": calls.append,
     }
@@ -79,7 +80,6 @@ async def _run(
                 request,
                 base_url=pytestconfig.getoption("llm_base_url"),
                 temperature=pytestconfig.getoption("llm_temperature"),
-                reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                 **options,
             )
             return read_only_tools

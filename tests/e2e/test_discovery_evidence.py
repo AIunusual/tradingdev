@@ -13,6 +13,7 @@ from tests.e2e.discovery_workflow import (
     verify_discovery_outcome,
     verify_dvol_query_reply,
     verify_market_cache_reply,
+    verify_readonly_attempts,
 )
 from tests.e2e.llm_client import ToolCall
 from tests.integration.mcp_harness import MCPWorkspace
@@ -286,3 +287,19 @@ def test_dvol_reply_accepts_query_evidence_and_unknown_observations(reply: str) 
 def test_dvol_reply_rejects_invented_or_ambiguous_query_evidence(reply: str) -> None:
     with pytest.raises(AssertionError):
         verify_dvol_query_reply(reply)
+
+
+@pytest.mark.parametrize("extra", ["list_artifacts", "save_strategy", "unknown_tool"])
+def test_readonly_discovery_uses_registered_permissions_for_all_attempts(
+    extra: str,
+) -> None:
+    calls = [
+        ToolCall("inspect_dataset", {}, {"success": True}),
+        ToolCall(extra, {}, {"success": False}),
+    ]
+    registered = {"inspect_dataset", "list_artifacts"}
+    if extra == "list_artifacts":
+        verify_readonly_attempts(calls, registered)
+    else:
+        with pytest.raises(AssertionError, match="unapproved tool"):
+            verify_readonly_attempts(calls, registered)
