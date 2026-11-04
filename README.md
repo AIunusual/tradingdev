@@ -13,6 +13,7 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 一份確認單，核對設定並同意後才開始回測；完成後可在對話中解讀結果或開啟圖表。
 
 - [安裝與連接助手](#安裝與連接助手)
+- [使用 Docker 部署](#使用-docker-部署)
 - [完成第一次回測](#完成第一次回測)
 - [建立與研究自己的策略](#建立與研究自己的策略)
 - [研究機器學習訊號](#研究機器學習訊號)
@@ -23,6 +24,9 @@ TradingDev 本身不提供對話模型，需搭配支援 MCP 工具呼叫的 AI 
 - [相關文件](#相關文件)
 
 ## 安裝與連接助手
+
+若要部署在伺服器或 NAS，可直接使用下方的 [Docker 部署方式](#使用-docker-部署)，
+主機不必另裝 Python 或 uv。
 
 ### 1. 準備環境並安裝
 
@@ -122,10 +126,13 @@ uv run --locked tradingdev-mcp \
 這是 MCP 工具端點，不是瀏覽器操作介面；圖表請使用 Dashboard。
 
 `127.0.0.1` 指向發起連線的設備本身，另一台設備不能直接用這個網址連到你的主機。
-服務固定綁定 loopback。MCP HTTP 端點預設僅接受本機 `127.0.0.1`、`localhost`、`[::1]` 的 Host，
+服務預設只監聽 `127.0.0.1`；`--host` 可指定監聽 IP，例如 `--host 0.0.0.0`
+監聽所有 IPv4 網路介面，或 `--host ::` 監聽 IPv6。此選項只適用於 `--web`，
+不會自動放寬允許的 Host／Origin，也不提供登入驗證。
+MCP HTTP 端點預設僅接受本機 `127.0.0.1`、`localhost`、`[::1]` 的 Host，
 包括指定連接埠；瀏覽器 Origin 也須為對應的本機 HTTP 來源。沒有 Origin 的原生客戶端
 仍可連線，不可信 Host／Origin 分別收到 HTTP 421／403。
-跨設備連線須使用具驗證與存取控制的反向代理或網路轉送，並保護後端 loopback 端點。
+跨設備連線須使用具驗證與存取控制的反向代理或網路轉送，並限制後端連接埠的存取。
 若代理保留公開 Host，或瀏覽器使用不同來源，明確增加對應的完整值，例如：
 
 ```bash
@@ -156,6 +163,127 @@ Streamable HTTP 每次請求的本文上限為 4 MiB，超過會收到 HTTP 413�
 助手應實際呼叫工具，取得策略清單與資料來源。
 清單會區分隨專案提供的內建策略，以及保存在工作區的自建策略。
 若助手只提供一般建議，請先確認客戶端已連接 `tradingdev` 並允許工具呼叫。
+
+## 使用 Docker 部署
+
+適合長期運行 MCP Server 的 Linux 伺服器或 NAS。主機需有 Docker Engine 與
+Docker Compose v2 以上，以及 64 位元 x86-64 或 ARM64 CPU；不支援 32 位元 NAS。
+映像包含 Python 與內建策略所需依賴，首次建置會下載較多套件，請預留磁碟空間。
+這套部署只提供 MCP Server；查看結果時，可請助手產生 HTML 報告並匯出研究 ZIP，
+下載後離線開啟，操作見[查看結果與圖表](#查看結果與圖表)。
+容器保存的成果路徑以 `/workspace` 開頭；主機上的原生 Dashboard 不能只把
+`TRADINGDEV_WORKSPACE` 改成掛載資料夾就讀取這些成果，還需要相同的絕對路徑環境。
+
+### 準備檔案與資料夾
+
+下載完整專案，在專案目錄執行首次設定：
+
+```bash
+git clone https://github.com/Kuan-Lun/tradingdev.git
+cd tradingdev
+cp .env.example .env
+mkdir -p workspace
+id -u
+id -g
+```
+
+編輯 `.env`，將 `TRADINGDEV_UID`、`TRADINGDEV_GID` 分別填入最後兩個命令的數字，
+使用能寫入 `workspace` 的一般帳號。容器以該身分執行，避免以 root 建立研究檔案。
+若要另存到 NAS 共享資料夾，將 `TRADINGDEV_DATA_DIR` 改為該資料夾的絕對路徑，
+例如 `/volume1/docker/tradingdev-workspace`，先建立它並授予該帳號讀寫權限。
+遇到 `Permission denied` 時核對 UID／GID 與 NAS 資料夾權限；部署不會自動變更既有檔案擁有者。
+
+首次使用請選擇空的工作區。既有研究可能記錄絕對路徑，不要直接把原生安裝的工作區
+搬到容器內當作遷移。容器內的工作區固定為 `/workspace`，往後更新與還原都保持此路徑。
+`.env` 是本機部署設定，已排除於 Git 與映像建置內容之外；各項設定範例見
+[.env.example](.env.example)。
+
+### 設定連線入口
+
+預設只在伺服器本機開放 `127.0.0.1:8000`，適合同機的反向代理。
+例如對外網址為 `https://research.example.com/mcp`，在 `.env` 設定：
+
+```dotenv
+MCP_BIND_IP=127.0.0.1
+MCP_PORT=8000
+MCP_ALLOWED_HOST=research.example.com
+MCP_ALLOWED_ORIGIN=https://research.example.com
+```
+
+將既有反向代理的目的地設為 `http://127.0.0.1:8000`，保留原始 Host、路徑與
+SSE 串流；公開 `/mcp` 及研究封存下載所需的 `/research-download/` 路徑。
+若代理與 Docker 主機不同，或代理本身在另一個容器中，`127.0.0.1` 指向代理自身；
+請將 `MCP_BIND_IP` 改為 Docker 主機可達的內網 IP，代理也改連該 IP，並限制只有代理能存取。
+
+使用 HTTPS 代理時，另將 `MCP_TRUSTED_PROXIES` 設為**容器實際看到的代理來源 IP**
+（常是 Docker 網路閘道，可由請求後的 `docker compose logs mcp` 存取紀錄確認），
+並讓代理傳送 `X-Forwarded-Proto: https`。這樣匯出的下載網址才會使用 HTTPS；
+未信任的轉送標頭會被忽略。多個可信 IP 可用逗號分隔，勿將不受信任的來源納入。
+
+若要在受控網路直接以 IP 連線，例如伺服器為 `192.168.1.20`，改為：
+
+```dotenv
+MCP_BIND_IP=0.0.0.0
+MCP_PORT=8000
+MCP_ALLOWED_HOST=192.168.1.20:8000
+MCP_ALLOWED_ORIGIN=http://192.168.1.20:8000
+```
+
+另一台電腦的 MCP URL 就是 `http://192.168.1.20:8000/mcp`；使用外網 IP 時，
+同樣替換成客戶端實際連線的 IP。`0.0.0.0` 是監聽設定，不能當作客戶端網址。
+改連接埠時同步調整網址及允許值；容器內連接埠維持 `8000`。
+Host 值不含協定或路徑，Origin 包含協定但不含路徑；非預設連接埠須保留。
+需要多個公開 Host／Origin 時，可在 `docker-compose.yml` 的 `command` 追加
+成對的 `--allow-host`／值或 `--allow-origin`／值。
+
+允許清單不提供登入驗證。服務能保存並執行生成的 Python 策略，請只開放給可信使用者；
+公開網路入口須由反向代理提供驗證、TLS 與存取控制。共用此容器的客戶端會使用同一工作區，
+不具備每位使用者的資料隔離；容器也不代表完整的策略執行 sandbox。
+瀏覽器客戶端所需的跨來源政策仍由代理處理，詳細限制見
+[HTTP 連接說明](#手動啟動並使用-http-連接)。
+
+### 啟動、更新與保存資料
+
+在專案目錄執行：
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 -f mcp
+```
+
+`ps` 應顯示服務執行中；`healthy` 表示容器內的連接埠已可連線，工具操作仍須依
+[確認助手能使用工具](#3-確認助手能使用工具)實際確認。查看日誌時按 `Ctrl+C`
+只結束追蹤，Server 仍在背景執行。Docker 服務重新啟動後會自動啟動此容器，
+手動停止的容器則需再次執行 `docker compose up -d`。
+
+Synology 使用者可把完整專案放在 NAS 上，以 Container Manager 的專案功能選用
+`docker-compose.yml`，並使用同目錄的 `.env` 設定；亦可透過 SSH 執行上述命令。
+需要完整原始碼與 `uv.lock` 才能建置，不能只上傳 Compose 檔。
+反向代理可使用 NAS 已有功能，目的地依上一節設定。
+
+更新前先等待回測／最佳化結束，並停止服務：
+
+```bash
+docker compose stop
+```
+
+停止期間備份 `TRADINGDEV_DATA_DIR` 指向的**整個資料夾**，包含 SQLite、策略、行情、
+模型與研究結果，並另存 `.env`。還原時先停止服務，還原完整資料夾與權限，再以相同
+容器路徑 `/workspace` 啟動。備份完成後更新程式並重新啟動：
+
+```bash
+git pull --ff-only
+docker compose up -d --build
+```
+
+停止或重建會中斷未完成的工作及客戶端連線，
+不會自動續跑；重新連線後查詢工作狀態再決定是否重做。
+
+`docker compose down` 可移除容器與 Compose 網路；研究資料保留在主機資料夾，
+更新、停止及移除容器都不會刪除它。再次啟動時仍須使用同一個 `TRADINGDEV_DATA_DIR`。
+修改 `.env` 後用 `docker compose up -d` 重新套用設定，單純 `restart` 不會載入變更。
 
 ## 完成第一次回測
 
@@ -322,6 +450,9 @@ walk-forward 切分。結果應同時查看訓練表現與樣本外表現。
    交給 `evaluate_signal`；後端會對完整資料集產生訊號並評估，不必在對話中搬運陣列。
 5. 評估時指定 `record=True`，再用 `leaderboard(dataset_id=...)` 分頁查詢該版本的候選。
    查詢預設拒絕混合不同期間、資料或評估條件；先篩選可比較的研究，再解讀排名與限制。
+   同一個工具也能排序已保存的回測結果；請指定要比較的執行結果與範圍。
+   參數與比較限制見
+   [run scope 排名契約](docs/run_artifacts.md#ranking-saved-run-scopes)。
 6. 請助手為選定的已保存候選產生 ML 訊號研究報告，例如「把剛才記錄的候選做成可離線閱讀的
    比較報告，保留沒有分數的候選並說明限制」。一次可選最多 50 個候選；跨視窗、horizon
    或分位數設定的比較須明確選擇參數曲面模式。
@@ -475,6 +606,12 @@ HTTP 連線會提供 15 分鐘有效的 ZIP 下載網址；持有網址者可下
 
 封存用於閱讀與討論，不包含整個工作區、完整行情或執行環境；若要繼續查詢研究，
 仍須保留原工作區。儲存與介面契約見[研究筆記與封存](docs/reports.md#research-notebooks-and-archives)。
+
+若希望把研究中可重用的邏輯整合回專案，可交給能讀取 repository 與指定工作區的
+開發助手，使用 `research-feedback` skill。先指定可讀取及共用的策略與研究證據；
+助手會評估、實作並驗證適合的共用元件，也可能判定不值得抽取。原策略版本與歷史結果
+保持不變。這是由人啟動的開發流程，不是 MCP 自動監看或發布更新；操作見
+[研究成果工程回饋](docs/development.md#研究成果工程回饋)。
 
 ### 開啟 Dashboard
 

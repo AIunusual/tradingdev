@@ -49,6 +49,7 @@ def _run(
         options: dict[str, Any] = {
             "timeout_seconds": pytestconfig.getoption("llm_timeout"),
             "model": pytestconfig.getoption("llm_model"),
+            "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
             "user_reply": user,
             "on_tool_call": on_tool_call,
         }
@@ -68,7 +69,6 @@ def _run(
                     prompt,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
         return codex_calls(await run_codex(workspace.root, prompt, **options))

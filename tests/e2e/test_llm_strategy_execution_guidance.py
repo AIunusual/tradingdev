@@ -45,6 +45,7 @@ def test_llm_strategy_execution_guidance(pytestconfig: pytest.Config) -> None:
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "tool_names": GUIDANCE_TOOLS,
                 "user_reply": observe_final,
                 "max_tool_calls": 8,
@@ -60,7 +61,6 @@ def test_llm_strategy_execution_guidance(pytestconfig: pytest.Config) -> None:
                     GUIDANCE_PROMPT,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 
@@ -106,6 +106,7 @@ def test_llm_volume_monthly_loss_explanation(pytestconfig: pytest.Config) -> Non
         async def run() -> list[ToolCall]:
             options: dict[str, Any] = {
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "user_reply": user,
                 "max_turns": 2,
@@ -121,7 +122,6 @@ def test_llm_volume_monthly_loss_explanation(pytestconfig: pytest.Config) -> Non
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))

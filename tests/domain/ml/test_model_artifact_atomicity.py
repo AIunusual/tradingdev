@@ -35,6 +35,7 @@ def _artifact(blob: bytes = b"model weights") -> ModelArtifact:
         feature_names=("returns",),
         content_hash=content_sha256(blob),
         n_train_samples=100,
+        training_dataset_id="ds_training",
     )
 
 
@@ -305,3 +306,35 @@ def test_a_model_id_collision_cannot_replace_the_published_identity(
         )
     assert _published(tmp_path) == before
     assert store.load_with_bytes(artifact.model_id) == (artifact, blob)
+
+
+def test_a_retrain_on_other_data_cannot_replace_the_recorded_training_dataset(
+    tmp_path: Path,
+) -> None:
+    """Rows already written kept the old value, so the artifact must not flip it."""
+    artifact, blob = _artifact(), b"model weights"
+    store = ModelArtifactStore(tmp_path)
+    store.save(model_bytes=blob, artifact=artifact)
+    before = _published(tmp_path)
+    with pytest.raises(ValueError, match="cannot replace that provenance"):
+        store.save(
+            model_bytes=blob,
+            artifact=replace(artifact, training_dataset_id="ds_other_training"),
+        )
+    assert _published(tmp_path) == before
+    assert store.load_with_bytes(artifact.model_id) == (artifact, blob)
+
+
+def test_an_unknown_training_dataset_is_filled_in_on_the_same_model_id(
+    tmp_path: Path,
+) -> None:
+    """A schema 1 record gains the binding; the model keeps its identity."""
+    artifact, blob = _artifact(), b"model weights"
+    legacy = replace(artifact, schema_version=1, training_dataset_id="")
+    store = ModelArtifactStore(tmp_path)
+    store.save(model_bytes=blob, artifact=legacy)
+    assert store.load(artifact.model_id).training_dataset_id == ""
+    store.save(model_bytes=blob, artifact=artifact)
+    restored = store.load(artifact.model_id)
+    assert restored == artifact
+    assert restored.model_id == legacy.model_id

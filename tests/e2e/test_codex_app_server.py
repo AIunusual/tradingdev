@@ -585,6 +585,7 @@ def test_eof_without_completed_turn_is_rejected() -> None:
     ("overrides", "error"),
     [
         ({"type": "commandExecution"}, "bypassed MCP"),
+        ({"type": "sleep"}, "bypassed MCP"),
         ({"type": "fileChange"}, "bypassed MCP"),
         ({"type": "subAgentActivity"}, "bypassed MCP"),
         ({"server": "foreign-server"}, "foreign-server"),

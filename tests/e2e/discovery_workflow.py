@@ -27,6 +27,14 @@ NATURAL_REQUEST = """請建立名為 llm_sma 的策略，使用 BTC/USDT 的 1 �
 """
 
 
+def verify_readonly_attempts(calls: list[ToolCall], readonly_tools: set[str]) -> None:
+    """Permit registered discovery routes, rejecting even failed write attempts."""
+    assert all(call.name in readonly_tools for call in calls), (
+        "Read-only research attempted an unapproved tool",
+        [call.name for call in calls if call.name not in readonly_tools],
+    )
+
+
 def verify_discovery_outcome(
     workspace: MCPWorkspace, calls: list[ToolCall], final_turn: ModelTurn
 ) -> str:

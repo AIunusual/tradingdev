@@ -69,7 +69,7 @@ for line in sys.stdin:
         result = {'thread': {'id': 'thread'},
                   'model': request['params'].get('model') or 'fixture-default',
                   'reasoningEffort': ('ultra' if mode == 'effort-mismatch'
-                                      else 'xhigh')}
+                      else (sys.argv[3] if len(sys.argv) > 3 else 'high'))}
     elif method == 'turn/start':
         result = {'turn': {'id': 'turn'}}
     else:
@@ -100,15 +100,22 @@ for line in sys.stdin:
 """
 
 
-@pytest.fixture(params=[None, "gpt-5.6-luna"], ids=["model-unset", "model-env"])
+@pytest.fixture(autouse=True)
+def isolated_model_settings(monkeypatch: MonkeyPatch) -> None:
+    """User live-test overrides must not change the offline fake's contract."""
+    monkeypatch.delenv("TRADINGDEV_LLM_MODEL", raising=False)
+    monkeypatch.delenv("TRADINGDEV_LLM_REASONING_EFFORT", raising=False)
+
+
+@pytest.fixture(params=[None, "gpt-6-luna"], ids=["model-unset", "model-env"])
 def model_environment(
     request: pytest.FixtureRequest, monkeypatch: MonkeyPatch
 ) -> str | None:
     model: str | None = request.param
     if model is None:
-        monkeypatch.delenv("TRADINGDEV_CODEX_MODEL", raising=False)
+        monkeypatch.delenv("TRADINGDEV_LLM_MODEL", raising=False)
     else:
-        monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", model)
+        monkeypatch.setenv("TRADINGDEV_LLM_MODEL", model)
     return model
 
 
@@ -116,7 +123,7 @@ def test_codex_process_config_isolates_effort_and_host_capabilities(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(codex_harness, "resolve_codex_binary", lambda: "/test/codex")
-    command = codex_harness._command(Path("/test/isolated"), "selected-model")
+    command = codex_harness._command(Path("/test/isolated"), "selected-model", "high")
     assert command[:4] == ["/test/codex", "app-server", "--listen", "stdio://"]
     assert command[4::2] == ["-c"] * len(command[5::2])
     settings = {
@@ -125,12 +132,13 @@ def test_codex_process_config_isolates_effort_and_host_capabilities(
         for key, _, value in [item.partition("=")]
     }
     assert settings["model"] == "selected-model"
-    assert settings["model_reasoning_effort"] == "xhigh"
+    assert settings["model_reasoning_effort"] == "high"
     assert settings["features.skip_host_skill_discovery"] is True
     assert "skip_host_skill_discovery" not in settings
     for feature in (
         "multi_agent",
         "shell_tool",
+        "sleep_tool",
         "shell_snapshot",
         "plugins",
         "remote_plugin",
@@ -159,7 +167,12 @@ def test_codex_stops_client_and_detached_child(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [sys.executable, "-c", _APP_SERVER, status],
+        lambda root, model, reasoning_effort: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            status,
+        ],
     )
     with TemporaryDirectory(prefix="tradingdev-codex-lifecycle-") as temporary:
         root = Path(temporary)
@@ -177,7 +190,7 @@ def test_codex_stops_client_and_detached_child(
                     )
                 )
         requested = json.loads((root / "thread_request.json").read_text())
-        assert requested["model"] == model_environment
+        assert requested["model"] == (model_environment or "gpt-6.1-sol")
         assert set(requested["config"]) == {"mcp_servers"}, (
             "A partial thread features table would erase process isolation flags"
         )
@@ -204,7 +217,7 @@ def test_codex_rejects_bypass_and_stops_client_and_detached_child(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [
+        lambda root, model, reasoning_effort: [
             sys.executable,
             "-c",
             _APP_SERVER,
@@ -214,9 +227,7 @@ def test_codex_rejects_bypass_and_stops_client_and_detached_child(
     )
     with TemporaryDirectory(prefix="tradingdev-codex-isolation-") as temporary:
         root = Path(temporary)
-        expected = (
-            "expected 'xhigh'" if failure == "effort-mismatch" else "bypassed MCP"
-        )
+        expected = "expected 'high'" if failure == "effort-mismatch" else "bypassed MCP"
         with pytest.raises(AssertionError, match=expected):
             asyncio.run(codex_harness.run_codex(root, "prompt"))
         for pid in json.loads((root / "client_pids.json").read_text()):
@@ -230,7 +241,12 @@ def test_codex_enables_forms_and_wires_the_explicit_callback(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [sys.executable, "-c", _APP_SERVER, "form"],
+        lambda root, model, reasoning_effort: [
+            sys.executable,
+            "-c",
+            _APP_SERVER,
+            "form",
+        ],
     )
     approval = SimulatedUserApproval(approved=False)
     with TemporaryDirectory(prefix="tradingdev-codex-form-") as temporary:
@@ -242,30 +258,35 @@ def test_codex_enables_forms_and_wires_the_explicit_callback(
         )
         assert len(approval.requests) == 1
         requested = json.loads((root / "thread_request.json").read_text())
-        assert requested["model"] == model_environment
+        assert requested["model"] == (model_environment or "gpt-6.1-sol")
         answer = json.loads((root / "form_answer.json").read_text())
         assert answer["action"] == "accept" and answer["content"] == {"approved": False}
     assert not root.exists()
 
 
-def test_codex_explicit_model_takes_precedence_over_environment(
+@pytest.mark.parametrize("effort", ["high", "xhigh"])
+def test_codex_explicit_settings_take_precedence_over_environment(
     monkeypatch: MonkeyPatch,
+    effort: str,
 ) -> None:
-    monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", "environment-model")
-    command_models: list[str | None] = []
+    monkeypatch.setenv("TRADINGDEV_LLM_MODEL", "environment-model")
+    monkeypatch.setenv("TRADINGDEV_LLM_REASONING_EFFORT", "low")
+    command_settings: list[tuple[str, str]] = []
 
-    def command(root: Path, model: str | None) -> list[str]:
-        command_models.append(model)
-        return [sys.executable, "-c", _APP_SERVER, "completed"]
+    def command(root: Path, model: str, reasoning_effort: str) -> list[str]:
+        command_settings.append((model, reasoning_effort))
+        return [sys.executable, "-c", _APP_SERVER, "completed", "[]", reasoning_effort]
 
     monkeypatch.setattr(codex_harness, "_command", command)
     with TemporaryDirectory(prefix="tradingdev-codex-model-") as temporary:
         root = Path(temporary)
         events = asyncio.run(
-            codex_harness.run_codex(root, "prompt", model="explicit-model")
+            codex_harness.run_codex(
+                root, "prompt", model="explicit-model", reasoning_effort=effort
+            )
         )
         assert events[-1]["method"] == "turn/completed"
-        assert command_models == ["explicit-model"]
+        assert command_settings == [("explicit-model", effort)]
         requested = json.loads((root / "thread_request.json").read_text())
         assert requested["model"] == "explicit-model"
     assert not root.exists()
@@ -324,7 +345,7 @@ def test_codex_user_callback_reads_only_the_terminal_answer(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [
+        lambda root, model, reasoning_effort: [
             sys.executable,
             "-c",
             _APP_SERVER,
@@ -367,7 +388,7 @@ def test_codex_completed_tool_evidence_survives_later_turn_failure(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [
+        lambda root, model, reasoning_effort: [
             sys.executable,
             "-c",
             _APP_SERVER,
@@ -441,7 +462,7 @@ def test_codex_reaps_process_when_cleanup_verification_fails(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [sys.executable, "-c", _WAITING_CLIENT],
+        lambda root, model, reasoning_effort: [sys.executable, "-c", _WAITING_CLIENT],
     )
     with TemporaryDirectory(prefix="tradingdev-codex-reaping-") as temporary:
         root = Path(temporary)
@@ -511,7 +532,7 @@ def test_codex_rejected_tool_response_can_be_repaired_without_losing_attempts(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [
+        lambda root, model, reasoning_effort: [
             sys.executable,
             "-c",
             _APP_SERVER,
@@ -565,7 +586,7 @@ def test_codex_failed_transport_remains_a_failure(
     monkeypatch.setattr(
         codex_harness,
         "_command",
-        lambda root, model: [
+        lambda root, model, reasoning_effort: [
             sys.executable,
             "-c",
             _APP_SERVER,

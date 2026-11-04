@@ -264,10 +264,11 @@ The MCP path verifies which saved model produced the signal; it does not prove
 a held-out evaluation. Python array callers and existing records may use a
 caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
 [artifact contract](ml_research.md#recorded-signal-evaluations).
-`leaderboard` ranks only a metric with a declared direction and, by default,
-only matching measurement contexts. Its optional `dataset_id` filter selects a
-verified dataset version and checks that recorded data context matches its
-manifest; differences in evaluation settings still require compatible context.
+`leaderboard` ranks only a metric with a declared direction. A signal ranking also
+requires, by default, only matching measurement contexts; its optional `dataset_id`
+filter selects a verified dataset version and checks that recorded data context
+matches its manifest; differences in evaluation settings still require compatible
+context.
 `allow_parameter_axes=True` permits window, horizon and quantile-count variations
 under the [parameter-surface rules](ml_research.md#recorded-signal-evaluations);
 it does not make those measurements comparable. `allow_mixed=True` opts into
@@ -275,13 +276,46 @@ incompatible contexts and must not be presented as a controlled comparison. Reta
 `caveats`, skipped entries and candidate counts when interpreting the winner;
 trying more candidates increases selection bias.
 
+The same tool ranks saved backtest scopes. The metric id selects the source: a
+bare name or `signal.<metric>` ranks recorded evaluations, while `run.<metric>`
+ranks saved scopes and requires `runs` as a list of selection objects, for example
+`runs=[{"run_id":"example","scope":"full"}]`. An omitted or null `scope` selects
+that run's default. The Python library uses tuples instead, as described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+The response reports the qualified id, so
+`metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
+is not echoed. The two argument sets are exclusive: a signal ranking refuses
+`runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
+`feature_set`, `family`, `allow_mixed=True` and `allow_parameter_axes=True`, because
+one call ranks one
+source. Selecting the same measurement twice is refused as `duplicate_selections`,
+in two layers. Identical requested pairs are refused before anything is loaded;
+differently spelled selections are compared after they load and resolve, which
+catches an omitted scope that names a scalar scope already selected. A selection
+that cannot be loaded is skipped before that second comparison, so two spellings of
+an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
+`run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
+and the stored value; `context`, `families` and `parameter_axes` are `null` —
+present but not applicable, because a named selection has no evaluation context or
+method mix to report. An empty value would read as measured-and-nothing, which is a
+different claim. Every row reports `source`, and one response never mixes the two: a
+signal metric and a backtest metric share no definition, so they share no column.
+The run-ranking semantics — saved scope parameters and metadata, manifest-level
+conditions, definition checks and fold-summary skips — are in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
-`top_k`. The complete filtered candidate set is compared and ranked before
-paging. `ranked` and `skipped` each return at most `limit` entries at the same
+`top_k`. For recorded evaluations the complete filtered candidate set is compared
+and ranked before paging; to rank saved backtest scopes instead, pass
+`run.<metric>` with explicit `runs` selections, and those scopes are ordered by the
+same rules. `ranked` and `skipped` each return at most `limit` entries at the same
 offset; `n_ranked` and `n_skipped` describe their complete counts. Follow the
-shared `next_offset` until `null`, even if one list has no entries on a page.
-Mixed-context rejection reports the full context count, limited examples and
-filter guidance, not every context's text.
+shared `next_offset` until `null`, even if one list has no entries on a page. A run
+selection is named explicitly and is usually small, so its page is normally the
+whole list; the source-specific response fields are described in
+[the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
+On a signal ranking, mixed-context rejection reports the full context count, limited
+examples and filter guidance, not every context's text.
 
 After inspecting saved candidates, discover the `ml` section with
 `get_report_sections` and pass 1–50 distinct entry IDs to
@@ -297,11 +331,17 @@ does not prove a model-to-run relationship or persist missing time series. Full
 selection, visibility and retention semantics are in the
 [report contract](reports.md#composable-offline-reports).
 
-Leaderboard records do not retain the training/evaluation split or establish
-whether evaluated rows participated in fitting or selection. A report built only
-from those records therefore establishes neither in-sample nor out-of-sample
-status. Describe the saved evaluation sample and keep that provenance unknown;
-model IDs, dataset IDs and a `full` scope are not split evidence.
+Leaderboard records carry the training dataset of the artifact they name, when that
+artifact records one. Equality with the evaluation `dataset_id` means the score is
+in-sample only when the backend generated the signal from that artifact, which
+`MLService.evaluate_prediction` does. `MLService.evaluate_signal` evaluates the array
+the caller passes, so a record it writes under a declared `model_id` says only that
+the named artifact was fitted on the evaluation dataset; nothing verifies that it
+produced those values, and the row's fields do not say which entry point wrote it.
+A different value does not establish a holdout either way, and an empty one leaves
+the relationship unknown, including on every record written before the binding
+existed. Describe the saved evaluation sample, and do not infer a training
+relationship from model IDs, dataset IDs or a `full` scope alone.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -539,10 +579,11 @@ already contain the computed features.
 
 ### Trained Models
 
-`models/<model_id>.json` holds schema 1 metadata; the matching `.bin` holds the
-pickled model wrapper. Metadata records model name, framework, kind, effective
-parameters, ordered features, training-row count, available feature importance
-and full blob SHA-256. At build time, the ID is computed as a 16-character
+`models/<model_id>.json` holds schema 2 metadata; the matching `.bin` holds the
+pickled model wrapper. Schema 1 records still load. Metadata records model name,
+framework, kind, effective parameters, ordered features, training-row count,
+available feature importance, the dataset the final artifact was fitted on and
+full blob SHA-256. At build time, the ID is computed as a 16-character
 SHA-256 prefix over name, parameters, ordered features and blob hash. It
 identifies model content, not a training execution or saved validation result.
 
@@ -554,6 +595,18 @@ serialized estimator, and the ID neither authenticates publishers nor proves all
 metadata unchanged. Prediction checks exact ordered dataset features and unpickles
 the same bytes that passed hash verification.
 
+Schema 2 adds `training_dataset_id`, the dataset the final artifact was fitted on.
+The dataset ID is derived from the dataset manifest, so it identifies the rows, the
+request that built them and the code that did it. It is deliberately absent from the
+model ID: recording it must not rename a model that already exists. Legacy records
+without this field read with an empty value, which stays unknown and is never inferred
+from the model, its metrics or the current dataset registry. Either supported schema
+preserves an explicit stored binding. An empty value is not "trained on nothing".
+
+The field records where the artifact was fitted. It does not make any evaluation
+held out; [Recorded Signal Evaluations](#recorded-signal-evaluations) states how a
+leaderboard record compares it with the dataset that record scored.
+
 Writers for one model ID hold `.<model_id>.lock`. A new blob is staged beside its
 destination and atomically published; an existing blob must have the same hash and
 is never truncated or replaced. Metadata is published last by atomic replacement,
@@ -562,6 +615,13 @@ during repeated training. Temporary files are removed on success and failure; th
 lock file is retained. A failed first publication removes its newly created blob
 if no metadata was published. This is not a crash or power-loss transaction:
 an interrupted, unpublished blob can be recovered by retrying the same content.
+
+Because the binding is not part of the model ID, a repeated save of the same content
+may update it: an existing artifact whose training dataset is unknown gains the one
+now supplied, including a schema 1 record read as unknown. Once recorded it is
+immutable — a save that would name a different dataset for the same content is
+rejected instead of overwriting, because leaderboard rows already written kept the
+old value.
 
 The schema 1 filenames remain unchanged. `ModelArtifactStore.load_with_bytes`
 returns the verified metadata and bytes together; `load` returns only metadata.
@@ -604,7 +664,8 @@ result without a leaderboard write.
 by ID. Each record preserves finite metrics, observation count, model and dataset
 IDs, a display label, the candidate's saved settings, the hash of the
 signal that was measured, the method family that produced it (`ml_model`, `rule`
-or `other`) with a readable `method_name` for candidates that have no model, and
+or `other`) with a readable `method_name` for candidates that have no model, the
+dataset its model was trained on when the artifact records one, and
 an evaluation context: symbol or panel symbols,
 timeframe, requested period, horizon, IC window, quantile count, feature set,
 build-time code fingerprint and dataset content hash. For a model row, the fitted
@@ -617,6 +678,27 @@ Empty parameters are not fitted defaults, and an empty fingerprint is not
 reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
+
+`training_dataset_id` is empty when no model is named, and when the
+artifact cannot be read as a valid record: it is absent (`FileNotFoundError`), or
+`load` raises `ValueError`, which covers unreadable JSON, an unsupported schema
+version, and an identity or hash mismatch. Those cases are recorded as unknown; any
+other error propagates, so the recording fails and no entry is written. Equality with
+`dataset_id` means the recorded score is in-sample only when the signal came from
+that artifact — the MCP path above — and not when `MLService.evaluate_signal`
+evaluated an array the caller supplied. Such a record under a declared `model_id`
+says where that artifact was fitted without establishing that it produced the
+signal, and the fields alone do not separate the two cases.
+Re-running the model and matching `signal_fingerprint` shows that the recorded
+values are reproducible from that model; it does not show that the original signal
+came from it, because the fingerprint covers signal values only and a caller can
+supply the same values.
+Inequality proves nothing about the rows: a dataset identity also covers the
+requested period and the build-time code fingerprint, so identical rows can carry
+two identities, and genuinely different versions can still cover overlapping
+periods. A training window and an evaluation window that share dates produce two
+identities and no holdout. Older records are not backfilled, and a reader must not
+substitute the evaluation dataset for a missing training one.
 
 #### Method families
 

@@ -714,6 +714,7 @@ async def _model_workflow(
                 _prompt(kind, revision_id),
                 user_reply=approval,
                 model=pytestconfig.getoption("llm_model"),
+                reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                 timeout_seconds=pytestconfig.getoption("llm_timeout"),
             )
         )

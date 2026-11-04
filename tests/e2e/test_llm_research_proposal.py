@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,10 +32,13 @@ REQUEST = (
 )
 
 
+@dataclass
 class ProposalUser(ObservedPlanUser):
     """Consent follows the actual saved proposal; the request supplies no tool plan."""
 
-    async def __call__(self, turn: ModelTurn) -> str | None:
+    preliminary_turns: int = 0
+
+    async def _reply(self, turn: ModelTurn) -> str | None:
         if not self.replies:
             assert not any(
                 call.name
@@ -46,55 +50,80 @@ class ProposalUser(ObservedPlanUser):
                 }
                 for call in turn.calls
             ), "No real-data execution or automatic search before consent"
-        reply = await super().__call__(turn)
-        if len(self.turns) == 1:
-            plan = self.plans[-1]
-            assert isinstance(plan.manifest, ComparisonManifest)
-            assert 2 <= len(plan.manifest.candidates) <= 8
-            assert all(
-                candidate.manifest.strategy_execution.kind == "generated"
-                for candidate in plan.manifest.candidates
+        presented = any(
+            call.name.startswith("prepare_") and call.result.get("success") is True
+            for call in turn.calls
+        )
+        if not self.plans and not presented:
+            assert turn.number == len(self.turns) + 1
+            self.turns.append(turn)
+            self._no_execution()
+            assert self.preliminary_turns == 0, (
+                "Only one preliminary proposal turn is supported"
             )
-            config = reviewed_config(plan)
-            assert config["backtest"]["symbol"] == "BTC/USDT"
-            assert config["backtest"]["timeframe"] == "1h"
-            assert config["backtest"]["init_cash"] == 10000
-            assert config["backtest"]["fees"] == 0.0006
-            assert config["backtest"]["slippage"] == 0.0005
-            calls = effective_workflow_calls(turn.calls)
-            first_save = next(
-                index
-                for index, call in enumerate(calls)
-                if call.name == "save_strategy"
+            assert turn.text.strip(), "A preliminary proposal must be visible"
+            self.preliminary_turns += 1
+            return (
+                "請先把你剛建議的幾組設定一併列成待確認方案，讓我檢視完整設定；"
+                "我還沒有同意正式執行。"
             )
-            assert any(
-                call.name == "get_strategy_contract"
-                and call.arguments.get("section") == "indicators"
-                and call.arguments.get("indicator") == "bollinger_bands"
-                and call.result.get("content", {}).get("selected") is not None
-                for call in calls[:first_save]
-            ), "Discover the installed Bollinger API before authoring"
-            prepare_index = next(
-                index
-                for index, call in enumerate(calls)
-                if call.name == "prepare_comparison" and call.result.get("success")
-            )
-            draft = assert_saved_research(calls, prepare_index)
-            assert draft == plan.research_evidence.research.record.draft
-            parameters = plan.research_evidence.research.parameters
-            variants: dict[str, set[str]] = {}
-            for item in parameters:
-                variants.setdefault(item.parameter_path, set()).add(
-                    json.dumps(item.value, sort_keys=True)
-                )
-            varied = {path for path, values in variants.items() if len(values) > 1}
-            assert varied, "Proposals must actually vary an unspecified parameter"
-            assert all(
-                item.provenance == "model_proposal"
-                for item in parameters
-                if item.parameter_path in varied
-            )
+        reviewing = not self.plans
+        reply = await super()._reply(turn)
+        if reviewing:
+            self._verify_proposal()
         return reply
+
+    def assert_complete(self) -> None:
+        assert len(self.replies) == len(self.decisions)
+        assert len(self.turns) == len(self.replies) + self.preliminary_turns + 1
+
+    def _verify_proposal(self) -> None:
+        plan = self.plans[-1]
+        assert isinstance(plan.manifest, ComparisonManifest)
+        assert 2 <= len(plan.manifest.candidates) <= 8
+        assert all(
+            candidate.manifest.strategy_execution.kind == "generated"
+            for candidate in plan.manifest.candidates
+        )
+        config = reviewed_config(plan)
+        assert config["backtest"]["symbol"] == "BTC/USDT"
+        assert config["backtest"]["timeframe"] == "1h"
+        assert config["backtest"]["init_cash"] == 10000
+        assert config["backtest"]["fees"] == 0.0006
+        assert config["backtest"]["slippage"] == 0.0005
+        calls = effective_workflow_calls(
+            [call for turn in self.turns for call in turn.calls]
+        )
+        first_save = next(
+            index for index, call in enumerate(calls) if call.name == "save_strategy"
+        )
+        assert any(
+            call.name == "get_strategy_contract"
+            and call.arguments.get("section") == "indicators"
+            and call.arguments.get("indicator") == "bollinger_bands"
+            and call.result.get("content", {}).get("selected") is not None
+            for call in calls[:first_save]
+        ), "Discover the installed Bollinger API before authoring"
+        prepare_index = next(
+            index
+            for index, call in enumerate(calls)
+            if call.name == "prepare_comparison" and call.result.get("success")
+        )
+        draft = assert_saved_research(calls, prepare_index)
+        assert draft == plan.research_evidence.research.record.draft
+        parameters = plan.research_evidence.research.parameters
+        variants: dict[str, set[str]] = {}
+        for item in parameters:
+            variants.setdefault(item.parameter_path, set()).add(
+                json.dumps(item.value, sort_keys=True)
+            )
+        varied = {path for path, values in variants.items() if len(values) > 1}
+        assert varied, "Proposals must actually vary an unspecified parameter"
+        assert all(
+            item.provenance == "model_proposal"
+            for item in parameters
+            if item.parameter_path in varied
+        )
 
 
 @pytest.mark.live_llm

@@ -11,6 +11,11 @@ build/
 .venv/
 venv/
 
+# Local Compose deployment settings
+.env
+.env.*
+!.env.example
+
 # Legacy root-level runtime data path removed from app defaults
 /data/
 
