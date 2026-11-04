@@ -19,6 +19,7 @@ from tradingdev.app.contracts.research import (
     MetricQueryError,
     RunMetricsResponse,
     RunResponse,
+    RunScopeSelection,
     RunSummary,
 )
 
@@ -82,20 +83,25 @@ def register(mcp: MCPServer, service: RunService) -> None:
         )
     )
     def compare_runs(
-        run_ids: list[str],
+        selections: list[RunScopeSelection],
         metric_ids: list[str] | None = None,
-        scope: str | None = None,
     ) -> CompareRunsResponse | MetricQueryError | ErrorResponse:
-        """Compare recorded scopes without ranking; check each metric's compatibility.
+        """Compare saved run scopes without ranking; check each metric's compatibility.
 
-        Omit scope for each run's default. metric_ids selects stored metrics;
-        omission selects summaries. Fold statistics retain valid_count.
+        Each selection names one run and optionally one saved scope, so two scopes
+        of the same run can be compared; omit scope for that run's default. Two
+        selections that resolve to the same measurement are refused. metric_ids
+        selects stored metrics; omission selects summaries. Fold statistics retain
+        valid_count. Rows report metric_source: bundle or legacy_summary.
         Incompatible definitions, modes, or settings are explicitly reported.
         Use display_metrics for presentation; raw metrics retain saved units.
         Rolling traces are summaries with artifact_id and json_pointer;
         get_artifact(include_content=true) pages the complete saved evidence.
         """
-        payload = service.compare_runs(run_ids, metric_ids=metric_ids, scope=scope)
+        payload = service.compare_runs(
+            [(item.run_id, item.scope) for item in selections],
+            metric_ids=metric_ids,
+        )
         if payload.get("success") is False:
             if "available_metric_ids" in payload:
                 return MetricQueryError.model_validate(payload)

@@ -534,7 +534,7 @@ class ReportService:
         if len(run_ids) > 1:
             comparison = RunService(
                 workspace=self._workspace, store=self._store
-            ).compare_runs(run_ids)
+            ).compare_runs([(run_id, None) for run_id in run_ids])
             if not comparison.get("success"):
                 raise ReportPublicationError(
                     str(comparison.get("code", "report_comparison_failed")),
