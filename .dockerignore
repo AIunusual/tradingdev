@@ -1,0 +1,9 @@
+# Send only build inputs; never send local credentials or research workspaces.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+src/**/__pycache__/
+src/**/*.py[cod]

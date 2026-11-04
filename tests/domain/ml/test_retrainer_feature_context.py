@@ -9,8 +9,7 @@ had decided not to trade.
 Expected values here are arithmetic on the feature definitions and on the
 fixture's bar offsets, never copied from a run: a bar's features first exist once
 it has ``26 + 9 - 1 = 34`` rows behind it (TA-Lib's MACD histogram starts at
-``slow + signal - 2``), and a seeded indicator agrees with an unlimited history
-to within the documented settling tolerance after a further
+``slow + signal - 2``). A preferred seed-decay margin adds a further
 ``ceil(ln(1e-3) / ln(1 - 2/27)) = 90`` bars.
 """
 
@@ -35,7 +34,7 @@ _EXISTING_ROWS = 26 + 9 - 1
 """Rows one bar needs before the MACD histogram exists at all."""
 
 _SETTLED_ROWS = _EXISTING_ROWS + 90
-"""Rows one bar needs before the seeded indicators agree with a full history."""
+"""Preferred rows from the declared seed-decay margin, not an error bound."""
 
 _FIT_BARS = 450
 _SCORED_BARS = 50
@@ -245,14 +244,18 @@ def test_a_frame_that_never_completes_a_feature_row_fails() -> None:
     assert model.frames == []
 
 
-def test_a_complete_history_that_still_yields_no_row_does_not_blame_it() -> None:
+@pytest.mark.parametrize("history_rows", [40, 150])
+def test_a_complete_history_that_still_yields_no_row_does_not_blame_it(
+    history_rows: int,
+) -> None:
     """Enough rows is not the same as a complete row.
 
     Equal closes leave the Bollinger width at zero, which the feature engineer
     replaces with NaN, so no row survives however much history is supplied. The
-    message must not send the caller looking for more history it already has.
+    message must not send the caller looking for more history it already has,
+    even when the available history is shorter than the seed-decay context.
     """
-    frame = _market_frame(200)
+    frame = _market_frame(history_rows + 20)
     for column in ("open", "high", "low", "close"):
         frame[column] = 100.0
     frame["volume"] = 1000.0
@@ -265,7 +268,12 @@ def test_a_complete_history_that_still_yields_no_row_does_not_blame_it() -> None
             threshold=0.55,
             cooldown=1,
             lookback=12,
-        ).run(frame.iloc[150:], frame.iloc[:150], model, FeatureEngineer(lookback=12))
+        ).run(
+            frame.iloc[history_rows:],
+            frame.iloc[:history_rows],
+            model,
+            FeatureEngineer(lookback=12),
+        )
 
     assert "provide more history" not in str(rejected.value)
     assert model.frames == []

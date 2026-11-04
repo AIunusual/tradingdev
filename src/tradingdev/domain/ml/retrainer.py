@@ -121,12 +121,13 @@ class RollingRetrainer:
                 last_trade_bar = i
 
         if total_bars and not scored_bars:
-            needed = fe.context_rows
+            needed = fe.minimum_context_rows
             available = len(combined)
             msg = (
                 f"rolling prediction scored none of {total_bars} bars: the "
-                f"feature engineer needs {needed} rows for a complete feature "
-                f"row, and the history plus the scored frame hold {available}"
+                f"feature engineer needs at least {needed} rows before a complete "
+                f"feature row is possible, and the history plus the scored frame "
+                f"hold {available}"
             )
             if available < needed:
                 msg += "; provide more history before the scored window"

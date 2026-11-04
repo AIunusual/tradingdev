@@ -84,7 +84,7 @@ class TestContextRows:
         assert FeatureEngineer(lookback=12).context_rows > TA_CONTEXT_ROWS
 
     def test_the_seeded_indicators_are_given_time_to_settle(self) -> None:
-        # RSI recurses with Wilder's 1/14, MACD's signal line with 2/27. A seed
+        # RSI recurses with Wilder's 1/14, MACD's slow EMA with 2/27. A seed
         # below 1e-3 needs ceil(ln(1e-3) / ln(1 - alpha)) bars: 94 and 90.
         assert FeatureEngineer(lookback=12).context_rows == 26 + 9 - 1 + 90
         assert FeatureEngineer(lookback=24).context_rows == 26 + 9 - 1 + 90

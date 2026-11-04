@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -167,6 +168,10 @@ def main(argv: list[str] | None = None) -> None:
         help="HTTP transport when --web is set.",
     )
     parser.add_argument(
+        "--host",
+        help="HTTP listen IP when --web is set. Default: 127.0.0.1.",
+    )
+    parser.add_argument(
         "--port",
         type=int,
         default=8000,
@@ -185,9 +190,10 @@ def main(argv: list[str] | None = None) -> None:
         help="Additional exact Origin (http(s)://host[:port]); repeat as needed.",
     )
     args = parser.parse_args(argv)
-    if not args.web and (args.allow_host or args.allow_origin):
-        parser.error("--allow-host and --allow-origin require --web")
+    if not args.web and (args.host is not None or args.allow_host or args.allow_origin):
+        parser.error("--host, --allow-host and --allow-origin require --web")
     try:
+        host = str(ip_address(args.host)) if args.host is not None else "127.0.0.1"
         security = (
             http_transport_security(
                 args.port,
@@ -204,7 +210,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.web and args.transport == "streamable-http":
         mcp.run(
             transport="streamable-http",
-            host="127.0.0.1",
+            host=host,
             port=args.port,
             # Preserve SSE streaming for clients using the legacy protocol.
             json_response=False,
@@ -213,7 +219,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.web:
         mcp.run(
             transport="sse",
-            host="127.0.0.1",
+            host=host,
             port=args.port,
             transport_security=security,
         )

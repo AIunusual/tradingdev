@@ -7,7 +7,7 @@ import hashlib
 import json
 import pickle
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +18,7 @@ import pytest
 from tests.app.test_run_metrics import _publish, _scope
 from tests.data_cache import seed_market_cache
 from tests.e2e.codex_harness import run_codex
+from tests.e2e.conversation import visible_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.ml_report_evidence import (
     ML_REPORT_REQUEST,
@@ -37,6 +38,7 @@ from tradingdev.domain.ml.registry.leaderboard_store import LeaderboardStore
 if TYPE_CHECKING:
     from tests.e2e.conversation import ModelTurn
     from tests.integration.mcp_harness import MCPWorkspace
+    from tradingdev.domain.ml.leaderboard import LeaderboardEntry
 
 ML_TOOLS = [
     "get_ml_contract",
@@ -194,15 +196,20 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert evaluation["horizon"] == 1 and evaluation["window"] == 12
     assert evaluation["n_observations"] == dataset["rows"]
     assert evaluation["recorded"]["n_candidates"] == 1
+    assert evaluation["recorded"]["training_dataset_id"] == dataset_id
     assert ranked.arguments.get("metric") == "hit_rate"
     assert ranked.arguments.get("dataset_id") == dataset_id
     leaderboard = ranked.result
-    assert leaderboard["metric"] == "hit_rate"
+    # The echo is source-qualified: one tool ranks two sources now, so the
+    # answer names the one it read instead of restating a bare metric name.
+    assert leaderboard["metric"] == "signal.hit_rate"
+    assert leaderboard["source"] == "signal"
     assert leaderboard["n_candidates"] == leaderboard["n_ranked"] == 1
     assert leaderboard["caveats"], "Leaderboard must retain interpretation caveats"
     row = leaderboard["ranked"][0]
     assert row["entry_id"] == evaluation["recorded"]["entry_id"]
     assert row["dataset_id"] == dataset_id and row["model_id"] == model["model_id"]
+    assert row["training_dataset_id"] == dataset_id
     assert row["n_observations"] == dataset["rows"]
     assert row["value"] == evaluation["metrics"]["hit_rate"]
     assert row["parameters"] == model["parameters"]
@@ -233,6 +240,7 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
 
     models = ModelArtifactStore(paths.models)
     artifact = models.load(evidence.model["model_id"])
+    assert artifact.training_dataset_id == dataset["dataset_id"]
     assert artifact.n_train_samples == len(frame)
     assert list(artifact.feature_names) == dataset["feature_columns"]
     assert artifact.parameters == evidence.model["parameters"]
@@ -253,6 +261,7 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert entry.metric("hit_rate") == pytest.approx(hit_rate)
     assert entry.context.data_fingerprint == dataset["content_hash"]
     assert entry.parameters == artifact.parameters
+    assert entry.training_dataset_id == artifact.training_dataset_id
     assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
     assert entry.signal_fingerprint == evidence.prediction["signal_fingerprint"]
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
@@ -266,6 +275,222 @@ def seed_ml_markets(workspace: MCPWorkspace) -> None:
     other_market = ml_market_frame()
     other_market["close"] *= 2
     workspace.seed_market(other_market)
+
+
+@dataclass(frozen=True)
+class TrainingProvenanceCase:
+    model_id: str
+    training_dataset_id: str
+    overlapping_dataset_id: str
+    historical: tuple[LeaderboardEntry, ...]
+
+    @property
+    def request(self) -> str:
+        ids = "、".join(entry.entry_id for entry in self.historical)
+        return (
+            f"請用已保存的模型 {self.model_id}，分別對資料集 "
+            f"{self.training_dataset_id}、{self.overlapping_dataset_id} "
+            "做訊號評估並保存結果。再查詢既有候選 "
+            f"{ids}，一起判斷這 {len(self.historical) + 2} 筆結果能否支持"
+            "未見資料上的表現，說明理由。"
+            "請以表格每個候選一列，列出完整候選識別碼、訓練及評估資料來源，"
+            "以及你對證據的判讀。這次只評估既有模型及解讀研究，"
+            "不要重新取得行情、訓練模型、執行回測或改寫既有候選。"
+        )
+
+
+async def prepare_training_provenance(
+    workspace: MCPWorkspace,
+) -> TrainingProvenanceCase:
+    """Create real fitted-model inputs plus legacy/model-free saved evidence."""
+    seed_ml_markets(workspace)
+    async with workspace.connect() as client:
+        built = await client.call("build_dataset", **DATASET_ARGUMENTS)
+        overlapping = await client.call(
+            "build_dataset", **{**DATASET_ARGUMENTS, "end_date": "2024-01-09"}
+        )
+        assert built["success"] and overlapping["success"]
+        dataset_id = built["dataset"]["dataset_id"]
+        other_id = overlapping["dataset"]["dataset_id"]
+        assert dataset_id != other_id
+        trained = await client.call(
+            "train_model", dataset_id=dataset_id, **TRAINING_ARGUMENTS
+        )
+        assert trained["success"], trained
+    paths = WorkspacePaths(workspace.workspace)
+    datasets = MLDatasetStore(paths.ml_datasets)
+    train_frame, _ = datasets.load(dataset_id)
+    other_frame, _ = datasets.load(other_id)
+    assert set(other_frame["timestamp"]) < set(train_frame["timestamp"])
+    historical = seed_ml_report_candidates(paths)
+    undeclared = replace(
+        historical[0],
+        entry_id="purple-signal-3",
+        label="紫杉訊號研究",
+        method_family="other",
+        method_name="",
+        parameters={},
+    )
+    assert not LeaderboardStore(paths.ml_leaderboard).record(undeclared)
+    return TrainingProvenanceCase(
+        trained["model"]["model_id"],
+        dataset_id,
+        other_id,
+        (*historical, undeclared),
+    )
+
+
+def assert_training_provenance(
+    workspace: MCPWorkspace,
+    case: TrainingProvenanceCase,
+    attempted: list[ToolCall],
+    final_text: str,
+    readonly_tools: set[str],
+) -> None:
+    """Check real evidence and visible explanation coverage; review prose separately."""
+    permitted = readonly_tools | {
+        "evaluate_signal",
+        "save_research_note",
+        "export_research_note",
+        "generate_report",
+    }
+    assert all(call.name in permitted for call in attempted), "Unrequested mutation"
+    calls = effective_workflow_calls(attempted)
+    dataset_ids = {case.training_dataset_id, case.overlapping_dataset_id}
+    for call in calls:
+        if call.name == "evaluate_signal":
+            assert call.arguments.get("model_id") == case.model_id
+            assert call.arguments.get("dataset_id") in dataset_ids
+            assert call.arguments.get("record") is True
+    successful = [
+        call
+        for call in calls
+        if isinstance(call.result, dict) and call.result.get("success") is True
+    ]
+    report_paths = {
+        call.result["path"] for call in successful if call.name == "generate_report"
+    }
+    if len(report_paths) > 1:
+        # Catch the observed cross-report claim; other wording still needs review.
+        assert "所有內容保存在同一份" not in visible_text(final_text), (
+            "Multiple report files must not be described as one file"
+        )
+    assert any(call.name == "get_ml_contract" for call in successful)
+    evaluations = {
+        call.arguments["dataset_id"]: call.result
+        for call in successful
+        if call.name == "evaluate_signal"
+    }
+    assert evaluations.keys() == dataset_ids, "Both requested evaluations are required"
+    discovered = {
+        row["entry_id"]
+        for call in successful
+        if call.name == "leaderboard"
+        for group in ("ranked", "skipped")
+        for row in call.result[group]
+    }
+    assert {entry.entry_id for entry in case.historical} <= discovered
+    paths = WorkspacePaths(workspace.workspace)
+    stored = {
+        entry.entry_id: entry
+        for entry in LeaderboardStore(paths.ml_leaderboard).entries()
+    }
+    for entry in case.historical:
+        assert stored[entry.entry_id] == entry, "Historical evidence was changed"
+    expected_ids: list[str] = []
+    for dataset_id, result in evaluations.items():
+        recorded = result["recorded"]
+        entry = stored[recorded["entry_id"]]
+        assert recorded["training_dataset_id"] == case.training_dataset_id
+        assert entry.training_dataset_id == case.training_dataset_id
+        assert entry.model_id == case.model_id and entry.dataset_id == dataset_id
+        expected_ids.append(entry.entry_id)
+    expected_ids.extend(entry.entry_id for entry in case.historical)
+    rows: dict[str, str] = {}
+    for entry_id in expected_ids:
+        matches = [
+            line
+            for line in final_text.splitlines()
+            if line.lstrip().startswith("|") and entry_id in line
+        ]
+        assert len(matches) == 1, f"Missing candidate explanation row: {entry_id}"
+        rows[entry_id] = visible_text(matches[0])
+        entry = stored[entry_id]
+        assert entry.dataset_id in rows[entry_id], (
+            f"Missing or incorrect evaluation dataset for {entry_id}"
+        )
+        if entry.training_dataset_id:
+            assert entry.training_dataset_id in rows[entry_id], (
+                f"Missing or incorrect training dataset for {entry_id}"
+            )
+    same_id = evaluations[case.training_dataset_id]["recorded"]["entry_id"]
+    assert re.search(r"樣本內|in.sample", rows[same_id], re.IGNORECASE)
+    other_id = evaluations[case.overlapping_dataset_id]["recorded"]["entry_id"]
+    assert re.search(r"重疊|無法|不能|不足|不代表|不等於|樣本內", rows[other_id])
+    for entry in case.historical:
+        pattern = (
+            r"未知|不明|未記錄|未保存|無法"
+            if entry.family != "rule"
+            else r"不適用|未擬合|未訓練|沒有.*(?:訓練|擬合)|無.*(?:訓練|擬合)"
+        )
+        assert re.search(pattern, rows[entry.entry_id]), (
+            "Missing training provenance explanation"
+        )
+    print(
+        "[training-provenance] Final reply for semantic review:\n" + final_text,
+        flush=True,
+    )
+
+
+@pytest.mark.live_llm
+def test_natural_request_interprets_training_provenance(
+    pytestconfig: pytest.Config,
+) -> None:
+    with temporary_mcp_workspace() as workspace:
+        case = asyncio.run(prepare_training_provenance(workspace))
+        turns: list[ModelTurn] = []
+        readonly_tools: set[str] = set()
+
+        async def observe_final(turn: ModelTurn) -> None:
+            turns.append(turn)
+
+        async def run() -> list[ToolCall]:
+            options: dict[str, Any] = {
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+                "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+                "user_reply": observe_final,
+                "max_tool_calls": 24,
+            }
+            async with workspace.connect() as client:
+                product_tools = (await client.session.list_tools()).tools
+                names = [tool.name for tool in product_tools]
+                readonly_tools.update(
+                    tool.name
+                    for tool in product_tools
+                    if tool.annotations and tool.annotations.read_only_hint is True
+                )
+                assert all(name not in case.request for name in names)
+                options["tool_names"] = names
+                if pytestconfig.getoption("llm_provider") == "local":
+                    return await run_local_model(
+                        client,
+                        case.request,
+                        base_url=pytestconfig.getoption("llm_base_url"),
+                        temperature=pytestconfig.getoption("llm_temperature"),
+                        **options,
+                    )
+            return codex_calls(await run_codex(workspace.root, case.request, **options))
+
+        calls = asyncio.run(run())
+        print(
+            json.dumps([asdict(call) for call in calls], ensure_ascii=False), flush=True
+        )
+        assert len(turns) == 1
+        assert_training_provenance(
+            workspace, case, calls, turns[0].text, readonly_tools
+        )
+    assert not workspace.root.exists()
 
 
 @pytest.mark.live_llm
@@ -283,6 +508,7 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "tool_names": ML_TOOLS,
                 "user_reply": observe_final,
                 "max_tool_calls": 16,
@@ -297,7 +523,6 @@ def test_llm_ml_pipeline(pytestconfig: pytest.Config) -> None:
                     ML_PROMPT,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 
@@ -389,6 +614,7 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": reply,
                 "max_tool_calls": 18,
             }
@@ -408,7 +634,6 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
@@ -462,6 +687,7 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 18,
             }
@@ -481,7 +707,6 @@ def test_natural_request_discovers_saved_ml_report(pytestconfig: pytest.Config) 
                         ML_REPORT_REQUEST,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(
@@ -566,6 +791,7 @@ def test_natural_request_discovers_rolling_evidence(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
             }
             async with workspace.connect() as client:
@@ -585,41 +811,90 @@ def test_natural_request_discovers_rolling_evidence(
                         request,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             return codex_calls(await run_codex(workspace.root, request, **options))
 
         attempted = asyncio.run(run())
-        assert all(call.name in readonly_tools for call in attempted), attempted
-        calls = effective_workflow_calls(attempted)
-        assert any(
-            c.name == "get_ml_contract" and c.result.get("success") for c in calls
-        )
-        summaries = [
-            c.result
-            for c in calls
-            if c.name == "get_run_metrics" and c.result.get("success")
-        ]
-        assert (
-            summaries and summaries[-1]["metadata"]["rolling_trace"]["roll_count"] == 4
-        )
-        evidence = [
-            c.result
-            for c in calls
-            if c.name == "get_artifact"
-            and c.result.get("success")
-            and c.arguments.get("artifact_id") == "rolling_saved:performance_json"
-            and "content" in c.result
-            and "content_page" in c.result
-        ]
-        assert evidence and any(
-            re.search(r'"n_train_rows"\s*:\s*57\b', page["content"])
-            for page in evidence
-        )
-        assert turns and "57" in turns[-1].text
+        transcript = {
+            "calls": [asdict(call) for call in attempted],
+            "turns": [asdict(turn) for turn in turns],
+        }
+        try:
+            assert all(call.name in readonly_tools for call in attempted), attempted
+            artifact = store.get_artifact("rolling_saved:performance_json")
+            assert artifact is not None
+            assert turns
+            verify_rolling_evidence(
+                attempted, turns[-1].text, Path(artifact["path"]).read_text()
+            )
+        except (AssertionError, KeyError, ValueError, IndexError) as error:
+            pytest.fail(
+                f"Incomplete rolling evidence: {error}\n"
+                + json.dumps(transcript, ensure_ascii=False)
+            )
         print(
             "[rolling-evidence] Final reply for semantic review:\n" + turns[-1].text,
             flush=True,
         )
     assert not workspace.root.exists()
+
+
+def verify_rolling_evidence(
+    attempted: list[ToolCall], reply: str, saved_text: str
+) -> None:
+    """Accept a bound summary plus detail, or complete saved artifact evidence."""
+    calls = effective_workflow_calls(attempted)
+    assert any(c.name == "get_ml_contract" and c.result.get("success") for c in calls)
+    summaries = [
+        c.result.get("metadata", {}).get("rolling_trace", {})
+        for c in calls
+        if c.name == "get_run_metrics"
+        and c.result.get("success")
+        and c.arguments.get("run_id") == "rolling_saved"
+        and c.result.get("scope") == "fold/0/test"
+    ]
+    summary = any(
+        item.get("roll_count") == 4
+        and item.get("trained_roll_count") == 3
+        and item.get("artifact_id") == "rolling_saved:performance_json"
+        for item in summaries
+    )
+    covered = bytearray(len(saved_text))
+    contents: list[str] = []
+    for call in calls:
+        if not (
+            call.name == "get_artifact"
+            and call.result.get("success")
+            and call.arguments.get("artifact_id") == "rolling_saved:performance_json"
+            and "content" in call.result
+            and "content_page" in call.result
+        ):
+            continue
+        assert (
+            call.result["artifact"]["artifact_id"] == "rolling_saved:performance_json"
+        )
+        page = call.result["content_page"]
+        content = call.result["content"]
+        offset = page["offset"]
+        assert page["total_characters"] == len(saved_text)
+        assert page["content_sha256"] == hashlib.sha256(saved_text.encode()).hexdigest()
+        assert 0 <= offset <= offset + len(content) <= len(saved_text)
+        assert content == saved_text[offset : offset + len(content)]
+        covered[offset : offset + len(content)] = b"1" * len(content)
+        contents.append(content)
+    observed_text = "".join(
+        character if covered[index] else "\0"
+        for index, character in enumerate(saved_text)
+    )
+    assert contents and re.search(r'"n_train_rows"\s*:\s*57\b', observed_text), (
+        "Read the second roll's saved labeled-row count"
+    )
+    assert summary or (covered and all(covered)), (
+        "Read bound roll counts or the complete saved trace"
+    )
+    prose = visible_text(reply)
+    assert all(re.search(rf"(?<!\d){number}(?!\d)", prose) for number in (4, 3, 57)), (
+        "Explain all requested roll counts"
+    )
+    assert "rolling_saved" in prose, "Identify the saved evidence in the final reply"

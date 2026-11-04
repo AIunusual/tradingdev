@@ -210,10 +210,37 @@ _ML_GUIDANCE = {
         "n_quantiles, so a rule sweep is not reported as a parameter surface."
     ),
     "ranking": (
+        "The metric id selects the source. A bare name or signal.<metric> "
+        "ranks recorded evaluations; run.<metric> ranks saved backtest scopes "
+        "and requires runs as a list of objects with run_id and scope; "
+        "an omitted or null scope means "
+        "that run's default. A run row carries run_id, scope, the trading "
+        "conditions its manifest recorded, metric_source and the stored value; "
+        "context, families and parameter_axes are null, because a named "
+        "selection has no evaluation context or method mix to report. "
+        "Run rows retain the selected scope's saved parameters and metadata: "
+        "simple and walk-forward scopes contain constructor parameters including "
+        "captured defaults; optimization scopes contain trial overrides, not a "
+        "reconstructed constructor. Recorded fitted values stay in "
+        "metadata.strategy_parameters. Conditions describe the run's submitted "
+        "manifest, while metadata.observations describes the scope's observed "
+        "period. Saved metric definitions must match the current catalog or the "
+        "candidate is skipped. Provider package versions and settings can still "
+        "differ, so ordering is conditional, not a controlled comparison. Read "
+        "get_run_metrics for full scope evidence and saved definitions, and "
+        "get_metric_catalog for run metric names and directions (this contract "
+        "lists signal metrics only). An aggregate fold summary cannot be ranked, "
+        "so a walk-forward run's default test_summary is skipped; name a numbered "
+        "fold. "
         "record=True replaces the same candidate/settings/dataset/context. "
         "leaderboard metrics have declared directions; never assume higher is "
-        "better. Filter by dataset_id to compare one verified dataset version. "
-        "Each row reports the method_family that produced it: ml_model (fitted, "
+        "better. On a signal ranking, filter by dataset_id to compare one "
+        "verified dataset version; the other filters, allow_mixed and "
+        "allow_parameter_axes apply only there. A run ranking refuses those "
+        "arguments and a signal "
+        "ranking refuses runs, because one call ranks one source. "
+        "On a signal ranking, each row reports the method_family that produced it: "
+        "ml_model (fitted, "
         "parameters copied from the artifact), rule (hand-set, parameters "
         "declared by the caller) or other (other/unknown construction). A table "
         "may mix them and counts each family; labels alone do not establish "
@@ -222,7 +249,10 @@ _ML_GUIDANCE = {
         "was measured under, the candidate's saved settings and its "
         "signal_fingerprint; "
         "comparing that fingerprint with a fresh signal shows whether a re-run "
-        "reproduced the recorded signal. allow_mixed permits incompatible "
+        "reproduced the recorded signal. A model row also carries "
+        "training_dataset_id, empty when unknown: equality with dataset_id means "
+        "the score is in-sample when the model produced the signal, and inequality "
+        "proves nothing. allow_mixed permits incompatible "
         "contexts but does not make them comparable; allow_parameter_axes "
         "relaxes window, horizon and n_quantiles within the saved identity, "
         "without verifying shared source bars across horizons. This ranks a "
@@ -265,6 +295,11 @@ class MLService:
         )
         # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
+
+    @property
+    def workspace(self) -> WorkspacePaths:
+        """The workspace this service reads; shared, not copied, by ranking."""
+        return self._workspace
 
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
@@ -608,7 +643,9 @@ class MLService:
             elif isinstance(value, (int, float)):
                 number = float(value)
                 stored_metrics[key] = number if math.isfinite(number) else None
-        label, parameters = self._candidate_identity(model_id, fingerprint, identity)
+        label, parameters, training_dataset_id = self._candidate_identity(
+            model_id, fingerprint, identity
+        )
         entry = LeaderboardEntry(
             entry_id=build_entry_id(
                 model_id=model_id or "",
@@ -631,6 +668,7 @@ class MLService:
             signal_fingerprint=fingerprint,
             method_family=identity.family,
             method_name=identity.name,
+            training_dataset_id=training_dataset_id,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -642,6 +680,7 @@ class MLService:
             "signal_fingerprint": fingerprint,
             "method_family": identity.family,
             "method_name": identity.name,
+            "training_dataset_id": training_dataset_id,
         }
 
     @staticmethod
@@ -655,27 +694,35 @@ class MLService:
 
     def _candidate_identity(
         self, model_id: str | None, fingerprint: str, identity: MethodIdentity
-    ) -> tuple[str, dict[str, Any]]:
-        """A readable name for a recorded candidate and its settings.
+    ) -> tuple[str, dict[str, Any], str]:
+        """A readable name, its settings, and the dataset the model was trained on.
 
-        The parameters come from the artifact itself, so a row describes the
-        model that produced it even if the artifact is later retrained. A
-        candidate without a model has no artifact to read, so its declared name
-        and settings are used instead of a bare hash: an unnamed signal keeps
-        the hash in its label, which is all that distinguishes it.
+        The parameters are copied from the artifact at record time, so a row keeps
+        the settings it was recorded with. A candidate without a model has no
+        artifact to read, so its declared name and settings are used instead of a
+        bare hash: an unnamed signal keeps the hash in its label, which is all that
+        distinguishes it.
+
+        The training dataset comes from the artifact as well. A missing artifact, or
+        one whose metadata cannot be read as a valid record — unreadable JSON, an
+        unsupported schema version, or an identity or hash mismatch — yields an
+        empty id: the row then says the training data is unknown rather than
+        implying the evaluation dataset trained the model. Any other storage error
+        propagates, so the recording fails instead of losing that silently.
         """
         if not model_id:
             label = identity.name or (
                 f"ad-hoc signal ({fingerprint[:8]})" if fingerprint else "ad-hoc signal"
             )
-            return label, dict(identity.parameters)
+            return label, dict(identity.parameters), ""
         try:
             artifact = ModelArtifactStore(self._workspace.models).load(model_id)
         except FileNotFoundError, ValueError:
-            return model_id, {}
+            return model_id, {}, ""
         return (
             f"{artifact.model_name} ({artifact.framework})",
             dict(artifact.parameters),
+            artifact.training_dataset_id,
         )
 
     def leaderboard(
@@ -759,6 +806,7 @@ class MLService:
         result = rank_entries(entries, metric, top_k=top_k)
         ranked = [
             {
+                "source": "signal",
                 "rank": item.rank,
                 "entry_id": item.entry.entry_id,
                 "label": item.entry.label,
@@ -766,6 +814,7 @@ class MLService:
                 "dataset_id": item.entry.dataset_id,
                 "method_family": item.entry.family,
                 "method_name": item.entry.method_name,
+                "training_dataset_id": item.entry.training_dataset_id,
                 "horizon": item.entry.context.horizon,
                 "window": item.entry.context.window,
                 "n_quantiles": item.entry.context.n_quantiles,
@@ -789,6 +838,7 @@ class MLService:
         caveats.extend(surface_caveats(axes))
         return {
             "success": True,
+            "source": "signal",
             "metric": result.metric,
             "direction": result.direction,
             "n_candidates": len(entries),
@@ -799,10 +849,12 @@ class MLService:
             "ranked": ranked,
             "skipped": [
                 {
+                    "source": "signal",
                     "entry_id": item.entry.entry_id,
                     "label": item.entry.label,
                     "method_family": item.entry.family,
                     "method_name": item.entry.method_name,
+                    "training_dataset_id": item.entry.training_dataset_id,
                     "reason": item.reason,
                     # A candidate with no score is still a point on the grid:
                     # without these coordinates a failed run leaves a hole that
@@ -860,6 +912,48 @@ class MLService:
             "offset": offset,
             "limit": limit,
             "next_offset": end if end < total else None,
+        }
+
+    def rank_signal_candidates(
+        self,
+        metric: str,
+        *,
+        dataset_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        horizon: int | None = None,
+        feature_set: str | None = None,
+        family: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        allow_mixed: bool = False,
+        allow_parameter_axes: bool = False,
+    ) -> dict[str, Any]:
+        """Return the shared ranking shape for recorded signal evaluations.
+
+        ``metric`` is the bare signal metric; the caller owns the ``signal.``
+        prefix that identifies the source. Ordering, caveats, refusal rules and
+        paging are exactly the ones :meth:`leaderboard_page` applies, so the two
+        surfaces cannot disagree about what was measured.
+        """
+        payload = self.leaderboard_page(
+            metric,
+            dataset_id=dataset_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            horizon=horizon,
+            feature_set=feature_set,
+            family=family,
+            offset=offset,
+            limit=limit,
+            allow_mixed=allow_mixed,
+            allow_parameter_axes=allow_parameter_axes,
+        )
+        return {
+            **payload,
+            "source": "signal",
+            "ranked": [{**row, "source": "signal"} for row in payload["ranked"]],
+            "skipped": [{**row, "source": "signal"} for row in payload["skipped"]],
         }
 
     def build_dataset(

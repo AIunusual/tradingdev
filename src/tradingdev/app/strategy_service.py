@@ -34,7 +34,7 @@ from tradingdev.app.contracts.strategy import (
     StrategySummary,
 )
 from tradingdev.app.pagination import paginate
-from tradingdev.app.quality_policy import quality_config_path
+from tradingdev.app.quality_policy import quality_check_config
 from tradingdev.app.research import SelectedResearchRevision, build_research_config
 from tradingdev.app.strategy_contract_service import StrategyContractService
 from tradingdev.domain.research import ResearchSpec  # noqa: TC001
@@ -812,8 +812,14 @@ class StrategyService:
         return recent
 
     def _quality_gate_diagnostics(self, source_path: Path) -> list[StrategyDiagnostic]:
+        with quality_check_config() as config:
+            return self._run_quality_gates(source_path, config)
+
+    def _run_quality_gates(
+        self, source_path: Path, config: Path
+    ) -> list[StrategyDiagnostic]:
         diagnostics: list[StrategyDiagnostic] = []
-        config_path = str(quality_config_path())
+        config_path = str(config)
         for command, label, timeout in (
             (
                 [

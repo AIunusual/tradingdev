@@ -29,6 +29,7 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.contracts.reports import ReportAnalysis
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
@@ -159,9 +160,22 @@ def verify_comparison_delivery(
         queried = [
             call
             for call in calls
-            if call.name in {"get_run", "get_run_metrics"}
-            and call.arguments.get("run_id") == row.run_id
+            if call.name in {"get_run", "get_run_metrics", "compare_runs"}
+            and isinstance(call.result, dict)
             and call.result.get("success") is True
+            and (
+                (
+                    call.name in {"get_run", "get_run_metrics"}
+                    and call.arguments.get("run_id") == row.run_id
+                )
+                or (
+                    call.name == "compare_runs"
+                    and any(
+                        selected["run_id"] == row.run_id and selected["scope"] == "full"
+                        for selected in call.result["runs"]
+                    )
+                )
+            )
         ]
         assert queried, f"Saved evidence must be queried for {candidate.label}"
         run = store.get_run(row.run_id)
@@ -196,9 +210,11 @@ def verify_comparison_delivery(
         job_id=job_id,
         run_ids=run_ids,
     )
-    assert report_call.arguments.get("commentary"), (
-        "Report requires explanatory commentary"
-    )
+    assert report_call.arguments.get("analysis"), "Report requires research analysis"
+    analysis = ReportAnalysis.model_validate(report_call.arguments["analysis"])
+    assert {(ref.run_id, ref.scope) for ref in analysis.references} == {
+        (run_id, "full") for run_id in run_ids
+    }, "Comparison analysis must reference every candidate's full result"
     selected = report_call.arguments.get("sections")
     assert selected is None or selected == list(REPORT_RECIPES["standard"])
     service = ReportService(workspace=paths, store=store)
@@ -211,6 +227,8 @@ def verify_comparison_delivery(
         "</script>", 1
     )[0]
     payload = json.loads(raw)
+    expected_analysis = analysis.model_dump(mode="json")
+    assert payload["analysis"] == expected_analysis
     assert payload["sections"] == list(REPORT_RECIPES["standard"])
     evidence = payload["fixed_comparison"]
     assert evidence["manifest"] == saved.model_dump(mode="json")
@@ -229,6 +247,7 @@ def verify_comparison_delivery(
         ]
     report_path = Path(report["path"])
     report_manifest = json.loads(report_path.with_name("manifest.json").read_text())
+    assert report_manifest["analysis"] == expected_analysis
     assert report_manifest["fixed_comparison"] == evidence
     registered = store.get_artifact(report["artifact_id"])
     assert registered is not None and registered["path"] == str(report_path)
@@ -237,7 +256,10 @@ def verify_comparison_delivery(
         "[comparison] Manual semantic review required: verify every candidate's "
         "metric attribution, success/failure wording, limitations and detail "
         "navigation against the saved evidence. Identity checks do not prove prose "
-        "correctness.\nFinal delivery:\n" + final.text,
+        "correctness.\nSaved analysis:\n"
+        + analysis.model_dump_json(indent=2)
+        + "\nFinal delivery:\n"
+        + final.text,
         flush=True,
     )
 
@@ -281,6 +303,7 @@ async def direct_comparison(
         return result
 
     await call("get_strategy", strategy_id="kd_crossover")
+    assert isinstance(await call("list_data_sources"), list)
     parameters = {"config": KDStrategyConfig().model_dump(), "fit_config": None}
     paths = list(confirmation_presentation(parameters)["parameter_descriptions"])
     evidence = await call(
@@ -313,19 +336,18 @@ async def direct_comparison(
     calls.append(ToolCall("get_job_status", {"job_id": accepted["job_id"]}, done))
     assert done["status"] == "done", done
     run_ids = [candidate["run_id"] for candidate in done["comparison"]["candidates"]]
-    for run_id in run_ids:
-        await call("get_run", run_id=run_id)
-        await call("get_run_metrics", run_id=run_id)
+    await call("compare_runs", selections=[{"run_id": run_id} for run_id in run_ids])
     await call("get_report_sections")
     report = await call(
         "generate_report",
         comparison_job_id=accepted["job_id"],
-        commentary=[
-            {
-                "title": "比較限制",
-                "text": "固定兩組參數使用相同合成行情；結果不代表真實交易績效。",
-            }
-        ],
+        analysis={
+            "summary": "已完成事先指定的兩組 K 週期比較。",
+            "observations": "兩組使用相同資料快照，完整結果並列於報告。",
+            "hypotheses_and_limits": "行情為合成資料，不代表真實交易績效。",
+            "next_steps": "檢視各組已保存明細；不擴大搜尋或執行新研究。",
+            "references": [{"run_id": run_id, "scope": "full"} for run_id in run_ids],
+        },
     )
     assert report["success"], report
     final = (
@@ -368,6 +390,11 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
             "wrong_parent",
             "missing_link",
             "unqueried_child",
+            "partial_analysis",
+            "failed_comparison",
+            "missing_analysis",
+            "wrong_analysis_reference",
+            "unsaved_analysis",
         ):
             broken = deepcopy(calls)
             final_calls = deepcopy(user.turns[-1].calls)
@@ -381,6 +408,18 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
                 report_call.arguments["comparison_job_id"] = "another_parent"
             elif failure == "missing_link":
                 final_text = "完成，但未交付報告連結。"
+            elif failure == "partial_analysis":
+                report_call.arguments["analysis"]["references"].pop()
+            elif failure == "missing_analysis":
+                report_call.arguments.pop("analysis")
+            elif failure == "wrong_analysis_reference":
+                report_call.arguments["analysis"]["references"][0]["scope"] = "train"
+            elif failure == "unsaved_analysis":
+                report_call.arguments["analysis"]["observations"] = "未保存的其他觀察。"
+            elif failure == "failed_comparison":
+                for call in broken:
+                    if call.name == "compare_runs":
+                        call.result["success"] = False
             else:
                 hidden = report_call.result["run_ids"][-1]
                 broken = [
@@ -391,6 +430,13 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
                         and call.arguments.get("run_id") == hidden
                     )
                 ]
+                for call in broken:
+                    if call.name == "compare_runs":
+                        call.result["runs"] = [
+                            row
+                            for row in call.result["runs"]
+                            if row["run_id"] != hidden
+                        ]
             changed = replace(
                 user, turns=[user.turns[0], ModelTurn(2, final_text, final_calls)]
             )

@@ -206,6 +206,17 @@ Comparisons retain the requested values and report comparability and reasons;
 differences in mode, definitions, provider versions, sampling, annualization,
 capital or execution context cannot silently become equivalent rankings.
 
+`compare_runs` keys each row by a `(run_id, scope)` pair, so two scopes of one run
+can be compared side by side; omit `scope` to use that run's default. Selections
+that resolve to the same measurement are refused as duplicates, including an
+omitted scope paired with the explicit name of that run's default. Each row reports
+`metric_source`: `bundle` when the values came from the performance bundle,
+`legacy_summary` when they came from a run row that has no bundle. Comparability
+reasons and `context_differences` identify a selection as `run_id` when its default
+scope was used and as `run_id#scope` when a scope was named, so two scopes of one
+run stay distinct instead of collapsing into one entry. Comparison reads stored
+values only; nothing is recomputed.
+
 Detailed reads verify supported schema, run/manifest identity and recorded
 artifact digest. Missing or corrupted artifacts are errors rather than a request
 to rerun a strategy. Publication validates and encodes data before writing;

@@ -17,13 +17,13 @@ MACD_SIGNAL = 9
 BOLLINGER_LENGTH = 20
 
 _EMA_SEED_TOLERANCE = 1e-3
-"""Residual weight an exponential seed may still carry at the scored bar.
+"""Target residual weight for the individual exponential recursions.
 
 TA-Lib seeds its EMAs and Wilder smoothing from the first window it sees, so a
 short context starts those recursions from a value an unlimited history would
-not have.  A context is only long enough once the seed has decayed below this
-weight; measured against a full history, that leaves the seeded features within
-about 0.1% of a standard deviation.
+not have. This sets a preferred seed-decay margin, not an output-error bound:
+the difference also depends on the initial values, coupled recursions and the
+indicator's nonlinear transformations.
 """
 
 
@@ -50,13 +50,11 @@ TA_SETTLED_CONTEXT_ROWS = max(
     MACD_SLOW + MACD_SIGNAL - 1 + _settle_bars(2.0 / (MACD_SLOW + 1)),
     BOLLINGER_LENGTH,
 )
-"""Rows, including the bar itself, for the seeded indicators to settle.
+"""Preferred rows, including the bar, to reduce indicator seed effects.
 
-:data:`TA_CONTEXT_ROWS` makes the values exist; this makes them agree with what
-an unlimited history would produce, to within :data:`_EMA_SEED_TOLERANCE`.  The
-difference is not academic: at :data:`TA_CONTEXT_ROWS` the MACD histogram is
-still off by more than a standard deviation on some bars, which would hand the
-model a feature it was never trained on.
+:data:`TA_CONTEXT_ROWS` permits complete indicator values; this adds a decay
+margin derived from the slowest exponential recursions. Finite context remains
+an approximation to a full history, with no uniform output-error guarantee.
 """
 
 
