@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import signal
 import subprocess
+import sys
 import time
-from contextlib import suppress
-from tempfile import TemporaryFile
+from contextlib import contextmanager, suppress
+from pathlib import Path
+from tempfile import TemporaryFile, mkdtemp
 from typing import TYPE_CHECKING
 
 import psutil
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Generator, Iterable
     from typing import TextIO
 
 CLEANUP_UNVERIFIED_EXIT_CODE = 86
@@ -21,6 +25,59 @@ CLEANUP_UNVERIFIED_EXIT_CODE = 86
 
 class ProcessCleanupError(RuntimeError):
     """Subprocess cleanup could not be verified; retain affected workspaces."""
+
+    code = "process_cleanup_unverified"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retained_workspaces: Iterable[Path] = (),
+        interrupted: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.retained_workspaces = tuple(
+            dict.fromkeys(path.resolve() for path in retained_workspaces)
+        )
+        self.interrupted = interrupted
+
+    def retain(self, root: Path, label: str) -> None:
+        """Attach a workspace without replacing the original failure or cause."""
+        path = root.resolve()
+        if path not in self.retained_workspaces:
+            self.retained_workspaces += (path,)
+            self.args = (f"{self} {label} retained at {path}",)
+
+    def payload(self) -> dict[str, object]:
+        """Machine-readable CLI diagnostic; messages never control cleanup."""
+        return {
+            "code": self.code,
+            "retained_workspaces": [str(path) for path in self.retained_workspaces],
+            "interrupted": self.interrupted,
+            "message": str(self),
+        }
+
+
+def report_cleanup_failure(error: ProcessCleanupError) -> int:
+    """Emit one structured stderr event and the cleanup-specific exit status."""
+    print(json.dumps(error.payload(), ensure_ascii=False), file=sys.stderr)
+    return CLEANUP_UNVERIFIED_EXIT_CODE
+
+
+@contextmanager
+def process_workspace(*, prefix: str, label: str) -> Generator[Path]:
+    """Remove temporary files only when subprocess cleanup is verified."""
+    root = Path(mkdtemp(prefix=prefix))
+    retained = False
+    try:
+        yield root
+    except ProcessCleanupError as error:
+        retained = True
+        error.retain(root, label)
+        raise
+    finally:
+        if not retained:
+            shutil.rmtree(root)
 
 
 _GRACE_SECONDS = 5.0
@@ -168,14 +225,32 @@ def _run(
             terminate_tree(leader, known)
         except ProcessCleanupError as error:
             if failure is not None:
+                cleanup_failures = (
+                    (error, failure)
+                    if isinstance(failure, ProcessCleanupError)
+                    else (error,)
+                )
                 raise ProcessCleanupError(
-                    f"{type(failure).__name__}: {failure}; cleanup failed: {error}"
+                    f"{type(failure).__name__}: {failure}; cleanup failed: {error}",
+                    retained_workspaces=(
+                        root
+                        for cleanup in cleanup_failures
+                        for root in cleanup.retained_workspaces
+                    ),
+                    interrupted=isinstance(failure, KeyboardInterrupt)
+                    or any(cleanup.interrupted for cleanup in cleanup_failures),
                 ) from failure
             raise
         finally:
             if process.poll() is not None:
                 process.wait()
     if failure is not None:
+        if process.returncode == CLEANUP_UNVERIFIED_EXIT_CODE:
+            raise ProcessCleanupError(
+                f"{type(failure).__name__}: {failure}; "
+                "the child check reported unverified subprocess cleanup.",
+                interrupted=isinstance(failure, KeyboardInterrupt),
+            ) from failure
         raise failure
     assert process.returncode is not None
     return process.returncode

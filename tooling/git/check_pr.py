@@ -22,7 +22,11 @@ from tooling.git.candidates import (
     verify_candidate,
 )
 from tooling.git.pr_context import get_pull_request, remote_url
-from tooling.process_guard import run_captured
+from tooling.process_guard import (
+    ProcessCleanupError,
+    report_cleanup_failure,
+    run_captured,
+)
 from tooling.review_options import add_review_arguments, validate_review_options
 
 
@@ -35,6 +39,12 @@ def _remote_refs(source: str, base_ref: str, head_ref: str) -> tuple[str, str]:
             env=execution_environment(Path.cwd()),
             timeout=120,
         )
+    except ProcessCleanupError as error:
+        raise ProcessCleanupError(
+            "Remote ref verification subprocess cleanup is unverified.",
+            retained_workspaces=error.retained_workspaces,
+            interrupted=error.interrupted,
+        ) from error
     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
         # Git commands and their diagnostics can contain credential-bearing URLs.
         raise RuntimeError(
@@ -218,6 +228,8 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except ProcessCleanupError as exc:
+        raise SystemExit(report_cleanup_failure(exc)) from exc
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         print(f"PR checks failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

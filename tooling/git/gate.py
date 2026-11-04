@@ -22,6 +22,7 @@ from tooling.git.candidates import (
     verify_candidate,
 )
 from tooling.git.change_scope import ChangeScope, classify_changes
+from tooling.process_guard import ProcessCleanupError, report_cleanup_failure
 from tooling.review_options import add_review_arguments, validate_review_options
 
 
@@ -238,6 +239,8 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except ProcessCleanupError as error:
+        raise SystemExit(report_cleanup_failure(error)) from error
     except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         print(f"Git checks failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

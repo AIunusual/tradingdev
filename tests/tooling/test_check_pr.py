@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import psutil
 import pytest
-from tooling import presentations, review_docs, review_evidence
+from tooling import presentations, process_guard, review_docs, review_evidence
 from tooling.git import candidates, check_pr, gate
 from tooling.git.pr_context import PullRequest
 from tooling.process_guard import ProcessCleanupError, terminate_tree
@@ -100,18 +100,12 @@ def scenario(monkeypatch: MonkeyPatch) -> Iterator[Scenario]:
         monkeypatch.setattr(check_pr, "remote_url", lambda *_: str(source))
         temporary_paths: list[Path] = []
 
-        def directory(*, prefix: str) -> TemporaryDirectory[str]:
-            result = TemporaryDirectory(prefix=prefix, dir=root)
-            temporary_paths.append(Path(result.name))
-            return result
-
         def snapshot_directory(*, prefix: str) -> str:
             result = mkdtemp(prefix=prefix, dir=root)
             temporary_paths.append(Path(result))
             return result
 
-        monkeypatch.setattr(candidates, "TemporaryDirectory", directory)
-        monkeypatch.setattr(candidates, "mkdtemp", snapshot_directory)
+        monkeypatch.setattr(process_guard, "mkdtemp", snapshot_directory)
         yield Scenario(source, request, temporary_paths)
 
 
@@ -376,8 +370,8 @@ def _forbid_check_side_effects(monkeypatch: MonkeyPatch) -> None:
         candidates, "run", lambda *_, **__: pytest.fail("Review called")
     )
     monkeypatch.setattr(
-        candidates,
-        "TemporaryDirectory",
+        process_guard,
+        "mkdtemp",
         lambda **_: pytest.fail("Temporary files created"),
     )
 
@@ -1539,3 +1533,115 @@ raise SystemExit(presentations.main())
             if retained.exists():
                 shutil.rmtree(retained)
     _assert_cleaned(scenario)
+
+
+@pytest.mark.parametrize("during_setup", [False, True])
+def test_merge_candidate_retains_partial_or_ready_repository_on_cleanup_failure(
+    scenario: Scenario, monkeypatch: MonkeyPatch, during_setup: bool
+) -> None:
+    before = _source_state(scenario.source)
+    if during_setup:
+
+        def unverified(*args: Any, **kwargs: Any) -> None:
+            (kwargs["cwd"] / "diagnostic.txt").write_text("cleanup unverified")
+            raise ProcessCleanupError("injected setup cleanup failure")
+
+        monkeypatch.setattr(candidates, "run_captured", unverified)
+    try:
+        with (
+            pytest.raises(
+                ProcessCleanupError, match="Merge candidate retained at"
+            ) as error,
+            candidates.merge_candidate(
+                str(scenario.source), "refs/heads/main", "refs/pull/7/head"
+            ) as candidate,
+        ):
+            (candidate.repository / "diagnostic.txt").write_text("cleanup unverified")
+            raise ProcessCleanupError("injected check cleanup failure")
+        assert len(scenario.temporary_paths) == 1
+        root = scenario.temporary_paths[0]
+        assert error.value.retained_workspaces == (root.resolve(),)
+        assert (root / "diagnostic.txt").read_text() == "cleanup unverified"
+        assert _source_state(scenario.source) == before
+    finally:
+        # The injected failure starts no process; real Git commands have returned
+        # through the supervised runner before the body failure is raised.
+        for root in scenario.temporary_paths:
+            if root.exists():
+                shutil.rmtree(root)
+    _assert_cleaned(scenario)
+
+
+def test_documentation_cli_cleanup_failure_retains_outer_candidate(
+    scenario: Scenario,
+    capfd: CaptureFixture[str],
+) -> None:
+    code = """\
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from tooling import review_docs
+from tooling.process_guard import ProcessCleanupError
+candidate = Path.cwd()
+plan = SimpleNamespace(prompts=('evidence',), verify=lambda: None, manifest={
+    'plan_hash': 'test', 'path_owners': {}, 'selected_scopes': ['tooling'],
+    'evidence_utf8_bytes': 8, 'total_prompt_utf8_bytes': 8})
+review_docs.prepare_review = lambda *args, **kwargs: plan
+def unverified(root, *args, **kwargs):
+    (candidate / 'review-path').write_text(str(root))
+    (root / 'diagnostic.txt').write_text('unverified; no reviewer launched')
+    raise ProcessCleanupError('injected cleanup failure')
+review_docs._run = unverified
+sys.argv = ['review_docs', '--base', 'base', '--tree', 'tree']
+raise SystemExit(review_docs.main())
+"""
+    try:
+        with (
+            pytest.raises(ProcessCleanupError, match="Merge candidate retained at"),
+            candidates.merge_candidate(
+                str(scenario.source), "refs/heads/main", "refs/pull/7/head"
+            ) as candidate,
+        ):
+            process_guard.run_checked(
+                [sys.executable, "-c", code],
+                cwd=candidate.repository,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": str(
+                        Path(review_docs.__file__).resolve().parent.parent
+                    ),
+                },
+                timeout=10,
+            )
+        root = scenario.temporary_paths[0]
+        review_root = Path((root / "review-path").read_text())
+        event = json.loads(capfd.readouterr().err)
+        assert event["code"] == "process_cleanup_unverified"
+        assert event["retained_workspaces"] == [str(review_root.resolve())]
+        assert (
+            review_root / "diagnostic.txt"
+        ).read_text() == "unverified; no reviewer launched"
+    finally:
+        # The real review CLI has stopped and its descendants were verified by
+        # run_checked. Only its injected cleanup status deliberately fails.
+        for root in scenario.temporary_paths:
+            marker = root / "review-path"
+            if marker.exists():
+                review_root = Path(marker.read_text())
+                if review_root.exists():
+                    shutil.rmtree(review_root)
+            if root.exists():
+                shutil.rmtree(root)
+    _assert_cleaned(scenario)
+
+
+def test_remote_ref_cleanup_failure_keeps_type_without_exposing_credentials(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def unverified(*args: Any, **kwargs: Any) -> None:
+        raise ProcessCleanupError("https://secret@github.com/repository")
+
+    monkeypatch.setattr(check_pr, "run_captured", unverified)
+    with pytest.raises(ProcessCleanupError, match="cleanup is unverified") as error:
+        check_pr._remote_refs("unused", "refs/heads/main", "refs/pull/7/head")
+    assert "secret" not in str(error.value)
