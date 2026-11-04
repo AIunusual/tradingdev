@@ -397,6 +397,13 @@ def _reject_unsupported_sample_claims(text: str) -> None:
     conditional = re.compile(
         r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
     )
+    # Accept the contract's same-data condition, not an exclusive claim such as
+    # "only this research can be called out-of-sample".
+    same_data_condition = re.compile(
+        r"(?=[^，,。；;]*訓練)(?=[^，,。；;]*評估)"
+        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*時"
+        r"(?:才(?:可|能)(?:判(?:定)?|認定|視)?)?$"
+    )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
     for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
         for match in claim.finditer(sentence):
@@ -405,6 +412,7 @@ def _reject_unsupported_sample_claims(text: str) -> None:
             if (
                 uncertain.search(before)
                 or conditional.search(before)
+                or same_data_condition.search(before)
                 or unknown_after.search(after)
             ):
                 continue
