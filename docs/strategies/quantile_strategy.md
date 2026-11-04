@@ -49,8 +49,14 @@ Warm-up or unavailable features produce a flat signal and reset the position,
 even before the minimum holding period. When features return, a new entry must
 pass the entry conditions again. Indicator gaps can also make subsequent bars
 unavailable, so missing data may cause extra exits or periods without exposure.
-See the [scoring contract](../strategy_contract.md#training-before-scoring) for
-the alignment and state-handling requirements.
+The state machine processes every source row across feature gaps and chunks,
+resetting holding count, entry price and size weight on an unscorable bar. Parameter
+search uses the same full-frame gap handling. Scoring features omit targets, so
+an unavailable future label does not suppress a usable tail prediction.
+
+For chronology, empty-frame handling and the developer contracts for feature
+alignment and model output, read the
+[training contract](../strategy_contract.md#training-before-scoring).
 
 ## Running
 

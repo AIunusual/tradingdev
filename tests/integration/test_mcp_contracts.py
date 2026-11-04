@@ -226,7 +226,7 @@ async def test_application_errors_follow_advertised_output_schemas(
             ),
             (
                 "compare_runs",
-                {"run_ids": ["missing_a", "missing_b"]},
+                {"selections": [{"run_id": "missing_a"}, {"run_id": "missing_b"}]},
                 "success",
                 False,
             ),

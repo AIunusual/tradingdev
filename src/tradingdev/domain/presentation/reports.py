@@ -137,7 +137,7 @@ def report_navigation_instructions(
     )
     if has_results or comparison:
         return ml_navigation + " " + run_navigation
-    return ml_navigation + " 所有內容保存在同一份離線 HTML。"
+    return ml_navigation + " 每份報告均可由各自的離線 HTML 獨立閱讀。"
 
 
 def _run_navigation_instructions(

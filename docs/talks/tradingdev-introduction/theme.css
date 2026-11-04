@@ -89,6 +89,14 @@ section.chapter header, section.closing header { color: #b7cfcc; }
 section.chapter h2, section.closing h2 { font-size: 58px; max-width: 1000px; }
 section.chapter p, section.closing p { font-size: 34px; max-width: 1030px; }
 section.statement blockquote { font-size: 42px; line-height: 1.5; }
+section.subsection h2::before {
+  content: '';
+  display: block;
+  width: 72px;
+  height: 4px;
+  margin-bottom: 20px;
+  background: #087f79;
+}
 section.compact { font-size: 27px; }
 section.compact table { font-size: 23px; }
 section.compact table th, section.compact table td { padding: 13px 16px; }

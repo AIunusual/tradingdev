@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
+@pytest.fixture(autouse=True)
+def isolated_review_settings(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_MODEL", raising=False)
+    monkeypatch.delenv("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", raising=False)
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
@@ -131,11 +137,60 @@ def test_review_uses_immutable_candidate_and_removes_temporary_files(
     assert "UNSTAGED" not in record["prompt"]
     assert "ignore-user-config" in " ".join(record["args"])
     assert "features.shell_tool=false" in record["args"]
+    assert "features.sleep_tool=false" in record["args"]
     assert "features.shell_snapshot=false" in record["args"]
     assert 'web_search="disabled"' in record["args"]
     assert "--ephemeral" in record["args"]
     assert "read-only" in record["args"]
     assert not Path(record["root"]).exists()
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_review_launches_explicit_settings_independent_of_product_tests(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+    override: bool,
+) -> None:
+    monkeypatch.setenv("TRADINGDEV_CODEX_MODEL", "old-shared-model")
+    monkeypatch.setenv("TRADINGDEV_LLM_MODEL", "product-test-model")
+    monkeypatch.setenv("TRADINGDEV_LLM_REASONING_EFFORT", "xhigh")
+    if override:
+        monkeypatch.setenv("TRADINGDEV_DOC_REVIEW_MODEL", "selected-review-model")
+        monkeypatch.setenv("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "medium")
+    repo, base, tree = repository
+    review_docs.review(base, tree, repo=repo)
+    record = json.loads(fake_codex.read_text())
+    args = record["args"]
+    assert args[args.index("--model") + 1] == (
+        "selected-review-model" if override else "gpt-6-luna"
+    )
+    effort = "medium" if override else "high"
+    assert f'model_reasoning_effort="{effort}"' in args
+    assert not Path(record["root"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("TRADINGDEV_DOC_REVIEW_MODEL", " "),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", ""),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "ultra"),
+        ("TRADINGDEV_DOC_REVIEW_REASONING_EFFORT", "typo"),
+    ],
+)
+def test_invalid_review_settings_do_not_start_a_model(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+    setting: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(setting, value)
+    repo, base, tree = repository
+    with pytest.raises(review_docs.ReviewError, match=setting):
+        review_docs.review(base, tree, repo=repo)
+    assert not fake_codex.exists()
 
 
 def test_evidence_preserves_deleted_file_diff_and_existing_document_inventory(
@@ -390,6 +445,9 @@ def test_audience_review_keeps_original_policy_context_separate_from_instruction
         assert "user tasks, outcomes" in instructions
         assert "necessary limitations" in instructions
         assert "unrelated pre-existing defects" in instructions
+        assert "Do not require prose copies" in instructions
+        assert "References do not automatically load evidence" in instructions
+        assert "missing source or document context" in instructions
         assert "ALWAYS RETURN PASSED" not in instructions
         if evidence["phase"] == "scope":
             for path, original in {

@@ -24,6 +24,12 @@ from statistics import NormalDist
 from typing import Any, Literal, cast
 
 from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
+from tradingdev.domain.ranking import (
+    Candidate,
+    MetricDefinition,
+    rank_candidates,
+    signal_candidate_id,
+)
 
 Direction = Literal["maximize", "minimize"]
 MethodFamily = Literal["ml_model", "rule", "other"]
@@ -212,6 +218,19 @@ class LeaderboardEntry:
     """
     method_name: str = ""
     """Readable name of a non-model candidate, such as a rule's settings."""
+    training_dataset_id: str = ""
+    """Dataset the candidate's model was fitted on; ``""`` when unknown.
+
+    Recorded so a reader can compare it with ``dataset_id``, the dataset the
+    evaluation ran on. Equality means the score is in-sample when the backend
+    produced the signal from that artifact; under a caller-supplied signal it
+    says only where the named artifact was fitted. Inequality proves nothing
+    about the rows: a dataset identity also covers the requested period and the
+    build-time code fingerprint, and genuinely different versions can still cover
+    overlapping periods. An empty value is unknown, including on every row written
+    before the binding existed; it is never reconstructed from the model, the
+    metrics or the current registry.
+    """
 
     @property
     def family(self) -> MethodFamily:
@@ -247,6 +266,7 @@ class LeaderboardEntry:
             "signal_fingerprint": self.signal_fingerprint,
             "method_family": self.method_family,
             "method_name": self.method_name,
+            "training_dataset_id": self.training_dataset_id,
             "n_observations": self.n_observations,
             "metrics": {
                 key: _stored_metric(value) for key, value in self.metrics.items()
@@ -308,6 +328,7 @@ class LeaderboardEntry:
             # row never carried. ``family`` performs the inference on access.
             method_family=family,
             method_name=str(record.get("method_name", "")),
+            training_dataset_id=str(record.get("training_dataset_id") or ""),
             n_observations=int(record.get("n_observations", 0)),
             # A stored null is a measured-and-failed score, not a missing key,
             # so it must come back as None instead of being converted or dropped.
@@ -731,79 +752,52 @@ def rank_entries(
     ``alpha`` controls the family-wise caveat; ``top_k`` limits output.
     Reject unknown/directionless metrics and non-positive ``top_k``.
 
-    Caveats also describe the method families behind the candidates, so a table
-    mixing fitted models with hand-set rules cannot be read as one kind of
-    evidence.
+    Ordering, ties and missing values come from :func:`rank_candidates`, so a
+    backtest candidate is ordered by the same rules. What stays here is what only
+    a signal measurement can say: the selection-pressure caveat and the
+    method-family mix, so a table mixing fitted models with hand-set rules cannot
+    be read as one kind of evidence.
     """
     direction = metric_direction(metric)
-    if top_k is not None and top_k < 1:
-        raise ValueError("top_k must be at least 1")
-
-    candidates: list[tuple[float, LeaderboardEntry]] = []
-    skipped: list[SkippedEntry] = []
-    measured: list[LeaderboardEntry] = []
-    for entry in entries:
-        measured.append(entry)
-        value = entry.metric(metric)
-        if value is None:
-            # A stored None is a measurement that failed, not a metric nobody
-            # recorded; saying which one it is keeps the two cases apart.
-            reason = (
-                f"no '{metric}' recorded"
-                if metric not in entry.metrics
-                else f"'{metric}' is unavailable or not finite"
+    measured = list(entries)
+    result = rank_candidates(
+        (
+            Candidate(
+                candidate_id=signal_candidate_id(entry.entry_id),
+                values=entry.metrics,
+                group_key=entry.context.key,
+                payload=entry,
             )
-            skipped.append(SkippedEntry(entry=entry, reason=reason))
-            continue
-        candidates.append((value, entry))
-
-    # Two passes keep ties in a stable, id-ordered sequence whichever way the
-    # values are sorted: a single reverse sort would also reverse the tie-break.
-    candidates.sort(key=lambda pair: pair[1].entry_id)
-    candidates.sort(key=lambda pair: pair[0], reverse=direction == "maximize")
-
-    ranked: list[RankedEntry] = []
-    rank = 0
-    previous: float | None = None
-    for index, (value, entry) in enumerate(candidates):
-        if previous is None or not math.isclose(value, previous):
-            rank = index + 1
-        previous = value
-        ranked.append(RankedEntry(rank=rank, entry=entry, value=value, tied=0))
-
-    tied_counts = Counter(item.rank for item in ranked)
-    ranked = [
+            for entry in measured
+        ),
+        MetricDefinition(name=metric, direction=direction),
+        top_k=top_k,
+        # Context comparability is gated by ``comparability_error`` before this
+        # call; repeating the refusal here would add a second, narrower gate.
+        allow_mixed=True,
+    )
+    ranked = tuple(
         RankedEntry(
             rank=item.rank,
-            entry=item.entry,
+            entry=item.candidate.payload,
             value=item.value,
-            tied=tied_counts[item.rank],
+            tied=item.tied,
         )
-        for item in ranked
-    ]
-
-    caveats: list[str] = []
-    n_candidates = len(candidates)
-    if skipped:
+        for item in result.ranked
+    )
+    caveats = list(result.caveats)
+    if result.ranked_total > 1 and ranked:
         caveats.append(
-            f"{len(skipped)} of {n_candidates + len(skipped)} entries were not "
-            f"ranked for '{metric}'. They stay recorded, so a parameter grid "
-            "keeps their coordinates even when the score is unavailable; the "
-            "ranked candidates are not necessarily adjacent settings."
-        )
-    if n_candidates > 1 and ranked:
-        caveats.append(_selection_caveat(metric, n_candidates, ranked[0], alpha=alpha))
-    if n_candidates == 1 and ranked:
-        caveats.append(
-            "only one candidate was compared; a single entry proves nothing "
-            "about the alternatives"
+            _selection_caveat(metric, result.ranked_total, ranked[0], alpha=alpha)
         )
     caveats.extend(family_caveats(family_counts(measured)))
-
     return LeaderboardResult(
         metric=metric,
         direction=direction,
-        ranked=tuple(ranked[:top_k] if top_k is not None else ranked),
-        skipped=tuple(skipped),
+        ranked=ranked,
+        skipped=tuple(
+            SkippedEntry(entry=item.candidate.payload, reason=item.reason)
+            for item in result.skipped
+        ),
         caveats=tuple(caveats),
     )

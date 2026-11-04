@@ -414,17 +414,21 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
                 and call.arguments.get("run_id") == run_id
             ),
         )
-    catalog_index = require_index(
-        "get_metric_catalog returning the additional metrics",
-        (
-            index
-            for index, call in enumerate(calls)
-            if call.name == "get_metric_catalog"
-            and call.result
-            and call.result.get("success") is True
-            and {definition["id"] for definition in call.result["definitions"]}
-            >= DETAIL_METRIC_IDS
-        ),
+    catalog_indices = [
+        index
+        for index, call in enumerate(calls)
+        if call.name == "get_metric_catalog"
+        and call.result.get("success") is True
+        and {definition["id"] for definition in call.result["definitions"]}
+        >= DETAIL_METRIC_IDS
+    ]
+    catalog_index = (
+        done_index
+        if scenario.runtime_exit
+        else require_index(
+            "get_metric_catalog returning the additional metrics",
+            iter(catalog_indices),
+        )
     )
     detail_index = require_index(
         f"get_run_metrics(run_id={run_id!r}) returning the requested extra metrics",
@@ -445,6 +449,12 @@ def assert_workflow(calls: list[ToolCall], scenario: Scenario) -> None:
         ),
     )
     assert calls[detail_index].result["scope"] == "full"
+    if scenario.runtime_exit:
+        assert (
+            any(index < detail_index for index in catalog_indices)
+            or set(calls[detail_index].result.get("definitions", {}))
+            >= DETAIL_METRIC_IDS
+        ), "Requested metrics must include their definitions"
     summary = queried.result["run"]
     assert set(summary["available_metric_ids"]) >= DETAIL_METRIC_IDS
     assert DETAIL_METRIC_IDS.isdisjoint(summary["metrics"])
@@ -565,6 +575,7 @@ def test_llm_authors_backtests_and_queries_results(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
             }
             if scenario.runtime_exit:
                 async with workspace.connect() as client:
@@ -589,7 +600,6 @@ def test_llm_authors_backtests_and_queries_results(
                         scenario.prompt,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         user_reply=user,
                         **options,
                     )

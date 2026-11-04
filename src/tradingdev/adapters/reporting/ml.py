@@ -57,6 +57,7 @@ _CONTEXT_LABELS = {
     "method_name": "方法名稱",
     "model_id": "模型識別碼",
     "dataset_id": "資料集識別碼",
+    "training_dataset_id": "訓練資料集",
     "signal_fingerprint": "訊號指紋",
     "symbol": "標的",
     "timeframe": "K 棒時間頻率",
@@ -267,13 +268,24 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
     candidates = []
     for index, scope in enumerate(block["scopes"]):
         metadata = scope["metadata"]
+        context_rows: dict[str, Any] = {
+            label: metadata.get(key) for key, label in _CONTEXT_LABELS.items()
+        }
+        if not context_rows.get("訓練資料集"):
+            # Only a declared rule establishes a method without model fitting.
+            # An undeclared signal could have come from an external fitted model.
+            family = metadata.get("method_family")
+            if family == "rule":
+                context_rows["訓練資料集"] = "不適用（無訓練模型）"
+            elif family == "ml_model":
+                context_rows["訓練資料集"] = "未知（此紀錄未保存）"
+            else:
+                context_rows["訓練資料集"] = "未知（未宣告訊號來源）"
         candidates.append(
             f"<details class='ml-candidate' id='ml-candidate-{index}'><summary>"
             + escape(metadata["label"] or scope["scope_id"])
             + f" · Entry ID {escape(scope['scope_id'])}</summary>"
-            + _pairs(
-                {label: metadata.get(key) for key, label in _CONTEXT_LABELS.items()}
-            )
+            + _pairs(context_rows)
             + "<h4>候選參數</h4>"
             + (
                 _pairs(scope["parameters"])

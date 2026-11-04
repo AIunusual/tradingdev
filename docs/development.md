@@ -49,11 +49,24 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 
 ### 依賴相容性限制
 
-本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；FLAML 2.7 的
-[上游宣告](https://github.com/microsoft/FLAML/blob/v2.7.0/README.md)仍有限制，
-可安裝不代表所有上游功能均支援。修改 ML 依賴時須保留各 learner 的實際訓練與
+本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
+功能均已驗證。修改 ML 依賴時須保留各 learner 的實際訓練與
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
+
+### 容器建置與驗證
+
+[Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
+`uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
+ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
+映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+
+容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
+並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
+以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
+結束後先停止並移除該 project 容器，再清理測試資料與專用映像／建置快取；
+不要清理共用 Docker 資源。未實測的 CPU 架構與 NAS 平台須明列限制。
+使用者部署、設定與備份操作統一見 [README](../README.md#使用-docker-部署)。
 
 ## 測試設計與精簡
 
@@ -104,13 +117,25 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
 
-行為改變時同步更新受影響的契約與操作說明。實作或測試案例調整而工具職責未變時，
-通常不需要擴寫本指南。刪減內容前確認仍保留必要操作、資料保存與安全限制。
+依 [文件政策](../AGENTS.md#政策與溝通) 判斷本次變更是否改變使用方式、對外語意、
+資料保存／讀取、相容性或安全邊界。修正受影響的敘述；既有說明仍正確且足夠時，
+不因實作或測試調整再追加段落。契約保留行為與限制，schema、catalog、常數與
+正式 model 負責可機械取得的定義，不逐欄複製到 Markdown。
+
+整理契約時先找主要維護來源，合併重複敘述，再提供按需入口。參照應包含「何時讀、
+檔案與類別／函式或工具、可取得的資訊」，例如設定欄位查 `BacktestRunConfig`，
+MCP 使用端則取得 `get_strategy_contract(section="configuration")`。讀者需要的
+範例、重要語意及失敗處理仍保留；新增小文件不是精簡的必要步驟。
 
 新增、改名或拆分契約時，同步檢查 [review_scope.py](../tooling/review_scope.py) 的責任選取
 及 [test_review_scope.py](../tests/tooling/test_review_scope.py) 的證據涵蓋。新文件會自動納入
 審查，但未知章節保守保留，拆檔本身不代表減少上下文。量測應分開報告文件閱讀量、
 審查輸入與產品 MCP；不把 bytes 當成 tokens。
+
+PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未包含在原始證據中，
+以 `--review-context-for SCOPE:PATH` 補入同一候選 Git 版本的完整檔案；跨範圍問題
+使用 `cross_scope`。參照本身不證明內容正確，也不會自動載入來源；必要內容缺失時
+依 finding 補齊證據後重查，不為通過審查把 schema 重抄回文件。
 
 一般文件只走文件檢查；已登錄簡報走簡報專項；開發政策與已登錄開發工具走工具
 檢查，其餘程式／依賴或未知變更走完整檢查。分類規則見
@@ -167,6 +192,37 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 
 開啟終端機顯示的網址；結束按 `Ctrl+C`。此入口不下載行情。
 
+## 研究成果工程回饋
+
+需要把策略案例中的共通邏輯、檢查或方法整合回專案時，使用
+[research-feedback skill](../.agents/skills/research-feedback/SKILL.md)。它提供來源固定、
+共用價值判斷、元件整合、使用端探索與驗證的工作流程；Git、審查及授權政策仍由
+[AGENTS.md](../AGENTS.md) 管理。單純建立策略或查看回測不需要此 skill。
+
+在能存取 repository 與來源 workspace 的開發助手中呼叫 `$research-feedback`；
+若客戶端未發現 repository skills，明確要求讀取上述 `SKILL.md` 再執行。
+只有 MCP 工具存取權的客戶端無法藉此修改 server 程式，也不假設客戶端能讀 server
+本機路徑。提供實際可讀取的來源，例如：
+
+> 使用 $research-feedback，讀取 `/absolute/workspace-a` 的策略與指定版本，及
+> `/absolute/workspace-b` 的另一個策略與指定版本。這些來源允許用於共用元件開發；
+> 僅分享抽取後的邏輯與去識別化合成測資，保留私人策略、行情與原始報告。
+> 請判斷是否有值得重用的機制，若有則在本專案完成整合、使用入口與驗證。
+
+先提供策略 ID、選定 revision（或明示採目前版本）、實際授權範圍，以及相關 run／
+筆記（若有）；不必為了使用 skill 重跑研究。只有評估需求時可以明示「唯讀分析，
+不修改」。已有授權不重複確認，
+缺少來源或可共用範圍時補齊後才處理相依工作。若沒有合適的抽取候選，回報理由與
+證據即可，不為交付而新增元件。
+
+原 workspace 的 revision、設定、驗證證據、結果與筆記保持唯讀。要驗證新的使用方式，
+在隔離工作區建立新策略版本；匯入的共用程式不受舊 revision 雜湊完整凍結，須記錄
+實作版本並驗證受影響使用端。需要使用者續查的驗收成果須保留，不能當測試暫存清理。
+
+這是由人啟動、開發助手執行的流程，不會在每次策略保存時自動運行，也不會自行
+掃描其他 workspace、分享私人研究或發布更新。效果以實際抽取、使用端採用及驗證
+證據判斷；合成案例只能驗證流程，不能證明真實多人研究的改善成效。
+
 ## 選擇性 LLM 測試
 
 此工具驗證模型透過真實 MCP 完成策略研究互動及成果交付。修改模型可見的指引、
@@ -176,7 +232,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 [tests/e2e/](../tests/e2e/)，provider 選項定義於 [tests/llm_plugin.py](../tests/llm_plugin.py)。
 
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol --llm-timeout 1800
+./scripts/check-llm.sh codex --llm-timeout 1800
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-timeout 1800
 ```
 
@@ -184,16 +240,23 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
-Codex 測試固定使用 `xhigh` 推理強度，並在啟動模型回合前核對及記錄實際值；
-所選模型須支援此強度。這些情境驗證單一客戶端透過 MCP 操作，不繼承宿主的
-Ultra 自動委派模式，也不允許子代理或其他原生工具代做。設定僅適用於測試程序，
-不修改使用者的全域 Codex 設定。
+Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
+`--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
+`TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
+啟動模型回合前核對及記錄實際模型與推理強度，所選能力不可用或不符即失敗。
+推理強度的可接受值由 [provider 選項](../tests/llm_plugin.py) 的
+`CODEX_REASONING_EFFORTS` 定義；不支援會自動委派的 Ultra。
+這些情境驗證單一客戶端透過 MCP 操作，不允許子代理或其他原生工具代做，
+也不修改使用者的全域 Codex 設定。
+
+此處指定的是受測模型。驗證某個模型的相容性時，明確指定該模型與推理強度；
+其他模型的結果不能代替。此測試不執行程式碼審查或 PR 文件一致性審查。
 
 以 `-k` 選取相關情境，省略時執行全部。可先列出目前可用情境，不呼叫模型：
 
 ```bash
 ./scripts/check-llm.sh codex --collect-only -q
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol -k novice --llm-timeout 1800
+./scripts/check-llm.sh codex -k novice --llm-timeout 1800
 ```
 
 依變更責任選擇與維護測試：
@@ -204,7 +267,7 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
 | 執行計畫、使用者決策與訓練指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
-| 固定參數比較與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
+| 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
@@ -216,9 +279,9 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 
 `--llm-timeout` 是每個情境的期限。長流程需要足夠上下文；已驗證的本地 Qwen 配置
 為 64K，但不代表所有模型的最低需求。容量不足須調整服務配置後重跑完整情境。
-Ollama 設定方式見[官方說明](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)。
 Local 可用 `--llm-temperature`、`--llm-reasoning-effort` 覆寫支援的採樣設定；
-這些選項不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
+未指定時使用本地服務預設，不讀取 Codex 測試的專用環境變數。
+`--llm-temperature` 不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
 
 ### 量測模型上下文
 
@@ -242,6 +305,12 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 
 依 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 安排獨立唯讀 reviewer，提供任務目的、
 基準／受查版本、差異範圍與相關契約。保持受查內容穩定，核實 findings、修正後複查。
+使用 CLI 時明確指定 review 模型及推理強度；以下範例使用 `gpt-6.1-sol` 與 `high`：
+
+```bash
+codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
+  review --base origin/main
+```
 
 | 命令 | 適用範圍 |
 | --- | --- |
@@ -310,16 +379,19 @@ PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分�
 開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
 
 真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
-這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
-`TRADINGDEV_CODEX_MODEL` 指定，例如：
+這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
+`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
 
 ```bash
-TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 ```
 
 文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
-上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
+設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
+舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
+PR 文件審查每次只使用選定模型與推理強度；執行失敗直接回報，不自動切換模型。
 審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 

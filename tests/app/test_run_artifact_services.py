@@ -67,7 +67,7 @@ def test_run_service_compare_and_artifact_lookup(tmp_path: Path) -> None:
     runs = RunService(workspace=workspace, store=store)
     artifacts = ArtifactService(workspace=workspace, store=store)
 
-    comparison = runs.compare_runs(["run_a", "run_b"])
+    comparison = runs.compare_runs([("run_a", None), ("run_b", None)])
     assert comparison["success"] is True
     assert comparison["runs"][0]["metrics"]["total_return"] == 0.1
     artifact = artifacts.get_artifact("run_a:result_json", include_content=True)

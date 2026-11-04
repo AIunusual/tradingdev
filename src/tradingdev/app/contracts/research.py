@@ -124,6 +124,13 @@ class MetricCompatibility(ContractModel):
     reasons: list[str]
 
 
+class RunScopeSelection(ContractModel):
+    """One saved scope selected for comparison; a null scope means its default."""
+
+    run_id: str
+    scope: str | None = None
+
+
 class RunComparison(MetricDiscovery):
     """Selected recorded metrics, with their context and provenance."""
 
@@ -133,6 +140,7 @@ class RunComparison(MetricDiscovery):
     kind: Literal["backtest", "fold_summary"] | None
     mode: Literal["signal", "volume"] | None
     split: Literal["full", "train", "test"] | None
+    metric_source: Literal["bundle", "legacy_summary"]
     metrics: dict[str, JsonValue]
     display_metrics: MetricDisplayValues
     metadata: dict[str, JsonValue]

@@ -254,6 +254,9 @@ def verify_ml_report_outcome(
             # family, not the stored field, which is empty on older rows.
             "method_family": entry.family,
             "method_name": entry.method_name,
+            # The dataset the model was trained on, so a reader can tell an
+            # in-sample score from a held-out one. Empty means unknown.
+            "training_dataset_id": entry.training_dataset_id,
         }, "Saved context snapshot changed"
         assert scope["observations"] is None
         assert scope["kind"] == "ml_signal" and scope["mode"] == "signal"
@@ -340,7 +343,11 @@ def _verify_interpretation(text: str) -> None:
         re.IGNORECASE,
     )
     sentences = re.split(r"[。！？!?；;\n]|\.(?=\s|$)", visible)
-    assert re.search(r"回測|backtest", visible, re.IGNORECASE) and any(
+    outcome_terms = re.compile(
+        r"回測|獲利|損益|收益|報酬|\b(?:backtests?|profit\w*|returns?|pnl)\b",
+        re.IGNORECASE,
+    )
+    assert outcome_terms.search(visible) and any(
         cost_terms.search(sentence) and limitation_terms.search(sentence)
         for sentence in sentences
     ), "Final reply must discuss signal evidence and cost-aware backtest limits"
@@ -402,8 +409,14 @@ _REPEAT_MARKER = re.compile(
     r"亦然|亦同|皆然|均然|亦如此|亦是如此|也是如此|同樣如此|亦如是|"
     r"同樣適用|也適用於|亦適用於|也一樣|也不例外|正是如此|也成立|亦復如此"
 )
-_UNAVAILABLE_PREDICATE = re.compile(
-    r"不可用|缺|未知|不明|無法|沒有|未|不足|尚待|待確認|不確定|是否"
+_UNAVAILABLE_SCORE = re.compile(
+    r"(?:分數|指標|相關性|IC)[^，,。；;]*"
+    r"(?:不可用|缺值|缺失|未提供|未取得|未知|不明|尚待確認)"
+)
+_UNCERTAIN_RESTATEMENT = re.compile(r"是否|不確定|無法(?:確認|判定)|尚待(?:確認|驗證)")
+_CONCESSIVE_PREFIX = re.compile(r"雖(?:然)?|儘管|即使")
+_FOLLOW_UP_ACTION = re.compile(
+    r"\s*(?:仍)?(?:需要|須|需|要)(?:先)?(?:確認|核對|補查|查明)"
 )
 
 
@@ -467,9 +480,11 @@ def _repeats_definition_for_saved_rows(remainder: str, following: list[str]) -> 
     "在訓練資料上做的評估是樣本內；候選結果亦然。" and its same-clause form
     "…，這也適用於本次兩個候選" label the candidate through an anaphor, so the
     definition must not excuse them. The first part that names the saved rows
-    decides: with an anaphor it is a restatement unless that part already stated
-    an unavailability before the anaphor ("視窗 24 的分數不可用，視窗 12 亦然").
-    Parts that never name the rows — a score, a next step — are ordinary prose.
+    decides: an anaphor is a restatement unless it asks about the relationship,
+    refers to an unavailable score ("視窗 24 的分數不可用，視窗 12 亦然"), or
+    modifies a follow-up action ("兩個候選也一樣需要確認切分證據"). Merely
+    lacking split evidence does not excuse an affirmative restatement, including
+    concessions such as "雖然無法確認切分證據，同樣如此".
     """
     for candidate in (remainder, *following):
         if not _SAVED_ROW_REFERENCE.search(candidate):
@@ -477,7 +492,16 @@ def _repeats_definition_for_saved_rows(remainder: str, following: list[str]) -> 
         marker = _REPEAT_MARKER.search(candidate)
         if marker is None:
             return False
-        return not _UNAVAILABLE_PREDICATE.search(candidate[: marker.start()])
+        before = candidate[: marker.start()]
+        after = candidate[marker.end() :]
+        return not (
+            (
+                _UNCERTAIN_RESTATEMENT.search(before)
+                and not _CONCESSIVE_PREFIX.search(before)
+            )
+            or _UNAVAILABLE_SCORE.search(before)
+            or _FOLLOW_UP_ACTION.match(after)
+        )
     return False
 
 
@@ -495,6 +519,19 @@ def _reject_unsupported_sample_claims(text: str) -> None:
     conditional = re.compile(
         r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
     )
+    # Only exempt an explicitly general contract condition. Claims that this
+    # research satisfies it still need evidence, even when phrased with "only".
+    general_rule = re.compile(r"一般而言|一般判讀原則|契約的一般規則|(?:依|根據)契約")
+    asserted_case = re.compile(
+        r"本(?:研究|次|候選)|這(?:份|些)|因為|由於|既然|已(?:確認|證實)"
+    )
+    same_data_condition = re.compile(
+        r"(?=[^，,。；;]*(?:訓練|\btraining_dataset_id\b))"
+        r"(?=[^，,。；;]*(?:評估|\bdataset_id\b))"
+        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*"
+        r"(?:(?:時(?:才(?:可|能))?|才(?:可|能))(?:據此)?|[，,]\s*可(?:以)?)"
+        r"(?:判(?:定)?|認定|視|確認)?(?:此評分|該評估)?$"
+    )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
     clauses = re.split(r"[。！？!?；;\n]|但|然而|不過", text)
     for index, clause in enumerate(clauses):
@@ -507,7 +544,12 @@ def _reject_unsupported_sample_claims(text: str) -> None:
                 or unknown_after.search(after)
             ):
                 continue
-            if _states_training_data_definition(before, match):
+            if _states_training_data_definition(before, match) or (
+                _IN_SAMPLE_DEFINITION.fullmatch(match.group())
+                and general_rule.search(before)
+                and not asserted_case.search(before)
+                and same_data_condition.search(before)
+            ):
                 if _repeats_definition_for_saved_rows(
                     clause[match.end() :], clauses[index + 1 :]
                 ):
