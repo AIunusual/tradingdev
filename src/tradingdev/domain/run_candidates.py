@@ -41,9 +41,9 @@ Different instruments, frequencies, periods and costs do not make two backtests
 incomparable: they make the comparison conditional, and the conditions travel with
 each candidate so a reader can see them. A source-qualified metric id guarantees
 only that both sides were asked for the same catalogued metric. Each run's saved
-definition snapshot records a provider name but no package version, and neither that
-snapshot nor the versions a scope records in its metadata are compared, so a
-historical run can still be ranked beside one measured under a newer definition.
+definition snapshot is checked by the service against the current catalogue.
+Provider versions and measurement settings remain in each scope's metadata;
+matching definitions do not establish identical measurement conditions.
 """
 
 
@@ -72,6 +72,7 @@ class RunCandidate:
     strategy_id: str
     revision_id: str
     parameters: Mapping[str, Any]
+    metadata: Mapping[str, Any]
     conditions: TradingConditions
     metric_source: MetricSource
 
@@ -83,6 +84,7 @@ def build_run_candidate(
     strategy_id: str,
     revision_id: str,
     parameters: Mapping[str, Any],
+    metadata: Mapping[str, Any],
     symbol: str,
     timeframe: str,
     start_date: str,
@@ -128,6 +130,7 @@ def build_run_candidate(
         strategy_id=strategy_id,
         revision_id=revision_id,
         parameters=dict(parameters),
+        metadata=dict(metadata),
         conditions=TradingConditions(
             symbol=symbol,
             timeframe=timeframe,
