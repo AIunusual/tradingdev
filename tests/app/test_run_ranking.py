@@ -25,6 +25,7 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.ranking_service import RankingService, resolve_metric
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
+    FoldStats,
     MetricDefinitionSnapshot,
     ObservationsBundle,
     PerformanceArtifacts,
@@ -147,7 +148,11 @@ def _publish_run(
     scopes = scopes or {"full": {SHARPE: 1.0}}
     manifest = manifest or _manifest(window=window)
     recorded_hash = manifest.manifest_hash if record_manifest_hash else None
-    default_scope = next(iter(scopes))
+    scope_models = scope_models or {
+        name: _scope(values).model_copy(update={"parameters": {"window": window}})
+        for name, values in scopes.items()
+    }
+    default_scope = next(iter(scope_models))
     if publish_manifest:
         ExecutionManifestStore(workspace).publish(run_id, manifest)
     store.create_run(
@@ -156,14 +161,9 @@ def _publish_run(
         strategy_id="fixture",
         revision_id="rev-1",
         artifact_dir=workspace.runs / run_id,
-        metrics=scopes[default_scope],
+        metrics=scope_models[default_scope].model_dump(mode="json")["values"],
         manifest_hash=recorded_hash,
     )
-    scope_models = scope_models or {
-        name: _scope(values).model_copy(update={"parameters": {"window": window}})
-        for name, values in scopes.items()
-    }
-    default_scope = next(iter(scope_models))
     names = {name for scope in scope_models.values() for name in scope.values}
     PerformanceStore(workspace, store).publish(
         PerformanceArtifacts(
@@ -407,6 +407,53 @@ class TestPublishedRuns:
         ] == [
             ("beta", 1, 2),
             ("alpha", 1, 2),
+        ]
+
+    def test_a_fold_summary_scope_is_skipped_instead_of_raising(
+        self, storage: tuple[WorkspacePaths, SQLiteStore]
+    ) -> None:
+        """A walk-forward run defaults to an aggregate, which is not scalar.
+
+        Before this refusal, ``float()`` raised ``TypeError`` inside the ranking
+        core, outside the ``ValueError`` handler, so one aggregate scope aborted
+        the whole call instead of producing a skipped row.
+        """
+        workspace, store = storage
+        _publish_run(
+            workspace,
+            store,
+            "wf",
+            scope_models={
+                "test_summary": PerformanceScope.model_validate(
+                    {
+                        "kind": "fold_summary",
+                        "mode": "signal",
+                        "split": "test",
+                        "values": {
+                            SHARPE: FoldStats(
+                                mean=1.2, std=0.3, min=0.9, max=1.5, valid_count=3
+                            )
+                        },
+                        "metadata": {},
+                    }
+                )
+            },
+        )
+
+        result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+            "run.sharpe_ratio", [("wf", "test_summary")]
+        )
+
+        assert result["success"] is True
+        assert result["ranked"] == []
+        assert result["skipped"] == [
+            {
+                "candidate_id": "run:wf#test_summary",
+                "reason": (
+                    "wf test_summary: fold summary cannot be ranked; "
+                    "select a fold scope"
+                ),
+            }
         ]
 
     def test_top_k_limits_the_page_but_reports_the_full_total(
