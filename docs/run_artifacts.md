@@ -740,21 +740,23 @@ figures are ranked through the leaderboard, and an id without a direction cannot
 order candidates.
 
 A scope must hold scalar values. Scalar backtest scopes, including numbered
-walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries are
-not: a walk-forward run defaults to `test_summary`, whose metrics are `FoldStats`
-objects. `get_run_metrics` returns those as dictionaries, the ranking core calls
-`float()` on every value, and the resulting `TypeError` is not a skip reason — the
-whole call fails instead of returning a skipped row. Select a numbered fold, or read
-the summary through `get_run_metrics`, until aggregate summaries are rankable.
+walk-forward folds such as `fold/0/test`, are rankable. Aggregate fold summaries
+such as `test_summary` are skipped with a reason directing the caller to a numbered
+fold; their descriptive statistics are not scalar backtest measurements. Other
+valid selections still rank normally.
 
-Identity in a ranked row is run-level, not scope-level. The strategy parameters and
-trading conditions are read from the run's published manifest — the input mapping
-that was submitted — and are therefore the same for every scope of that run.
-Optimization trial parameters, fitted values and captured constructor defaults are
-not overlaid, so these fields do not identify the parameters a particular scope was
-actually executed with. Read the scope's own saved evidence, such as the
-`parameters` and metadata `get_run_metrics` returns for that scope, when the
-effective settings matter.
+Each row's `parameters` is the selected scope's saved mapping: simple and
+walk-forward runs store constructor parameters including captured defaults;
+optimization scopes store trial overrides, not the fully merged constructor.
+Ranking does not reconstruct or merge these settings. Its `metadata` preserves the scope's
+provenance and settings; fitted values remain separately identified by
+`metadata.strategy_parameters` when recorded. Growing rolling traces retain the
+summary and artifact references supplied by `get_run_metrics`.
+
+The trading `conditions` describe the run's submitted manifest and remain the same
+for all scopes of that run. They are not a fold's observed dates: use the scope's
+saved `metadata.observations` for the actual measurement period. Missing metadata
+remains unknown rather than being reconstructed from the run configuration.
 
 Values come from the saved performance bundle; nothing is recomputed. Before a
 value is used, the manifest recorded on the run is loaded and verified against the
@@ -763,8 +765,8 @@ be read is skipped with that reason: an unknown run, a bundle that never recorde
 the metric, a run with no recorded manifest, an unreadable manifest, or a manifest
 that no longer matches its hash. A skipped candidate keeps its place in the report
 and is never zero filled, so a failed measurement cannot look like a low one. This
-skip path covers unreadable evidence only; a readable scope whose values are not
-scalars fails the call, as described above, rather than producing a skipped row.
+skip path also covers unsupported fold summaries and incompatible saved metric
+definitions; neither invalidates the remaining candidates.
 
 Ordering, shared ranks, the missing-value rule, the returned slice and the base
 caveats all come from `rank_candidates`; `top_k` limits only the returned page,
@@ -783,13 +785,13 @@ difference as an effect. See
 [Performance Artifacts](performance_artifacts.md#metric-interpretation) for metric
 meanings, units and the provider behind each value.
 
-Ranking orders by the current catalogue direction. Each run's saved definition
-snapshot records a provider name but no package version, and neither that snapshot
-nor the versions a scope records in `metadata.providers` are compared across
-candidates. A historical run measured under an older definition, or under an older
-package version, can therefore be ranked beside one measured under today's. The
-ranking does not establish that two values share a definition; treat a
-mixed-provider selection as conditional in the same way as mixed conditions.
+Ranking uses the current catalogue direction and unit only after verifying the
+selected metric's saved definition against the current catalogue. A definition
+mismatch is skipped with the differing fields rather than relabeling historical
+values or silently converting units. No historical values are recomputed.
+Provider package versions and measurement settings remain in each row's saved
+metadata. These can differ even when catalogue definitions match; the response
+always states that ordering is conditional, not proof of a controlled comparison.
 
 ## Research Notes and Archives
 
