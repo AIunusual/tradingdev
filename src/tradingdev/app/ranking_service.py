@@ -9,6 +9,7 @@ reported as skipped with the reason, never re-run and never zero-filled.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
@@ -16,6 +17,7 @@ from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.run_service import RunService
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.execution import ManifestError
+from tradingdev.domain.performance.artifacts import MetricDefinitionSnapshot
 from tradingdev.domain.performance.catalog import METRIC_CATALOG
 from tradingdev.domain.ranking import Candidate, MetricDefinition, rank_candidates
 from tradingdev.domain.run_candidates import (
@@ -144,7 +146,11 @@ class RankingService:
             result["metric"] = metric
             return result
         if metric.startswith(_RUN_PREFIX):
-            if any(value is not None for value in filters) or allow_parameter_axes:
+            if (
+                any(value is not None for value in filters)
+                or allow_parameter_axes
+                or allow_mixed
+            ):
                 raise ValueError(
                     "backtest ranking selects saved scopes with runs, "
                     "not signal filters"
@@ -205,7 +211,7 @@ class RankingService:
         skipped: list[dict[str, str]] = []
         for run_id, scope in selections:
             try:
-                candidate = self._load_candidate(run_id, scope)
+                candidate = self._load_candidate(run_id, scope, metric)
             except ValueError as exc:
                 skipped.append(
                     {
@@ -245,6 +251,7 @@ class RankingService:
                     "strategy_id": item.candidate.payload.strategy_id,
                     "revision_id": item.candidate.payload.revision_id,
                     "parameters": dict(item.candidate.payload.parameters),
+                    "metadata": dict(item.candidate.payload.metadata),
                     "conditions": {
                         "symbol": item.candidate.payload.conditions.symbol,
                         "timeframe": item.candidate.payload.conditions.timeframe,
@@ -267,11 +274,17 @@ class RankingService:
                 for item in result.skipped
             ]
             + skipped,
-            "caveats": list(result.caveats),
+            "caveats": [
+                *result.caveats,
+                "Ranking is conditional on each scope's saved metadata, including "
+                "provider versions, settings and observation periods; it does not "
+                "establish a controlled comparison. Conditions describe the run's "
+                "submitted period, not each scope's observed period.",
+            ],
         }
 
     def _load_candidate(
-        self, run_id: str, scope: str | None
+        self, run_id: str, scope: str | None, metric: str
     ) -> Candidate[RunCandidate]:
         """Build one candidate from stored values; raise ValueError with the reason."""
         run_payload = self._runs.get_run(run_id)
@@ -287,16 +300,25 @@ class RankingService:
         # A null request resolves to the run's default, and the row must name the
         # scope it was actually read from rather than the request that found it.
         resolved_scope = str(metrics_payload["scope"])
-        values = metrics_payload["metrics"]
-        if any(isinstance(value, dict) for value in values.values()):
-            # A fold summary aggregates over folds, so its values are statistics
-            # rather than the scalar the ranking core orders. Refuse the scope
-            # here, where a reason becomes a skipped row, instead of letting
-            # float() raise a TypeError that would abort the whole call.
+        if metrics_payload["kind"] == "fold_summary":
             raise ValueError(
                 f"{run_id} {resolved_scope}: fold summary cannot be "
                 "ranked; select a fold scope"
             )
+        name = metric[len(_RUN_PREFIX) :]
+        recorded = metrics_payload["definitions"].get(name)
+        if recorded is not None:
+            current = MetricDefinitionSnapshot.model_validate(
+                asdict(METRIC_CATALOG[name])
+            ).model_dump()
+            differences = [
+                key for key, value in current.items() if recorded.get(key) != value
+            ]
+            if differences:
+                raise ValueError(
+                    f"{run_id} {resolved_scope}: recorded metric definition differs "
+                    f"from the current catalog: {', '.join(differences)}"
+                )
         manifest_hash = run.get("manifest_hash")
         if not manifest_hash:
             raise ValueError(f"{run_id}: no execution manifest recorded")
@@ -320,15 +342,13 @@ class RankingService:
             raise ValueError(
                 f"{run_id}: execution manifest has no usable backtest conditions"
             ) from exc
-        parameters = strategy_section.get("parameters")
-        if not isinstance(parameters, dict):
-            raise ValueError(f"{run_id}: execution manifest has no strategy parameters")
         candidate = build_run_candidate(
             run_id=run_id,
             scope=resolved_scope,
             strategy_id=str(run["strategy_id"]),
             revision_id=str(run.get("revision_id") or ""),
-            parameters=parameters,
+            parameters=metrics_payload["parameters"],
+            metadata=metrics_payload["metadata"],
             symbol=backtest.symbol,
             timeframe=backtest.timeframe,
             start_date=backtest.start_date.isoformat(),
@@ -337,4 +357,4 @@ class RankingService:
             slippage=backtest.slippage,
             metric_source="bundle",
         )
-        return to_ranking_candidate(candidate, values)
+        return to_ranking_candidate(candidate, metrics_payload["metrics"])

@@ -63,6 +63,7 @@ def _manifest(
     slippage: float = 0.0005,
     start_date: str = "2024-01-01",
     end_date: str = "2024-03-01",
+    submitted_parameters: dict[str, int] | None = None,
 ) -> ExecutionManifest:
     """The smallest config ``_resolve_config`` accepts, with nothing left implicit.
 
@@ -77,7 +78,9 @@ def _manifest(
             "strategy": {
                 "id": "fixture",
                 "revision_id": "rev-1",
-                "parameters": {"window": window},
+                "parameters": {"window": window}
+                if submitted_parameters is None
+                else submitted_parameters,
             },
             "backtest": {
                 "symbol": symbol,
@@ -127,11 +130,13 @@ def _publish_run(
     store: SQLiteStore,
     run_id: str,
     *,
-    scopes: dict[str, dict[str, float | None] | PerformanceScope] | None = None,
+    scopes: dict[str, dict[str, float | None]] | None = None,
     window: int = 20,
     publish_manifest: bool = True,
     record_manifest_hash: bool = True,
     manifest: ExecutionManifest | None = None,
+    scope_models: dict[str, PerformanceScope] | None = None,
+    definitions: dict[str, MetricDefinitionSnapshot] | None = None,
 ) -> ExecutionManifest:
     """Publish one run the way a completed execution would leave it.
 
@@ -139,15 +144,12 @@ def _publish_run(
     published manifest, and the performance bundle -- because
     ``PerformanceStore.publish`` refuses a bundle whose identity differs from its
     run. Writing the hash in only one place produces a fixture that cannot exist.
-
-    A scope may be given as plain values or as a built ``PerformanceScope``, which
-    is how a fold summary (``kind: "fold_summary"``) is published.
     """
     scopes = scopes or {"full": {SHARPE: 1.0}}
     manifest = manifest or _manifest(window=window)
     recorded_hash = manifest.manifest_hash if record_manifest_hash else None
-    scope_models = {
-        name: values if isinstance(values, PerformanceScope) else _scope(values)
+    scope_models = scope_models or {
+        name: _scope(values).model_copy(update={"parameters": {"window": window}})
         for name, values in scopes.items()
     }
     default_scope = next(iter(scope_models))
@@ -170,7 +172,8 @@ def _publish_run(
                 manifest_hash=recorded_hash,
                 default_scope=default_scope,
                 scopes=scope_models,
-                definitions={
+                definitions=definitions
+                or {
                     name: MetricDefinitionSnapshot.model_validate(
                         asdict(METRIC_CATALOG[name])
                     )
@@ -180,8 +183,6 @@ def _publish_run(
             observations=ObservationsBundle(
                 run_id=run_id,
                 manifest_hash=recorded_hash,
-                # Only scalar backtest scopes carry observations; a fold summary
-                # is an aggregate and has none.
                 scopes={
                     name: _observations()
                     for name, scope in scope_models.items()
@@ -359,6 +360,14 @@ class TestPublishedRuns:
             store,
             "grid",
             scopes={"window-10": {SHARPE: 0.4}, "window-20": {SHARPE: 0.9}},
+            scope_models={
+                "window-10": _scope({SHARPE: 0.4}).model_copy(
+                    update={"parameters": {"window": 10}}
+                ),
+                "window-20": _scope({SHARPE: 0.9}).model_copy(
+                    update={"parameters": {"window": 20}}
+                ),
+            },
         )
 
         result = RankingService(workspace=workspace, store=store).rank_run_scopes(
@@ -370,11 +379,7 @@ class TestPublishedRuns:
             ("window-10", 0.4),
         ]
         assert result["ranked_total"] == 2
-        # Identity is run-level: both scopes report the manifest's submitted
-        # parameters, not the parameters each scope was executed with. The scope
-        # names here differ from the manifest on purpose, so a future change that
-        # starts overlaying trial parameters would fail this assertion.
-        assert {row["parameters"]["window"] for row in result["ranked"]} == {20}
+        assert [row["parameters"]["window"] for row in result["ranked"]] == [20, 10]
         assert len({row["conditions"]["symbol"] for row in result["ranked"]}) == 1
 
     def test_near_equal_values_share_a_rank_but_keep_numeric_order(
@@ -418,7 +423,7 @@ class TestPublishedRuns:
             workspace,
             store,
             "wf",
-            scopes={
+            scope_models={
                 "test_summary": PerformanceScope.model_validate(
                     {
                         "kind": "fold_summary",
@@ -577,6 +582,7 @@ class TestCandidateDispatch:
             ("feature_set", "core"),
             ("family", "rule"),
             ("allow_parameter_axes", True),
+            ("allow_mixed", True),
         ],
     )
     def test_signal_filters_are_refused_on_the_backtest_path(
@@ -672,7 +678,7 @@ class TestDuplicateSelections:
             workspace,
             store,
             "wf",
-            scopes={
+            scope_models={
                 "test_summary": PerformanceScope.model_validate(
                     {
                         "kind": "fold_summary",
@@ -696,3 +702,103 @@ class TestDuplicateSelections:
         assert result["success"] is True
         assert result["n_ranked"] == 0
         assert len(result["skipped"]) == 2
+
+
+def test_fold_summary_is_skipped_without_losing_scalar_candidates(
+    storage: tuple[WorkspacePaths, SQLiteStore],
+) -> None:
+    workspace, store = storage
+    summary = PerformanceScope.model_validate(
+        {
+            "kind": "fold_summary",
+            "mode": "signal",
+            "split": "test",
+            "values": {
+                SHARPE: {
+                    "mean": 1.0,
+                    "std": 0.0,
+                    "min": 1.0,
+                    "max": 1.0,
+                    "valid_count": 1,
+                }
+            },
+            "metadata": {},
+        }
+    )
+    _publish_run(
+        workspace,
+        store,
+        "folded",
+        scope_models={"fold/0/test": _scope({SHARPE: 1.0}), "test_summary": summary},
+    )
+    result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+        "run.sharpe_ratio", [("folded", "test_summary"), ("folded", "fold/0/test")]
+    )
+    assert [(row["scope"], row["value"]) for row in result["ranked"]] == [
+        ("fold/0/test", 1.0)
+    ]
+    assert result["ranked_total"] == 1
+    assert result["skipped"][0]["candidate_id"] == "run:folded#test_summary"
+    assert "fold summary" in result["skipped"][0]["reason"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("unit", "percent"),
+        ("optimization_direction", "minimize"),
+        ("provider", "old-provider"),
+    ],
+)
+def test_historical_definition_is_not_ranked_as_the_current_measurement(
+    storage: tuple[WorkspacePaths, SQLiteStore],
+    field: str,
+    value: str,
+) -> None:
+    workspace, store = storage
+    metric = "annual_return"
+    definition = MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[metric]))
+    _publish_run(workspace, store, "current", scopes={"full": {metric: 0.2}})
+    _publish_run(
+        workspace,
+        store,
+        "historical",
+        scopes={"full": {metric: 10.0}},
+        definitions={metric: definition.model_copy(update={field: value})},
+    )
+    result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+        f"run.{metric}", [("historical", "full"), ("current", "full")]
+    )
+    assert [(row["run_id"], row["value"]) for row in result["ranked"]] == [
+        ("current", 0.2)
+    ]
+    assert result["unit"] == "fraction"
+    assert field in result["skipped"][0]["reason"]
+
+
+def test_scope_defaults_and_fitted_parameters_keep_their_saved_meaning(
+    storage: tuple[WorkspacePaths, SQLiteStore],
+) -> None:
+    workspace, store = storage
+    scope = _scope({SHARPE: 1.0}).model_copy(
+        update={
+            "parameters": {"window": 30},
+            "metadata": {
+                "strategy_parameters": {"threshold": 0.6},
+                "providers": {"numpy": "saved-version"},
+            },
+        }
+    )
+    _publish_run(
+        workspace,
+        store,
+        "defaults",
+        scope_models={"full": scope},
+        manifest=_manifest(window=30, submitted_parameters={}),
+    )
+    result = RankingService(workspace=workspace, store=store).rank_run_scopes(
+        "run.sharpe_ratio", [("defaults", "full")]
+    )
+    row = result["ranked"][0]
+    assert row["parameters"] == {"window": 30}
+    assert row["metadata"] == scope.metadata

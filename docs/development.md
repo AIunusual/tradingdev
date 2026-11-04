@@ -55,6 +55,21 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
 
+### 容器建置與驗證
+
+[Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
+`uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
+ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
+映像建置採 [uv 的多階段安裝方式](https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs)，
+執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+
+容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
+並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
+以及錯誤 Host／Origin 的拒絕行為。使用獨立 Compose project、臨時工作區及映像標籤，
+結束後先停止並移除該 project 容器，再清理測試資料與專用映像／建置快取；
+不要清理共用 Docker 資源。未實測的 CPU 架構與 NAS 平台須明列限制。
+使用者部署、設定與備份操作統一見 [README](../README.md#使用-docker-部署)。
+
 ## 測試設計與精簡
 
 本節是落實 [AGENTS.md 測試政策](../AGENTS.md#測試與清理) 的本機設計基準。
@@ -179,6 +194,37 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 
 開啟終端機顯示的網址；結束按 `Ctrl+C`。此入口不下載行情。
 
+## 研究成果工程回饋
+
+需要把策略案例中的共通邏輯、檢查或方法整合回專案時，使用
+[research-feedback skill](../.agents/skills/research-feedback/SKILL.md)。它提供來源固定、
+共用價值判斷、元件整合、使用端探索與驗證的工作流程；Git、審查及授權政策仍由
+[AGENTS.md](../AGENTS.md) 管理。單純建立策略或查看回測不需要此 skill。
+
+在能存取 repository 與來源 workspace 的開發助手中呼叫 `$research-feedback`；
+若客戶端未發現 repository skills，明確要求讀取上述 `SKILL.md` 再執行。
+只有 MCP 工具存取權的客戶端無法藉此修改 server 程式，也不假設客戶端能讀 server
+本機路徑。提供實際可讀取的來源，例如：
+
+> 使用 $research-feedback，讀取 `/absolute/workspace-a` 的策略與指定版本，及
+> `/absolute/workspace-b` 的另一個策略與指定版本。這些來源允許用於共用元件開發；
+> 僅分享抽取後的邏輯與去識別化合成測資，保留私人策略、行情與原始報告。
+> 請判斷是否有值得重用的機制，若有則在本專案完成整合、使用入口與驗證。
+
+先提供策略 ID、選定 revision（或明示採目前版本）、實際授權範圍，以及相關 run／
+筆記（若有）；不必為了使用 skill 重跑研究。只有評估需求時可以明示「唯讀分析，
+不修改」。已有授權不重複確認，
+缺少來源或可共用範圍時補齊後才處理相依工作。若沒有合適的抽取候選，回報理由與
+證據即可，不為交付而新增元件。
+
+原 workspace 的 revision、設定、驗證證據、結果與筆記保持唯讀。要驗證新的使用方式，
+在隔離工作區建立新策略版本；匯入的共用程式不受舊 revision 雜湊完整凍結，須記錄
+實作版本並驗證受影響使用端。需要使用者續查的驗收成果須保留，不能當測試暫存清理。
+
+這是由人啟動、開發助手執行的流程，不會在每次策略保存時自動運行，也不會自行
+掃描其他 workspace、分享私人研究或發布更新。效果以實際抽取、使用端採用及驗證
+證據判斷；合成案例只能驗證流程，不能證明真實多人研究的改善成效。
+
 ## 選擇性 LLM 測試
 
 此工具驗證模型透過真實 MCP 完成策略研究互動及成果交付。修改模型可見的指引、
@@ -216,7 +262,7 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
 | 執行計畫、使用者決策與訓練指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
-| 固定參數比較與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
+| 固定參數比較、已保存 scope 比較與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |

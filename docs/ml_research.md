@@ -283,7 +283,8 @@ ranks saved scopes and requires `runs` as `(run_id, scope)` pairs, where a null
 `metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
 is not echoed. The two argument sets are exclusive: a signal ranking refuses
 `runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
-`feature_set`, `family` and `allow_parameter_axes`, because one call ranks one
+`feature_set`, `family`, `allow_mixed=True` and `allow_parameter_axes=True`, because
+one call ranks one
 source. Selecting the same measurement twice is refused as `duplicate_selections`,
 in two layers. Identical requested pairs are refused before anything is loaded;
 differently spelled selections are compared after they load and resolve, which
@@ -296,8 +297,8 @@ present but not applicable, because a named selection has no evaluation context 
 method mix to report. An empty value would read as measured-and-nothing, which is a
 different claim. Every row reports `source`, and one response never mixes the two: a
 signal metric and a backtest metric share no definition, so they share no column.
-The run-ranking limits — manifest-level parameters, no cross-run condition matching,
-fold summaries skipped — are in
+The run-ranking semantics — saved scope parameters and metadata, manifest-level
+conditions, definition checks and fold-summary skips — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept

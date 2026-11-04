@@ -243,7 +243,7 @@ class LeaderboardSkipped(ContractModel):
 
 
 class RunConditions(ContractModel):
-    """The trading conditions a saved scope was measured under."""
+    """Run-level submitted conditions; scope observations remain in metadata."""
 
     symbol: str
     timeframe: str
@@ -265,6 +265,7 @@ class RankedRunRow(ContractModel):
     strategy_id: str
     revision_id: str
     parameters: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
     conditions: RunConditions
     metric_source: Literal["bundle", "legacy_summary"]
     """Whether the value came from the performance bundle or a legacy summary."""

@@ -304,6 +304,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         get_ml_contract; choose run metrics and their declared directions from
         get_metric_catalog, which get_ml_contract does not list. Omitting family
         ranks every method together and reports the mix.
+        Filters, allow_mixed and allow_parameter_axes apply only to signal rankings.
         Follow next_offset; inspect caveats before believing the first row.
         """
         try:

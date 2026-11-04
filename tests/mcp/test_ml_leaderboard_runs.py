@@ -1,10 +1,7 @@
 """The leaderboard tool's second source: saved run scopes ranked by a run. metric.
 
-The signal path is pinned in ``test_ml_leaderboard_tool.py``; that file is left
-untouched on purpose, because the parameter surface it exercises must keep
-working while the same tool learns to rank backtests. What is new here is the
-dispatch: a ``run.`` prefix plus an explicit selection, one page shape for both
-sources, and rows that say which kind of measurement they are.
+The signal path is covered in ``test_ml_leaderboard_tool.py``. This module checks
+the run dispatch through real saved artifacts and the typed MCP response.
 """
 
 from __future__ import annotations
@@ -15,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
-from tests.app.test_run_ranking import _publish_run
+from tests.app.test_run_ranking import _publish_run, _scope
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -100,6 +97,42 @@ def test_a_run_metric_ranks_the_selected_scopes(
     assert all(isinstance(row, RankedRunRow) for row in board.ranked)
     assert {row.source for row in board.ranked} == {"run"}
     assert board.n_skipped == 0 and board.skipped == []
+
+
+def test_scope_parameters_and_observation_metadata_survive_the_tool(
+    mcp: MCPServer, workspace: WorkspacePaths
+) -> None:
+    store = SQLiteStore(workspace)
+    scopes = {}
+    for index, value in enumerate((0.5, 1.5)):
+        scope = _scope({SHARPE: value}).model_copy(
+            update={"parameters": {"window": 10 + index}, "split": "train"}
+        )
+        scope.metadata["observations"] = {
+            "start_date": f"2024-02-0{index + 1}",
+            "end_date": f"2024-02-0{index + 2}",
+        }
+        scope.metadata["strategy_parameters"] = {"fitted_threshold": index + 0.5}
+        scopes[f"trial/{index}/train"] = scope
+    _publish_run(workspace, store, "trials", scope_models=scopes, window=99)
+    payload = _dispatch(
+        mcp,
+        "leaderboard",
+        {
+            "metric": "run.sharpe_ratio",
+            "runs": [{"run_id": "trials", "scope": name} for name in scopes],
+        },
+    )
+    board = LeaderboardPageResponse.model_validate(payload)
+    rows = _run_rows(board)
+    assert [row.scope for row in rows] == ["trial/1/train", "trial/0/train"]
+    assert [row.parameters for row in rows] == [{"window": 11}, {"window": 10}]
+    assert [row.metadata for row in rows] == [
+        scopes["trial/1/train"].metadata,
+        scopes["trial/0/train"].metadata,
+    ]
+    assert all(row.conditions.start_date.startswith("2024-01-01") for row in rows)
+    assert any("conditional" in caveat for caveat in board.caveats)
 
 
 def test_a_run_ranking_carries_no_signal_only_fields(
@@ -189,6 +222,19 @@ def test_the_tool_refuses_a_request_that_mixes_the_two_sources(
     assert payload["success"] is False
     assert payload["code"] == "invalid_leaderboard_request"
     assert expected in payload["error"]
+
+
+def test_run_ranking_refuses_the_signal_context_override(
+    mcp: MCPServer, published: list[dict[str, str]]
+) -> None:
+    payload = _dispatch(
+        mcp,
+        "leaderboard",
+        {"metric": "run.sharpe_ratio", "runs": published, "allow_mixed": True},
+    )
+    assert payload["success"] is False
+    assert payload["code"] == "invalid_leaderboard_request"
+    assert "not signal filters" in payload["error"]
 
 
 def test_the_advertised_schema_offers_runs_and_a_metric(
