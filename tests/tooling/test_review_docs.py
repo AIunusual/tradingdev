@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from tooling import review_docs
 from tooling.presentations import PRESENTATION_PATHS
-from tooling.process_guard import terminate_tree
+from tooling.process_guard import (
+    CLEANUP_UNVERIFIED_EXIT_CODE,
+    ProcessCleanupError,
+    terminate_tree,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1229,7 +1233,7 @@ def test_interrupt_cancels_running_batches_and_cleans_all_reviewer_processes(
             leader = args[0]
             assert leader is not None
             terminate_tree(*args, **kwargs)
-            raise RuntimeError(
+            raise ProcessCleanupError(
                 f"cleanup verification failed for leader PID {leader.pid}"
             )
 
@@ -1246,29 +1250,32 @@ def test_interrupt_cancels_running_batches_and_cleans_all_reviewer_processes(
         raise interruption
 
     monkeypatch.setattr(Future, "result", interrupt_result)
-    with pytest.raises(KeyboardInterrupt) as error:
-        review_docs.review(base, tree, repo=repo, timeout_seconds=30)
-    assert error.value is interruption
-    records = _records(fake_codex)
-    assert len(records) == workers
-    assert all("ended" not in record for record in records)
-    _assert_reviewer_cleanup(records)
-    notes = getattr(error.value, "__notes__", [])
-    if cleanup_failure:
-        assert len(notes) == workers
-        for record in records:
-            batch = _prompt_evidence(record["prompt"])["batch"]["index"]
-            assert any(
-                f"Batch {batch}/{batch_count}" in note
-                and "RuntimeError: cleanup verification failed" in note
-                and f"leader PID {record['pid']}" in note
-                for note in notes
-            )
-    else:
-        assert notes == []
+    try:
+        expected = ProcessCleanupError if cleanup_failure else KeyboardInterrupt
+        with pytest.raises(expected) as error:
+            review_docs.review(base, tree, repo=repo, timeout_seconds=30)
+        records = _records(fake_codex)
+        assert len(records) == workers
+        assert all("ended" not in record for record in records)
+        if cleanup_failure:
+            assert error.value.__cause__ is interruption
+            assert isinstance(error.value, ProcessCleanupError)
+            assert error.value.interrupted
+            for record in records:
+                batch = _prompt_evidence(record["prompt"])["batch"]["index"]
+                assert f"Batch {batch}/{batch_count}" in str(error.value)
+                assert f"leader PID {record['pid']}" in str(error.value)
+                assert Path(record["root"]).resolve() in error.value.retained_workspaces
+                assert Path(record["root"], "events.jsonl").exists()
+        else:
+            assert error.value is interruption
+            assert getattr(error.value, "__notes__", []) == []
+            _assert_reviewer_cleanup(records)
+    finally:
+        _remove_stopped_review_workspaces(_records(fake_codex))
 
 
-def test_batch_cleanup_error_is_reported_even_when_all_verdicts_pass(
+def test_batch_cleanup_error_retains_diagnostics_even_when_all_verdicts_pass(
     repository: tuple[Path, str, str], fake_codex: Path, monkeypatch: MonkeyPatch
 ) -> None:
     repo, base, tree = repository
@@ -1276,11 +1283,87 @@ def test_batch_cleanup_error_is_reported_even_when_all_verdicts_pass(
 
     def fail_after_cleanup(*args: Any, **kwargs: Any) -> None:
         terminate_tree(*args, **kwargs)
-        raise RuntimeError("cleanup verification failed")
+        raise ProcessCleanupError("cleanup verification failed")
 
     monkeypatch.setattr(review_docs, "terminate_tree", fail_after_cleanup)
-    with pytest.raises(review_docs.ReviewError, match="cleanup verification failed"):
-        review_docs.review(base, tree, repo=repo)
-    records = _records(fake_codex)
-    assert len(records) == 7
-    _assert_reviewer_cleanup(records)
+    try:
+        with pytest.raises(
+            ProcessCleanupError, match="cleanup verification failed"
+        ) as error:
+            review_docs.review(base, tree, repo=repo)
+        records = _records(fake_codex)
+        assert len(records) == 7
+        assert not error.value.interrupted
+        for record in records:
+            assert Path(record["root"]).resolve() in error.value.retained_workspaces
+            root = Path(record["root"])
+            assert (root / "events.jsonl").is_file()
+            assert (root / "stderr.log").is_file()
+            assert (root / "verdict.json").is_file()
+    finally:
+        _remove_stopped_review_workspaces(_records(fake_codex))
+
+
+def _remove_stopped_review_workspaces(records: list[dict[str, Any]]) -> None:
+    # Failure injection calls real termination before reporting uncertainty.
+    # Verify every child is gone before deleting intentionally retained evidence.
+    for record in records:
+        with pytest.raises(ProcessLookupError):
+            os.kill(record["pid"], 0)
+    for record in records:
+        root = Path(record["root"])
+        if root.exists():
+            shutil.rmtree(root)
+
+
+def test_review_cli_preserves_cleanup_failure_exit_protocol(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise ProcessCleanupError(
+            "opaque detail",
+            retained_workspaces=[Path("/test/evidence")],
+            interrupted=True,
+        )
+
+    monkeypatch.setattr(review_docs, "review", fail)
+    monkeypatch.setattr(
+        sys, "argv", ["review_docs", "--base", "base", "--tree", "tree"]
+    )
+    assert review_docs.main() == CLEANUP_UNVERIFIED_EXIT_CODE
+    assert json.loads(capsys.readouterr().err) == {
+        "code": "process_cleanup_unverified",
+        "retained_workspaces": ["/test/evidence"],
+        "interrupted": True,
+        "message": "opaque detail",
+    }
+
+
+def test_communication_timeout_does_not_hide_unverified_cleanup(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class Process:
+        pid = 123
+        calls = 0
+
+        def communicate(self, **kwargs: Any) -> None:
+            self.calls += 1
+            if self.calls > 1:
+                raise subprocess.TimeoutExpired("reviewer", 5)
+
+    def unverified(*args: Any, **kwargs: Any) -> None:
+        raise ProcessCleanupError("cleanup remains unverified")
+
+    monkeypatch.setattr(review_docs, "_command", lambda root: ["unused"])
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: Process())
+    monkeypatch.setattr(review_docs, "process_identity", lambda pid: None)
+    monkeypatch.setattr(review_docs, "process_descendants", lambda identity: set())
+    monkeypatch.setattr(review_docs, "terminate_tree", unverified)
+    with TemporaryDirectory(
+        prefix="tradingdev-review-communication-test-"
+    ) as temporary:
+        with pytest.raises(
+            ProcessCleanupError, match="cleanup remains unverified"
+        ) as error:
+            review_docs._run(Path(temporary), "evidence", 10)
+        assert "communication also failed" in " ".join(error.value.__notes__)

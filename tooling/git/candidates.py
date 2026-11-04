@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import tarfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING
 
 from tooling.git.change_scope import classify_changes
-from tooling.process_guard import ProcessCleanupError, run_captured, run_checked
+from tooling.process_guard import process_workspace, run_captured, run_checked
 from tooling.review_options import review_arguments, validate_review_options
 
 if TYPE_CHECKING:
@@ -71,20 +69,6 @@ def run(
     run_checked(command, cwd=cwd, env=environment, timeout=timeout)
 
 
-@contextmanager
-def _snapshot_workspace() -> Generator[Path]:
-    root = Path(mkdtemp(prefix="tradingdev-git-check-"))
-    retained = False
-    try:
-        yield root
-    except ProcessCleanupError as error:
-        retained = True
-        raise ProcessCleanupError(f"{error} Snapshot retained at {root}") from error
-    finally:
-        if not retained:
-            shutil.rmtree(root)
-
-
 def check_snapshot(
     tree: str,
     profile: str,
@@ -93,7 +77,7 @@ def check_snapshot(
     timeout_seconds: int = DEFAULT_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> None:
     validate_snapshot_timeout(timeout_seconds)
-    with _snapshot_workspace() as root:
+    with process_workspace(prefix="tradingdev-git-check-", label="Snapshot") as root:
         archive = root / "candidate.tar"
         with archive.open("wb") as output:
             subprocess.run(
@@ -168,8 +152,9 @@ def merge_candidate(
     source: str, base_ref: str, head_ref: str
 ) -> Generator[MergeCandidate]:
     """Fetch and merge in a disposable repository, leaving the caller untouched."""
-    with TemporaryDirectory(prefix="tradingdev-pr-candidate-") as temporary:
-        repository = Path(temporary)
+    with process_workspace(
+        prefix="tradingdev-pr-candidate-", label="Merge candidate"
+    ) as repository:
         environment = execution_environment(repository)
 
         def candidate_git(*args: str) -> str:
