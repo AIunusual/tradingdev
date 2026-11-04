@@ -24,6 +24,8 @@ def test_model(pytestconfig):
     provider = pytestconfig.getoption("llm_provider")
     assert provider in {"codex", "local"}
     Path("model.ran").write_text(provider, encoding="utf-8")
+    Path("model_name.ran").write_text(
+        repr(pytestconfig.getoption("llm_model")), encoding="utf-8")
     temperature = pytestconfig.getoption("llm_temperature")
     Path("temperature.ran").write_text(repr(temperature), encoding="utf-8")
     reasoning_effort = pytestconfig.getoption("llm_reasoning_effort")
@@ -31,7 +33,9 @@ def test_model(pytestconfig):
 """
 
 
-def _run_selection(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run_selection(
+    root: Path, *arguments: str, overrides: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     (root / "pytest.ini").write_text(
         "[pytest]\nmarkers =\n    live_llm: explicit model test\n",
         encoding="utf-8",
@@ -45,6 +49,9 @@ def _run_selection(root: Path, *arguments: str) -> subprocess.CompletedProcess[s
         "PYTEST_PLUGINS": "",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    for key in ("TRADINGDEV_LLM_MODEL", "TRADINGDEV_LLM_REASONING_EFFORT"):
+        environment.pop(key, None)
+    environment.update(overrides or {})
     return subprocess.run(  # noqa: S603
         [
             sys.executable,
@@ -89,7 +96,11 @@ def test_explicit_provider_includes_live_tests(
     assert (tmp_path / "model.ran").read_text(encoding="utf-8") == provider
     assert (tmp_path / "offline.ran").exists()
     assert (tmp_path / "temperature.ran").read_text(encoding="utf-8") == "None"
-    assert (tmp_path / "reasoning_effort.ran").read_text(encoding="utf-8") == "None"
+    assert (tmp_path / "reasoning_effort.ran").read_text(encoding="utf-8") == (
+        "'high'" if provider == "codex" else "None"
+    )
+    if provider == "codex":
+        assert (tmp_path / "model_name.ran").read_text() == "'gpt-6.1-sol'"
 
 
 @pytest.mark.parametrize(
@@ -285,13 +296,78 @@ def test_blank_local_reasoning_effort_fails_before_any_test_executes(
     assert not (tmp_path / "model.ran").exists()
 
 
-@pytest.mark.parametrize("provider", [None, "codex"])
-def test_reasoning_effort_requires_explicit_local_provider(
-    tmp_path: Path, provider: str | None
-) -> None:
-    options = [] if provider is None else [f"--llm-provider={provider}"]
-    result = _run_selection(tmp_path, *options, "--llm-reasoning-effort=low")
+def test_reasoning_effort_requires_explicit_provider(tmp_path: Path) -> None:
+    result = _run_selection(tmp_path, "--llm-reasoning-effort=low")
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--llm-reasoning-effort" in result.stderr
+    assert not (tmp_path / "offline.ran").exists()
+    assert not (tmp_path / "model.ran").exists()
+
+
+@pytest.mark.parametrize(
+    ("options", "overrides", "expected_model", "expected_effort"),
+    [
+        (
+            [],
+            {
+                "TRADINGDEV_CODEX_MODEL": "old-shared-model",
+                "TRADINGDEV_DOC_REVIEW_MODEL": "review-model",
+            },
+            "gpt-6.1-sol",
+            "high",
+        ),
+        (
+            [],
+            {
+                "TRADINGDEV_LLM_MODEL": "configured-model",
+                "TRADINGDEV_LLM_REASONING_EFFORT": "high",
+            },
+            "configured-model",
+            "high",
+        ),
+        (
+            ["--llm-model=explicit-model", "--llm-reasoning-effort=medium"],
+            {
+                "TRADINGDEV_LLM_MODEL": "configured-model",
+                "TRADINGDEV_LLM_REASONING_EFFORT": "high",
+            },
+            "explicit-model",
+            "medium",
+        ),
+    ],
+    ids=["isolated-baseline", "test-environment", "explicit-overrides"],
+)
+def test_codex_settings_reach_selected_tests(
+    tmp_path: Path,
+    options: list[str],
+    overrides: dict[str, str],
+    expected_model: str,
+    expected_effort: str,
+) -> None:
+    result = _run_selection(
+        tmp_path, "--llm-provider=codex", *options, overrides=overrides
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "model_name.ran").read_text() == repr(expected_model)
+    assert (tmp_path / "reasoning_effort.ran").read_text() == repr(expected_effort)
+
+
+@pytest.mark.parametrize(
+    ("options", "overrides"),
+    [
+        (["--llm-model= "], {}),
+        (["--llm-reasoning-effort=ultra"], {}),
+        (["--llm-reasoning-effort=typo"], {}),
+        ([], {"TRADINGDEV_LLM_MODEL": ""}),
+        ([], {"TRADINGDEV_LLM_REASONING_EFFORT": ""}),
+    ],
+)
+def test_invalid_codex_settings_fail_before_tests(
+    tmp_path: Path, options: list[str], overrides: dict[str, str]
+) -> None:
+    result = _run_selection(
+        tmp_path, "--llm-provider=codex", *options, overrides=overrides
+    )
+    assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert not (tmp_path / "offline.ran").exists()
     assert not (tmp_path / "model.ran").exists()

@@ -214,7 +214,7 @@ def verify_comparison_delivery(
     analysis = ReportAnalysis.model_validate(report_call.arguments["analysis"])
     assert {(ref.run_id, ref.scope) for ref in analysis.references} == {
         (run_id, "full") for run_id in run_ids
-    }
+    }, "Comparison analysis must reference every candidate's full result"
     selected = report_call.arguments.get("sections")
     assert selected is None or selected == list(REPORT_RECIPES["standard"])
     service = ReportService(workspace=paths, store=store)
@@ -227,7 +227,8 @@ def verify_comparison_delivery(
         "</script>", 1
     )[0]
     payload = json.loads(raw)
-    assert payload["analysis"] == analysis.model_dump(mode="json")
+    expected_analysis = analysis.model_dump(mode="json")
+    assert payload["analysis"] == expected_analysis
     assert payload["sections"] == list(REPORT_RECIPES["standard"])
     evidence = payload["fixed_comparison"]
     assert evidence["manifest"] == saved.model_dump(mode="json")
@@ -246,7 +247,7 @@ def verify_comparison_delivery(
         ]
     report_path = Path(report["path"])
     report_manifest = json.loads(report_path.with_name("manifest.json").read_text())
-    assert report_manifest["analysis"] == analysis.model_dump(mode="json")
+    assert report_manifest["analysis"] == expected_analysis
     assert report_manifest["fixed_comparison"] == evidence
     registered = store.get_artifact(report["artifact_id"])
     assert registered is not None and registered["path"] == str(report_path)
@@ -389,6 +390,7 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
             "wrong_parent",
             "missing_link",
             "unqueried_child",
+            "partial_analysis",
             "failed_comparison",
             "missing_analysis",
             "wrong_analysis_reference",
@@ -406,12 +408,14 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
                 report_call.arguments["comparison_job_id"] = "another_parent"
             elif failure == "missing_link":
                 final_text = "完成，但未交付報告連結。"
+            elif failure == "partial_analysis":
+                report_call.arguments["analysis"]["references"].pop()
             elif failure == "missing_analysis":
                 report_call.arguments.pop("analysis")
             elif failure == "wrong_analysis_reference":
                 report_call.arguments["analysis"]["references"][0]["scope"] = "train"
             elif failure == "unsaved_analysis":
-                report_call.arguments["analysis"]["summary"] = "未保存的另一份解讀。"
+                report_call.arguments["analysis"]["observations"] = "未保存的其他觀察。"
             elif failure == "failed_comparison":
                 for call in broken:
                     if call.name == "compare_runs":

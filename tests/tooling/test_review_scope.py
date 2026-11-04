@@ -172,6 +172,8 @@ def test_repeated_headings_remain_distinct_with_correct_ancestors() -> None:
     [
         ("tooling/review_docs.py", "tooling"),
         ("tests/tooling/test_review_docs.py", "tooling"),
+        ("tests/llm_plugin.py", "tooling"),
+        ("tests/conftest.py", "general"),
         (".githooks/pre-commit", "tooling"),
         (".Codex/hooks/finalize-python", "tooling"),
         ("pyproject.toml", "tooling"),

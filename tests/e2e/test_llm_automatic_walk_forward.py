@@ -29,6 +29,7 @@ def test_natural_automatic_walk_forward_covers_final_observation(
         async def run() -> list[ToolCall]:
             options: dict[str, Any] = {
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "user_reply": user,
             }
@@ -62,7 +63,6 @@ def test_natural_automatic_walk_forward_covers_final_observation(
                         prompt,
                         base_url=pytestconfig.getoption("llm_base_url"),
                         temperature=pytestconfig.getoption("llm_temperature"),
-                        reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                         **options,
                     )
             assert pytestconfig.getoption("llm_provider") == "codex"

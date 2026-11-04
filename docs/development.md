@@ -49,9 +49,8 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 
 ### 依賴相容性限制
 
-本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；FLAML 2.7 的
-[上游宣告](https://github.com/microsoft/FLAML/blob/v2.7.0/README.md)仍有限制，
-可安裝不代表所有上游功能均支援。修改 ML 依賴時須保留各 learner 的實際訓練與
+本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
+功能均已驗證。修改 ML 依賴時須保留各 learner 的實際訓練與
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
 
@@ -60,8 +59,7 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 [Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
 `uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
 ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
-映像建置採 [uv 的多階段安裝方式](https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs)，
-執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
@@ -234,7 +232,7 @@ uv run --locked --extra dashboard streamlit run research/mae_analysis.py
 [tests/e2e/](../tests/e2e/)，provider 選項定義於 [tests/llm_plugin.py](../tests/llm_plugin.py)。
 
 ```bash
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol --llm-timeout 1800
+./scripts/check-llm.sh codex --llm-timeout 1800
 ./scripts/check-llm.sh local --llm-model qwen3.8:27b --llm-timeout 1800
 ```
 
@@ -242,16 +240,23 @@ Codex 需要已登入的 CLI 與所選模型存取權；Local 需要已啟動且
 服務，預設 `http://localhost:11434/v1`，以 `--llm-base-url` 指定其他 loopback 位址。
 工具不下載模型、不自動切換 provider；所選能力不可用會失敗。
 
-Codex 測試固定使用 `xhigh` 推理強度，並在啟動模型回合前核對及記錄實際值；
-所選模型須支援此強度。這些情境驗證單一客戶端透過 MCP 操作，不繼承宿主的
-Ultra 自動委派模式，也不允許子代理或其他原生工具代做。設定僅適用於測試程序，
-不修改使用者的全域 Codex 設定。
+Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順序為 `--llm-model`／
+`--llm-reasoning-effort`、專用環境變數 `TRADINGDEV_LLM_MODEL`／
+`TRADINGDEV_LLM_REASONING_EFFORT`、固定基準；不沿用宿主或文件審查的模型設定。
+啟動模型回合前核對及記錄實際模型與推理強度，所選能力不可用或不符即失敗。
+推理強度的可接受值由 [provider 選項](../tests/llm_plugin.py) 的
+`CODEX_REASONING_EFFORTS` 定義；不支援會自動委派的 Ultra。
+這些情境驗證單一客戶端透過 MCP 操作，不允許子代理或其他原生工具代做，
+也不修改使用者的全域 Codex 設定。
+
+此處指定的是受測模型。驗證某個模型的相容性時，明確指定該模型與推理強度；
+其他模型的結果不能代替。此測試不執行程式碼審查或 PR 文件一致性審查。
 
 以 `-k` 選取相關情境，省略時執行全部。可先列出目前可用情境，不呼叫模型：
 
 ```bash
 ./scripts/check-llm.sh codex --collect-only -q
-./scripts/check-llm.sh codex --llm-model gpt-6.1-sol -k novice --llm-timeout 1800
+./scripts/check-llm.sh codex -k novice --llm-timeout 1800
 ```
 
 依變更責任選擇與維護測試：
@@ -274,9 +279,9 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 
 `--llm-timeout` 是每個情境的期限。長流程需要足夠上下文；已驗證的本地 Qwen 配置
 為 64K，但不代表所有模型的最低需求。容量不足須調整服務配置後重跑完整情境。
-Ollama 設定方式見[官方說明](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)。
 Local 可用 `--llm-temperature`、`--llm-reasoning-effort` 覆寫支援的採樣設定；
-這些選項不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
+未指定時使用本地服務預設，不讀取 Codex 測試的專用環境變數。
+`--llm-temperature` 不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
 
 ### 量測模型上下文
 
@@ -300,6 +305,12 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 
 依 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 安排獨立唯讀 reviewer，提供任務目的、
 基準／受查版本、差異範圍與相關契約。保持受查內容穩定，核實 findings、修正後複查。
+使用 CLI 時明確指定 review 模型及推理強度；以下範例使用 `gpt-6.1-sol` 與 `high`：
+
+```bash
+codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
+  review --base origin/main
+```
 
 | 命令 | 適用範圍 |
 | --- | --- |
@@ -368,16 +379,19 @@ PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分�
 開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
 
 真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
-這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
-`TRADINGDEV_CODEX_MODEL` 指定，例如：
+這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
+`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
 
 ```bash
-TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 ```
 
 文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
-上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
+設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
+舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
+PR 文件審查每次只使用選定模型與推理強度；執行失敗直接回報，不自動切換模型。
 審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 

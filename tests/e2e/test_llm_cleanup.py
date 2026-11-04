@@ -325,6 +325,7 @@ def test_llm_previews_then_cleans_only_authorized_drafts(
             options: dict[str, Any] = {
                 "timeout_seconds": pytestconfig.getoption("llm_timeout"),
                 "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
             }
             if provider == "codex":
                 return codex_calls(
@@ -336,7 +337,6 @@ def test_llm_previews_then_cleans_only_authorized_drafts(
                     seed.prompt,
                     base_url=pytestconfig.getoption("llm_base_url"),
                     temperature=pytestconfig.getoption("llm_temperature"),
-                    reasoning_effort=pytestconfig.getoption("llm_reasoning_effort"),
                     **options,
                 )
 
