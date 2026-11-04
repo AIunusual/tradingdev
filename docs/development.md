@@ -49,9 +49,8 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 
 ### 依賴相容性限制
 
-本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；FLAML 2.7 的
-[上游宣告](https://github.com/microsoft/FLAML/blob/v2.7.0/README.md)仍有限制，
-可安裝不代表所有上游功能均支援。修改 ML 依賴時須保留各 learner 的實際訓練與
+本專案使用 Python 3.14、XGBoost 3 及 FLAML 基礎套件；可安裝不代表所有上游
+功能均已驗證。修改 ML 依賴時須保留各 learner 的實際訓練與
 評估驗證，入口見 [tests/domain/ml/](../tests/domain/ml/) 及
 [整合測試](../tests/integration/)。安裝問題亦見 [README](../README.md)。
 
@@ -60,8 +59,7 @@ Shell 入口位於 [scripts/](../scripts/)，Git hooks 位於 [.githooks/](../.g
 [Dockerfile](../Dockerfile) 使用與專案相同的 Python 次版本，透過
 `uv sync --locked --no-dev --no-editable` 安裝執行環境；Ruff、Mypy 與內建策略的
 ML 套件屬執行期依賴，不能因為容器部署而移除。品質設定隨 wheel 收錄。
-映像建置採 [uv 的多階段安裝方式](https://docs.astral.sh/uv/guides/integration/docker/#non-editable-installs)，
-執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
+映像採多階段建置，執行層只複製安裝環境；[.dockerignore](../.dockerignore) 限定傳入建置的檔案。
 
 容器修改除完整離線檢查外，須驗證 Compose 解析、實際建置與 HTTP MCP 連線，
 並檢查非 root 身分的工作區寫入、生成策略驗證所需工具／套件、容器重建後資料讀取，
@@ -243,7 +241,6 @@ Ultra 自動委派模式，也不允許子代理或其他原生工具代做。�
 
 `--llm-timeout` 是每個情境的期限。長流程需要足夠上下文；已驗證的本地 Qwen 配置
 為 64K，但不代表所有模型的最低需求。容量不足須調整服務配置後重跑完整情境。
-Ollama 設定方式見[官方說明](https://docs.ollama.com/api/openai-compatibility#setting-the-local-context-size)。
 Local 可用 `--llm-temperature`、`--llm-reasoning-effort` 覆寫支援的採樣設定；
 這些選項不適用於 Codex。模型版本與設定不同，驗證結果不能直接互相替代。
 
