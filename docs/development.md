@@ -305,8 +305,7 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 
 依 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 安排獨立唯讀 reviewer，提供任務目的、
 基準／受查版本、差異範圍與相關契約。保持受查內容穩定，核實 findings、修正後複查。
-獨立 reviewer 使用 `gpt-6.1-sol` 與 `high`；更高階模型留給具體困難問題。
-使用 CLI 時明確指定 review 模型及推理強度，例如：
+使用 CLI 時明確指定 review 模型及推理強度；以下範例使用 `gpt-6.1-sol` 與 `high`：
 
 ```bash
 codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
@@ -392,8 +391,7 @@ TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
 設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
 舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
-正常 PR 檢查只使用選定配置，失敗不自動切換模型；模型選型比較須獨立執行，
-不能將某個模型的通過結果覆蓋另一個模型的失敗。
+PR 文件審查每次只使用選定模型與推理強度；執行失敗直接回報，不自動切換模型。
 審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 
