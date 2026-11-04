@@ -52,6 +52,34 @@ def _payload(prompt: str) -> dict[str, Any]:
     return dict(json.loads(prompt.rsplit("\n\n", 1)[-1]))
 
 
+def test_model_options_review_preserves_source_and_development_guidance(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    path = "tests/llm_plugin.py"
+    _write(tmp_path, path, "MODEL = 'old'\n")
+    _write(
+        tmp_path,
+        "docs/development.md",
+        "# 開發指南\n\n## 選擇性 LLM 測試\nModel selection contract.\n",
+    )
+    _write(
+        tmp_path,
+        "README.md",
+        "# TradingDev\n\n## 查看結果與圖表\nReport-only instructions.\n",
+    )
+    base = _tree(tmp_path)
+    _write(tmp_path, path, "MODEL = 'new'\n")
+    plan = review_docs.prepare_review(base, _tree(tmp_path), repo=tmp_path)
+    assert plan.manifest["selected_scopes"] == ["tooling"]
+    batch = _payload(plan.prompts[0])
+    assert batch["assigned_paths"] == [path]
+    assert batch["candidate_files"][path] == "MODEL = 'new'\n"
+    assert "+MODEL = 'new'" in batch["path_diffs"][path]
+    assert "Model selection contract." in plan.prompts[0]
+    assert "Report-only instructions." not in plan.prompts[0]
+
+
 def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     change: tuple[Path, str, str],
 ) -> None:

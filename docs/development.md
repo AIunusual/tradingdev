@@ -269,6 +269,13 @@ Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下�
 
 依 [AGENTS.md](../AGENTS.md#開發階段的程式碼審查) 安排獨立唯讀 reviewer，提供任務目的、
 基準／受查版本、差異範圍與相關契約。保持受查內容穩定，核實 findings、修正後複查。
+獨立 reviewer 使用 `gpt-6.1-sol` 與 `high`；更高階模型留給具體困難問題。
+使用 CLI 時明確指定 review 模型及推理強度，例如：
+
+```bash
+codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
+  review --base origin/main
+```
 
 | 命令 | 適用範圍 |
 | --- | --- |
@@ -337,16 +344,20 @@ PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分�
 開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更即跑全套。
 
 真實模型策略測試另依變更選取。開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
-這一步不要求使用 Astra，建議使用 Sol 或其他具足夠上下文容量的模型，透過
-`TRADINGDEV_CODEX_MODEL` 指定，例如：
+這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
+`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
 
 ```bash
-TRADINGDEV_CODEX_MODEL=gpt-6.1-sol ./scripts/check-pr.sh 27
+TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 ```
 
 文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
 修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
-上述命令為這次 PR 文件審查指定模型；開發階段 `codex review` 的模型須另行指定。
+上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
+設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
+文件審查不再使用 `TRADINGDEV_CODEX_MODEL`，請改用上述專用設定。
+正常 PR 檢查只使用選定配置，失敗不自動切換模型；模型選型比較須獨立執行，
+不能將某個模型的通過結果覆蓋另一個模型的失敗。
 審查程式與來源入口見
 [review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
 
