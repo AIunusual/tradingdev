@@ -160,7 +160,9 @@ def verify_comparison_delivery(
         queried = [
             call
             for call in calls
-            if call.result.get("success") is True
+            if call.name in {"get_run", "get_run_metrics", "compare_runs"}
+            and isinstance(call.result, dict)
+            and call.result.get("success") is True
             and (
                 (
                     call.name in {"get_run", "get_run_metrics"}
@@ -300,6 +302,7 @@ async def direct_comparison(
         return result
 
     await call("get_strategy", strategy_id="kd_crossover")
+    assert isinstance(await call("list_data_sources"), list)
     parameters = {"config": KDStrategyConfig().model_dump(), "fit_config": None}
     paths = list(confirmation_presentation(parameters)["parameter_descriptions"])
     evidence = await call(
