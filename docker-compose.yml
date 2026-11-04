@@ -1,0 +1,39 @@
+services:
+  mcp:
+    build:
+      context: .
+    init: true
+    restart: unless-stopped
+    user: "${TRADINGDEV_UID:-1000}:${TRADINGDEV_GID:-1000}"
+    ports:
+      - "${MCP_BIND_IP:-127.0.0.1}:${MCP_PORT:-8000}:8000"
+    volumes:
+      - type: bind
+        source: ${TRADINGDEV_DATA_DIR:-./workspace}
+        target: /workspace
+        bind:
+          create_host_path: false
+    environment:
+      FORWARDED_ALLOW_IPS: ${MCP_TRUSTED_PROXIES:-127.0.0.1}
+    command:
+      - --web
+      - --transport
+      - streamable-http
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --allow-host
+      - ${MCP_ALLOWED_HOST:-localhost:8000}
+      - --allow-origin
+      - ${MCP_ALLOWED_ORIGIN:-http://localhost:8000}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

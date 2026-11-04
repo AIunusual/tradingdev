@@ -143,6 +143,9 @@ def test_cli_rejects_invalid_http_options_before_creating_workspace(
 ) -> None:
     workspace = tmp_path / "workspace"
     for arguments in (
+        ["--host", "0.0.0.0"],
+        ["--web", "--host", "http://192.0.2.10:8000"],
+        ["--web", "--host", ""],
         ["--allow-host", "research.example"],
         ["--web", "--port", "0"],
         ["--web", "--allow-origin", "*"],
