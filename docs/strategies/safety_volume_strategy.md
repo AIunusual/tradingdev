@@ -133,6 +133,10 @@ strategy:
       scheme: roll_ex
 ```
 
+啟用後，若整段評分資料沒有任何一根能算出完整特徵，共享引擎會直接失敗，不會把
+整段都留成中性值；個別缺特徵的 bar 仍保留 `P(safe)=0.5`。錯誤訊息與
+`predict_lookback` 的需求見 [滾動規則](../ml_research.md#rolling-retraining-schemes)。
+
 ### Position & Volume
 
 | 參數 | 預設值 | 說明 |
