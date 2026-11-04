@@ -343,7 +343,11 @@ def _verify_interpretation(text: str) -> None:
         re.IGNORECASE,
     )
     sentences = re.split(r"[。！？!?；;\n]|\.(?=\s|$)", visible)
-    assert re.search(r"回測|backtest", visible, re.IGNORECASE) and any(
+    outcome_terms = re.compile(
+        r"回測|獲利|損益|收益|報酬|\b(?:backtests?|profit\w*|returns?|pnl)\b",
+        re.IGNORECASE,
+    )
+    assert outcome_terms.search(visible) and any(
         cost_terms.search(sentence) and limitation_terms.search(sentence)
         for sentence in sentences
     ), "Final reply must discuss signal evidence and cost-aware backtest limits"

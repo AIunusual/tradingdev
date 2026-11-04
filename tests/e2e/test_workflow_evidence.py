@@ -231,6 +231,32 @@ def test_scripted_repair_still_requires_artifact_listing() -> None:
         assert_workflow(calls, SCENARIOS["repair"])
 
 
+@pytest.mark.parametrize("missing", [None, "daily_pnl_mean", "total_volume", "n_days"])
+def test_natural_repair_can_read_definitions_with_saved_metrics(
+    missing: str | None,
+) -> None:
+    calls = [call for call in _repair_evidence() if call.name != "get_metric_catalog"]
+    calls[2].result["diagnostics"] = [{"code": "strategy_check_failed"}]
+    calls[-1].result["definitions"] = {
+        name: {"id": name}
+        for name in ("daily_pnl_mean", "total_volume", "n_days")
+        if name != missing
+    }
+    calls.append(
+        ToolCall(
+            "generate_report",
+            {"run_ids": ["run"]},
+            {"success": True, "run_ids": ["run"], "artifact_id": "report:html"},
+        )
+    )
+    scenario = replace(SCENARIOS["repair"], runtime_exit=True)
+    if missing is None:
+        assert_workflow(calls, scenario)
+    else:
+        with pytest.raises(AssertionError, match="must include their definitions"):
+            assert_workflow(calls, scenario)
+
+
 def test_detail_from_another_run_is_rejected() -> None:
     calls = _repair_evidence()
     calls[-1].arguments["run_id"] = "unrelated"

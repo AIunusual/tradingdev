@@ -311,6 +311,29 @@ def test_ml_report_requires_an_explicit_transaction_cost_limitation(
 
 
 @pytest.mark.parametrize(
+    "explanation",
+    [
+        "這份研究保存的是訊號相關性等指標，沒有交易成本、成交、持倉路徑或帳戶損益；"
+        "因此無法據此推論扣除交易成本後策略是否獲利。",
+        "這只是訊號研究，並不是策略回測。尚未計入交易成本。",
+    ],
+    ids=["no-backtest-keyword", "context-in-previous-sentence"],
+)
+def test_ml_report_accepts_cost_limit_with_context(
+    report: MLReportWorkflow,
+    explanation: str,
+) -> None:
+    path = report.calls[-1].result["path"]
+    text = (
+        f"[報告](<{path}>)\n\n"
+        "訊號評估視窗 12 有分數，視窗 24 分數不可用，不能視為零。"
+        + explanation
+        + _UNKNOWN_PROVENANCE_CONTEXT
+    )
+    replace(report, turn=replace(report.turn, text=text)).verify()
+
+
+@pytest.mark.parametrize(
     "claim",
     [
         "這份研究可支持樣本內訊號關聯的描述。",

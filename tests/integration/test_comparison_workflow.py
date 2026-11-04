@@ -29,6 +29,7 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.comparisons import ComparisonStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.contracts.reports import ReportAnalysis
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.comparison import ComparisonManifest
 from tradingdev.domain.execution import ExecutionManifest
@@ -196,9 +197,10 @@ def verify_comparison_delivery(
         job_id=job_id,
         run_ids=run_ids,
     )
-    assert report_call.arguments.get("commentary"), (
-        "Report requires explanatory commentary"
-    )
+    analysis = ReportAnalysis.model_validate(report_call.arguments.get("analysis"))
+    assert {(ref.run_id, ref.scope) for ref in analysis.references} == {
+        (run_id, "full") for run_id in run_ids
+    }, "Comparison analysis must reference every candidate's full result"
     selected = report_call.arguments.get("sections")
     assert selected is None or selected == list(REPORT_RECIPES["standard"])
     service = ReportService(workspace=paths, store=store)
@@ -211,6 +213,8 @@ def verify_comparison_delivery(
         "</script>", 1
     )[0]
     payload = json.loads(raw)
+    expected_analysis = analysis.model_dump(mode="json")
+    assert payload["analysis"] == expected_analysis
     assert payload["sections"] == list(REPORT_RECIPES["standard"])
     evidence = payload["fixed_comparison"]
     assert evidence["manifest"] == saved.model_dump(mode="json")
@@ -229,6 +233,7 @@ def verify_comparison_delivery(
         ]
     report_path = Path(report["path"])
     report_manifest = json.loads(report_path.with_name("manifest.json").read_text())
+    assert report_manifest["analysis"] == expected_analysis
     assert report_manifest["fixed_comparison"] == evidence
     registered = store.get_artifact(report["artifact_id"])
     assert registered is not None and registered["path"] == str(report_path)
@@ -320,12 +325,13 @@ async def direct_comparison(
     report = await call(
         "generate_report",
         comparison_job_id=accepted["job_id"],
-        commentary=[
-            {
-                "title": "比較限制",
-                "text": "固定兩組參數使用相同合成行情；結果不代表真實交易績效。",
-            }
-        ],
+        analysis={
+            "summary": "固定比較兩組 KD 參數。",
+            "observations": "兩組候選皆完成，完整指標保存在各自結果中。",
+            "hypotheses_and_limits": "使用相同合成行情，不代表真實交易績效。",
+            "next_steps": "研究樣本外資料前應另行確認期間與設定。",
+            "references": [{"run_id": run_id, "scope": "full"} for run_id in run_ids],
+        },
     )
     assert report["success"], report
     final = (
@@ -368,6 +374,8 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
             "wrong_parent",
             "missing_link",
             "unqueried_child",
+            "partial_analysis",
+            "unsaved_analysis",
         ):
             broken = deepcopy(calls)
             final_calls = deepcopy(user.turns[-1].calls)
@@ -381,6 +389,10 @@ def test_fixed_comparison_approval_worker_and_complete_report() -> None:
                 report_call.arguments["comparison_job_id"] = "another_parent"
             elif failure == "missing_link":
                 final_text = "完成，但未交付報告連結。"
+            elif failure == "partial_analysis":
+                report_call.arguments["analysis"]["references"].pop()
+            elif failure == "unsaved_analysis":
+                report_call.arguments["analysis"]["observations"] = "未保存的其他觀察。"
             else:
                 hidden = report_call.result["run_ids"][-1]
                 broken = [
