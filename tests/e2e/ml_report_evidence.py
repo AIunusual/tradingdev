@@ -397,12 +397,17 @@ def _reject_unsupported_sample_claims(text: str) -> None:
     conditional = re.compile(
         r"若|如果|假如|倘若|(?:^|[：:,，\s])如[^，,。；;]*(?<!規)則"
     )
-    # Accept the contract's same-data condition, not an exclusive claim such as
-    # "only this research can be called out-of-sample".
+    # Only exempt an explicitly general contract condition. Claims that this
+    # research satisfies it still need evidence, even when phrased with "only".
+    general_rule = re.compile(r"一般而言|一般判讀原則|契約的一般規則")
+    asserted_case = re.compile(
+        r"本(?:研究|次|候選)|這(?:份|些)|因為|由於|既然|已(?:確認|證實)"
+    )
     same_data_condition = re.compile(
-        r"(?=[^，,。；;]*訓練)(?=[^，,。；;]*評估)"
-        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*時"
-        r"(?:才(?:可|能)(?:判(?:定)?|認定|視)?)?$"
+        r"(?=[^，,。；;]*(?:訓練|\btraining_dataset_id\b))"
+        r"(?=[^，,。；;]*(?:評估|\bdataset_id\b))"
+        r"[^，,。；;]*(?:相同|等於)[^，,。；;]*"
+        r"(?:時(?:才(?:可|能))?|才(?:可|能))(?:據此)?(?:判(?:定)?|認定|視)?$"
     )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
     for sentence in re.split(r"[。！？!?；;\n]|但|然而|不過", text):
@@ -412,7 +417,11 @@ def _reject_unsupported_sample_claims(text: str) -> None:
             if (
                 uncertain.search(before)
                 or conditional.search(before)
-                or same_data_condition.search(before)
+                or (
+                    general_rule.search(before)
+                    and not asserted_case.search(before)
+                    and same_data_condition.search(before)
+                )
                 or unknown_after.search(after)
             ):
                 continue

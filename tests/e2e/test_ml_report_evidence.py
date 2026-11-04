@@ -353,6 +353,10 @@ def test_ml_report_accepts_cost_limit_with_context(
         "只有這份研究的結果才可視為已證實的樣本外評估。",
         "只有本次結果才可判為樣本內；其他研究尚未確認。",
         "本研究的訓練與評估資料相同，故結果為樣本內評估。",
+        "training_dataset_id 與 dataset_id 相同，本研究為樣本內評估。",
+        "本研究就是因為 training_dataset_id 與 dataset_id 相同才可據此判為樣本內。",
+        "一般判讀原則是：本研究就是因為 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內。",
     ],
 )
 def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
@@ -382,6 +386,9 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "一般而言，模型產生訊號且訓練資料集 ID 等於評估資料集 ID 時為樣本內；"
         "ID 不同也不保證期間不重疊。本次缺乏此欄位、訓練期間、分割及驗證紀錄，"
         "不能判定樣本內外或無洩漏。",
+        "一般判讀原則是：由模型產生訊號且 training_dataset_id 與 dataset_id "
+        "相同才可據此判為樣本內；不同 ID 本身亦不證明樣本外。"
+        "本候選缺少訓練 ID，不能套用同集判定。",
     ],
 )
 def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
