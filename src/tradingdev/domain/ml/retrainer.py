@@ -58,6 +58,9 @@ class RollingRetrainer:
         Raises:
             ValueError: If the frames have no usable time identity, because the
                 overlap with the training history cannot be detected without it.
+            ValueError: If a non-empty scored frame leaves every bar without a
+                usable feature row, because all-zero signals would otherwise be
+                reported as a strategy that simply never trades.
         """
         history, scored = align_scoring_history(train_data, test_df)
         window_size = max(self._lookback * 10, len(history))
@@ -68,6 +71,7 @@ class RollingRetrainer:
         signals = np.zeros(total_bars, dtype=int)
         current_model = model
         last_trade_bar = -self._cooldown
+        scored_bars = 0
 
         total_retrains = (total_bars - 1) // self._retrain_interval + 1
         retrain_count = 0
@@ -106,18 +110,44 @@ class RollingRetrainer:
             if i - last_trade_bar < self._cooldown:
                 continue
 
-            signal = self._predict_bar(combined, combined_idx, fe, current_model)
+            features = self._bar_features(combined, combined_idx, fe)
+            if features is None:
+                continue
+            scored_bars += 1
+
+            signal = self._signal(features, current_model)
             if signal != 0:
                 signals[i] = signal
                 last_trade_bar = i
 
+        if total_bars and not scored_bars:
+            needed = fe.minimum_context_rows
+            available = len(combined)
+            msg = (
+                f"rolling prediction scored none of {total_bars} bars: the "
+                f"feature engineer needs at least {needed} rows before a complete "
+                f"feature row is possible, and the history plus the scored frame "
+                f"hold {available}"
+            )
+            if available < needed:
+                msg += "; provide more history before the scored window"
+            else:
+                msg += (
+                    "; that is enough history, so the features are incomplete "
+                    "for another reason (a flat price series leaves the "
+                    "Bollinger width undefined, for example)"
+                )
+            raise ValueError(msg)
+
         elapsed = time.monotonic() - t_start
         n_signals = int(np.count_nonzero(signals))
         logger.info(
-            "[signals] Complete: %d bars in %.1fs (%.0f bars/s), %d signals emitted",
+            "[signals] Complete: %d bars in %.1fs (%.0f bars/s), %d scored, "
+            "%d signals emitted",
             total_bars,
             elapsed,
             total_bars / elapsed if elapsed > 0 else 0,
+            scored_bars,
             n_signals,
         )
         return signals
@@ -154,21 +184,36 @@ class RollingRetrainer:
                 return model
         return fallback_model
 
-    def _predict_bar(
+    def _bar_features(
         self,
         combined: pd.DataFrame,
         combined_idx: int,
         fe: FeatureEngineer,
-        model: XGBoostDirectionModel,
-    ) -> int:
-        ctx_start = max(0, combined_idx - self._lookback * 2)
+    ) -> pd.DataFrame | None:
+        """Return the feature row for ``combined_idx``, or None if it is unusable.
+
+        The context must cover the features' own warm-up: the fixed indicators
+        need a fixed number of bars whatever the lookback is, so sizing it as a
+        multiple of the lookback alone left a short lookback with an empty frame
+        and no prediction at all.  ``2 x lookback + 1`` stays as a floor so that
+        a lookback large enough to cover the warm-up keeps the context, and
+        therefore the seeded indicator values, it already had.
+        """
+        ctx_rows = max(2 * self._lookback + 1, fe.context_rows)
+        ctx_start = max(0, combined_idx - ctx_rows + 1)
         ctx = combined.iloc[ctx_start : combined_idx + 1].copy()
         feat_pred = fe.transform(ctx, include_target=False)
 
         if combined_idx not in feat_pred.index:
-            return 0
+            return None
+        return feat_pred.loc[[combined_idx]]
 
-        proba = model.predict_proba(feat_pred.loc[[combined_idx]])
+    def _signal(
+        self,
+        features: pd.DataFrame,
+        model: XGBoostDirectionModel,
+    ) -> int:
+        proba = model.predict_proba(features)
         p_long = float(proba[1].iloc[0]) if 1 in proba.columns else 0.0
         p_short = float(proba[-1].iloc[0]) if -1 in proba.columns else 0.0
 

@@ -68,7 +68,10 @@ surviving source index labels; there is no index-reset option. Callers needing
 row positions supply a positional index.
 SafetyVolume maps optional ML directions to those source rows. XGBoost rolling
 prediction skips a bar whose own features are unavailable, rather than reusing
-an earlier prediction. Its threshold search evaluates the complete source frame,
+an earlier prediction. A scored frame in which no bar can be scored fails
+instead of reporting an all-flat result; the
+[rolling rules](#rolling-retraining-schemes) cover the context and the failure.
+Its threshold search evaluates the complete source frame,
 leaves unavailable rows without entry signals, and measures cooldown in source
 bars, including gaps.
 
@@ -410,14 +413,42 @@ Whichever scheme is declared, a training window ends strictly before the bar it
 scores, the scored frame is never concatenated in front of itself, and a bar
 whose features are unavailable is not scored rather than reusing the previous
 bar's value. Those are the same rules the classic retrainer follows in its own
-loop. The engine adds one rule of its own: a training row whose label reads past
-the last bar of the training window is dropped before fitting, whatever the feature engineer
-returned. The classic retrainer has no such filter — it relies on the engineer
-leaving that tail unlabelled for `dropna` to remove — which is why the engine
-takes `label_horizon` explicitly and why an engineer that fills its unlabelled
-tail cannot smuggle an unrealised outcome into an enabled run. A nonempty scored
-frame in which no bar can be scored fails rather than returning all-zero signals;
-an empty scored frame simply has nothing to score.
+loop. The classic loop sizes its scoring context from the feature engineer's
+declared `context_rows`. `FeatureEngineer.minimum_context_rows` is the earliest
+point at which every feature can exist; `context_rows` adds a preferred margin
+to reduce the influence of exponential initial values. Other feature engineers
+must declare their own minimum and, where needed, seed-decay margin. Available
+history is still the limit: shorter history can score once complete features
+exist. The decay target bounds individual recursion weights, not the final
+indicator error against a full history; finite-context values remain approximate.
+Missing or degenerate inputs can prevent scoring even above the minimum, and the
+failure message distinguishes this from insufficient history. `2 x lookback + 1` rows
+remain a floor, so a lookback that already covered the requirement keeps the
+context, and the seeded values, it had. The engine keeps the geometry described
+above: `predict_lookback` still follows the lookback, and resolution only
+requires it to cover `lookback + 1`. A scheme whose geometry leaves no bar with a
+complete feature row is therefore not rejected up front — scoring runs to the end
+and fails instead of returning all-zero signals. Which error that is depends on
+whether a model was available: the feature-context failure names
+`predict_lookback` and the field to raise, while a replay that never obtained a
+causal model reports the model-availability error described above, which does not
+name that field. A lookback short enough to need `predict_lookback` raised must
+set it explicitly. For the direction strategy, at least
+`minimum_context_rows - 1` prior bars are needed for complete features to be
+possible; `context_rows - 1` is recommended for the same seed-decay margin as the
+classic loop. The engine adds the scored bar on top. The SafetyVolume risk gate passes a different engineer to the
+same engine, and `RiskFeatureEngineer` declares no equivalent, so its geometry has
+to be sized from that engineer's own windows — its 60-bar volatility window alone
+needs 60 preceding bars, or 61 rows including the scored one. The engine adds one
+rule of its own: a training row whose
+label reads past the last bar of the training window is dropped before fitting,
+whatever the feature engineer returned. The classic retrainer has no such filter
+— it relies on the engineer leaving that tail unlabelled for `dropna` to remove
+— which is why the engine takes `label_horizon` explicitly and why an engineer
+that fills its unlabelled tail cannot smuggle an unrealised outcome into an
+enabled run. A nonempty scored frame in which no bar can be scored fails on both
+paths rather than returning all-zero signals; an empty scored frame simply has
+nothing to score.
 
 What an unscored bar becomes differs by consumer: the direction strategy emits
 `0`, while the Safety Volume risk gate keeps its neutral `0.5`. Neither borrows a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -29,6 +30,30 @@ if TYPE_CHECKING:
     )
 
 logger = setup_logger(__name__)
+
+_DIRECTION_INPUT_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
+
+
+def _direction_inputs(df: pd.DataFrame) -> pd.DataFrame:
+    """Project a frame onto the OHLCV columns direction features are built from.
+
+    Direction features read prices and volume only, so any other column is
+    neither an input nor allowed to collide with an engineered name.
+    """
+    columns = [name for name in _DIRECTION_INPUT_COLUMNS if name in df.columns]
+    return df.loc[:, columns]
+
+
+@dataclass(frozen=True)
+class _MLDirection:
+    """A direction feature pipeline together with the model fitted on it.
+
+    Keeping the pair together ties a model to the exact feature contract it was
+    trained on, so no call site can score it through another pipeline.
+    """
+
+    features: FeatureEngineer
+    model: XGBoostDirectionModel
 
 
 class SafetyVolumeStrategy(BaseStrategy):
@@ -70,7 +95,13 @@ class SafetyVolumeStrategy(BaseStrategy):
     # ------------------------------------------------------------------
 
     def fit(self, df: pd.DataFrame) -> None:
-        """Train the Risk Gate model and optionally the direction model."""
+        """Train the Risk Gate model and optionally the direction model.
+
+        Raises:
+            ValueError: If a threshold search runs on a frame whose index
+                labels are not unique, because the scored validation rows could
+                not be mapped back to the bars their directions come from.
+        """
         val_ratio = self._config.validation_ratio
         split_idx = int(len(df) * (1 - val_ratio))
         train_df = df.iloc[:split_idx]
@@ -83,12 +114,17 @@ class SafetyVolumeStrategy(BaseStrategy):
         self._best_lookback = best_lb
 
         # --- Threshold search ---
+        # Each fit decides its own threshold: a fit whose lookback search
+        # qualifies nothing must not trade on the previous fold's value.
+        self._best_threshold = self._config.risk_threshold
         if self._config.risk_threshold_candidates and best_model:
+            direction_source = self._search_direction_source(train_df, best_lb)
             self._best_threshold = self._search_threshold(
                 val_df,
+                df,
                 best_model,
                 best_fe,
-                best_lb,
+                direction_source,
             )
 
         # --- Retrain final risk model on full data ---
@@ -226,14 +262,71 @@ class SafetyVolumeStrategy(BaseStrategy):
     # Threshold search
     # ------------------------------------------------------------------
 
+    def _search_direction_source(
+        self,
+        train_df: pd.DataFrame,
+        lookback: int,
+    ) -> _MLDirection | None:
+        """Decide the direction mode this fit's threshold search scores with.
+
+        The declared configuration decides the mode, never the model an earlier
+        fit left behind.  With ML direction enabled the model is fitted on this
+        fit's training split alone, so the validation rows the threshold is
+        chosen on stay unseen and cannot be rewarded by a model that already
+        memorised them.  ``fit`` then refits on the full frame for live signals,
+        the same way the risk gate is retrained after its own search.
+        """
+        if not self._config.use_ml_direction:
+            return None
+        return self._train_ml_direction(train_df, lookback)
+
+    def _validation_directions(
+        self,
+        feat_val: pd.DataFrame,
+        context_df: pd.DataFrame,
+        source: _MLDirection | None,
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Directions for the scored validation bars, computed with their history.
+
+        Scoring the validation slice on its own spends the whole window on
+        feature warm-up: the risk gate already dropped its first ``lookback``
+        bars, and the direction pipeline needs as many again.  The search would
+        then compare candidates over directions that are all zero and call the
+        most permissive one best.  ``context_df`` supplies the bars that precede
+        the scored rows; only those rows are returned.
+        """
+        if not context_df.index.is_unique:
+            msg = (
+                "fit() needs unique index labels to align the threshold search "
+                "with the validation rows"
+            )
+            raise ValueError(msg)
+        positions = context_df.index.get_indexer(feat_val.index)
+        if (positions < 0).any():
+            msg = "Validation rows must come from the frame passed to fit()"
+            raise ValueError(msg)
+        directions = (
+            self._compute_sma_directions(context_df)
+            if source is None
+            else self._ml_directions(context_df, source)
+        )
+        return directions[positions]
+
     def _search_threshold(
         self,
         val_df: pd.DataFrame,
+        context_df: pd.DataFrame,
         model: XGBoostDirectionModel,
         fe: RiskFeatureEngineer | None,
-        lookback: int,
+        direction_source: _MLDirection | None,
     ) -> float:
-        """Find the threshold that minimises loss while meeting volume."""
+        """Find the threshold that minimises loss while meeting volume.
+
+        ``direction_source`` states the direction mode the candidates are scored
+        under: ``None`` is the SMA crossover, a trained source is ML direction.
+        It is resolved for this fit rather than read from the strategy, so a
+        leftover model cannot silently change how the candidates are compared.
+        """
         if fe is None or self._backtest_engine is None:
             return self._config.risk_threshold
 
@@ -249,7 +342,16 @@ class SafetyVolumeStrategy(BaseStrategy):
                 proba.iloc[:, 0].values,
             )
 
-        directions = self._compute_directions(feat_val)
+        directions = self._validation_directions(
+            feat_val,
+            context_df,
+            direction_source,
+        )
+        if not np.any(directions):
+            logger.warning(
+                "Threshold search skipped: no validation bar has a direction",
+            )
+            return self._config.risk_threshold
 
         best_threshold = self._config.risk_threshold
         best_pnl: float | None = None
@@ -476,18 +578,38 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         df: pd.DataFrame,
     ) -> npt.NDArray[np.floating[Any]]:
-        """ML direction using the trained direction model."""
+        """ML direction using the model the last fit trained for live signals."""
         if self._dir_model is None or self._dir_fe is None:
             return self._compute_sma_directions(df)
+        return self._ml_directions(
+            df,
+            _MLDirection(features=self._dir_fe, model=self._dir_model),
+        )
+
+    def _ml_directions(
+        self,
+        df: pd.DataFrame,
+        source: _MLDirection,
+    ) -> npt.NDArray[np.floating[Any]]:
+        """Score one direction per row with an explicit direction source.
+
+        Only the OHLCV columns the pipeline was fitted on reach it.  A frame
+        that already carries engineered columns - the risk gate's validation
+        matrix, for instance - would otherwise contribute a second copy of every
+        shared name, and XGBoost rejects duplicate columns.
+        """
         out = np.zeros(len(df), dtype=np.float64)
         if df.empty:
             return out
         # Preserve source positions through dropna, including interior gaps.
         # The copied RangeIndex is metadata, never an input feature for the model.
-        feat = self._dir_fe.transform(df.reset_index(drop=True), include_target=False)
+        feat = source.features.transform(
+            _direction_inputs(df).reset_index(drop=True),
+            include_target=False,
+        )
         if feat.empty:
             return out
-        preds = self._dir_model.predict(feat)
+        preds = source.model.predict(feat)
         if len(preds) != len(feat) or not preds.index.equals(feat.index):
             msg = (
                 "Direction predictions do not match the feature rows: "
@@ -502,19 +624,32 @@ class SafetyVolumeStrategy(BaseStrategy):
         self,
         df: pd.DataFrame,
     ) -> None:
-        """Train the optional ML direction model."""
+        """Train the optional ML direction model that scores live signals."""
+        source = self._train_ml_direction(df, self._best_lookback or 720)
+        self._dir_fe = source.features
+        self._dir_model = source.model
+
+    def _train_ml_direction(
+        self,
+        df: pd.DataFrame,
+        lookback: int,
+    ) -> _MLDirection:
+        """Fit a direction pipeline on exactly the rows it is given."""
         from tradingdev.domain.ml.features.features import FeatureEngineer
 
-        best_lb = self._best_lookback or 720
-        self._dir_fe = FeatureEngineer(
-            lookback=best_lb,
+        features = FeatureEngineer(
+            lookback=lookback,
             target_horizon=1,
         )
-        feat = self._dir_fe.transform(df, include_target=True)
-        self._dir_model = XGBoostDirectionModel(
+        feat = features.transform(
+            _direction_inputs(df),
+            include_target=True,
+        )
+        model = XGBoostDirectionModel(
             config=self._config.direction_model,
         )
-        self._dir_model.train(feat)
+        model.train(feat)
+        return _MLDirection(features=features, model=model)
 
     # ------------------------------------------------------------------
     # State machine

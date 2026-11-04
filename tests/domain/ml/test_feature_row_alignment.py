@@ -106,17 +106,33 @@ def test_threshold_search_without_complete_features_keeps_default() -> None:
 def test_rolling_prediction_requires_the_current_source_row(
     position: int, expected: int
 ) -> None:
+    """A bar is scored from its own feature row, or not at all.
+
+    Positions 20 and 100 have no complete row of their own -- warm-up, and a
+    flat region whose Bollinger width is zero -- so no prediction is made for
+    them and the frame handed to the model is always the bar itself.
+    """
     frame = _gapped_frame()
     original = frame.copy(deep=True)
     model = _PredictionRecorder()
     retrainer = RollingRetrainer(XGBoostModelConfig(), 1000, 0.6, 0, 24)
 
-    signal = retrainer._predict_bar(frame, position, FeatureEngineer(24), model)
+    signals = retrainer.run(frame, frame.iloc[:0], model, FeatureEngineer(24))
 
-    assert signal == expected
-    assert len(model.frames) == expected
-    if expected:
-        pd.testing.assert_frame_equal(
-            model.frames[0][frame.columns], frame.iloc[[position]]
+    predicted = [int(request.index[0]) for request in model.frames]
+    assert (position in predicted) is bool(expected)
+    assert signals[position] == expected
+    for request in model.frames:
+        assert len(request) == 1
+        bar = int(request.index[0])
+        # ``run()`` normalises the scored frame to UTC; the fixture is naive.
+        assert pd.Timestamp(request["timestamp"].iloc[0]) == pd.Timestamp(
+            frame["timestamp"].iloc[bar]
+        ).tz_localize("UTC")
+        np.testing.assert_allclose(
+            request[["open", "high", "low", "close", "volume"]].to_numpy(dtype=float),
+            frame.loc[[bar], ["open", "high", "low", "close", "volume"]].to_numpy(
+                dtype=float
+            ),
         )
     pd.testing.assert_frame_equal(frame, original)

@@ -369,7 +369,7 @@ def _require_unknown_sample_provenance(sentences: list[str]) -> None:
     sample_label = re.compile(r"樣本[內外]")
     identity = re.compile(
         r"是否|與否|歸屬|屬於|來源|關係|判定|確認|認定|區分|身分|身份|"
-        r"樣本內[／/或與、 ]*外"
+        r"樣本(?:內[／/或與、 ]*(?:樣本)?外|外[／/或與、 ]*(?:樣本)?內)"
     )
     assert any(
         unknown.search(sentence)
@@ -529,10 +529,14 @@ def _reject_unsupported_sample_claims(text: str) -> None:
         r"(?=[^，,。；;]*(?:訓練|\btraining_dataset_id\b))"
         r"(?=[^，,。；;]*(?:評估|\bdataset_id\b))"
         r"[^，,。；;]*(?:相同|等於)[^，,。；;]*"
-        r"(?:(?:時(?:才(?:可|能))?|才(?:可|能))(?:據此)?|[，,]\s*可(?:以)?)"
+        r"(?:(?:[，,]\s*)?(?:時(?:才(?:可|能))?|才(?:可|能))"
+        r"(?:據此|依此)?|[，,]\s*可(?:以)?)"
         r"(?:判(?:定)?|認定|視|確認)?(?:此評分|該評估)?$"
     )
     unknown_after = re.compile(r"仍(?:然)?(?:未知|不明)|尚待(?:確認|驗證)|尚未確認")
+    unknown_alternative = re.compile(
+        r"^\s*(?:或|[／/])(?:樣本)?[內外](?:仍(?:然)?|均|皆)?(?:未知|不明)\s*$"
+    )
     clauses = re.split(r"[。！？!?；;\n]|但|然而|不過", text)
     for index, clause in enumerate(clauses):
         for match in _SAMPLE_CLAIM.finditer(clause):
@@ -542,6 +546,7 @@ def _reject_unsupported_sample_claims(text: str) -> None:
                 uncertain.search(before)
                 or conditional.search(before)
                 or unknown_after.search(after)
+                or unknown_alternative.fullmatch(after)
             ):
                 continue
             if _states_training_data_definition(before, match) or (

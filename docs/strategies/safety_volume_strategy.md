@@ -38,6 +38,9 @@ ML 方向模型只對特徵齊備的 bar 產生預測，依原始列位置回填
 那根 bar，不會因中間缺列移動其他預測。若模型回傳的列數或來源索引與特徵列不一致，
 執行會以 `RuntimeError` 停止，不會截短或猜測對齊。
 
+方向特徵只讀 `timestamp`、開高低收與成交量；輸入框架即使已帶 `log_return`、
+`ret_lag_*` 等同名特徵欄位，也不會被併入方向特徵，因此不會產生重複欄位。
+
 ### Layer 3: Holding Manager (狀態機)
 
 管理持倉生命週期，確保符合交易所規則。
@@ -72,6 +75,24 @@ FLAT ──(safe + direction)──► LONG/SHORT
 與滑點後 `total_pnl` 最高且為有限數值的 `risk_threshold`；若有效結果皆虧損，
 選擇虧損最小者。不可用與非有限數值不參與比較；全部無有效結果時，保留
 設定的 `risk_threshold`。此搜尋不以 `monthly_volume_target` 作為硬性篩選條件。
+
+候選值一律以本次 `fit()` 宣告的方向模式評分：`use_ml_direction` 為 false 時用
+SMA，為 true 時用 ML，不沿用前一次 `fit()` 留在策略上的模型。啟用 ML 時，
+搜尋用的方向模型只以訓練區間配適，驗證區間不進入其訓練資料；搜尋結束後才以
+完整資料重新配適正式訊號使用的模型，與 Risk Gate 在搜尋後重訓的方式相同。
+
+方向以含驗證區間之前歷史的完整資料計算，再取出驗證列，因此特徵暖機不會吃掉
+驗證視窗。驗證區間內若沒有任何一根 bar 能取得方向，候選值無從比較，搜尋不選出
+新值。每次 `fit()` 都先把 `risk_threshold` 還原為設定值，只有搜尋成功才覆寫，
+所以連續 `fit()` 或 walk-forward 跨 fold 重複使用同一策略物件時，不會沿用上一個
+fold 的模型或門檻。
+
+搜尋要評分的驗證列會先被 Risk Gate 的特徵暖機濾掉一部分，方向必須依索引標籤
+對回原本的 bar，因此這條路徑要求 `fit()` 輸入的索引標籤唯一；重複標籤無法唯一
+對應時，`fit()` 以 `ValueError` 停止，不會挑一個較寬鬆的門檻繼續。以
+`reset_index(drop=True)` 或任何唯一索引提供資料即可。只有實際執行搜尋時才有
+這項要求（設定 `risk_threshold_candidates` 且 lookback 搜尋找到合格風險模型）；
+沒有搜尋的 `fit()` 不受影響。
 
 ### Direction
 
@@ -111,6 +132,10 @@ strategy:
       enabled: true
       scheme: roll_ex
 ```
+
+啟用後，若整段評分資料沒有任何一根能算出完整特徵，共享引擎會直接失敗，不會把
+整段都留成中性值；個別缺特徵的 bar 仍保留 `P(safe)=0.5`。錯誤訊息與
+`predict_lookback` 的需求見 [滾動規則](../ml_research.md#rolling-retraining-schemes)。
 
 ### Position & Volume
 

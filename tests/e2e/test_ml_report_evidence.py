@@ -449,6 +449,12 @@ def test_ml_report_accepts_cost_limit_with_context(
         "相同才可確認此評分為樣本內；候選結果亦然。",
         "一般而言，本研究的模型產生訊號且保存的訓練與評估 dataset_id "
         "相同，可判定該評估為樣本內。",
+        "其分數是樣本內；模型種類未知。",
+        "其分數是樣本內或樣本外已確認。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本內；候選結果亦然。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本外。",
     ],
 )
 def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
@@ -469,6 +475,7 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "如果資料曾用於訓練，則屬於樣本內；目前沒有切分證據。",
         "是否屬於樣本內仍未知。",
         "結果屬於樣本內與否仍未知。",
+        "模型候選未保存訓練資料，因此其分數是樣本內或樣本外未知。",
         "這不是已證實的樣本外評估。",
         "契約的一般規則是：如評估用於訓練的資料則仍為樣本內；"
         "本次沒有證據可套用為既成事實。",
@@ -492,6 +499,8 @@ def test_ml_report_rejects_affirmative_sample_labels_without_split_evidence(
         "相同才可確認此評分為樣本內；不同 ID 也不能證明樣本外。",
         "一般而言，模型產生訊號且保存的訓練與評估 dataset_id 相同，"
         "可判定該評估為樣本內；識別不同仍不足以證明樣本外，還需期間與分割證據。",
+        "一般而言，只有確認訊號由該模型產生且訓練與評估資料集相同，"
+        "才可依此判為樣本內；不同資料集 ID 仍可能期間重疊，不能據此稱為樣本外。",
         # Reported rule: the model quotes the product rule instead of stating it.
         "工具一般規則說明訓練資料上的評估屬於樣本內，"
         "但不能由一般規則推定這兩筆實際屬於樣本內；同樣也不能宣稱樣本外。",
@@ -522,6 +531,8 @@ def test_ml_report_accepts_unknown_or_conditional_sample_provenance(
         "模型擬合與這份評估的資料是否重疊，紀錄沒有交代。",
         "樣本內／外來源尚不明。",
         "無法確認這些結果的樣本內或樣本外歸屬。",
+        "模型候選未保存訓練資料，因此其分數是樣本內或樣本外未知。",
+        "模型候選未保存訓練資料，因此其分數是樣本外或樣本內未知。",
         _UNKNOWN_PROVENANCE_CONTEXT,
     ],
 )
