@@ -66,6 +66,16 @@ def _inference_entry_points() -> dict[str, str]:
     }
 
 
+def _public_benchmark_symbols() -> set[str]:
+    """Public callables and result dataclasses declared by benchmark.py."""
+    return {
+        node.name
+        for node in _module_ast(_BENCHMARK).body
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        and not node.name.startswith("_")
+    }
+
+
 def test_architecture_names_every_inference_entry_point() -> None:
     """The review requires the outcome entry points to be discoverable here."""
     entry_points = _inference_entry_points()
@@ -117,3 +127,26 @@ def test_method_semantics_remain_in_the_module_docstrings() -> None:
     # Benchmark interpretation guidance stays with the implementation.
     for term in ("active return", "excess return", "average net exposure", "costs"):
         assert term in benchmark_doc, f"benchmark docstring lost guidance: {term}"
+
+
+def test_architecture_names_the_benchmark_callables() -> None:
+    """Readers must be able to find the maintained benchmark contracts."""
+    symbols = _public_benchmark_symbols()
+    assert {"buy_and_hold_returns", "compare_to_benchmark", "BenchmarkComparison"} <= (
+        symbols
+    )
+    section = _statistics_section()
+    missing = sorted(name for name in symbols if name not in section)
+    assert not missing, f"architecture section omits benchmark symbols: {missing}"
+
+
+def test_benchmark_docstring_separates_point_estimates_from_uncertainty() -> None:
+    """Serial dependence changes uncertainty, not the location of sample means."""
+    doc = _docstring_text(_BENCHMARK)
+    assert "does not by itself bias those sample means" in doc
+    assert "Dependence changes their uncertainty, not their location" in doc
+    assert "i.i.d. standard error" in doc
+    assert "miscalibrated" in doc
+    # The old claim conflated dependence with a biased point estimate.
+    assert "annualised point estimates are biased" not in doc
+    assert "point estimates are biased" not in doc

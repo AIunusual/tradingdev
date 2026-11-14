@@ -65,13 +65,23 @@ Reading the results:
   only the periods both cover; build the benchmark from the same bars and
   the same ``frequency`` as the strategy returns.
 * Annualisation uses the caller's ``periods_per_year``, as in
-  :mod:`tradingdev.domain.statistics.sharpe`. Point estimates scale means
-  by ``periods_per_year`` and standard deviations by
-  ``sqrt(periods_per_year)``, which assumes independent periods, while
-  :func:`difference_interval` uses a stationary bootstrap that keeps their
-  autocorrelation. The point estimate and the interval therefore rest on
-  different assumptions; with autocorrelated returns the annualised point
-  estimates are biased, and the interval is the better guide to precision.
+  :mod:`tradingdev.domain.statistics.sharpe`.
+  :func:`compare_to_benchmark` scales sample means and the regression
+  intercept by ``periods_per_year`` and a sample standard deviation by
+  ``sqrt(periods_per_year)``. For a stationary series, serial dependence
+  does not by itself bias those sample means or the intercept: they still
+  estimate the per-period quantities, and the annualisation is a fixed
+  arithmetic rescaling. Dependence changes their uncertainty, not their
+  location. An i.i.d. standard error, and the ``sqrt`` scaling of a
+  standard deviation, no longer describe the sampling variance of a mean
+  when successive periods are correlated, so confidence intervals and
+  significance computed under independence are miscalibrated, and the
+  annualised dispersion figures inherit that scaling assumption.
+  :func:`tradingdev.domain.statistics.comparison.difference_interval`
+  addresses the uncertainty with a stationary bootstrap that resamples
+  blocks and so preserves the dependence. Read the point estimates as
+  "how large" and the interval as "how precisely known"; autocorrelated
+  returns change the second, not the first.
 
 Conventions:
 
