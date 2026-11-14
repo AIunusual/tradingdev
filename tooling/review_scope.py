@@ -58,6 +58,24 @@ class BehaviorContext:
     document_scopes: frozenset[str]
 
 
+@dataclass(frozen=True)
+class DevelopmentContext:
+    """Reviewed development operations, separate from owners and product SRS."""
+
+    operations: frozenset[str]
+
+
+DEVELOPMENT_OPERATIONS = frozenset(
+    {
+        "issue_claim",
+        "pr_cleanup",
+        "candidate_review",
+        "environment_quality",
+        "presentation",
+    }
+)
+
+
 _ALL = frozenset(SCOPES)
 _PRODUCT = frozenset({"strategy", "execution", "results", "data", "ml", "interfaces"})
 
@@ -414,6 +432,229 @@ _WHOLE_DOC_SCOPES: dict[str, frozenset[str]] = {
     # Quantile scoring details moved here from the shared authoring contract.
     "docs/strategies/quantile_strategy.md": frozenset(
         {"strategy", "execution", "ml", "interfaces"}
+    ),
+}
+
+
+# Operation selectors name existing sections, never copy policy or change the
+# review owner. Unlisted known sections are unrelated; genuinely new headings
+# still retain their whole subtree through the shared document registry.
+_DEVELOPMENT_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
+    "AGENTS.md": {
+        **_headings(
+            DEVELOPMENT_OPERATIONS,
+            "政策與溝通",
+            "設計原則",
+            "環境與品質工具",
+            "測試與清理",
+            "執行時機",
+            "開發階段的程式碼審查",
+            "工作樹與分階段提交",
+            "完成回報",
+        ),
+        **_headings({"issue_claim"}, "Issue 接手與指派"),
+        **_headings({"pr_cleanup"}, "PR 合併後的本機分支清理"),
+        **_headings({"candidate_review"}, "Git hooks 與本機 PR 審查"),
+        **_headings({"candidate_review", "environment_quality"}, "模型上下文與提示詞"),
+    },
+    "docs/development.md": {
+        **_headings(
+            DEVELOPMENT_OPERATIONS,
+            "開發指南",
+            "環境與常用命令",
+            "測試設計與精簡",
+            "更新文件",
+            "注意事項",
+        ),
+        **_headings({"issue_claim"}, "接手 issue"),
+        **_headings({"pr_cleanup"}, "4. 合併後更新 main、清理本機分支"),
+        **_headings(
+            {"candidate_review"},
+            "開發階段的程式碼審查",
+            "1. 分階段提交並推送",
+            "2. 在 GitHub 建立 PR，交由審閱者檢查",
+            "測試證據與文件修正",
+            "檢查期間的主線更新",
+            "3. 在 GitHub 審閱並合併",
+            "尚未建立 PR 的本機檢查",
+        ),
+        **_headings(
+            {"candidate_review", "environment_quality"},
+            "執行離線測試",
+            "平行執行離線測試",
+            "SRS 維護與檢核",
+        ),
+        **_headings(
+            {"environment_quality"},
+            "型別檢查與契約保護",
+            "依賴相容性限制",
+            "容器建置與驗證",
+            "選擇性 LLM 測試",
+            "量測模型上下文",
+        ),
+        **_headings(
+            {"presentation"},
+            "簡報的編輯與輸出",
+            "在 VS Code 儲存時自動編譯",
+            "手動輸出與預覽",
+            "簡報網站發布設定",
+            "Cloudflare 自動發布",
+            "共用網域與專案路徑",
+        ),
+    },
+    "ARCHITECTURE.md": {
+        **_headings(DEVELOPMENT_OPERATIONS, "Repository 開發工具與研究原型"),
+        **_headings({"environment_quality"}, "容器執行 adapter"),
+    },
+    "README.md": _headings({"environment_quality"}, "1. 準備環境並安裝"),
+    "CLAUDE.md": _headings(DEVELOPMENT_OPERATIONS, "Claude Code"),
+}
+_DEVELOPMENT_WHOLE_DOCS = {
+    "docs/talks/tradingdev-introduction/README.md": frozenset({"presentation"}),
+}
+# Reading a policy as background does not mean edits to it affect only that
+# operation. Only these pure development instructions have reviewed change
+# responsibilities; shared/product policy and unfamiliar ancestry stay broad.
+_DEVELOPMENT_CHANGE_HEADINGS = {
+    "AGENTS.md": frozenset(
+        {
+            "Issue 接手與指派",
+            "PR 合併後的本機分支清理",
+            "Git hooks 與本機 PR 審查",
+            "開發階段的程式碼審查",
+            "工作樹與分階段提交",
+        }
+    ),
+    "docs/development.md": frozenset(
+        {
+            "接手 issue",
+            "4. 合併後更新 main、清理本機分支",
+            "開發階段的程式碼審查",
+            "1. 分階段提交並推送",
+            "2. 在 GitHub 建立 PR，交由審閱者檢查",
+            "測試證據與文件修正",
+            "檢查期間的主線更新",
+            "3. 在 GitHub 審閱並合併",
+            "尚未建立 PR 的本機檢查",
+            "執行離線測試",
+            "平行執行離線測試",
+            "簡報的編輯與輸出",
+            "在 VS Code 儲存時自動編譯",
+            "手動輸出與預覽",
+            "簡報網站發布設定",
+            "Cloudflare 自動發布",
+            "共用網域與專案路徑",
+        }
+    ),
+}
+
+
+def _development_paths(
+    operations: Iterable[str], *paths: str
+) -> dict[str, DevelopmentContext]:
+    return dict.fromkeys(paths, DevelopmentContext(frozenset(operations)))
+
+
+# Register audited entry points and consumers explicitly. Neither a tooling/
+# prefix nor a familiar filename establishes an operation's responsibility.
+_DEVELOPMENT_CONTEXTS: dict[str, DevelopmentContext] = {
+    **_development_paths(
+        {"issue_claim"},
+        "tooling/git/claim_issue.py",
+        "scripts/claim-issue.sh",
+        "tests/tooling/test_claim_issue.py",
+    ),
+    **_development_paths(
+        {"pr_cleanup"},
+        "tooling/git/cleanup_pr.py",
+        "scripts/cleanup-pr.sh",
+        "tests/tooling/test_pr_cleanup.py",
+    ),
+    **_development_paths(
+        {"candidate_review", "pr_cleanup"},
+        "tooling/git/pr_context.py",
+        "tests/tooling/test_pr_context.py",
+        "scripts/detect-primary-branch.sh",
+    ),
+    **_development_paths(
+        {"candidate_review"},
+        "tooling/git/gate.py",
+        "tooling/git/check_pr.py",
+        "tooling/git/change_scope.py",
+        "tooling/review_docs.py",
+        "tooling/review_options.py",
+        "tooling/review_scope.py",
+        "tooling/review_plan.py",
+        "scripts/check-pr.sh",
+        "scripts/git-flow-commit.sh",
+        "scripts/install-git-hooks.sh",
+        ".githooks/commit-msg",
+        ".githooks/pre-commit",
+        ".githooks/pre-merge-commit",
+        ".githooks/pre-push",
+        ".githooks/pre-rebase",
+        "tests/tooling/test_candidate_cleanup.py",
+        "tests/tooling/test_candidate_profiles.py",
+        "tests/tooling/test_change_scope.py",
+        "tests/tooling/test_check_options.py",
+        "tests/tooling/test_check_pr.py",
+        "tests/tooling/test_git_hooks.py",
+        "tests/tooling/test_pr_base_refresh.py",
+        "tests/tooling/test_review_docs.py",
+        "tests/tooling/test_review_scope.py",
+        "tests/tooling/test_review_plan.py",
+    ),
+    **_development_paths(
+        {"candidate_review", "environment_quality"},
+        "tooling/git/candidates.py",
+        "tooling/git/suite.py",
+        "tooling/codex_binary.py",
+        "scripts/check-full.sh",
+        "scripts/check-tooling.sh",
+        "tests/tooling/test_codex_binary.py",
+        "tests/tooling/git_check_scenarios.py",
+    ),
+    **_development_paths(
+        {"candidate_review", "presentation"},
+        "tooling/review_evidence.py",
+    ),
+    **_development_paths(
+        {"candidate_review", "environment_quality", "presentation"},
+        "tooling/environment.py",
+        "tooling/git/receipts.py",
+        "tests/tooling/test_environment.py",
+        "tests/tooling/test_verification_receipts.py",
+    ),
+    **_development_paths(
+        {"environment_quality"},
+        "tooling/quality.py",
+        "scripts/check-fast.sh",
+        "scripts/format.sh",
+        "scripts/rebuild-env.sh",
+        "tests/tooling/test_quality.py",
+        "tests/tooling/test_rebuild_env.py",
+        "tests/tooling/test_parallel_pytest.py",
+    ),
+    **_development_paths(
+        {"presentation"},
+        "docs/talks/tradingdev-introduction/README.md",
+        "tooling/presentations.py",
+        "tooling/presentation_bundle.py",
+        "tooling/presentation_html.py",
+        "tooling/presentation_errors.py",
+        "tooling/marp/build.mjs",
+        "tooling/marp/render-diagrams.mjs",
+        "tooling/marp/presentation-url.mjs",
+        "tooling/marp/package.json",
+        "tooling/marp/package-lock.json",
+        "scripts/presentations.sh",
+        "scripts/check-presentations.sh",
+        "scripts/stage-presentations.sh",
+        "scripts/build-presentations-site.sh",
+        "tests/tooling/test_presentations.py",
+        "tests/tooling/test_presentation_bundle.py",
+        ".vscode/tasks.json",
+        "wrangler.jsonc",
     ),
 }
 
@@ -1054,6 +1295,36 @@ def behavior_context_for_path(path: str) -> BehaviorContext | None:
     return _BEHAVIOR_CONTEXTS.get(path)
 
 
+def development_context_for_path(path: str) -> DevelopmentContext | None:
+    """Return audited operations without changing ownership or SRS obligations."""
+    normalized = PurePosixPath(path)
+    if (
+        normalized.is_absolute()
+        or ".." in normalized.parts
+        or normalized.as_posix() != path
+    ):
+        return None
+    return _DEVELOPMENT_CONTEXTS.get(path)
+
+
+def development_context_for_sections(
+    path: str, sections: Iterable[MarkdownSection]
+) -> DevelopmentContext | None:
+    """Resolve edited operational sections; background relevance is insufficient."""
+    allowed = _DEVELOPMENT_CHANGE_HEADINGS.get(path, frozenset())
+    operations: set[str] = set()
+    for section in sections:
+        if (
+            section.path != path
+            or not section.headings
+            or section.headings[-1] not in allowed
+            or any(title not in _DOC_HEADINGS[path] for title in section.headings)
+        ):
+            return None
+        operations.update(_DEVELOPMENT_HEADINGS[path][section.headings[-1]])
+    return DevelopmentContext(frozenset(operations)) if operations else None
+
+
 def scope_for_path(path: str) -> str:
     """Return one owner; classification never filters a path out of evidence."""
     normalized = PurePosixPath(path)
@@ -1256,6 +1527,49 @@ def unknown_document_sections(path: str, text: str) -> tuple[MarkdownSection, ..
         index
         for index, section in enumerate(sections)
         if any(title not in registry for title in section.headings)
+    }
+    if not selected:
+        return ()
+    selected.update(
+        index
+        for index, section in enumerate(sections)
+        if not section.headings
+        or any(
+            section.start_line <= line <= section.end_line for line in reference_lines
+        )
+    )
+    return _with_ancestor_sections(sections, selected)
+
+
+def sections_for_development_context(
+    context: DevelopmentContext, path: str, text: str
+) -> tuple[MarkdownSection, ...]:
+    """Select exact operation guidance, ancestors and unfamiliar document text.
+
+    Operation groups are not selectable review owners. Shared section recognition
+    keeps new headings conservative, including descendants under known titles;
+    a selected heading does not automatically expand its known child sections.
+    """
+    invalid = context.operations - DEVELOPMENT_OPERATIONS
+    if invalid or not context.operations:
+        raise ValueError(f"Unknown development operations: {sorted(invalid)!r}")
+    sections, reference_lines = _parse_sections(path, text)
+    if path in _DEVELOPMENT_WHOLE_DOCS:
+        return sections if context.operations & _DEVELOPMENT_WHOLE_DOCS[path] else ()
+    if path in _WHOLE_DOC_SCOPES:
+        return ()
+    registry = _DOC_HEADINGS.get(path)
+    if registry is None or not any(section.headings for section in sections):
+        return sections
+    operations = _DEVELOPMENT_HEADINGS.get(path, {})
+    selected = {
+        index
+        for index, section in enumerate(sections)
+        if any(title not in registry for title in section.headings)
+        or (
+            section.headings
+            and context.operations & operations.get(section.headings[-1], frozenset())
+        )
     }
     if not selected:
         return ()

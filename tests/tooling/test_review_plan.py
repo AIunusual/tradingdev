@@ -1593,6 +1593,348 @@ def real_document_repository(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.parametrize(
+    ("sources", "operations", "required", "excluded"),
+    [
+        (
+            (
+                "tooling/git/claim_issue.py",
+                "scripts/claim-issue.sh",
+                "tests/tooling/test_claim_issue.py",
+            ),
+            {"issue_claim"},
+            (("AGENTS.md", "Issue 接手與指派"), ("docs/development.md", "接手 issue")),
+            ("撰寫 issue", "4. 合併後更新 main、清理本機分支", "檢查期間的主線更新"),
+        ),
+        (
+            (
+                "tooling/git/cleanup_pr.py",
+                "scripts/cleanup-pr.sh",
+                "tests/tooling/test_pr_cleanup.py",
+            ),
+            {"pr_cleanup"},
+            (
+                ("AGENTS.md", "PR 合併後的本機分支清理"),
+                ("docs/development.md", "4. 合併後更新 main、清理本機分支"),
+            ),
+            ("接手 issue", "檢查期間的主線更新", "測試證據與文件修正"),
+        ),
+        (
+            ("tooling/git/pr_context.py",),
+            {"candidate_review", "pr_cleanup"},
+            (
+                ("docs/development.md", "4. 合併後更新 main、清理本機分支"),
+                ("docs/development.md", "檢查期間的主線更新"),
+            ),
+            ("接手 issue", "容器建置與驗證", "選擇性 LLM 測試"),
+        ),
+        (
+            ("tooling/review_options.py",),
+            {"candidate_review"},
+            (
+                ("AGENTS.md", "模型上下文與提示詞"),
+                ("AGENTS.md", "Git hooks 與本機 PR 審查"),
+                ("docs/development.md", "測試證據與文件修正"),
+                ("docs/development.md", "檢查期間的主線更新"),
+                ("docs/development.md", "SRS 維護與檢核"),
+            ),
+            ("接手 issue", "4. 合併後更新 main、清理本機分支", "選擇性 LLM 測試"),
+        ),
+        (
+            ("scripts/check-fast.sh", "tooling/quality.py"),
+            {"environment_quality"},
+            (
+                ("docs/development.md", "型別檢查與契約保護"),
+                ("docs/development.md", "量測模型上下文"),
+                ("docs/development.md", "SRS 維護與檢核"),
+            ),
+            ("接手 issue", "4. 合併後更新 main、清理本機分支", "檢查期間的主線更新"),
+        ),
+        (
+            ("tooling/environment.py", "tooling/git/receipts.py"),
+            {"environment_quality", "candidate_review", "presentation"},
+            (
+                ("docs/development.md", "容器建置與驗證"),
+                ("docs/development.md", "選擇性 LLM 測試"),
+                ("docs/development.md", "測試證據與文件修正"),
+                ("docs/development.md", "在 VS Code 儲存時自動編譯"),
+                ("ARCHITECTURE.md", "容器執行 adapter"),
+                ("README.md", "1. 準備環境並安裝"),
+            ),
+            ("接手 issue", "4. 合併後更新 main、清理本機分支"),
+        ),
+        (
+            ("scripts/presentations.sh",),
+            {"presentation"},
+            (
+                ("docs/development.md", "在 VS Code 儲存時自動編譯"),
+                ("docs/development.md", "Cloudflare 自動發布"),
+            ),
+            ("接手 issue", "4. 合併後更新 main、清理本機分支", "檢查期間的主線更新"),
+        ),
+    ],
+)
+def test_development_operations_select_exact_real_guidance_and_complete_sources(
+    real_document_repository: Path,
+    sources: tuple[str, ...],
+    operations: set[str],
+    required: tuple[tuple[str, str], ...],
+    excluded: tuple[str, ...],
+) -> None:
+    repo = real_document_repository
+    root = Path(__file__).resolve().parents[2]
+    for path in sources:
+        _write(repo, path, (root / path).read_text(encoding="utf-8"))
+    base = _tree(repo)
+    for path in sources:
+        with (repo / path).open("a", encoding="utf-8") as stream:
+            stream.write("\n# Operation context regression.\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owned = [batch for batch in batches if batch["phase"] == "scope"]
+    for path in sources:
+        owner = next(batch for batch in owned if path in batch["assigned_paths"])
+        assert set(owner["development_contexts"][path]["operations"]) == operations
+        assert path not in owner["behavior_contexts"]
+        assert owner["candidate_files"][path] == original["candidate_files"][path]
+        assert owner["path_diffs"][path] == original["path_diffs"][path]
+        assert owner["requirement_context_paths"][owner["scope"]] == []
+    sections = [section for batch in owned for section in batch["document_sections"]]
+    required += (
+        ("AGENTS.md", "工作樹與分階段提交"),
+        ("AGENTS.md", "測試與清理"),
+        ("docs/development.md", "注意事項"),
+        ("ARCHITECTURE.md", "Repository 開發工具與研究原型"),
+    )
+    for path, heading in required:
+        expected = next(
+            section
+            for section in markdown_sections(path, original["candidate_files"][path])
+            if section.headings[-1:] == (heading,)
+        )
+        assert any(
+            section["path"] == path
+            and section["text"] == expected.text
+            and section["start_line"] == expected.start_line
+            and section["end_line"] == expected.end_line
+            and section["blob_oid"] == original["candidate_file_blobs"][path]
+            for section in sections
+        ), (sources, path, heading)
+    assert not {
+        heading for section in sections for heading in section["headings"][-1:]
+    } & set(excluded)
+    assert not any(
+        section["path"].startswith("docs/requirements/") for section in sections
+    )
+    selected = {(s["path"], s["headings"][-1]) for s in sections if s["headings"]}
+    assert ("README.md", "手動啟動並使用 HTTP 連接") not in selected
+    assert ("README.md", "使用 Docker 部署") not in selected
+    assert ("ARCHITECTURE.md", "核心概念與身分") not in selected
+    assert ("docs/development.md", "MAE 研究原型") not in selected
+    if "presentation" in operations:
+        guide = f"{DECK}/README.md"
+        assert any(
+            batch["candidate_files"].get(guide) == original["candidate_files"][guide]
+            or "".join(
+                s["text"] for s in batch["document_sections"] if s["path"] == guide
+            )
+            == original["candidate_files"][guide]
+            for batch in batches
+        )
+
+
+def test_development_and_product_changes_keep_their_union_in_cross_scope_audit(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    paths = (
+        "tooling/git/claim_issue.py",
+        "tooling/git/cleanup_pr.py",
+        "src/tradingdev/mcp/tools/data.py",
+    )
+    for path in paths:
+        _write(repo, path, "VALUE = 'before'\n")
+    base = _tree(repo)
+    for path in paths:
+        _write(repo, path, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert audit["path_diffs"] == original["path_diffs"]
+    assert set(audit["behavior_contexts"][paths[-1]]["requirement_ids"]) >= {
+        "FR-DATA-001",
+        "FR-DATA-002",
+        "NFR-API-001",
+    }
+    assert set(audit["development_contexts"]) == set(paths[:2])
+    product = next(batch for batch in batches if paths[-1] in batch["assigned_paths"])
+    tooling = next(batch for batch in batches if paths[0] in batch["assigned_paths"])
+    assert set(tooling["assigned_paths"]) == set(paths[:2])
+    for batch in (tooling, audit):
+        selected = {
+            (s["path"], s["headings"][-1])
+            for s in batch["document_sections"]
+            if s["headings"]
+        }
+        assert ("docs/development.md", "接手 issue") in selected
+        assert ("docs/development.md", "4. 合併後更新 main、清理本機分支") in selected
+    for batch in (product, audit):
+        assert any(
+            s["path"] == "docs/requirements/data.md" and "FR-DATA-001" in s["text"]
+            for s in batch["document_sections"]
+        )
+        expected = next(
+            s.text
+            for s in markdown_sections(
+                "docs/run_artifacts.md",
+                original["candidate_files"]["docs/run_artifacts.md"],
+            )
+            if s.headings[-1:] == ("Market Data Cache",)
+        )
+        assert any(s["text"] == expected for s in batch["document_sections"])
+    for path in paths:
+        owner = next(batch for batch in batches if path in batch["assigned_paths"])
+        assert owner["candidate_files"][path] == original["candidate_files"][path]
+        assert owner["path_diffs"][path] == original["path_diffs"][path]
+
+
+@pytest.mark.parametrize("change_kind", ["modify", "delete", "rename"])
+def test_unknown_tooling_path_keeps_fallback_and_old_operation_obligations(
+    real_document_repository: Path, change_kind: str
+) -> None:
+    repo = real_document_repository
+    known = "tooling/git/claim_issue.py"
+    unknown = "tooling/git/claim_extension.py"
+    _write(repo, known, "VALUE = 'original claim implementation'\n")
+    if change_kind != "rename":
+        _write(repo, unknown, "VALUE = 'old unknown consumer'\n")
+    base = _tree(repo)
+    if change_kind == "rename":
+        (repo / known).rename(repo / unknown)
+    else:
+        _write(repo, unknown, "VALUE = 'changed unknown consumer'\n")
+        if change_kind == "delete":
+            (repo / known).unlink()
+        else:
+            _write(repo, known, "VALUE = 'updated claim implementation'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    batch = next(batch for batch in batches if known in batch["assigned_paths"])
+    assert set(batch["assigned_paths"]) == {known, unknown}
+    assert batch["behavior_contexts"][unknown] == {"fallback_scope": "tooling"}
+    assert batch["development_contexts"][known] == {
+        "operations": ["issue_claim"],
+        "selection_basis": "registered-path",
+    }
+    assert batch["path_diffs"] == original["path_diffs"]
+    assert batch["base_file_blobs"][known] == original["base_file_blobs"][known]
+    if change_kind != "modify":
+        assert known not in batch["candidate_files"]
+        assert "-VALUE = 'original claim implementation'" in batch["path_diffs"][known]
+    for path in (known, unknown):
+        if path in original["candidate_files"]:
+            assert batch["candidate_files"][path] == original["candidate_files"][path]
+    for path, heading in (
+        ("docs/development.md", "接手 issue"),
+        ("docs/development.md", "4. 合併後更新 main、清理本機分支"),
+        ("docs/development.md", "MAE 研究原型"),
+        ("README.md", "手動啟動並使用 HTTP 連接"),
+    ):
+        expected = next(
+            s.text
+            for s in markdown_sections(path, original["candidate_files"][path])
+            if s.headings[-1:] == (heading,)
+        )
+        assert any(
+            s["path"] == path and s["text"] == expected
+            for s in batch["document_sections"]
+        )
+
+
+def test_development_unknown_heading_is_preserved_and_default_capacity_fails_closed(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    source = "tooling/git/claim_issue.py"
+    unknown = "## New operational contract\n" + "Necessary unknown original.\n" * 10_000
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    _write(repo, "README.md", readme + "\n" + unknown)
+    _write(repo, source, "VALUE = 'before'\n")
+    base = _tree(repo)
+    _write(repo, source, "VALUE = 'after'\n")
+    # The new section is one indivisible original. No implicit budget increase,
+    # truncation or successful plan is allowed just because the path is known.
+    with pytest.raises(ReviewError, match="original document section.*README.md"):
+        build_review_plan(build_evidence(repo, base, _tree(repo)))
+
+
+@pytest.mark.parametrize(
+    ("document", "heading", "edit", "precise"),
+    [
+        ("docs/development.md", "接手 issue", "modify", True),
+        ("AGENTS.md", "Issue 接手與指派", "modify", True),
+        ("AGENTS.md", "模型上下文與提示詞", "modify", False),
+        ("docs/development.md", "接手 issue", "delete", False),
+        ("docs/development.md", "接手 issue", "rename", False),
+    ],
+)
+def test_tool_and_operational_document_edits_narrow_only_reviewed_responsibilities(
+    real_document_repository: Path,
+    document: str,
+    heading: str,
+    edit: str,
+    precise: bool,
+) -> None:
+    repo = real_document_repository
+    source = "tooling/git/claim_issue.py"
+    _write(repo, source, "VALUE = 'before'\n")
+    base = _tree(repo)
+    _write(repo, source, "VALUE = 'after'\n")
+    original_text = (repo / document).read_text(encoding="utf-8")
+    section = next(
+        part
+        for part in markdown_sections(document, original_text)
+        if part.headings[-1:] == (heading,)
+    )
+    if edit == "modify":
+        replacement = section.text.rstrip() + "\n\n操作說明修訂。\n\n"
+    elif edit == "delete":
+        replacement = ""
+    else:
+        replacement = section.text.replace(heading, "新操作標題", 1)
+    _write(repo, document, original_text.replace(section.text, replacement, 1))
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(batch for batch in batches if document in batch["assigned_paths"])
+    assert owner["candidate_files"][document] == original["candidate_files"][document]
+    assert owner["path_diffs"][document] == original["path_diffs"][document]
+    if precise:
+        assert owner["development_contexts"][document] == {
+            "operations": ["issue_claim"],
+            "selection_basis": "changed-operational-sections",
+        }
+        assert document not in owner["behavior_contexts"]
+    else:
+        assert document not in owner["development_contexts"]
+        assert owner["behavior_contexts"][document] == {"fallback_scope": "tooling"}
+    # Shared product policy, removed sections and unfamiliar headings cannot
+    # borrow the neighboring claim tool's narrower context.
+    readme_headings = {
+        s["headings"][-1]
+        for s in owner["document_sections"]
+        if s["path"] == "README.md" and s["headings"]
+    }
+    assert ("手動啟動並使用 HTTP 連接" in readme_headings) is not precise
+
+
 def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
     real_document_repository: Path,
 ) -> None:
