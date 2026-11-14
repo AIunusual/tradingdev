@@ -856,7 +856,8 @@ uv run --no-sync python -m tooling.review_docs \
 `selection_basis` 區分路徑登錄與實際章節變更。操作文件僅在原標題階層仍存在時精選；
 共用或產品政策、未知標題、原章節刪除或改名仍採保守背景。混合操作取聯集，
 未登錄路徑維持 owner 背景，未知章節及其前提仍保留。
-各批 `document_sections` 也列出選取原因；`unknown-sections-preserved` 或
+各批 `document_sections` 也列出選取原因；`development-operation-context` 表示依開發操作
+選取的政策與操作背景，也包含為維持完整性而保留的未知章節。`unknown-sections-preserved` 或
 `unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
 盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
 新增章節不能直接沿用父章節歸屬，跨範圍的總覽仍可保留完整內容。
