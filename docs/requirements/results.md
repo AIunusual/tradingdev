@@ -6,7 +6,7 @@
 
 - **需求**：以穩定身分查詢保存的策略、工作、run 與 artifact，提供摘要、篩選、分頁及明細入口；查詢依當次保存的設定與來源。
 - **驗收**：目前 YAML 或預設值變更不改寫歷史解讀；缺少或損壞證據回報原因，不猜測或重跑策略補造。分頁說明續讀方式及總量，不承諾跨寫入的一致快照；ML 身分與 run 不混用。
-- **契約**：[探索分頁](../run_artifacts.md#discovery-pages)、[歷史觀察值](../run_artifacts.md#historical-observation-queries)。
+- **契約**：[探索分頁](../run_artifacts.md#discovery-pages)、[歷史觀察值](../run_artifacts.md#historical-observation-queries)、[保存設定與來源](../run_artifacts.md#research-settings-and-provenance)、[提交研究說明](../run_artifacts.md#research-evidence-records)、[執行身分與固定設定](../run_artifacts.md#execution-manifest)。
 - **驗證**：[MCP 歷史契約](../../tests/mcp/test_history_contracts.py)、[真實 MCP 分頁](../../tests/integration/test_list_pagination.py) 核對呼叫端與保存資料。
 
 ## FR-RES-002 績效與基準解讀
@@ -27,14 +27,14 @@
 
 - **需求**：要求完成研究並解讀績效時，助手須提供結果、證據限制及報告連結，除非使用者明確拒絕報告或只要摘要；建議不自動授權下一次實驗。
 - **驗收**：最終回覆識別所選結果及明細查看方式，確認交付檔案存在可讀。只回報工作啟動或中途貼連結不算完成；報告失敗可沿用已保存結果重試。HTTP 可提供綁定已保存確認單、報告或研究封存的短效連結；檔案變動或連結失效須明示，重新取得不重跑研究。無 HTTP 交付時由客戶端適當交付，遠端主機路徑不冒充下載網址。
-- **契約**：[研究解讀與診斷](../reports.md#research-interpretation-and-diagnostic-providers)、[報告交付](../reports.md#composable-offline-reports)。
+- **契約**：[研究解讀與診斷](../reports.md#research-interpretation-and-diagnostic-providers)、[報告交付](../reports.md#composable-offline-reports)、[產物下載與交付限制](../run_artifacts.md#reading-artifact-delivery)。
 - **驗證**：[交付證據檢查](../../tests/e2e/test_report_delivery.py) 為離線驗證器測試；[真實模型成果交付](../../tests/e2e/test_llm_research_delivery.py) 及 [HTTP 模型交付](../../tests/e2e/test_llm_http_delivery.py) 驗證受測流程，須另啟模型測試。
 
 ## FR-RES-005 研究筆記與封存
 
 - **需求**：可保存研究摘要、更新目前筆記，並將指定版本與報告匯出為可獨立閱讀的封存；筆記不替代原始研究證據或執行授權。
 - **驗收**：更新需核對預期版本，衝突不覆寫；匯出核對附件身分、內容與容量，缺少或變更時拒絕。後續筆記更新不改變舊封存；HTTP 下載期限及 stdio 本機路徑差異明示。封存不等同整個工作區、全部行情或重現環境。
-- **契約**：[研究筆記與封存](../reports.md#research-notebooks-and-archives)。
+- **契約**：[研究筆記與封存](../reports.md#research-notebooks-and-archives)、[封存下載與交付限制](../run_artifacts.md#reading-artifact-delivery)。
 - **驗證**：[筆記 service](../../tests/app/test_research_notes.py)、[MCP 筆記](../../tests/mcp/test_mcp_research_notes.py) 檢查版本、附件完整性、匯出及交付入口。
 
 ## FR-RES-006 可見對話保存與閱讀

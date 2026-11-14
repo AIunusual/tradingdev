@@ -729,6 +729,77 @@ _ML_ROLLING_WORKFLOW_CONTEXT = BehaviorContext(
     frozenset({"ml", "results"}),
 )
 
+_DATA_LOOKUP_CONTEXT = BehaviorContext(
+    frozenset({"FR-DATA-001", "FR-DATA-002", "NFR-OPS-002", "NFR-API-001"}),
+    frozenset({"data"}),
+)
+_DRAFT_CLEANUP_CONTEXT = BehaviorContext(
+    frozenset({"FR-STR-005"}),
+    frozenset({"strategy"}),
+)
+_NOTE_CONTEXT = BehaviorContext(
+    frozenset({"FR-RES-005", "NFR-OPS-002"}),
+    frozenset({"results"}),
+)
+_NOTE_INTERFACE_CONTEXT = BehaviorContext(
+    _NOTE_CONTEXT.requirement_ids | {"NFR-API-001"},
+    _NOTE_CONTEXT.document_scopes,
+)
+_CONVERSATION_CONTEXT = BehaviorContext(
+    frozenset({"FR-RES-006", "NFR-OPS-002"}),
+    frozenset({"results"}),
+)
+_BENCHMARK_CONTEXT = BehaviorContext(
+    frozenset({"FR-RES-002"}),
+    frozenset({"results"}),
+)
+# Saved scope semantics include walk-forward folds, optimization trials and
+# rolling traces. Reading them does not itself prepare, train or execute them.
+_RUN_LOOKUP_CONTEXT = BehaviorContext(
+    _RUN_RESULT_REQUIREMENTS | {"NFR-DATA-001", "NFR-OPS-002"},
+    frozenset({"results"}),
+)
+_RUN_INTERFACE_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids | {"NFR-API-001"},
+    _RUN_LOOKUP_CONTEXT.document_scopes,
+)
+_RUN_DIAGNOSTIC_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids | {"FR-RES-004"},
+    frozenset({"results"}),
+)
+_RUN_REPORT_CONTEXT = BehaviorContext(
+    _RUN_DIAGNOSTIC_CONTEXT.requirement_ids | {"FR-RES-003", "NFR-UX-001"},
+    frozenset({"results"}),
+)
+_COMPARISON_REPORT_CONTEXT = BehaviorContext(
+    _RUN_REPORT_CONTEXT.requirement_ids | {"FR-EXEC-004"},
+    frozenset({"results"}),
+)
+# Both the shared report service and history MCP entry point also select saved
+# ML evaluations and fixed comparisons, including candidates without a run.
+_SHARED_REPORT_CONTEXT = BehaviorContext(
+    _ML_COMPARISON_REPORT_CONTEXT.requirement_ids | {"NFR-OPS-002"},
+    frozenset({"ml", "results"}),
+)
+_HISTORY_INTERFACE_CONTEXT = BehaviorContext(
+    _SHARED_REPORT_CONTEXT.requirement_ids | {"NFR-API-001"},
+    _SHARED_REPORT_CONTEXT.document_scopes,
+)
+_ARTIFACT_INTERFACE_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-EXEC-001",
+            "FR-RES-001",
+            "FR-RES-004",
+            "FR-RES-005",
+            "NFR-DATA-001",
+            "NFR-OPS-002",
+            "NFR-API-001",
+        }
+    ),
+    frozenset({"results"}),
+)
+
 # These modules have reviewed behavior responsibilities. Do not infer context
 # from a layer prefix or a topic-looking filename: an unregistered path retains
 # the conservative owner-based fallback. Changed Markdown is selected from its
@@ -842,6 +913,128 @@ _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
     # This module also discovers and reads a saved walk-forward rolling trace.
     "tests/e2e/test_llm_ml.py": _ML_ROLLING_WORKFLOW_CONTEXT,
     "tests/e2e/test_ml_workflow_evidence.py": _ML_WORKFLOW_CONTEXT,
+    **dict.fromkeys(
+        (
+            "src/tradingdev/mcp/tools/data.py",
+            "src/tradingdev/app/contracts/data.py",
+            "tests/mcp/test_data_contracts.py",
+        ),
+        _DATA_LOOKUP_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/mcp/tools/strategy_cleanup.py",
+            "src/tradingdev/app/strategy_cleanup_service.py",
+            "src/tradingdev/app/contracts/strategy_cleanup.py",
+            "tests/app/test_strategy_cleanup_service.py",
+        ),
+        _DRAFT_CLEANUP_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/research_note_service.py",
+            "src/tradingdev/app/contracts/research_notes.py",
+        ),
+        _NOTE_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/mcp/tools/research_notes.py",
+            "tests/mcp/test_mcp_research_notes.py",
+            # The service tests also exercise CLI discovery, exports and errors.
+            "tests/app/test_research_notes.py",
+        ),
+        _NOTE_INTERFACE_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/conversation_service.py",
+            "src/tradingdev/app/contracts/conversations.py",
+        ),
+        _CONVERSATION_CONTEXT,
+    ),
+    "tests/app/test_conversations.py": BehaviorContext(
+        _CONVERSATION_CONTEXT.requirement_ids | {"NFR-API-001"},
+        _CONVERSATION_CONTEXT.document_scopes,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/benchmark_service.py",
+            "tests/app/test_benchmark_service.py",
+        ),
+        _BENCHMARK_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/run_service.py",
+            "src/tradingdev/app/rolling_trace_summary.py",
+            "src/tradingdev/app/trade_history_service.py",
+            "src/tradingdev/app/contracts/history.py",
+            "tests/app/test_trade_history.py",
+            "tests/app/test_execution_history.py",
+        ),
+        _RUN_LOOKUP_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/mcp/tools/runs.py",
+            "tests/app/test_run_metrics.py",
+        ),
+        _RUN_INTERFACE_CONTEXT,
+    ),
+    "src/tradingdev/app/diagnostic_service.py": _RUN_DIAGNOSTIC_CONTEXT,
+    "tests/app/test_report_service.py": _RUN_REPORT_CONTEXT,
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/report_comparison.py",
+            "tests/app/test_research_report_service.py",
+        ),
+        _COMPARISON_REPORT_CONTEXT,
+    ),
+    "tests/app/test_comparison_report.py": BehaviorContext(
+        _COMPARISON_REPORT_CONTEXT.requirement_ids | {"NFR-API-001"},
+        _COMPARISON_REPORT_CONTEXT.document_scopes,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/report_service.py",
+            "src/tradingdev/app/contracts/reports.py",
+        ),
+        _SHARED_REPORT_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/mcp/tools/history.py",
+            "tests/mcp/test_history_contracts.py",
+        ),
+        _HISTORY_INTERFACE_CONTEXT,
+    ),
+    # The diagnostics tests also publish mixed ML/run reports and notebook ZIPs.
+    "tests/app/test_diagnostics.py": BehaviorContext(
+        _ML_RUN_REPORT_CONTEXT.requirement_ids | _NOTE_CONTEXT.requirement_ids,
+        frozenset({"ml", "results"}),
+    ),
+    # The service dispatches both signal and run ranking; these tests also check
+    # that arguments from the other source are rejected rather than ignored.
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/ranking_service.py",
+            "tests/app/test_run_ranking.py",
+        ),
+        BehaviorContext(
+            _ML_RUN_RANKING_CONTEXT.requirement_ids | {"NFR-OPS-002"},
+            frozenset({"ml", "results"}),
+        ),
+    ),
+    "src/tradingdev/mcp/tools/artifacts.py": _ARTIFACT_INTERFACE_CONTEXT,
+    "tests/mcp/test_artifact_downloads.py": BehaviorContext(
+        _ARTIFACT_INTERFACE_CONTEXT.requirement_ids - {"FR-RES-005"},
+        frozenset({"results"}),
+    ),
+    "tests/app/test_artifact_text_pages.py": BehaviorContext(
+        frozenset({"FR-RES-001", "NFR-DATA-001", "NFR-OPS-002", "NFR-API-001"}),
+        frozenset({"results"}),
+    ),
 }
 
 

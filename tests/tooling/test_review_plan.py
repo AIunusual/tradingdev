@@ -18,7 +18,9 @@ from tooling.review_plan import build_review_plan
 from tooling.review_scope import markdown_sections
 
 STRATEGY = "src/tradingdev/app/strategy_service.py"
-REPORT = "src/tradingdev/app/report_service.py"
+# Synthetic ownership tests deliberately use an unregistered consumer. Reviewed
+# services have real SRS obligations, which the real-document tests provide.
+REPORT = "src/tradingdev/app/report_consumer.py"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -723,7 +725,7 @@ def test_explicit_scope_cannot_hide_a_changed_responsibility(
     monkeypatch.setattr(
         review_docs, "_run", lambda *_a, **_kw: pytest.fail("model ran")
     )
-    with pytest.raises(ReviewError, match="uncovered.*report_service"):
+    with pytest.raises(ReviewError, match="uncovered.*report_consumer"):
         review_docs.review(base, tree, repo=repo, review_scopes=("strategy",))
     plan = review_docs.prepare_review(
         base, tree, repo=repo, review_scopes=("strategy", "results", "data")
@@ -1514,7 +1516,7 @@ def test_removed_or_renamed_contract_retains_base_obligation_and_complete_diff(
     behavior_requirement_change: tuple[Path, str, str, str], operation: str
 ) -> None:
     repo, _, first, second = behavior_requirement_change
-    caller = "src/tradingdev/app/report_service.py"
+    caller = REPORT
     _write(repo, caller, "USE_RETIRED_SCORE = True\n")
     base = _tree(repo)
     requirement = "docs/requirements/ml.md"
@@ -1921,3 +1923,275 @@ def test_unknown_research_module_preserves_known_and_conservative_context(
             "".join(s["text"] for s in sections if s["path"] == path)
             == (original["candidate_files"][path])
         )
+
+
+@pytest.mark.parametrize(
+    ("sources", "requirements", "contracts"),
+    [
+        (
+            (
+                "src/tradingdev/mcp/tools/data.py",
+                "src/tradingdev/app/contracts/data.py",
+                "tests/mcp/test_data_contracts.py",
+            ),
+            {"FR-DATA-001", "FR-DATA-002", "NFR-API-001", "NFR-OPS-002"},
+            {
+                ("docs/run_artifacts.md", "Market Data Cache"),
+                ("docs/run_artifacts.md", "Automatic DVOL Queries"),
+                ("ARCHITECTURE.md", "MCP 回覆契約"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/mcp/tools/strategy_cleanup.py",
+                "src/tradingdev/app/strategy_cleanup_service.py",
+                "src/tradingdev/app/contracts/strategy_cleanup.py",
+                "tests/app/test_strategy_cleanup_service.py",
+            ),
+            {"FR-STR-005"},
+            {("docs/strategy_contract.md", "Draft Cleanup")},
+        ),
+        (
+            (
+                "src/tradingdev/mcp/tools/research_notes.py",
+                "src/tradingdev/app/research_note_service.py",
+                "tests/app/test_research_notes.py",
+                "tests/mcp/test_mcp_research_notes.py",
+            ),
+            {"FR-RES-005", "NFR-OPS-002"},
+            {
+                ("docs/reports.md", "Research notebooks and archives"),
+                ("docs/run_artifacts.md", "Reading Artifact Delivery"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/conversation_service.py",
+                "src/tradingdev/app/contracts/conversations.py",
+                "tests/app/test_conversations.py",
+            ),
+            {"FR-RES-006", "NFR-OPS-002"},
+            {
+                ("docs/reports.md", "Recorded conversations"),
+                ("docs/reports.md", "Codex CLI recording adapter"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/benchmark_service.py",
+                "tests/app/test_benchmark_service.py",
+            ),
+            {"FR-RES-002"},
+            {("docs/performance_artifacts.md", "Benchmarks")},
+        ),
+        (
+            (
+                "src/tradingdev/mcp/tools/runs.py",
+                "src/tradingdev/app/run_service.py",
+                "src/tradingdev/app/rolling_trace_summary.py",
+                "src/tradingdev/app/trade_history_service.py",
+                "tests/app/test_run_metrics.py",
+                "tests/app/test_trade_history.py",
+                "tests/app/test_execution_history.py",
+            ),
+            {"FR-RES-001", "FR-RES-002", "NFR-DATA-001", "NFR-OPS-002"},
+            {
+                ("docs/performance_artifacts.md", "Performance Scopes and Provenance"),
+                ("docs/run_artifacts.md", "Historical Observation Queries"),
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/run_artifacts.md", "Research Settings and Provenance"),
+                ("docs/run_artifacts.md", "Execution Manifest"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/report_comparison.py",
+                "tests/app/test_comparison_report.py",
+                "tests/app/test_research_report_service.py",
+            ),
+            {"FR-EXEC-004", "FR-RES-001", "FR-RES-003", "FR-RES-004"},
+            {
+                ("docs/run_artifacts.md", "Fixed Comparison Evidence"),
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/reports.md", "Composable Offline Reports"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/report_service.py",
+                "src/tradingdev/mcp/tools/history.py",
+                "tests/mcp/test_history_contracts.py",
+            ),
+            {"FR-ML-004", "FR-EXEC-004", "FR-RES-001", "FR-RES-003", "FR-RES-004"},
+            {
+                ("docs/ml_research.md", "Recorded Signal Evaluations"),
+                ("docs/run_artifacts.md", "Fixed Comparison Evidence"),
+                ("docs/reports.md", "Research interpretation and diagnostic providers"),
+                ("docs/performance_artifacts.md", "Performance Scopes and Provenance"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/ranking_service.py",
+                "tests/app/test_run_ranking.py",
+            ),
+            {"FR-ML-003", "FR-ML-004", "FR-RES-001", "FR-RES-002"},
+            {
+                ("docs/run_artifacts.md", "Ranking Saved Run Scopes"),
+                ("docs/ml_research.md", "Recorded Signal Evaluations"),
+                ("docs/performance_artifacts.md", "Performance Scopes and Provenance"),
+            },
+        ),
+        (
+            ("src/tradingdev/mcp/tools/artifacts.py",),
+            {"FR-EXEC-001", "FR-RES-001", "FR-RES-004", "FR-RES-005", "NFR-OPS-002"},
+            {
+                ("docs/run_artifacts.md", "Reading Artifact Text"),
+                ("docs/run_artifacts.md", "Reading Artifact Delivery"),
+                (
+                    "docs/execution_plans.md",
+                    "Execution Plans and Confirmation Documents",
+                ),
+            },
+        ),
+        (
+            ("tests/mcp/test_artifact_downloads.py",),
+            {"FR-EXEC-001", "FR-RES-004", "NFR-DATA-001", "NFR-API-001"},
+            {("docs/run_artifacts.md", "Reading Artifact Delivery")},
+        ),
+        (
+            ("tests/app/test_artifact_text_pages.py",),
+            {"FR-RES-001", "NFR-DATA-001", "NFR-OPS-002", "NFR-API-001"},
+            {("docs/run_artifacts.md", "Reading Artifact Text")},
+        ),
+    ],
+    ids=[
+        "data-boundary",
+        "draft-cleanup",
+        "notebooks",
+        "conversations",
+        "benchmark",
+        "saved-run-scopes",
+        "comparison-report",
+        "shared-report-entrypoints",
+        "mixed-ranking",
+        "artifact-delivery",
+        "artifact-http-consumer",
+        "artifact-text-consumer",
+    ],
+)
+def test_non_ml_entrypoints_keep_original_contracts_and_complete_changes(
+    real_document_repository: Path,
+    sources: tuple[str, ...],
+    requirements: set[str],
+    contracts: set[tuple[str, str]],
+) -> None:
+    repo = real_document_repository
+    for source in sources:
+        _write(repo, source, "VALUE = 'before'\n")
+    base = _tree(repo)
+    for source in sources:
+        _write(repo, source, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    # Shared integrity/report requirements still carry cross-domain contracts.
+    # This explicit test budget does not change the default reviewer capacity.
+    plan = build_review_plan(raw, max_prompt_bytes=500_000)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    for source in sources:
+        batch = next(part for part in batches if source in part["assigned_paths"])
+        assert requirements <= set(
+            batch["behavior_contexts"][source]["requirement_ids"]
+        )
+        assert batch["candidate_files"][source] == original["candidate_files"][source]
+        assert batch["path_diffs"][source] == original["path_diffs"][source]
+        sections = batch["document_sections"]
+        selected = {
+            (s["path"], s["headings"][-1]): s for s in sections if s["headings"]
+        }
+        assert contracts <= selected.keys()
+        assert requirements <= {heading.split()[0] for _, heading in selected}
+        # Verify complete original records and contracts, not just selected IDs.
+        for path, text in original["candidate_files"].items():
+            if not path.endswith(".md"):
+                continue
+            for section in markdown_sections(path, text):
+                if section.headings and (
+                    section.headings[-1].split()[0] in requirements
+                    or (path, section.headings[-1]) in contracts
+                ):
+                    assert (
+                        selected[(path, section.headings[-1])]["text"] == section.text
+                    )
+        for section in sections:
+            lines = original["candidate_files"][section["path"]].splitlines(True)
+            assert section["text"] == "".join(
+                lines[section["start_line"] - 1 : section["end_line"]]
+            )
+        assert ("README.md", "使用 Docker 部署") not in selected
+        assert ("README.md", "手動啟動並使用 HTTP 連接") not in selected
+        for requirement, heading in (
+            ("FR-RES-005", "Research notebooks and archives"),
+            ("FR-RES-006", "Recorded conversations"),
+        ):
+            if requirement not in requirements:
+                assert ("docs/reports.md", heading) not in selected
+        assert not any(
+            heading.startswith(("NFR-SAFE-002", "NFR-OPS-001"))
+            for _, heading in selected
+        )
+    audit = next((b for b in batches if b["phase"] == "cross_scope"), batches[0])
+    assert audit["path_diffs"] == original["path_diffs"]
+
+
+@pytest.mark.parametrize(
+    ("known", "unknown", "owner"),
+    [
+        (
+            "src/tradingdev/mcp/tools/data.py",
+            "src/tradingdev/mcp/tools/new_history.py",
+            "interfaces",
+        ),
+        (
+            "src/tradingdev/app/benchmark_service.py",
+            "src/tradingdev/app/report_extension.py",
+            "results",
+        ),
+    ],
+)
+def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations(
+    real_document_repository: Path, known: str, unknown: str, owner: str
+) -> None:
+    repo = real_document_repository
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'before'\n")
+    base = _tree(repo)
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    with pytest.raises(ReviewError, match="budget|capacity"):
+        build_review_plan(raw, max_prompt_bytes=1_000)
+    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    batch = next(
+        _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
+    )
+    assert batch["scope"] == owner
+    assert set(batch["assigned_paths"]) == {known, unknown}
+    assert batch["behavior_contexts"][unknown] == {"fallback_scope": owner}
+    assert batch["behavior_contexts"][known]["requirement_ids"]
+    assert batch["path_diffs"] == original["path_diffs"]
+    for path in (known, unknown):
+        assert batch["candidate_files"][path] == original["candidate_files"][path]
+    # These unrelated known sections must return when an unreviewed consumer
+    # shares the owner; a precise neighbor must never narrow the whole batch.
+    sections = batch["document_sections"]
+    for heading in ("Research notebooks and archives", "Recorded conversations"):
+        original_section = next(
+            section
+            for section in markdown_sections(
+                "docs/reports.md", original["candidate_files"]["docs/reports.md"]
+            )
+            if section.headings[-1:] == (heading,)
+        )
+        assert any(section["text"] == original_section.text for section in sections)
