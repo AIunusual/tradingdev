@@ -95,7 +95,8 @@ stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
 `check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
-`check-tooling.sh`。產品、依賴、共用測試設施及無法確認的變更仍跑完整套件。
+`check-tooling.sh`；已登錄且專供開發工具使用的測試支援檔案亦依此分流。
+產品、依賴、產品共用測試設施及無法確認的變更仍跑完整套件。
 提交與 PR 的檢查分流見下方流程。
 
 ### 平行執行離線測試
@@ -744,8 +745,8 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | --- | --- |
 | 一般文件 | 文件格式、連結與 SRS 結構；涉及 SRS 時再執行 Codex 一致性審查。 |
 | 已登錄簡報 | 文件與簡報專項；混合 SRS 時再執行 Codex 審查；視覺操作仍須人工確認。 |
-| 開發政策／已登錄開發工具 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
-| 產品／依賴／共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
+| 開發政策／已登錄開發工具／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
+| 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
 PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
 依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
