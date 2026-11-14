@@ -837,7 +837,7 @@ uv run --no-sync python -m tooling.review_docs \
 ```
 
 檢查規劃中的 `path_owners` 與 `selected_scopes`，確認程式與測試取得其負責文件。
-檔案 owner 與背景選取分開：已登錄模組依其行為責任取得需求原文，再沿該需求的
+檔案 owner 與背景選取分開：已登錄產品模組依其行為責任取得需求原文，再沿該需求的
 正式契約引用取得章節，不因 MCP 或端到端測試歸屬 `interfaces` 就載入全部產品背景。
 同一模組同時負責不同流程時，登錄須涵蓋全部責任。`behavior_contexts` 與
 `requirement_contracts` 可核對變更路徑、需求及契約的選取關係；每批依實際指派的檔案
@@ -849,7 +849,15 @@ uv run --no-sync python -m tooling.review_docs \
 [test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
 未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
 沒有行為登錄的路徑沿用 owner 的保守背景；未知文件與章節仍保留。
-各批 `document_sections` 也列出選取原因；`unknown-sections-preserved` 或
+開發工具另依 `development_contexts` 列出的操作責任選取政策與操作原文，不套用產品需求。
+登錄與選取入口為 [review_scope.py](../tooling/review_scope.py) 的 `DevelopmentContext`、
+`development_context_for_path`、`development_context_for_sections` 與
+`sections_for_development_context`；可核對路徑或純操作章節負責的操作及其必要原文。
+`selection_basis` 區分路徑登錄與實際章節變更。操作文件僅在原標題階層仍存在時精選；
+共用或產品政策、未知標題、原章節刪除或改名仍採保守背景。混合操作取聯集，
+未登錄路徑維持 owner 背景，未知章節及其前提仍保留。
+各批 `document_sections` 也列出選取原因；`development-operation-context` 表示依開發操作
+選取的政策與操作背景，也包含為維持完整性而保留的未知章節。`unknown-sections-preserved` 或
 `unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
 盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
 新增章節不能直接沿用父章節歸屬，跨範圍的總覽仍可保留完整內容。

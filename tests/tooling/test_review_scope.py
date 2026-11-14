@@ -9,9 +9,12 @@ import pytest
 from tooling.review_scope import (
     SCOPES,
     BehaviorContext,
+    DevelopmentContext,
     behavior_context_for_path,
+    development_context_for_path,
     markdown_sections,
     scope_for_path,
+    sections_for_development_context,
     sections_for_reference,
     sections_for_scope,
     selection_reason,
@@ -53,6 +56,79 @@ def test_development_guidance_is_retained_in_its_review_scope(
     assert "Claim policy evidence." not in "".join(
         section.text for section in sections_for_scope("results", path, text)
     )
+
+
+def test_development_contexts_preserve_owners_and_shared_consumers() -> None:
+    for path in ("tooling/git/claim_issue.py", "scripts/claim-issue.sh"):
+        assert development_context_for_path(path) == DevelopmentContext(
+            frozenset({"issue_claim"})
+        )
+        assert scope_for_path(path) == "tooling"
+        assert behavior_context_for_path(path) is None
+    assert development_context_for_path("tooling/git/pr_context.py") == (
+        DevelopmentContext(frozenset({"pr_cleanup", "candidate_review"}))
+    )
+    assert development_context_for_path("tooling/environment.py") == (
+        DevelopmentContext(
+            frozenset({"environment_quality", "candidate_review", "presentation"})
+        )
+    )
+    assert development_context_for_path("tooling/git/claim_extension.py") is None
+    assert development_context_for_path("scripts/new-check.sh") is None
+    for path in (
+        "./tooling/git/claim_issue.py",
+        "/tooling/git/claim_issue.py",
+        "tooling/git/../git/claim_issue.py",
+    ):
+        assert development_context_for_path(path) is None
+    assert "issue_claim" not in SCOPES
+
+
+def test_development_sections_keep_unknown_subtrees_ancestors_and_references() -> None:
+    path = "docs/development.md"
+    text = (
+        "原始前言。\n\n# 開發指南\n指南原文。\n\n"
+        "## 從開發到合併\n必要祖先。\n\n"
+        "### 4. 合併後更新 main、清理本機分支\n保留此操作。\n\n"
+        "### 1. 分階段提交並推送\n不相干操作。\n\n"
+        "## MAE 研究原型\n未知章節的祖先。\n\n"
+        "### 新操作\n新契約不可省略。\n\n"
+        "#### 接手 issue\n未知祖先下的已知標題亦保留。\n\n"
+        "## 研究成果工程回饋\n不相干已知章節。\n\n"
+        "## 撰寫 issue\n[操作定義]: ../AGENTS.md\n"
+    )
+    sections = sections_for_development_context(
+        DevelopmentContext(frozenset({"pr_cleanup"})), path, text
+    )
+    chosen = {section.headings[-1:] for section in sections}
+    assert chosen == {
+        (),
+        ("開發指南",),
+        ("從開發到合併",),
+        ("4. 合併後更新 main、清理本機分支",),
+        ("MAE 研究原型",),
+        ("新操作",),
+        ("接手 issue",),
+        ("撰寫 issue",),
+    }
+    for section in sections:
+        assert section.text == "".join(
+            text.splitlines(keepends=True)[section.start_line - 1 : section.end_line]
+        )
+    unknown = "# New document\nA complete, unregistered contract.\n"
+    assert (
+        "".join(
+            s.text
+            for s in sections_for_development_context(
+                DevelopmentContext(frozenset({"issue_claim"})), "docs/new.md", unknown
+            )
+        )
+        == unknown
+    )
+    with pytest.raises(ValueError, match="Unknown development operations"):
+        sections_for_development_context(
+            DevelopmentContext(frozenset({"typo"})), path, text
+        )
 
 
 def test_sections_partition_unicode_text_without_rewriting() -> None:

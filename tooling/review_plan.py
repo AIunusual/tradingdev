@@ -25,10 +25,14 @@ from tooling.review_evidence import (
 from tooling.review_scope import (
     SCOPES,
     BehaviorContext,
+    DevelopmentContext,
     MarkdownSection,
     behavior_context_for_path,
+    development_context_for_path,
+    development_context_for_sections,
     markdown_sections,
     scope_for_path,
+    sections_for_development_context,
     sections_for_reference,
     sections_for_scope,
     selection_reason,
@@ -38,7 +42,7 @@ from tooling.review_scope import (
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 9
+SCOPE_POLICY_VERSION = 10
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -374,6 +378,39 @@ def _behavior_contexts(
     return contexts
 
 
+def _development_document_context(
+    path: str, raw: dict[str, Any]
+) -> DevelopmentContext | None:
+    """Use both immutable sides of an operational document edit, never its owner."""
+    before = raw.get("base_document_files", {})
+    if (
+        not path.endswith(".md")
+        or path not in raw["path_diffs"]
+        or path in raw["base_file_blobs"]
+        and path not in before
+    ):
+        return None
+    old_lines, new_lines = _changed_lines(raw["path_diffs"][path])
+    candidate_sections = markdown_sections(path, raw["candidate_files"].get(path, ""))
+    candidate_headings = {section.headings for section in candidate_sections}
+    edited: list[MarkdownSection] = []
+    for source, lines in ((before, old_lines), (raw["candidate_files"], new_lines)):
+        if path not in source:
+            continue
+        edits = _markdown_edits(source[path], lines)
+        touched = [
+            section
+            for section in markdown_sections(path, source[path])
+            if edits.intersection(range(section.start_line, section.end_line + 1))
+        ]
+        # A removed/renamed section may depend on old ancestor prose no longer
+        # present in the full candidate. Do not narrow that deletion's context.
+        if any(section.headings not in candidate_headings for section in touched):
+            return None
+        edited.extend(touched)
+    return development_context_for_sections(path, edited)
+
+
 @dataclass(frozen=True)
 class ReviewPlan:
     """Prepared prompts and an inspectable manifest; neither is a passing receipt."""
@@ -584,6 +621,17 @@ def build_review_plan(
     before: dict[str, str] = raw.get("base_document_files", {})
     old_records = _requirement_records(before)
     behavior_contexts = _behavior_contexts(raw, records, old_records)
+    development_contexts: dict[str, DevelopmentContext] = {}
+    development_sources: dict[str, str] = {}
+    for path in owners:
+        profile = development_context_for_path(path)
+        source = "registered-path"
+        if profile is None and behavior_contexts.get(path) is None:
+            profile = _development_document_context(path, raw)
+            source = "changed-operational-sections"
+        if profile is not None:
+            development_contexts[path] = profile
+            development_sources[path] = source
     common["behavior_contexts"] = {
         path: {
             "requirement_ids": sorted(profile.requirement_ids),
@@ -592,19 +640,37 @@ def build_review_plan(
         if profile is not None
         else {"fallback_scope": owners[path]}
         for path, profile in behavior_contexts.items()
+        if profile is not None or path not in development_contexts
+    }
+    common["development_contexts"] = {
+        path: {
+            "operations": sorted(profile.operations),
+            "selection_basis": development_sources[path],
+        }
+        for path, profile in development_contexts.items()
     }
 
     def context_selection(
         scope: str, paths: list[str]
-    ) -> tuple[set[str], set[str], bool]:
+    ) -> tuple[set[str], set[str], bool, frozenset[str]]:
         profiles = [behavior_contexts.get(path) for path in paths]
-        precise = bool(profiles) and all(profile is not None for profile in profiles)
+        operations = frozenset().union(
+            *(
+                development_contexts[path].operations
+                for path in paths
+                if path in development_contexts
+            )
+        )
+        precise = bool(paths) and all(
+            behavior_contexts.get(path) is not None or path in development_contexts
+            for path in paths
+        )
         identifiers = set().union(
             *(p.requirement_ids for p in profiles if p is not None)
         )
         roles = set().union(*(p.document_scopes for p in profiles if p is not None))
         if precise:
-            return identifiers, roles, True
+            return identifiers, roles, True, operations
         # A fallback widens this batch; it cannot erase obligations already
         # identified for other assigned files, including cross-domain consumers.
         identifiers.update(
@@ -618,7 +684,7 @@ def build_review_plan(
             for identifier, record in old_records.items()
             if record.source in paths
         )
-        return identifiers, roles | {scope}, False
+        return identifiers, roles | {scope}, False, operations
 
     scope_selections = {
         scope: context_selection(
@@ -636,7 +702,7 @@ def build_review_plan(
                 for target, _ in record.contract_references
             }
         )
-        for scope, (identifiers, _, _) in scope_selections.items()
+        for scope, (identifiers, _, _, _) in scope_selections.items()
     }
     common["requirement_context_paths"]["cross_scope"] = sorted(
         set().union(
@@ -660,6 +726,14 @@ def build_review_plan(
         return unknown_document_sections(path, files[path])
 
     @cache
+    def development_sections(
+        operations: frozenset[str], path: str
+    ) -> tuple[MarkdownSection, ...]:
+        return sections_for_development_context(
+            DevelopmentContext(operations), path, files[path]
+        )
+
+    @cache
     def reference_sections(
         version: str, path: str, fragment: str
     ) -> tuple[MarkdownSection, ...]:
@@ -678,8 +752,17 @@ def build_review_plan(
             identifiers = set().union(*(s[0] for s in scope_selections.values()))
             roles: set[str] = set()
             precise = all(s[2] for s in scope_selections.values())
+            # Mandatory unchanged deck references do not by themselves add a
+            # changed development operation to the interaction audit.
+            operations = frozenset().union(
+                *(
+                    profile.operations
+                    for path, profile in development_contexts.items()
+                    if path in changed
+                )
+            )
         else:
-            identifiers, roles, precise = context_selection(scope, paths)
+            identifiers, roles, precise, operations = context_selection(scope, paths)
         sections: dict[tuple[str, str, int, int], dict[str, Any]] = {}
 
         def add_section(
@@ -753,6 +836,17 @@ def build_review_plan(
                     if roles != {scope}
                     else selection_reason(scope, path, files[path]),
                 )
+            if operations:
+                for part in development_sections(operations, path):
+                    add_section(
+                        "candidate",
+                        path,
+                        part.start_line,
+                        part.end_line,
+                        part.headings,
+                        part.text,
+                        "development-operation-context",
+                    )
 
         for identifier in sorted(identifiers):
             for version, record in (
