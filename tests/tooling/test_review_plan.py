@@ -15,6 +15,7 @@ from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
 from tooling.review_plan import build_review_plan
+from tooling.review_scope import markdown_sections
 
 STRATEGY = "src/tradingdev/app/strategy_service.py"
 REPORT = "src/tradingdev/app/report_service.py"
@@ -1690,3 +1691,233 @@ def test_real_document_corpus_keeps_ml_contracts_without_unrelated_interface_con
     assert all(
         batch["prompt_utf8_bytes"] <= budget for batch in plan.manifest["batches"]
     )
+
+
+@pytest.mark.parametrize(
+    ("sources", "requirements", "contracts"),
+    [
+        (
+            (
+                "src/tradingdev/app/research.py",
+                "src/tradingdev/domain/research.py",
+                "tests/app/test_research_resolution.py",
+            ),
+            {"FR-STR-001"},
+            {
+                ("docs/strategy_contract.md", "Research Inputs and Simulation Policy"),
+                ("docs/run_artifacts.md", "Research Settings and Provenance"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/domain/research_policy.py",
+                "tests/domain/test_research.py",
+            ),
+            {
+                "FR-STR-001",
+                "FR-EXEC-003",
+                "FR-RES-002",
+                "FR-ML-003",
+                "NFR-REPRO-001",
+            },
+            {
+                ("docs/strategy_contract.md", "Research Inputs and Simulation Policy"),
+                ("docs/strategy_contract.md", "Signal and Execution Semantics"),
+                ("docs/ml_research.md", "Recorded Signal Evaluations"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/app/research_evidence_service.py",
+                "src/tradingdev/app/contracts/research_evidence.py",
+                "src/tradingdev/adapters/storage/research_evidence.py",
+                "tests/app/test_research_evidence_service.py",
+                "tests/adapters/test_research_evidence_storage.py",
+            ),
+            {"FR-EXEC-001", "NFR-DATA-001", "NFR-OPS-002"},
+            {("docs/run_artifacts.md", "Research Evidence Records")},
+        ),
+        (
+            (
+                "src/tradingdev/domain/research_evidence.py",
+                "tests/domain/test_research_evidence.py",
+            ),
+            {
+                "FR-EXEC-001",
+                "FR-EXEC-002",
+                "FR-EXEC-004",
+                "FR-EXEC-006",
+                "NFR-DATA-001",
+                "NFR-OPS-002",
+            },
+            {
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/run_artifacts.md", "Fixed Comparison Evidence"),
+                ("docs/run_artifacts.md", "Execution Manifest"),
+            },
+        ),
+        (
+            ("src/tradingdev/domain/research_evidence_values.py",),
+            {"FR-EXEC-001", "FR-EXEC-002", "NFR-DATA-001", "NFR-OPS-002"},
+            {("docs/run_artifacts.md", "Research Evidence Records")},
+        ),
+        (
+            ("src/tradingdev/domain/parameter_values.py",),
+            {
+                "FR-EXEC-001",
+                "FR-EXEC-004",
+                "FR-EXEC-006",
+                "FR-RES-001",
+                "NFR-DATA-001",
+                "NFR-REPRO-001",
+            },
+            {
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/run_artifacts.md", "Execution Manifest"),
+                ("docs/run_artifacts.md", "Historical Observation Queries"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/domain/approved_research.py",
+                "tests/domain/test_approved_research.py",
+            ),
+            {
+                "FR-EXEC-001",
+                "FR-EXEC-002",
+                "FR-EXEC-004",
+                "FR-RES-001",
+                "NFR-DATA-001",
+                "NFR-REPRO-001",
+            },
+            {
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/run_artifacts.md", "Fixed Comparison Evidence"),
+                ("docs/run_artifacts.md", "Historical Observation Queries"),
+            },
+        ),
+        (
+            (
+                "src/tradingdev/adapters/storage/submitted_research.py",
+                "tests/app/test_submitted_research.py",
+            ),
+            {
+                "FR-EXEC-001",
+                "FR-EXEC-002",
+                "FR-EXEC-004",
+                "FR-RES-001",
+                "NFR-DATA-001",
+                "NFR-OPS-002",
+                "NFR-REPRO-001",
+            },
+            {
+                ("docs/run_artifacts.md", "Research Evidence Records"),
+                ("docs/run_artifacts.md", "Historical Observation Queries"),
+            },
+        ),
+    ],
+    ids=[
+        "intake",
+        "shared-policy",
+        "saved-records",
+        "bindings",
+        "snapshot-values",
+        "parameter-values",
+        "approved-research",
+        "submitted-research",
+    ],
+)
+def test_research_review_keeps_original_obligations_and_contracts(
+    real_document_repository: Path,
+    sources: tuple[str, ...],
+    requirements: set[str],
+    contracts: set[tuple[str, str]],
+) -> None:
+    repo = real_document_repository
+    for source in sources:
+        _write(repo, source, "VALUE = 'old'\n")
+    base = _tree(repo)
+    for source in sources:
+        _write(repo, source, "VALUE = 'fixed research'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    # Shared policy and integrity requirements intentionally retain their full
+    # cross-domain contracts. This is an explicit planner budget, not a promise
+    # that every research responsibility fits the default model capacity.
+    plan = build_review_plan(raw, max_prompt_bytes=450_000)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    for source in sources:
+        batch = next(part for part in batches if source in part["assigned_paths"])
+        assert batch["scope"] == "general"
+        assert batch["candidate_files"][source] == original["candidate_files"][source]
+        assert batch["path_diffs"][source] == original["path_diffs"][source]
+        assert requirements <= set(
+            batch["behavior_contexts"][source]["requirement_ids"]
+        )
+        sections = batch["document_sections"]
+        selected = {
+            (s["path"], s["headings"][-1]): s for s in sections if s["headings"]
+        }
+        assert requirements <= {heading.split()[0] for _, heading in selected}
+        assert contracts <= selected.keys()
+        for section in sections:
+            lines = original["candidate_files"][section["path"]].splitlines(True)
+            assert section["text"] == "".join(
+                lines[section["start_line"] - 1 : section["end_line"]]
+            )
+        for path, text in original["candidate_files"].items():
+            if not path.endswith(".md"):
+                continue
+            for section in markdown_sections(path, text):
+                if section.headings and (
+                    section.headings[-1].split()[0] in requirements
+                    or (path, section.headings[-1]) in contracts
+                ):
+                    assert selected[(path, section.headings[-1])]["text"] == (
+                        section.text
+                    )
+        assert ("README.md", "安裝與連接助手") not in selected
+        assert ("README.md", "手動啟動並使用 HTTP 連接") not in selected
+        assert ("docs/reports.md", "Recorded conversations") not in selected
+        assert ("docs/reports.md", "Codex CLI recording adapter") not in selected
+        assert not any(
+            heading.startswith(("NFR-SAFE-002", "NFR-OPS-001"))
+            for _, heading in selected
+        )
+
+
+def test_unknown_research_module_preserves_known_and_conservative_context(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    known = "src/tradingdev/domain/approved_research.py"
+    unknown = "src/tradingdev/domain/research_extension.py"
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'old'\n")
+    base = _tree(repo)
+    for path in (known, unknown):
+        _write(repo, path, "VALUE = 'new'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    # General fallback retains the entire document corpus. It must fail an
+    # insufficient budget rather than silently discard the unknown obligation.
+    with pytest.raises(ReviewError, match="budget|capacity"):
+        build_review_plan(raw, max_prompt_bytes=1_000)
+    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    batch = next(
+        _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
+    )
+    assert set(batch["assigned_paths"]) == {known, unknown}
+    assert batch["behavior_contexts"][unknown] == {"fallback_scope": "general"}
+    assert {"FR-EXEC-002", "FR-RES-001", "NFR-REPRO-001"} <= set(
+        batch["behavior_contexts"][known]["requirement_ids"]
+    )
+    assert batch["path_diffs"] == original["path_diffs"]
+    for path in (known, unknown):
+        assert batch["candidate_files"][path] == original["candidate_files"][path]
+    sections = batch["document_sections"]
+    for path in ("README.md", "docs/run_artifacts.md", "docs/requirements/quality.md"):
+        assert (
+            "".join(s["text"] for s in sections if s["path"] == path)
+            == (original["candidate_files"][path])
+        )
