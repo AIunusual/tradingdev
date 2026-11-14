@@ -338,7 +338,7 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | `domain/statistics/plateau.py` | `trials_from_metrics` 將呼叫端提供的全部參數試驗列轉為網格與有效試驗，`plateau_summary` 比較最佳試驗與鄰域平台；輸入、失敗列及缺失網格語意見模組與函式 docstring。獨立計算，不讀取 jobs／runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/comparison.py` | `align_returns` 取多條報酬序列的共同 UTC 期間，`difference_interval` 以配對 stationary bootstrap 估計統計量差額的區間與 p 值，`interval_table` 提供個別序列區間；區塊長度、不可用原因與輸入邊界見模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/comparison.py` | `align_returns` 依索引標籤交集對齊多條報酬序列（時區 naive 與 aware 的 datetime 索引混用會判為時區不符而拒絕，而非無交集），`difference_interval` 以配對 stationary bootstrap 估計統計量差額的區間與 p 值，`interval_table` 提供個別序列區間；區塊長度、不可用原因與輸入邊界見模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
 | `domain/statistics/benchmark.py` | `buy_and_hold_returns` 由呼叫端提供的價格序列產生不計成本的買進持有報酬，`compare_to_benchmark` 將策略報酬對該序列做最小二乘迴歸，回傳斜率（beta）、年化截距（alpha）、主動報酬、追蹤誤差、資訊比率與漲跌捕捉；為研究用序列分析，與 `domain/benchmark.py` 的產品基準（依資產類別固定標的、進出場皆計成本）不同，兩者數值不可互相替代。beta 即迴歸斜率：僅當策略與基準交易同一標的，才等同策略的平均淨暴露；若為不同標的（例如以 BTC/USDT 為基準比較 ETH 策略），beta 只是斜率，不可解讀為平均淨暴露。獨立計算，尚未接入績效發布或 MCP 查詢 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
