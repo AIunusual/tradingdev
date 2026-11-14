@@ -261,7 +261,6 @@ def build_evidence(
     base: str,
     tree: str,
     *,
-    max_bytes: int = MAX_EVIDENCE_BYTES,
     review_context: tuple[str, ...] = (),
     review_context_for: tuple[tuple[str, str], ...] = (),
 ) -> str:
@@ -383,12 +382,4 @@ def build_evidence(
         },
         "candidate_files": candidate_files,
     }
-    content = json.dumps(evidence, ensure_ascii=False)
-    size = len(content.encode("utf-8"))
-    if size > max_bytes:
-        raise ReviewError(
-            f"Documentation evidence is {size} bytes, exceeding the {max_bytes}-byte "
-            "budget. Split the change or explicitly raise --max-evidence-bytes; "
-            "no evidence was truncated and no model request was made."
-        )
-    return content
+    return json.dumps(evidence, ensure_ascii=False)
