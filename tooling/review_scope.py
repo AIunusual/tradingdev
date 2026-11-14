@@ -633,6 +633,58 @@ _STEM_SCOPES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+_RESEARCH_SELECTION_CONTEXT = BehaviorContext(
+    frozenset({"FR-STR-001"}),
+    frozenset({"strategy", "execution"}),
+)
+# These defaults also feed direct backtests, saved performance fallbacks and
+# independent ML annualization. Research intake alone does not cover the module.
+_RESEARCH_POLICY_CONTEXT = BehaviorContext(
+    _RESEARCH_SELECTION_CONTEXT.requirement_ids
+    | {"FR-EXEC-003", "FR-RES-002", "FR-ML-003", "NFR-REPRO-001"},
+    frozenset({"strategy", "execution", "results", "ml"}),
+)
+_RESEARCH_RECORD_CONTEXT = BehaviorContext(
+    frozenset({"FR-EXEC-001", "NFR-DATA-001", "NFR-OPS-002"}),
+    frozenset({"execution"}),
+)
+_RESEARCH_SNAPSHOT_VALUES_CONTEXT = BehaviorContext(
+    _RESEARCH_RECORD_CONTEXT.requirement_ids | {"FR-EXEC-002"},
+    frozenset({"execution", "results"}),
+)
+_RESEARCH_BINDING_CONTEXT = BehaviorContext(
+    _RESEARCH_SNAPSHOT_VALUES_CONTEXT.requirement_ids | {"FR-EXEC-004", "FR-EXEC-006"},
+    frozenset({"execution"}),
+)
+# Constructor leaves and merged search options are shared by confirmation,
+# evidence binding and historical scope provenance, including duplicate options.
+_RESEARCH_PARAMETER_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-EXEC-001",
+            "FR-EXEC-004",
+            "FR-EXEC-006",
+            "FR-RES-001",
+            "NFR-DATA-001",
+            "NFR-REPRO-001",
+        }
+    ),
+    frozenset({"execution", "results"}),
+)
+_APPROVED_RESEARCH_CONTEXT = BehaviorContext(
+    _RESEARCH_BINDING_CONTEXT.requirement_ids | {"FR-RES-001", "NFR-REPRO-001"},
+    frozenset({"execution", "results"}),
+)
+_SUBMITTED_RESEARCH_CONTEXT = BehaviorContext(
+    _RESEARCH_SNAPSHOT_VALUES_CONTEXT.requirement_ids
+    | {"FR-EXEC-004", "FR-RES-001", "NFR-REPRO-001"},
+    frozenset({"execution", "results"}),
+)
+_SUBMITTED_RESEARCH_WORKFLOW_CONTEXT = BehaviorContext(
+    _SUBMITTED_RESEARCH_CONTEXT.requirement_ids | {"FR-EXEC-007", "FR-RES-003"},
+    frozenset({"execution", "results"}),
+)
+
 _ML_RESEARCH_CONTEXT = BehaviorContext(
     frozenset({"FR-ML-001", "FR-ML-002", "FR-ML-003", "FR-ML-004", "NFR-DATA-001"}),
     frozenset({"ml"}),
@@ -678,10 +730,59 @@ _ML_ROLLING_WORKFLOW_CONTEXT = BehaviorContext(
 )
 
 # These modules have reviewed behavior responsibilities. Do not infer context
-# from a layer prefix or an ML-looking filename: an unregistered path retains
+# from a layer prefix or a topic-looking filename: an unregistered path retains
 # the conservative owner-based fallback. Changed Markdown is selected from its
 # actual changed sections, not assigned a whole-document behavior here.
 _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/research.py",
+            "src/tradingdev/domain/research.py",
+            "tests/app/test_research_resolution.py",
+        ),
+        _RESEARCH_SELECTION_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/domain/research_policy.py",
+            "tests/domain/test_research.py",
+        ),
+        _RESEARCH_POLICY_CONTEXT,
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/app/research_evidence_service.py",
+            "src/tradingdev/app/contracts/research_evidence.py",
+            "src/tradingdev/adapters/storage/research_evidence.py",
+            "tests/app/test_research_evidence_service.py",
+            "tests/adapters/test_research_evidence_storage.py",
+        ),
+        _RESEARCH_RECORD_CONTEXT,
+    ),
+    "src/tradingdev/domain/research_evidence_values.py": (
+        _RESEARCH_SNAPSHOT_VALUES_CONTEXT
+    ),
+    **dict.fromkeys(
+        (
+            "src/tradingdev/domain/research_evidence.py",
+            "tests/domain/test_research_evidence.py",
+        ),
+        _RESEARCH_BINDING_CONTEXT,
+    ),
+    "src/tradingdev/domain/parameter_values.py": _RESEARCH_PARAMETER_CONTEXT,
+    **dict.fromkeys(
+        (
+            "src/tradingdev/domain/approved_research.py",
+            "tests/domain/test_approved_research.py",
+        ),
+        _APPROVED_RESEARCH_CONTEXT,
+    ),
+    "src/tradingdev/adapters/storage/submitted_research.py": (
+        _SUBMITTED_RESEARCH_CONTEXT
+    ),
+    # This test also exercises terminal submission failures, publication rollback
+    # and report selection of comparisons with zero or only partial success.
+    "tests/app/test_submitted_research.py": _SUBMITTED_RESEARCH_WORKFLOW_CONTEXT,
     **dict.fromkeys(
         (
             "src/tradingdev/app/ml_service.py",

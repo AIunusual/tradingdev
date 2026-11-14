@@ -409,6 +409,9 @@ def test_mixed_ml_entrypoints_retain_saved_run_obligations(
         "src/tradingdev/mcp/tools/new_ml.py",
         "src/tradingdev/domain/ml/new_behavior.py",
         "tests/e2e/test_ml_new_behavior.py",
+        "src/tradingdev/domain/research_extension.py",
+        "src/tradingdev/app/research_preparation.py",
+        "tests/app/test_research_preparation.py",
         "src/tradingdev/app/strategy_service.py",
         "docs/ml_research.md",
         "docs/reports.md",
@@ -422,6 +425,18 @@ def test_unregistered_or_noncanonical_behavior_keeps_conservative_fallback(
     path: str,
 ) -> None:
     assert behavior_context_for_path(path) is None
+
+
+def test_submitted_research_test_retains_its_additional_workflow_obligations() -> None:
+    storage = behavior_context_for_path(
+        "src/tradingdev/adapters/storage/submitted_research.py"
+    )
+    workflow = behavior_context_for_path("tests/app/test_submitted_research.py")
+    assert storage is not None and workflow is not None
+    assert storage.requirement_ids < workflow.requirement_ids
+    assert {"FR-EXEC-007", "FR-RES-003"} <= workflow.requirement_ids
+    assert "FR-EXEC-007" not in storage.requirement_ids
+    assert scope_for_path("tests/app/test_submitted_research.py") == "general"
 
 
 def test_unknown_context_preserves_original_subtree_and_actual_ancestors() -> None:
