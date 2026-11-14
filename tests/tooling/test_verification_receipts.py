@@ -81,6 +81,8 @@ def test_documentation_refresh_reuses_success_without_relabelling_tested_tree(
         "tests",
         "dependency",
         "policy",
+        "tooling_helper",
+        "wait_skill",
         "prompt",
         "mode",
         "symlink",
@@ -108,6 +110,8 @@ def test_executable_or_unknown_changes_invalidate_even_after_a_docs_commit(
             "tests": "tests/conftest.py",
             "dependency": "uv.lock",
             "policy": "AGENTS.md",
+            "tooling_helper": "tests/tooling/git_check_scenarios.py",
+            "wait_skill": ".agents/skills/wait-for-check/SKILL.md",
             "prompt": "src/prompt.md",
             "presentation": "docs/talks/tradingdev-introduction/slides.md",
         }[change]

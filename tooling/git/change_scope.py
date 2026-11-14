@@ -24,6 +24,8 @@ _TOOLING_FILES = frozenset(
     {
         "AGENTS.md",
         "CLAUDE.md",
+        ".agents/skills/wait-for-check/SKILL.md",
+        "tests/tooling/git_check_scenarios.py",
         "tooling/documentation.py",
         "tooling/requirements.py",
         "tooling/quality.py",

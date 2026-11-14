@@ -144,14 +144,16 @@ def test_lightweight_candidate_uses_merged_tree_and_only_selected_checks(
 
 @pytest.mark.parametrize("runner", ["pr", "full"])
 @pytest.mark.parametrize(
-    ("failure", "slides"),
+    ("name", "failure", "slides"),
     [
-        (None, False),
-        ("rejection", False),
-        ("mutation", False),
-        ("refs", False),
-        (None, True),
-        ("slides", True),
+        ("AGENTS.md", None, False),
+        ("AGENTS.md", "rejection", False),
+        ("AGENTS.md", "mutation", False),
+        ("AGENTS.md", "refs", False),
+        ("AGENTS.md", None, True),
+        ("AGENTS.md", "slides", True),
+        ("tests/tooling/git_check_scenarios.py", None, False),
+        (".agents/skills/wait-for-check/SKILL.md", None, False),
     ],
 )
 def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
@@ -159,6 +161,7 @@ def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
     monkeypatch: MonkeyPatch,
     capsys: CaptureFixture[str],
     runner: str,
+    name: str,
     failure: str | None,
     slides: bool,
 ) -> None:
@@ -170,11 +173,12 @@ def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
         "feature/tooling",
         f"{scenario.request.base_sha}^",
     )
-    head = _commit(scenario.source, "AGENTS.md", "# Development policy\n")
+    (scenario.source / name).parent.mkdir(parents=True, exist_ok=True)
+    head = _commit(scenario.source, name, "# Development tool or policy\n")
     if slides:
-        name = "docs/talks/tradingdev-introduction/slides.md"
-        (scenario.source / name).parent.mkdir(parents=True)
-        head = _commit(scenario.source, name, "# Slides\n")
+        slides_name = "docs/talks/tradingdev-introduction/slides.md"
+        (scenario.source / slides_name).parent.mkdir(parents=True)
+        head = _commit(scenario.source, slides_name, "# Slides\n")
     _git(scenario.source, "update-ref", "refs/pull/7/head", head)
     request = replace(scenario.request, head_sha=head, head_ref="feature/tooling")
     monkeypatch.setattr(check_pr, "get_pull_request", lambda *_: request)
@@ -197,7 +201,7 @@ def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
         assert profile in {"scripts/check-tooling.sh", "scripts/check-presentations.sh"}
         assert timeout == 30
         assert (cwd / "base.txt").read_text() == "new main behavior\n"
-        assert (cwd / "AGENTS.md").read_text() == "# Development policy\n"
+        assert (cwd / name).read_text() == "# Development tool or policy\n"
         if profile == "scripts/check-presentations.sh":
             if failure == "slides":
                 raise subprocess.CalledProcessError(1, command)
@@ -205,7 +209,7 @@ def test_tooling_candidate_selects_its_suite_without_losing_candidate_guards(
         if failure == "rejection":
             raise subprocess.CalledProcessError(1, command)
         if failure == "mutation":
-            (cwd / "AGENTS.md").write_text("checker changed candidate\n")
+            (cwd / name).write_text("checker changed candidate\n")
         if failure == "refs":
             _git(scenario.source, "update-ref", "refs/heads/main", head)
 

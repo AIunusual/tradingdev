@@ -62,6 +62,9 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("tooling/presentation_errors.py", "tooling"),
         ("tooling/requirements.py", "tooling"),
         ("tests/tooling/test_new_tool.py", "tooling"),
+        ("tests/tooling/new_helper.py", "code"),
+        (".agents/skills/new-skill/SKILL.md", "code"),
+        (".agents/skills/wait-for-check/helper.py", "code"),
         ("scripts/check-tooling.sh", "tooling"),
         ("tests/conftest.py", "code"),
         ("tests/tooling/conftest.py", "code"),
@@ -86,6 +89,79 @@ def test_conservative_path_routing(
     path.write_text("# Changed\n")
     _git(root, "add", name)
     assert classify_changes(root, base, _git(root, "write-tree")).kind == expected
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "tests/tooling/git_check_scenarios.py",
+        ".agents/skills/wait-for-check/SKILL.md",
+    ],
+)
+@pytest.mark.parametrize("change", ["add", "modify", "delete"])
+def test_registered_support_files_use_tooling_checks(
+    repository: tuple[Path, str], name: str, change: str
+) -> None:
+    root, base = repository
+    path = root / name
+    path.parent.mkdir(parents=True)
+    if change != "add":
+        path.write_text("original support file\n")
+        _git(root, "add", name)
+        base = _git(root, "write-tree")
+    if change == "delete":
+        path.unlink()
+    else:
+        path.write_text("changed support file\n")
+    _git(root, "add", name)
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.payload() == {
+        "scope": "tooling",
+        "commit_profile": "fast",
+        "delivery_profile": "tooling",
+        "candidate_checks": ["documentation_review", "tooling"],
+    }
+
+
+@pytest.mark.parametrize(
+    "name, change",
+    [
+        ("tests/tooling/git_check_scenarios.py", "executable"),
+        (".agents/skills/wait-for-check/SKILL.md", "remove_executable"),
+        (".agents/skills/wait-for-check/SKILL.md", "symlink"),
+        ("tests/tooling/git_check_scenarios.py", "rename"),
+        (".agents/skills/wait-for-check/SKILL.md", "rename"),
+        ("tests/tooling/git_check_scenarios.py", "mixed"),
+        (".agents/skills/wait-for-check/SKILL.md", "mixed"),
+    ],
+)
+def test_support_registration_preserves_full_check_boundaries(
+    repository: tuple[Path, str], name: str, change: str
+) -> None:
+    root, _ = repository
+    path = root / name
+    path.parent.mkdir(parents=True)
+    path.write_text("original support file\n")
+    _git(root, "add", name)
+    if change == "remove_executable":
+        _git(root, "update-index", "--chmod=+x", name)
+    base = _git(root, "write-tree")
+    if change == "symlink":
+        path.unlink()
+        path.symlink_to(root / "app.py")
+    elif change == "rename":
+        _git(root, "mv", name, str(path.with_name("unknown" + path.suffix)))
+    elif change in {"executable", "remove_executable"}:
+        mode = "+x" if change == "executable" else "-x"
+        _git(root, "update-index", f"--chmod={mode}", name)
+    else:
+        path.write_text("changed support file\n")
+        (root / "app.py").write_text("VALUE = 2\n")
+    if change in {"symlink", "mixed"}:
+        _git(root, "add", ".")
+    scope = classify_changes(root, base, _git(root, "write-tree"))
+    assert scope.delivery_profile == "full"
+    assert scope.candidate_checks == ("documentation_review", "full")
 
 
 @pytest.mark.parametrize("change", ["delete", "rename", "code_rename", "mixed"])
@@ -167,6 +243,15 @@ def test_invalid_git_identity_fails_instead_of_selecting_docs(
             ["presentations"],
         ),
         (["AGENTS.md"], "fast", "tooling", ["documentation_review", "tooling"]),
+        (
+            [
+                "tests/tooling/git_check_scenarios.py",
+                ".agents/skills/wait-for-check/SKILL.md",
+            ],
+            "fast",
+            "tooling",
+            ["documentation_review", "tooling"],
+        ),
         (["app.py"], "fast", "full", ["documentation_review", "full"]),
         (
             ["app.py", "docs/talks/tradingdev-introduction/slides.md"],
