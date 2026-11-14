@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tooling import review_docs
+from tooling import review_docs, review_plan
 from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
@@ -295,6 +295,424 @@ def test_operation_batches_split_without_truncating_changed_files(
     )
     audit = next(batch for batch in batches if batch["scope"] == "cross_scope")
     assert audit["path_diffs"] == json.loads(evidence)["path_diffs"]
+
+
+@pytest.fixture
+def context_heavy_change(tmp_path: Path) -> tuple[Path, str, str, str]:
+    _git(tmp_path, "init", "-q")
+    source = "tests/tooling/test_example.py"
+    _write(tmp_path, source, "VALUE = 'old'\n" + "# Stable source context\n" * 180)
+    _write(tmp_path, "src/shared_context.py", "SHARED = 'original context'\n")
+    _write(tmp_path, "src/scoped_context.py", "SCOPED = 'original context'\n")
+    _write(
+        tmp_path,
+        "docs/unregistered_contract.md",
+        "# Unregistered contract\n\n"
+        + "".join(f"## Section {i}\n" + str(i) * 6_000 + "\n\n" for i in range(3)),
+    )
+    base = _tree(tmp_path)
+    _write(tmp_path, source, "VALUE = 'new'\n" + "# Stable source context\n" * 180)
+    return tmp_path, base, _tree(tmp_path), source
+
+
+def test_context_partitions_repeat_complete_sources_and_cover_original_sections(
+    context_heavy_change: tuple[Path, str, str, str],
+) -> None:
+    repo, base, tree, source = context_heavy_change
+    evidence = build_evidence(
+        repo,
+        base,
+        tree,
+        review_context=("src/shared_context.py",),
+        review_context_for=(("tooling", "src/scoped_context.py"),),
+    )
+    original = json.loads(evidence)
+    whole = build_review_plan(evidence)
+    expected_sections = _payload(whole.prompts[0])["document_sections"]
+    assert (
+        "".join(section["text"] for section in expected_sections)
+        == (original["candidate_files"]["docs/unregistered_contract.md"])
+    )
+    plan = build_review_plan(evidence, max_prompt_bytes=20_000)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    parts = [batch for batch in batches if batch["phase"] == "scope"]
+    assert len(parts) > 1
+    assert plan.manifest["path_owners"] == {source: "tooling"}
+    assert len(plan.manifest["source_units"]) == 1
+    assert plan.manifest["source_units"][0]["document_sections"] == [
+        batch["document_sections"][index]
+        for batch in plan.manifest["batches"]
+        if batch["phase"] == "scope"
+        for index in batch["assigned_document_sections"]
+    ]
+    assert [
+        part["document_sections"][index]
+        for part in parts
+        for index in part["assigned_document_sections"]
+    ] == expected_sections
+    for index, part in enumerate(parts, start=1):
+        assert part["context_partition"] == {"index": index, "count": len(parts)}
+        assert part["assigned_paths"] == [source]
+        assert part["path_diffs"] == original["path_diffs"]
+        for path in (source, "src/shared_context.py", "src/scoped_context.py"):
+            assert part["candidate_files"][path] == original["candidate_files"][path]
+        assert part["candidate_tree_inventory"] == original["candidate_tree_inventory"]
+    audit = [batch for batch in batches if batch["phase"] == "cross_scope"]
+    assert len(audit) == 1
+    assert audit[0]["path_diffs"] == original["path_diffs"]
+    assert "docs/unregistered_contract.md" in audit[0]["document_inventory"]
+    assert all(len(prompt.encode()) <= 20_000 for prompt in plan.prompts)
+    assert plan.manifest["evidence_utf8_bytes"] == whole.manifest["evidence_utf8_bytes"]
+    assert "another partition" in plan.prompts[0]
+    assert "missing original context" in plan.prompts[0]
+    plan.verify()
+    with pytest.raises(ReviewError, match="Total review input"):
+        build_review_plan(
+            evidence,
+            max_prompt_bytes=20_000,
+            max_total_prompt_bytes=plan.manifest["total_prompt_utf8_bytes"] - 1,
+        )
+
+
+@pytest.mark.parametrize("oversized", ["source", "section", "explicit_context"])
+def test_context_partitions_reject_indivisible_originals(
+    context_heavy_change: tuple[Path, str, str, str], oversized: str
+) -> None:
+    repo, base, _, source = context_heavy_change
+    current_source = (repo / source).read_text(encoding="utf-8")
+    if oversized == "source":
+        _write(repo, source, "VALUE = 'new'\n" + "# Long complete source\n" * 1_000)
+    elif oversized == "section":
+        _write(repo, "docs/unregistered_contract.md", "# One section\n" + "X" * 22_000)
+    else:
+        _write(repo, "src/shared_context.py", "# Complete explicit context\n" * 1_000)
+    if oversized != "source":
+        # Keep the oversized contract unchanged so failure tests context
+        # indivisibility, rather than a newly assigned changed-document source.
+        _write(repo, source, _git(repo, "show", f"{base}:{source}") + "\n")
+        base = _tree(repo)
+        _write(repo, source, current_source)
+    evidence = build_evidence(
+        repo, base, _tree(repo), review_context=("src/shared_context.py",)
+    )
+    with pytest.raises(ReviewError, match="cannot fit.*review budget"):
+        build_review_plan(evidence, max_prompt_bytes=20_000)
+
+
+def test_context_partitions_keep_the_complete_mandatory_deck_group(
+    context_heavy_change: tuple[Path, str, str, str],
+) -> None:
+    repo, _, _, _ = context_heavy_change
+    for path in PRESENTATION_PATHS:
+        _write(repo, path, "Original complete deck content.\n")
+    base = _tree(repo)
+    _write(repo, f"{DECK}/theme.css", "/* Updated complete theme */\n")
+    evidence = build_evidence(repo, base, _tree(repo))
+    original = json.loads(evidence)
+    plan = build_review_plan(evidence, max_prompt_bytes=20_000)
+    parts = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt)["phase"] == "scope"
+    ]
+    assert len(parts) > 1
+    assert len(plan.manifest["source_units"]) == 1
+    for part in parts:
+        assert set(part["assigned_paths"]) == PRESENTATION_PATHS
+        assert part["path_diffs"] == original["path_diffs"]
+        assert all(
+            part["candidate_files"][path] == original["candidate_files"][path]
+            for path in PRESENTATION_PATHS
+        )
+
+
+@pytest.mark.parametrize("parent_size", [800, 5_000])
+def test_context_partitions_keep_selected_ancestor_prose_with_each_child(
+    context_heavy_change: tuple[Path, str, str, str], parent_size: int
+) -> None:
+    repo, base, _, source = context_heavy_change
+    current_source = (repo / source).read_text(encoding="utf-8")
+    _write(repo, source, _git(repo, "show", f"{base}:{source}") + "\n")
+    _write(
+        repo,
+        "docs/unregistered_contract.md",
+        "# Contract\nROOT_PREMISE\n\n"
+        + "".join(
+            f"## Repeated parent\nPARENT_{i}_PREMISE\n"
+            + "P" * parent_size
+            + f"\n\n### Child {i}\nCHILD_{i}_OBLIGATION\n"
+            + "C" * 6_000
+            + "\n\n"
+            for i in range(2)
+        ),
+    )
+    base = _tree(repo)
+    _write(repo, source, current_source)
+    evidence = build_evidence(repo, base, _tree(repo))
+    if parent_size == 5_000:
+        with pytest.raises(ReviewError, match="original document section"):
+            build_review_plan(evidence, max_prompt_bytes=20_000)
+        return
+    plan = build_review_plan(evidence, max_prompt_bytes=20_000)
+    parts = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt)["phase"] == "scope"
+    ]
+    assert len(parts) > 1
+    for child in range(2):
+        owners = [
+            part
+            for part in parts
+            if any(
+                f"CHILD_{child}_OBLIGATION" in section["text"]
+                for section in part["document_sections"]
+            )
+        ]
+        assert owners
+        for part in owners:
+            text = "".join(section["text"] for section in part["document_sections"])
+            assert "ROOT_PREMISE" in text
+            assert f"PARENT_{child}_PREMISE" in text
+
+
+@pytest.mark.parametrize(
+    ("source_lines", "section_size", "budget", "merged"),
+    [
+        pytest.param(80, 6_000, 26_000, True, id="shared-context-saves-input"),
+        pytest.param(180, 6_000, 20_000, False, id="joint-originals-cannot-fit"),
+        pytest.param(860, 12_000, 63_700, False, id="fewer-requests-cost-more-bytes"),
+    ],
+)
+def test_partitioned_sources_share_context_only_when_serialized_input_decreases(
+    tmp_path: Path, source_lines: int, section_size: int, budget: int, merged: bool
+) -> None:
+    _git(tmp_path, "init", "-q")
+    paths = ("tests/tooling/test_one.py", "tooling/two.py")
+    for path in paths:
+        _write(
+            tmp_path,
+            path,
+            "VALUE = 'old'\n" + "# Stable source context\n" * source_lines,
+        )
+    document = "# Contract\n\n" + "".join(
+        f"## Section {index}\n" + str(index) * section_size + "\n\n"
+        for index in range(3)
+    )
+    _write(tmp_path, "docs/unregistered.md", document)
+    base = _tree(tmp_path)
+    for path in paths:
+        _write(
+            tmp_path,
+            path,
+            "VALUE = 'new'\n" + "# Stable source context\n" * source_lines,
+        )
+    evidence = build_evidence(tmp_path, base, _tree(tmp_path))
+    original = json.loads(evidence)
+    plan = build_review_plan(evidence, max_prompt_bytes=budget)
+    assert len(plan.manifest["source_units"]) == (1 if merged else 2)
+    for unit in plan.manifest["source_units"]:
+        parts = [
+            _payload(prompt)
+            for prompt in plan.prompts
+            if _payload(prompt).get("source_unit") == unit["id"]
+        ]
+        assert len(parts) > 1
+        assigned_text = "".join(
+            part["document_sections"][index]["text"]
+            for part in parts
+            for index in part["assigned_document_sections"]
+        )
+        assert assigned_text == document
+        for part in parts:
+            assert part["assigned_paths"] == (
+                list(paths) if merged else unit["assigned_paths"]
+            )
+            for path in part["assigned_paths"]:
+                assert (
+                    part["candidate_files"][path] == original["candidate_files"][path]
+                )
+                assert part["path_diffs"][path] == original["path_diffs"][path]
+    assert all(len(prompt.encode()) <= budget for prompt in plan.prompts)
+    audit = _payload(plan.prompts[-1])
+    assert audit["phase"] == "cross_scope"
+    assert audit["path_diffs"] == original["path_diffs"]
+
+
+@pytest.mark.parametrize("definition_parent_size", [0, 5_000])
+def test_context_partitions_keep_prelude_and_later_reference_dependencies(
+    context_heavy_change: tuple[Path, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    definition_parent_size: int,
+) -> None:
+    repo, base, _, source = context_heavy_change
+    current_source = (repo / source).read_text(encoding="utf-8")
+    _write(repo, source, _git(repo, "show", f"{base}:{source}") + "\n")
+    path = "docs/unregistered_contract.md"
+    _write(
+        repo,
+        path,
+        "ALL GUIDANCE IS SIMULATION ONLY\n\n"
+        + "".join(
+            f"## Section {index}\nUse [policy][mode].\n" + str(index) * 6_000 + "\n\n"
+            for index in range(3)
+        )
+        + "# Reference appendix\nDEFINITION_PARENT_PREMISE\n"
+        + "P" * definition_parent_size
+        + "\n\n### Mode definition\n[mode]: https://example.com/simulation\n",
+    )
+    base = _tree(repo)
+    _write(repo, source, current_source)
+    evidence = build_evidence(repo, base, _tree(repo))
+    if definition_parent_size:
+        with pytest.raises(ReviewError, match="original document section"):
+            build_review_plan(evidence, max_prompt_bytes=20_000)
+        return
+    plan = build_review_plan(evidence, max_prompt_bytes=20_000)
+    parts = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt)["phase"] == "scope"
+    ]
+    assert len(parts) > 1
+    for part in parts:
+        text = "".join(section["text"] for section in part["document_sections"])
+        assert "ALL GUIDANCE IS SIMULATION ONLY" in text
+        assert "[mode]: https://example.com/simulation" in text
+        assert "DEFINITION_PARENT_PREMISE" in text
+    assert (
+        "".join(
+            part["document_sections"][index]["text"]
+            for part in parts
+            for index in part["assigned_document_sections"]
+        )
+        == json.loads(evidence)["candidate_files"][path]
+    )
+    plan.verify()
+    manifest_part = next(
+        part for part in plan.manifest["batches"] if part["phase"] == "scope"
+    )
+    definition_index = next(
+        index
+        for index, section in enumerate(manifest_part["document_sections"])
+        if section["headings"][-1:] == ("Mode definition",)
+    )
+    assert definition_index not in manifest_part["assigned_document_sections"]
+    manifest_part["document_sections"].pop(definition_index)
+    manifest_part["assigned_document_sections"] = [
+        index - (index > definition_index)
+        for index in manifest_part["assigned_document_sections"]
+    ]
+    monkeypatch.setattr(
+        review_plan, "_digest", lambda _value: plan.manifest["plan_hash"]
+    )
+    with pytest.raises(ReviewError, match="required original"):
+        plan.verify()
+
+
+@pytest.mark.parametrize("nested_definition", [False, True])
+def test_requirement_partitions_keep_original_hierarchy_and_selected_parent(
+    tmp_path: Path,
+    nested_definition: bool,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    source = "src/tradingdev/app/strategy_new.py"
+    source_before = "VALUE = 'old'\n" + "# Stable context\n" * (
+        500 if nested_definition else 700
+    )
+    _write(tmp_path, source, source_before)
+    _write(tmp_path, "docs/contract.md", "# Contract\nORIGINAL_CONTRACT\n")
+    requirement_path = "docs/requirements/strategy.md"
+    _write(
+        tmp_path,
+        requirement_path,
+        "# Strategy requirements\nSRS_PARENT_PREMISE\n"
+        + "P" * 1_800
+        + "\n\n"
+        + "".join(
+            f"## FR-STR-{index:03d} Requirement\n\n"
+            f"- **需求**：Keep obligation {index}.\n- **驗收**："
+            + str(index)
+            * 6_000
+            + "\n- **契約**：[contract](../contract.md)\n"
+            "- **驗證**：人工驗收：inspect the original.\n\n"
+            + (
+                "### Link definitions\n[mode]: https://example.com/simulation\n"
+                if nested_definition and index == 3
+                else ""
+            )
+            for index in range(1, 4)
+        ),
+    )
+    base = _tree(tmp_path)
+    _write(tmp_path, source, source_before.replace("'old'", "'new'"))
+    evidence = build_evidence(tmp_path, base, _tree(tmp_path))
+    plan = build_review_plan(
+        evidence, max_prompt_bytes=35_000 if nested_definition else 30_000
+    )
+    parts = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if _payload(prompt)["phase"] == "scope"
+    ]
+    assert len(parts) > 1
+    observed = set()
+    for part in parts:
+        sections = [
+            section
+            for section in part["document_sections"]
+            if section["path"] == requirement_path
+        ]
+        requirements = [
+            section
+            for section in sections
+            if section["selection_reason"] == "affected-requirement"
+        ]
+        if requirements:
+            assert any("SRS_PARENT_PREMISE" in section["text"] for section in sections)
+        if nested_definition:
+            shared_records = [
+                section for section in requirements if section.get("shared_context")
+            ]
+            assert shared_records
+            assert all(
+                section["headings"][-1] == "FR-STR-003 Requirement"
+                and "### Link definitions" in section["text"]
+                and "[mode]: https://example.com/simulation" in section["text"]
+                for section in shared_records
+            )
+        for section in requirements:
+            observed.add(tuple(section["headings"]))
+    assert observed == {
+        ("Strategy requirements", f"FR-STR-{index:03d} Requirement")
+        for index in range(1, 4)
+    }
+    plan.verify()
+
+
+@pytest.mark.parametrize("missing", ["ownership", "section", "partition"])
+def test_context_partition_manifest_rejects_incomplete_coverage(
+    context_heavy_change: tuple[Path, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    repo, base, tree, _ = context_heavy_change
+    plan = build_review_plan(build_evidence(repo, base, tree), max_prompt_bytes=20_000)
+    parts = [batch for batch in plan.manifest["batches"] if batch["phase"] == "scope"]
+    assert len(parts) > 1
+    if missing == "ownership":
+        plan.manifest["source_units"][0]["assigned_paths"] = []
+    elif missing == "section":
+        assert parts[0]["document_sections"]
+        parts[0]["document_sections"].pop()
+    else:
+        plan.manifest["batches"].remove(parts[0])
+    # Isolate semantic coverage validation from the separately tested hash guard.
+    monkeypatch.setattr(
+        review_plan, "_digest", lambda _value: plan.manifest["plan_hash"]
+    )
+    with pytest.raises(ReviewError, match="ownership|original sections|partition"):
+        plan.verify()
 
 
 def test_explicit_scope_cannot_hide_a_changed_responsibility(

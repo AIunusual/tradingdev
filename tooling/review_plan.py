@@ -17,6 +17,7 @@ from tooling.requirements import (
     parse_requirement_records,
 )
 from tooling.review_evidence import (
+    MAX_EVIDENCE_BYTES,
     PRESENTATION_ARTIFACT_PATHS,
     ReviewError,
     automatic_document_paths,
@@ -31,12 +32,13 @@ from tooling.review_scope import (
     sections_for_reference,
     sections_for_scope,
     selection_reason,
+    shared_document_context_ranges,
     unknown_document_sections,
 )
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 8
+SCOPE_POLICY_VERSION = 9
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -111,7 +113,18 @@ SCOPE_INSTRUCTIONS = (
     "in unchanged material only when this change causes it, not unrelated cleanup. "
     "Missing context "
     "needed for a concrete cross-file question is a finding, not permission to "
-    "assume another reviewer checked it. Every batch must pass independently.\n\n"
+    "assume another reviewer checked it. A source_unit can have several "
+    "context_partition requests: each repeats its complete assigned files, exact "
+    "diffs and mandatory explicit context. assigned_document_sections identifies "
+    "zero-based entries in document_sections assigned to this request; selected "
+    "ancestor sections, document preludes and link definitions accompany their "
+    "dependent sections with complete original prose, even when another request "
+    "already contains them. Review the assigned "
+    "changes against these sections and their premises. Do not infer a verdict "
+    "from another partition. If "
+    "this comparison requires missing original context, name its exact path and "
+    "reason as a finding, even if another partition may contain it. Every batch "
+    "must pass independently.\n\n"
 )
 CROSS_SCOPE_INSTRUCTIONS = (
     "This is the cross-scope audit. Read the complete original diff across all "
@@ -133,6 +146,93 @@ def _digest(value: Any) -> str:
 
 def _bytes(value: str) -> int:
     return len(value.encode("utf-8"))
+
+
+def _section_ancestor_indexes(sections: list[dict[str, Any]]) -> list[list[int]]:
+    """Find already selected ancestors in source order, including repeated headings."""
+    latest: dict[tuple[str, str, str, tuple[str, ...]], int] = {}
+    result: list[list[int]] = []
+    for index, section in enumerate(sections):
+        origin = (section["path"], section["version"], section["blob_oid"])
+        headings = tuple(section["headings"])
+        parents: list[int] = []
+        for depth in range(1, len(headings)):
+            parent = latest.get((*origin, headings[:depth]))
+            # A similarly named heading before a newer selected ancestor belongs
+            # to its previous occurrence, not the current child's hierarchy.
+            if parent is not None and (not parents or parent > parents[-1]):
+                parents.append(parent)
+        result.append(parents)
+        latest[(*origin, headings)] = index
+    return result
+
+
+def _section_dependency_indexes(sections: list[dict[str, Any]]) -> list[list[int]]:
+    """Close selected dependencies, including later definitions and their parents."""
+    ancestors = _section_ancestor_indexes(sections)
+    shared: dict[tuple[str, str, str], set[int]] = {}
+    origins = [
+        (section["path"], section["version"], section["blob_oid"])
+        for section in sections
+    ]
+    for index, section in enumerate(sections):
+        if section.get("shared_context", False):
+            shared.setdefault(origins[index], set()).add(index)
+    direct = [
+        set(parents) | shared.get(origin, set())
+        for parents, origin in zip(ancestors, origins, strict=True)
+    ]
+    result = []
+    for index in range(len(sections)):
+        required = {index}
+        pending = [index]
+        while pending:
+            for dependency in direct[pending.pop()]:
+                if dependency not in required:
+                    required.add(dependency)
+                    pending.append(dependency)
+        result.append(sorted(required - {index}))
+    return result
+
+
+def _selected_evidence_bytes(batches: list[dict[str, Any]], raw: dict[str, Any]) -> int:
+    """Count unique delivered originals, not the unselected local source pool.
+
+    Full candidate files and per-path diffs are counted once across requests.
+    Document slices count their line union per path, Git version and blob; a
+    delivered full candidate already covers its candidate-version slices.
+    JSON packaging and repeated context remain subject to the prompt budgets.
+    """
+    candidates = {
+        path: text
+        for batch in batches
+        for path, text in batch["candidate_files"].items()
+    }
+    diffs = {
+        path: text for batch in batches for path, text in batch["path_diffs"].items()
+    }
+    size = sum(_bytes(text) for text in (*candidates.values(), *diffs.values()))
+    ranges: dict[tuple[str, str, str], list[tuple[int, int]]] = {}
+    for batch in batches:
+        for section in batch["document_sections"]:
+            version, path = section["version"], section["path"]
+            if version == "candidate" and path in candidates:
+                continue
+            key = (version, path, section["blob_oid"])
+            ranges.setdefault(key, []).append(
+                (section["start_line"], section["end_line"])
+            )
+    for (version, path, _), intervals in ranges.items():
+        sources = raw["base_document_files" if version == "base" else "candidate_files"]
+        lines = markdown_lines(sources[path])
+        merged: list[tuple[int, int]] = []
+        for start, end in sorted(intervals):
+            if merged and start <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        size += sum(_bytes("".join(lines[start - 1 : end])) for start, end in merged)
+    return size
 
 
 def _changed_lines(diff: str) -> tuple[set[int], set[int]]:
@@ -291,18 +391,88 @@ class ReviewPlan:
             self.manifest["prompt_hashes"]
         ):
             raise ReviewError("Review prompts differ from the prepared plan.")
+        units = self.manifest["source_units"]
+        if [unit["id"] for unit in units] != list(range(1, len(units) + 1)):
+            raise ReviewError("Review source-unit identities are inconsistent.")
+        assigned = [path for unit in units for path in unit["assigned_paths"]]
+        if sorted(assigned) != sorted(self.manifest["path_owners"]):
+            raise ReviewError("Review source units duplicate or omit path ownership.")
+        scope_batches = [
+            batch for batch in self.manifest["batches"] if batch["phase"] == "scope"
+        ]
+        if {batch["source_unit"] for batch in scope_batches} != {
+            unit["id"] for unit in units
+        }:
+            raise ReviewError("Review source units have missing or unknown partitions.")
+        for unit in units:
+            parts = [
+                batch for batch in scope_batches if batch["source_unit"] == unit["id"]
+            ]
+            if any(
+                part["scope"] != unit["scope"]
+                or part["assigned_paths"] != unit["assigned_paths"]
+                or part["context_partition"] != {"index": index, "count": len(parts)}
+                for index, part in enumerate(parts, start=1)
+            ) or any(
+                self.manifest["path_owners"][path] != unit["scope"]
+                for path in unit["assigned_paths"]
+            ):
+                raise ReviewError("Review context partition ownership is inconsistent.")
+            originals = unit["document_sections"]
+            positions = {
+                _json(section): index for index, section in enumerate(originals)
+            }
+            dependencies = _section_dependency_indexes(originals)
+            assigned_sections = []
+            for part in parts:
+                delivered = part["document_sections"]
+                assignments = part["assigned_document_sections"]
+                if (
+                    assignments != sorted(set(assignments))
+                    or any(
+                        type(index) is not int or not 0 <= index < len(delivered)
+                        for index in assignments
+                    )
+                    or any(_json(section) not in positions for section in delivered)
+                ):
+                    raise ReviewError(
+                        "Review context partition section assignments are invalid."
+                    )
+                owned = [delivered[index] for index in assignments]
+                assigned_sections.extend(owned)
+                required = {positions[_json(section)] for section in owned}
+                required.update(
+                    dependency
+                    for index in tuple(required)
+                    for dependency in dependencies[index]
+                )
+                if delivered != [originals[index] for index in sorted(required)]:
+                    raise ReviewError(
+                        "Review context partition omitted required original "
+                        "context dependencies."
+                    )
+            if assigned_sections != originals:
+                raise ReviewError(
+                    "Review context partitions omit or duplicate original sections."
+                )
 
 
 def build_review_plan(
     evidence: str,
     *,
+    max_evidence_bytes: int = MAX_EVIDENCE_BYTES,
     review_scopes: tuple[str, ...] | None = None,
     max_prompt_bytes: int = MAX_PROMPT_BYTES,
     max_total_prompt_bytes: int = MAX_TOTAL_PROMPT_BYTES,
     max_prompt_chars: int = 1_024_000,
 ) -> ReviewPlan:
     """Plan everything before calling a model; never trim a file to meet a budget."""
-    for limit in (max_prompt_bytes, max_total_prompt_bytes, max_prompt_chars):
+    for limit in (
+        max_evidence_bytes,
+        max_prompt_bytes,
+        max_total_prompt_bytes,
+        max_prompt_chars,
+    ):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ReviewError("Review context budgets must be positive integers.")
     raw = json.loads(evidence)
@@ -496,6 +666,11 @@ def build_review_plan(
         source = before[path] if version == "base" else files[path]
         return sections_for_reference(path, source, fragment)
 
+    @cache
+    def shared_context_ranges(version: str, path: str) -> tuple[tuple[int, int], ...]:
+        source = before[path] if version == "base" else files[path]
+        return shared_document_context_ranges(path, source)
+
     def document_context(
         scope: str, assigned: set[str], paths: list[str]
     ) -> list[dict[str, Any]]:
@@ -534,6 +709,14 @@ def build_review_plan(
                 "text": text,
                 "selection_reason": reason,
             }
+            for shared_start, shared_end in shared_context_ranges(version, path):
+                if start <= shared_end and shared_start <= end:
+                    if not start <= shared_start <= shared_end <= end:
+                        raise ReviewError(
+                            "Selected original section only partly covers shared "
+                            f"document context: {path}:{shared_start}-{shared_end}"
+                        )
+                    sections[key]["shared_context"] = True
 
         for path in sorted(doc_index):
             if (path in presentation and scope != "cross_scope") or path in assigned:
@@ -591,12 +774,25 @@ def build_review_plan(
                     )
                 ):
                     continue
+                requirement_headings = next(
+                    (
+                        part.headings
+                        for part in reference_sections(version, record.source, "")
+                        if part.start_line <= record.start_line <= part.end_line
+                    ),
+                    None,
+                )
+                if requirement_headings is None:
+                    raise ReviewError(
+                        "Missing original requirement heading hierarchy: "
+                        f"{record.source}:{record.start_line}"
+                    )
                 add_section(
                     version,
                     record.source,
                     record.start_line,
                     record.end_line,
-                    (record.identifier,),
+                    requirement_headings,
                     record.text,
                     "affected-requirement",
                 )
@@ -637,6 +833,7 @@ def build_review_plan(
         included = assigned | additional | scoped.get(scope, set())
         if scope == "presentation":
             included |= presentation
+        sections = document_context(scope, included, paths)
         return common | {
             "phase": "scope",
             "scope": scope,
@@ -660,7 +857,8 @@ def build_review_plan(
                 if p in raw["base_file_modes"]
             },
             "additional_context_paths": sorted(additional),
-            "document_sections": document_context(scope, included, paths),
+            "document_sections": sections,
+            "assigned_document_sections": list(range(len(sections))),
         }
 
     def render(batch: dict[str, Any], index: int, count: int) -> str:
@@ -676,9 +874,16 @@ def build_review_plan(
         )
 
     def fits(batch: dict[str, Any]) -> bool:
-        # Reserve enough digits for all path units, scopes and a cross-scope audit.
-        upper = len(owners) + len(SCOPES) + 1
-        prompt = render(batch, upper, upper)
+        # Every request consumes at least one byte. The total budget therefore
+        # bounds request/partition counts even when one source needs many parts.
+        upper = max_total_prompt_bytes
+        reserved = batch
+        if batch["phase"] == "scope":
+            reserved = batch | {
+                "source_unit": upper,
+                "context_partition": {"index": upper, "count": upper},
+            }
+        prompt = render(reserved, upper, upper)
         return _bytes(prompt) <= max_prompt_bytes and len(prompt) <= max_prompt_chars
 
     def capacity_error(subject: str) -> ReviewError:
@@ -690,15 +895,146 @@ def build_review_plan(
         )
 
     batches: list[dict[str, Any]] = []
+    source_units: list[dict[str, Any]] = []
+
+    def partition_source_unit(
+        batch: dict[str, Any], *, required: bool = True
+    ) -> list[dict[str, Any]]:
+        """Partition only context; every request retains all mandatory originals."""
+        complete_sections = batch["document_sections"]
+        dependencies = _section_dependency_indexes(complete_sections)
+
+        def context_part(assigned: list[int]) -> dict[str, Any]:
+            required = set(assigned)
+            required.update(
+                dependency for index in assigned for dependency in dependencies[index]
+            )
+            ordered = sorted(required)
+            return batch | {
+                "document_sections": [complete_sections[index] for index in ordered],
+                "assigned_document_sections": [
+                    ordered.index(index) for index in assigned
+                ],
+            }
+
+        parts: list[dict[str, Any]] = []
+        if fits(batch):
+            parts.append(batch)
+        else:
+            template = context_part([])
+            subject = (
+                f"Scope {batch['scope']!r}, required file group "
+                f"{batch['assigned_paths']!r}"
+            )
+            if not fits(template):
+                if not required:
+                    return []
+                raise capacity_error(subject)
+            group: list[int] = []
+            for section_index, section in enumerate(complete_sections):
+                combined = context_part([*group, section_index])
+                if fits(combined):
+                    group.append(section_index)
+                    continue
+                if group:
+                    parts.append(context_part(group))
+                single = context_part([section_index])
+                if not fits(single):
+                    if not required:
+                        return []
+                    raise capacity_error(
+                        f"{subject}, original document section {section['path']!r}"
+                        f":{section['start_line']}-{section['end_line']} "
+                        "and selected context dependencies"
+                    )
+                group = [section_index]
+            if group:
+                parts.append(context_part(group))
+        if [
+            part["document_sections"][index]
+            for part in parts
+            for index in part["assigned_document_sections"]
+        ] != complete_sections:
+            raise ReviewError(
+                "Review context partition lost original document evidence."
+            )
+        return parts
+
+    def numbered_parts(
+        parts: list[dict[str, Any]], identifier: int
+    ) -> list[dict[str, Any]]:
+        return [
+            part
+            | {
+                "source_unit": identifier,
+                "context_partition": {"index": index, "count": len(parts)},
+            }
+            for index, part in enumerate(parts, start=1)
+        ]
+
+    def append_source_unit(batch: dict[str, Any]) -> None:
+        identifier = len(source_units) + 1
+        complete_sections = batch["document_sections"]
+        parts = partition_source_unit(batch)
+        if source_units and len(parts) > 1:
+            previous = source_units[-1]
+            previous_parts = [
+                part for part in batches if part["source_unit"] == previous["id"]
+            ]
+            if previous["scope"] == batch["scope"] and len(previous_parts) > 1:
+                previous_batch = scope_batch(
+                    previous["scope"], previous["assigned_paths"]
+                )
+                combined = scope_batch(
+                    batch["scope"], previous["assigned_paths"] + batch["assigned_paths"]
+                )
+                # Identical selected originals keep the audit inventory and
+                # review obligations unchanged; no broader context is discarded.
+                if (
+                    previous_batch["document_sections"]
+                    == complete_sections
+                    == combined["document_sections"]
+                ):
+                    joint_parts = partition_source_unit(combined, required=False)
+                    separate = previous_parts + numbered_parts(parts, identifier)
+                    joint = numbered_parts(joint_parts, previous["id"])
+                    # Normalize only the outer request numbering. With no more
+                    # requests, actual indices/counts cannot increase the joint
+                    # plan's cost relative to this serialized comparison.
+                    separate_size = sum(_bytes(render(part, 1, 1)) for part in separate)
+                    joint_size = sum(_bytes(render(part, 1, 1)) for part in joint)
+                    if (
+                        joint
+                        and len(joint) <= len(separate)
+                        and joint_size < separate_size
+                    ):
+                        del batches[-len(previous_parts) :]
+                        source_units.pop()
+                        identifier = previous["id"]
+                        batch, parts = combined, joint_parts
+        source_units.append(
+            {
+                "id": identifier,
+                "scope": batch["scope"],
+                "assigned_paths": batch["assigned_paths"],
+                "document_sections": [
+                    {key: value for key, value in section.items() if key != "text"}
+                    for section in complete_sections
+                ],
+            }
+        )
+        batches.extend(numbered_parts(parts, identifier))
+
     for scope in sorted(selected):
         paths = sorted(p for p, owner in owners.items() if owner == scope)
+        if not paths:
+            append_source_unit(scope_batch(scope, []))
+            continue
         units = (
             [paths]
             if scope == "presentation" and presentation & PRESENTATION_ARTIFACT_PATHS
             else [[p] for p in paths]
         )
-        if not units:
-            units = [[]]
         group: list[str] = []
         for unit in units:
             combined = scope_batch(scope, [*group, *unit])
@@ -706,14 +1042,15 @@ def build_review_plan(
                 group.extend(unit)
                 continue
             if group:
-                batches.append(scope_batch(scope, group))
+                append_source_unit(scope_batch(scope, group))
                 group = []
             single = scope_batch(scope, unit)
             if not fits(single):
-                raise capacity_error(f"Scope {scope!r}, required file group {unit!r}")
+                append_source_unit(single)
+                continue
             group.extend(unit)
-        if group or not paths:
-            batches.append(scope_batch(scope, group))
+        if group:
+            append_source_unit(scope_batch(scope, group))
 
     if len(batches) > 1 or "cross_scope" in scoped:
         audit_context = additional | scoped.get("cross_scope", set())
@@ -773,7 +1110,7 @@ def build_review_plan(
             for path in required_paths
         ):
             raise ReviewError(f"Scoped context was not delivered completely: {scope}")
-    assigned_paths = [p for b in batches for p in b["assigned_paths"]]
+    assigned_paths = [p for unit in source_units for p in unit["assigned_paths"]]
     if sorted(assigned_paths) != sorted(owners):
         raise ReviewError(
             "Review plan contains duplicated or uncovered path ownership."
@@ -785,6 +1122,14 @@ def build_review_plan(
                 raise ReviewError(f"Incomplete assigned candidate source: {path}")
             if path in diffs and batch["path_diffs"].get(path) != diffs[path]:
                 raise ReviewError(f"Incomplete assigned change: {path}")
+    selected_bytes = _selected_evidence_bytes(batches, raw)
+    if selected_bytes > max_evidence_bytes:
+        raise ReviewError(
+            f"Selected documentation evidence is {selected_bytes} bytes, exceeding "
+            f"the {max_evidence_bytes}-byte budget. Split the change or explicitly "
+            "raise --max-evidence-bytes after checking model capacity; no evidence "
+            "was truncated and no model request was made."
+        )
     prompts = tuple(render(b, i, len(batches)) for i, b in enumerate(batches, start=1))
     sizes = [_bytes(prompt) for prompt in prompts]
     if sum(sizes) > max_total_prompt_bytes:
@@ -793,11 +1138,12 @@ def build_review_plan(
             f"requests, exceeding {max_total_prompt_bytes}; no model request was made."
         )
     manifest: dict[str, Any] = common | {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "planned_not_reviewed",
         "requested_scopes": review_scopes,
         "selected_scopes": sorted(selected),
         "additional_context_paths": sorted(additional),
+        "source_units": source_units,
         "requirement_contracts": {
             identifier: {
                 "source": record.source,
@@ -811,6 +1157,15 @@ def build_review_plan(
                 "index": i,
                 "phase": b["phase"],
                 "scope": b["scope"],
+                **(
+                    {
+                        "source_unit": b["source_unit"],
+                        "context_partition": b["context_partition"],
+                        "assigned_document_sections": b["assigned_document_sections"],
+                    }
+                    if b["phase"] == "scope"
+                    else {}
+                ),
                 "assigned_paths": b["assigned_paths"],
                 "candidate_file_blobs": b["candidate_file_blobs"],
                 "candidate_file_modes": b["candidate_file_modes"],
@@ -823,12 +1178,20 @@ def build_review_plan(
             }
             for i, b in enumerate(batches, start=1)
         ],
-        "evidence_utf8_bytes": _bytes(evidence),
+        "evidence_utf8_bytes": selected_bytes,
+        "source_pool_utf8_bytes": _bytes(evidence),
+        "max_evidence_bytes": max_evidence_bytes,
         "total_prompt_utf8_bytes": sum(sizes),
         "max_prompt_bytes": max_prompt_bytes,
         "max_total_prompt_bytes": max_total_prompt_bytes,
         "max_prompt_chars": max_prompt_chars,
-        "measurement": "Exact serialized UTF-8 bytes and characters, not tokens.",
+        "measurement": (
+            "source_pool_utf8_bytes measures local serialized evidence JSON. "
+            "evidence_utf8_bytes measures unique delivered original UTF-8 bytes: "
+            "complete files, exact diffs and document line unions. Prompt sizes "
+            "measure actual serialized request UTF-8 bytes and characters, "
+            "including repeated originals and metadata. None are token counts."
+        ),
         "limitations": (
             "Excludes provider wrapping, output reserve and internal model context. "
             "Scope rules do not prove every semantic or dynamic dependency; missing "

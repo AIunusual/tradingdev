@@ -533,10 +533,10 @@ def test_complete_html_asset_still_enforces_evidence_byte_budget(
     tree = _git(repo, "write-tree")
 
     with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
-        review_docs.review(base, tree, repo=repo)
+        review_docs.review(base, tree, repo=repo, max_prompt_bytes=1_000_000)
     assert not fake_codex.exists()
 
-    raw = review_docs.build_evidence(repo, base, tree, max_bytes=1_000_000)
+    raw = review_docs.build_evidence(repo, base, tree)
     assert json.loads(raw)["candidate_files"]["page.html"] == content
     assert "+" + content in json.loads(raw)["path_diffs"]["page.html"]
 
@@ -580,7 +580,9 @@ def test_audience_review_keeps_original_policy_context_separate_from_instruction
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
     if batched:
-        monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 12_000)
+        # Exercise source batching while keeping this policy-isolation fixture's
+        # small document context together, including partition metadata.
+        monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 14_000)
 
     review_docs.review(base, tree, repo=repo)
 
@@ -834,6 +836,81 @@ def test_excessive_evidence_fails_before_model_call(
     assert not fake_codex.exists()
 
 
+def test_unrelated_registered_document_sections_do_not_consume_evidence_budget(
+    repository: tuple[Path, str, str], fake_codex: Path
+) -> None:
+    repo, _, _ = repository
+    (repo / "README.md").write_text(
+        "# TradingDev\n\n## 查看結果與圖表\n" + "UNRELATED_REPORT_GUIDANCE\n" * 30_000,
+        encoding="utf-8",
+    )
+    (repo / "tests").mkdir()
+    source = repo / "tests/llm_plugin.py"
+    source.write_text("MODEL = 'old'\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    source.write_text("MODEL = 'new'\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    plan = review_docs.prepare_review(base, tree, repo=repo)
+    assert plan.manifest["source_pool_utf8_bytes"] > review_docs.MAX_EVIDENCE_BYTES
+    assert plan.manifest["evidence_utf8_bytes"] < review_docs.MAX_EVIDENCE_BYTES
+    review_docs.review(base, tree, repo=repo)
+
+    records = _records(fake_codex)
+    assert records
+    assert all("UNRELATED_REPORT_GUIDANCE" not in item["prompt"] for item in records)
+    batch = _prompt_evidence(records[0]["prompt"])
+    assert batch["candidate_files"]["tests/llm_plugin.py"] == "MODEL = 'new'\n"
+    assert "+MODEL = 'new'" in batch["path_diffs"]["tests/llm_plugin.py"]
+    _assert_reviewer_cleanup(records)
+
+
+@pytest.mark.parametrize(
+    "selection",
+    ["unknown-document", "unknown-heading", "global", "scoped", "changed"],
+)
+def test_required_original_evidence_cannot_escape_the_budget(
+    repository: tuple[Path, str, str], fake_codex: Path, selection: str
+) -> None:
+    repo, _, _ = repository
+    (repo / "tests").mkdir()
+    source = repo / "tests/llm_plugin.py"
+    source.write_text("MODEL = 'old'\n", encoding="utf-8")
+    path = "README.md"
+    heading = "## 查看結果與圖表\n"
+    if selection == "unknown-document":
+        (repo / "docs").mkdir()
+        path = "docs/unknown_contract.md"
+    elif selection == "unknown-heading":
+        heading = "## Undocumented responsibility\n"
+    required = "# TradingDev\n\n" + heading + "必要原文" * 55_000 + "\n"
+    if selection != "changed":
+        (repo / path).write_text(required, encoding="utf-8")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    source.write_text("MODEL = 'new'\n", encoding="utf-8")
+    if selection == "changed":
+        (repo / path).write_text(required, encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+
+    # Isolate the unique-evidence limit from per-request serialization limits.
+    with pytest.raises(review_docs.ReviewError, match="--max-evidence-bytes"):
+        review_docs.review(
+            base,
+            tree,
+            repo=repo,
+            review_context=(path,) if selection == "global" else (),
+            review_context_for=(("tooling", path),) if selection == "scoped" else (),
+            max_prompt_bytes=2_000_000,
+            max_total_prompt_bytes=5_000_000,
+        )
+    assert not fake_codex.exists()
+    assert not _records(fake_codex)
+
+
 def test_explicit_budget_reviews_complete_evidence_larger_than_default(
     repository: tuple[Path, str, str], fake_codex: Path
 ) -> None:
@@ -842,14 +919,25 @@ def test_explicit_budget_reviews_complete_evidence_larger_than_default(
     (repo / "src/app.py").write_text(content, encoding="utf-8")
     _git(repo, "add", "src/app.py")
     tree = _git(repo, "write-tree")
-    evidence = review_docs.build_evidence(repo, base, tree, max_bytes=1_000_000)
-    size = len(evidence.encode("utf-8"))
+    evidence = review_docs.build_evidence(repo, base, tree)
+    raw = json.loads(evidence)
+    size = sum(
+        len(content.encode("utf-8"))
+        for key in ("candidate_files", "path_diffs")
+        for content in raw[key].values()
+    )
     assert size > review_docs.MAX_EVIDENCE_BYTES
     with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
-        review_docs.review(base, tree, repo=repo)
+        review_docs.review(base, tree, repo=repo, max_prompt_bytes=1_000_000)
     assert not fake_codex.exists()
     with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
-        review_docs.review(base, tree, repo=repo, max_evidence_bytes=size - 1)
+        review_docs.review(
+            base,
+            tree,
+            repo=repo,
+            max_evidence_bytes=size - 1,
+            max_prompt_bytes=1_000_000,
+        )
     assert not fake_codex.exists()
 
     with pytest.raises(review_docs.ReviewError, match="per-request review budget"):
@@ -1072,7 +1160,9 @@ def _synthetic_evidence(file_count: int = 6) -> str:
 
 def _use_small_batches(monkeypatch: MonkeyPatch, *, file_count: int = 6) -> str:
     evidence = _synthetic_evidence(file_count)
-    monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 30_000)
+    # Keep one complete source plus shared context within the fixture budget;
+    # two sources still cannot fit. This isolates scheduling and cleanup tests.
+    monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 32_000)
     monkeypatch.setattr(review_docs, "build_evidence", lambda *_, **__: evidence)
     prompts = review_docs.build_review_prompts(evidence)
     assert len(prompts) == file_count + 1
@@ -1153,7 +1243,7 @@ def test_large_evidence_preserves_owned_sources_original_sections_and_cross_audi
     )
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
-    raw = review_docs.build_evidence(repo, base, tree, max_bytes=2_000_000)
+    raw = review_docs.build_evidence(repo, base, tree)
     evidence = json.loads(raw)
     assert len(raw) > review_docs.MAX_PROMPT_CHARS
     review_docs.review(
@@ -1191,17 +1281,26 @@ def test_prompt_limit_counts_unicode_characters_but_evidence_budget_counts_bytes
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
     evidence = review_docs.build_evidence(repo, base, tree)
-    byte_count = len(evidence.encode("utf-8"))
+    raw = json.loads(evidence)
+    byte_count = sum(
+        len(content.encode("utf-8"))
+        for key in ("candidate_files", "path_diffs")
+        for content in raw[key].values()
+    )
     prompt = review_docs.build_review_prompts(evidence)[0]
     assert len(prompt.encode("utf-8")) > len(prompt)
     # Leave room for the planner's conservative batch-index digit reservation.
     monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", len(prompt) + 100)
     assert review_docs.build_review_prompts(evidence) == [prompt]
-    assert (
-        review_docs.build_evidence(repo, base, tree, max_bytes=byte_count) == evidence
+    plan = review_docs.prepare_review(
+        base, tree, repo=repo, max_evidence_bytes=byte_count
     )
+    assert plan.manifest["evidence_utf8_bytes"] == byte_count
+    assert plan.prompts == (prompt,)
     with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
-        review_docs.build_evidence(repo, base, tree, max_bytes=byte_count - 1)
+        review_docs.prepare_review(
+            base, tree, repo=repo, max_evidence_bytes=byte_count - 1
+        )
     monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", len(prompt) - 1)
     with pytest.raises(review_docs.ReviewError, match="character"):
         review_docs.build_review_prompts(evidence)
