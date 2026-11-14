@@ -8,17 +8,19 @@ different rules:
   instrument per asset class; that table, not this docstring, decides which
   asset classes and instruments exist (at the time of writing it covers
   crypto, US equities and Taiwan equities; crypto, for example, uses
-  BTC/USDT). The instrument is bought once with the run's fee and slippage
-  and held to the end, and the reports show the total-return difference,
-  strategy minus benchmark.
+  BTC/USDT). ``buy_and_hold`` invests at the first close and liquidates at
+  the last close; both fills pay the run's fee and slippage. The reports
+  show the total-return difference, strategy minus benchmark.
 * This module takes whatever prices the caller passes, usually the very
   instrument the strategy trades, charges no costs, and reports the
   annualised mean of the per-period differences as the active return.
 
-The figures of the two benchmarks differ because of the instrument and the
-definition of the return difference, not because of costs: the product's
-cost falls on the entry only, after which its per-period returns equal the
-price returns. The cost rules therefore stay as they are.
+The figures of the two benchmarks differ in three ways: the instrument,
+the cost treatment, and the definition of the return difference. Between
+its entry and exit fills the product's per-period returns still equal the
+price returns, so its costs change the final total return, not the
+intermediate per-period series; this module charges no costs at all. The
+two are separate measurements and their figures are not interchangeable.
 
 The convention this package adopts in benchmark comparisons: "excess
 return" is reserved for the total-return difference, strategy minus
@@ -52,11 +54,12 @@ Reading the results:
   explained by that average exposure, which includes any timing skill. For
   a different instrument, such as the product's BTC/USDT benchmark of an
   ETH strategy, neither reading holds.
-* The benchmark pays no transaction costs and the strategy does. Here that
-  is deliberate: costs are part of what a strategy has to overcome to beat
-  holding the asset. The product's stored benchmark charges the run's
-  costs, but only on entry; its figures differ from this module's mainly
-  by instrument and by the return difference used.
+* The benchmark series here pays no transaction costs and the strategy
+  series supplied by the caller does. That is deliberate: costs are part
+  of what a strategy has to overcome to beat holding the asset. The
+  product's stored benchmark charges the run's costs on both entry and
+  exit; its figures differ from this module's by instrument, cost
+  treatment and the return difference used.
 * Both series must cover the same bars. They are always aligned with
   :func:`tradingdev.domain.statistics.comparison.align_returns`, which keeps
   only the periods both cover; build the benchmark from the same bars and
