@@ -274,7 +274,9 @@ class TestDifferenceInterval:
         a = frequency.series(np.random.default_rng(9).normal(0.0, 0.01, 60))
         flat = frequency.series(np.zeros(60))
 
-        result = difference_interval(a, flat, lambda v: float(np.mean(v)), reps=50)
+        result = difference_interval(
+            a, flat, lambda v: float(np.mean(v)), reps=50, seed=0
+        )
 
         assert result is not None
         assert result.correlation is None
@@ -494,9 +496,9 @@ class TestUnavailableReasons:
         a = frequency.series(np.random.default_rng(19).normal(0.0, 0.01, 60))
         flat = frequency.series(np.zeros(60))
 
-        result = difference_interval_outcome(a, flat, frequency.sharpe, reps=50)
+        result = difference_interval_outcome(a, flat, frequency.sharpe, reps=50, seed=0)
         table = interval_table_outcome(
-            {"a": a, "flat": flat}, frequency.sharpe, reps=50
+            {"a": a, "flat": flat}, frequency.sharpe, reps=50, seed=0
         )
 
         assert isinstance(result, IntervalUnavailable)
