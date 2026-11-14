@@ -338,8 +338,8 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | `domain/statistics/plateau.py` | `trials_from_metrics` 將呼叫端提供的全部參數試驗列轉為網格與有效試驗，`plateau_summary` 比較最佳試驗與鄰域平台；輸入、失敗列及缺失網格語意見模組與函式 docstring。獨立計算，不讀取 jobs／runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/comparison.py` | `align_returns` 依索引標籤交集對齊多條報酬序列（時區 naive 與 aware 的 datetime 索引混用會判為時區不符而拒絕，而非無交集），`difference_interval` 以配對 stationary bootstrap 估計統計量差額的區間與 p 值，`interval_table` 提供個別序列區間；兩者把不可用推論摺疊為 `None`。`difference_interval_outcome` 與 `interval_table_outcome` 進行相同推論，但不可用時改回傳 `IntervalUnavailable`，保留原因與統計量有定義時的點估計。兩組入口、區塊長度、不可用原因與輸入邊界的完整契約見 `domain/statistics/comparison.py` 的模組與函式 docstring。配對 bootstrap 只保證共同期間；比較須用樣本外報酬，且期間、標的與成本假設須可比較，否則屬實驗設計問題，任何統計量都無法修補。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/benchmark.py` | `buy_and_hold_returns` 由呼叫端提供的價格序列產生不計成本的買進持有報酬，`compare_to_benchmark` 將策略報酬對該序列做最小二乘迴歸，回傳斜率（beta）、年化截距（alpha）、主動報酬、追蹤誤差、資訊比率與漲跌捕捉；為研究用序列分析，與 `domain/benchmark.py` 的產品基準（依資產類別固定標的、進出場皆計成本）不同，兩者數值不可互相替代。主動報酬是各期報酬差的平均再年化（(mean(策略)−mean(基準))×年化期數），不同於報告的超額報酬（策略減基準的總報酬差、含複利、未年化）；兩者回答不同問題，不可互相替代。beta 即迴歸斜率：僅當策略與基準交易同一標的，才主要反映策略的平均淨暴露；若為不同標的（例如以 BTC/USDT 為基準比較 ETH 策略），beta 只是斜率，不可解讀為平均淨暴露。獨立計算，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/comparison.py` | 由呼叫端提供的報酬序列做配對 stationary bootstrap 推論；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。獨立計算，尚未接入績效發布或 MCP 查詢 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
@@ -353,14 +353,10 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `sharpe.py` 的 `sharpe_ratio` 計算比率，`sharpe_interval_outcome` 提供 bootstrap
 區間或不可用原因；`probabilistic_sharpe_ratio` 與 `deflated_sharpe_ratio` 分別計算
 相對指定門檻及搜尋調整門檻的機率。各函式的 docstring 維護報酬輸入、年化設定、
-不可用條件與推論假設。`comparison.py` 的配對比較在共同期間上使用同一組重抽樣索引：
-`difference_interval` 與 `interval_table` 把不可用推論摺疊為 `None`（重疊不足時在
-評估統計量之前即回傳），`difference_interval_outcome` 與 `interval_table_outcome`
-則回傳 `IntervalUnavailable`，保留不可用原因以及統計量有定義時的點估計；個別序列
-區間只是保守篩選，兩個策略是否不同仍以配對差額區間判定。這兩組入口的完整契約
-（回傳型別、區塊長度、不可用原因與輸入邊界）見 `domain/statistics/comparison.py`
-的模組與函式 docstring。`benchmark.py` 的買進持有報酬由呼叫端提供的價格序列計算
-且不計成本，與前述產品基準的保存值不是同一種測量。
+不可用條件與推論假設。`comparison.py` 提供配對推論，`benchmark.py` 提供研究用的
+買進持有報酬與策略迴歸比較，後者與前述產品基準的保存值不是同一種測量；兩者的
+公開入口、回傳契約與解讀限制見各模組與函式 docstring
+（`domain/statistics/comparison.py`、`domain/statistics/benchmark.py`）。
 摘要保留金額與比例回撤；帳戶權益的整段淨損益以原始本金為基準，累積 P&L
 （`init_cash=None`，例如 Volume 模式）以零為基準，首筆觀測後的權益變化另行命名。
 `summarize_performance` 依當次無風險利率計算摘要的 `sharpe_ratio` 欄位，

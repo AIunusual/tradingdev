@@ -1,8 +1,13 @@
-"""Keep the statistics overview in step with the comparison entry points.
+"""Keep the architecture overview a single-source-of-truth boundary.
 
-Expected values come from the module's own AST (declared return annotations and
-public function names), never from the documentation under test. If an entry
-point or its return contract changes, the overview must be updated as well.
+The architecture section records module responsibilities, public entry point
+names and where the full contracts live. Method-level statistical contracts
+and interpretation guidance belong to the module and function docstrings.
+
+Expected values come from the modules' AST (public function names and their
+declared return annotations, plus module docstrings), never from the
+documentation under test. Both directions are checked so that neither
+duplication nor loss of information passes silently.
 """
 
 from __future__ import annotations
@@ -12,33 +17,57 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
 _ARCHITECTURE = _ROOT / "ARCHITECTURE.md"
-_COMPARISON = _ROOT / "src/tradingdev/domain/statistics/comparison.py"
+_STATISTICS_DIR = _ROOT / "src/tradingdev/domain/statistics"
+_COMPARISON = _STATISTICS_DIR / "comparison.py"
+_BENCHMARK = _STATISTICS_DIR / "benchmark.py"
 
-_OVERVIEW_START = "需要從原始觀察值獨立計算時"
-_OVERVIEW_END = "摘要保留金額與比例回撤"
+_SECTION_START = "## 績效計算與對話摘要"
+_SECTION_END = "### 診斷擴充與替換"
 _INFERENCE_PREFIXES = ("difference_interval", "interval_table")
 
+# Criteria defined by the documentation review: these are method-level
+# contracts or interpretation guidance, so they must not be restated in the
+# architecture section. They are maintained in the module docstrings below.
+_METHOD_SEMANTICS = (
+    "IntervalUnavailable",
+    "摺疊為 `None`",
+    "保守篩選",
+    "同一組重抽樣索引",
+    "樣本外報酬",
+    "主動報酬是",
+    "beta 即迴歸斜率",
+    "平均淨暴露",
+)
 
-def _statistics_overview() -> str:
-    """The prose overview of independent statistics, excluding the module table."""
+
+def _statistics_section() -> str:
     text = _ARCHITECTURE.read_text(encoding="utf-8")
-    start = text.index(_OVERVIEW_START)
-    end = text.index(_OVERVIEW_END, start)
+    start = text.index(_SECTION_START)
+    end = text.index(_SECTION_END, start)
     return text[start:end]
+
+
+def _module_ast(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _docstring_text(path: Path) -> str:
+    """Collapse docstring line wrapping so prose is matched by wording."""
+    return " ".join((ast.get_docstring(_module_ast(path)) or "").split())
 
 
 def _inference_entry_points() -> dict[str, str]:
     """Public paired-bootstrap APIs and their declared return annotations."""
-    tree = ast.parse(_COMPARISON.read_text(encoding="utf-8"))
     return {
         node.name: ast.unparse(node.returns) if node.returns is not None else ""
-        for node in tree.body
+        for node in _module_ast(_COMPARISON).body
         if isinstance(node, ast.FunctionDef)
         and node.name.startswith(_INFERENCE_PREFIXES)
     }
 
 
-def test_every_inference_entry_point_is_named_in_the_overview() -> None:
+def test_architecture_names_every_inference_entry_point() -> None:
+    """The review requires the outcome entry points to be discoverable here."""
     entry_points = _inference_entry_points()
     assert {
         "difference_interval",
@@ -46,13 +75,33 @@ def test_every_inference_entry_point_is_named_in_the_overview() -> None:
         "interval_table",
         "interval_table_outcome",
     } <= set(entry_points)
-    overview = _statistics_overview()
-    missing = sorted(name for name in entry_points if name not in overview)
-    assert not missing, f"statistics overview omits entry points: {missing}"
+    section = _statistics_section()
+    missing = sorted(name for name in entry_points if name not in section)
+    assert not missing, f"architecture section omits entry points: {missing}"
 
 
-def test_overview_describes_the_unavailable_result_distinction() -> None:
-    """The distinction in prose must match the declared return types."""
+def test_architecture_does_not_restate_method_level_semantics() -> None:
+    """Method contracts stay in the docstrings, not in two places at once."""
+    section = _statistics_section()
+    duplicated = [term for term in _METHOD_SEMANTICS if term in section]
+    assert not duplicated, (
+        f"architecture section duplicates method-level semantics: {duplicated}"
+    )
+
+
+def test_architecture_points_to_both_authoritative_contracts() -> None:
+    section = _statistics_section()
+    assert "domain/statistics/comparison.py" in section
+    assert "domain/statistics/benchmark.py" in section
+    assert "模組與函式 docstring" in section or "模組及函式 docstring" in section
+
+
+def test_method_semantics_remain_in_the_module_docstrings() -> None:
+    """Removing duplication must not remove the guidance itself."""
+    comparison_doc = _docstring_text(_COMPARISON)
+    benchmark_doc = _docstring_text(_BENCHMARK)
+
+    # Unavailable-inference distinction, still declared by the return types.
     entry_points = _inference_entry_points()
     for name in ("difference_interval", "interval_table"):
         assert "None" in entry_points[name], f"{name} no longer collapses to None"
@@ -60,11 +109,11 @@ def test_overview_describes_the_unavailable_result_distinction() -> None:
         assert "IntervalUnavailable" in entry_points[name], (
             f"{name} no longer returns IntervalUnavailable"
         )
-    overview = _statistics_overview()
-    assert "IntervalUnavailable" in overview
-    assert "None" in overview
-    assert "不可用" in overview
+    assert "IntervalUnavailable" in comparison_doc
+    assert "out-of-sample" in comparison_doc
+    assert "experimental design" in comparison_doc
+    assert "common period" in comparison_doc
 
-
-def test_overview_points_to_the_full_contracts() -> None:
-    assert "domain/statistics/comparison.py" in _statistics_overview()
+    # Benchmark interpretation guidance stays with the implementation.
+    for term in ("active return", "excess return", "average net exposure", "costs"):
+        assert term in benchmark_doc, f"benchmark docstring lost guidance: {term}"
