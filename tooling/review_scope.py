@@ -857,6 +857,23 @@ def markdown_sections(path: str, text: str) -> tuple[MarkdownSection, ...]:
     return _parse_sections(path, text)[0]
 
 
+def shared_document_context_ranges(path: str, text: str) -> tuple[tuple[int, int], ...]:
+    """Locate complete prelude/reference sections shared by a document.
+
+    Ranges are one-based and inclusive. Callers retain complete already selected
+    sections intersecting these ranges, rather than clipping their original text.
+    """
+    sections, reference_lines = _parse_sections(path, text)
+    return tuple(
+        (section.start_line, section.end_line)
+        for section in sections
+        if not section.headings
+        or any(
+            section.start_line <= line <= section.end_line for line in reference_lines
+        )
+    )
+
+
 def _selection_reason(
     scope: str, path: str, sections: tuple[MarkdownSection, ...]
 ) -> str:

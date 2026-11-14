@@ -227,7 +227,7 @@ def main() -> None:
     parser.add_argument(
         "--max-evidence-bytes",
         type=int,
-        help="Override the documentation reviewer byte limit for this PR check",
+        help="Limit unique delivered documentation evidence in UTF-8 bytes",
     )
     parser.add_argument(
         "--documentation-timeout-seconds",

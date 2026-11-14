@@ -15,6 +15,7 @@ from tooling.review_scope import (
     sections_for_reference,
     sections_for_scope,
     selection_reason,
+    shared_document_context_ranges,
     unknown_document_sections,
 )
 
@@ -910,6 +911,24 @@ def test_reference_definitions_keep_their_complete_original_sections() -> None:
     sections = sections_for_scope("tooling", "README.md", text)
     assert "".join(section.text for section in sections) == text
     assert [section.start_line for section in sections] == [1, 2, 4, 9]
+
+
+def test_shared_document_context_uses_complete_commonmark_sections() -> None:
+    prelude = "Shared prelude.\n\n"
+    fenced = "# Guide\n```md\n[fake]: https://example.com/fake\n```\n"
+    definitions = (
+        "## References\nDefinitions apply to every section.\n\n"
+        "[mode]:\n  https://example.com/simulation\n  'Simulation'\n"
+    )
+    duplicate = "## Duplicate\n[MODE]: https://example.com/duplicate\n"
+    text = prelude + fenced + definitions + duplicate + "## Final\nOrdinary prose.\n"
+    sections = markdown_sections("context.md", text)
+    ranges = shared_document_context_ranges("context.md", text)
+    assert [
+        section.text
+        for section in sections
+        if (section.start_line, section.end_line) in ranges
+    ] == [prelude, definitions, duplicate]
 
 
 @pytest.mark.parametrize(
