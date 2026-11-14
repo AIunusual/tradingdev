@@ -24,9 +24,14 @@ from tooling.review_scope import (
     ("path", "headings"),
     [
         ("AGENTS.md", "# AGENTS.md\n\n## Issue 接手與指派\n"),
+        ("AGENTS.md", "# AGENTS.md\n\n## Issue 撰寫\n"),
         (
             "docs/development.md",
             "# 開發指南\n\n## 接手 issue\n",
+        ),
+        (
+            "docs/development.md",
+            "# 開發指南\n\n## 撰寫 issue\n",
         ),
         (
             "docs/development.md",

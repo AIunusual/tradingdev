@@ -242,6 +242,11 @@
   `check-full.sh` 或 commit／push hooks。Code review、離線測試、PR 文件
   一致性審查與真實模型策略測試各有用途，不能互相替代。
 
+## Issue 撰寫
+
+- 建立或改寫 issue 時，先讀 [撰寫 issue](docs/development.md#撰寫-issue)
+  章節的本機基準；無關任務不必預讀，不需另讀外部撰寫指南。
+
 ## Issue 接手與指派
 
 - 使用者明確表示接手某個 issue，或要求開始實作／修復該 issue 時，將其本人
