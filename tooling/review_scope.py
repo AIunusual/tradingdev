@@ -52,10 +52,24 @@ class BehaviorContext:
 
     Requirement records own their contract references. Document scopes select
     general reader context only; they do not expand all contracts of an owner.
+    Explicit document references select maintained originals without assigning
+    an independent research API a saved-product requirement.
     """
 
     requirement_ids: frozenset[str]
     document_scopes: frozenset[str]
+    document_references: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceContext:
+    """Complete supporting sources required by one reviewed changed path.
+
+    This selects evidence only: it does not change ownership, product
+    obligations, explicit context or the checks required for delivery.
+    """
+
+    required_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -1049,11 +1063,68 @@ _ARTIFACT_INTERFACE_CONTEXT = BehaviorContext(
     frozenset({"results"}),
 )
 
+_STATISTICS_ARCHITECTURE_REFERENCE = (
+    "ARCHITECTURE.md",
+    "績效計算與對話摘要",
+)
+_TEST_DESIGN_REFERENCE = ("docs/development.md", "測試設計與精簡")
+_PRODUCT_BENCHMARK_REFERENCE = ("docs/performance_artifacts.md", "benchmarks")
+_STATISTICS_API_CONTEXT = BehaviorContext(
+    frozenset(), frozenset(), (_STATISTICS_ARCHITECTURE_REFERENCE,)
+)
+_STATISTICS_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _TEST_DESIGN_REFERENCE),
+)
+_RESEARCH_BENCHMARK_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _PRODUCT_BENCHMARK_REFERENCE),
+)
+_RESEARCH_BENCHMARK_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (
+        _STATISTICS_ARCHITECTURE_REFERENCE,
+        _PRODUCT_BENCHMARK_REFERENCE,
+        _TEST_DESIGN_REFERENCE,
+    ),
+)
+
 # These modules have reviewed behavior responsibilities. Do not infer context
 # from a layer prefix or a topic-looking filename: an unregistered path retains
 # the conservative owner-based fallback. Changed Markdown is selected from its
 # actual changed sections, not assigned a whole-document behavior here.
 _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    "src/tradingdev/domain/statistics/benchmark.py": _RESEARCH_BENCHMARK_CONTEXT,
+    "src/tradingdev/domain/statistics/comparison.py": _STATISTICS_API_CONTEXT,
+    "tests/domain/statistics/test_statistics_benchmark.py": (
+        _RESEARCH_BENCHMARK_TEST_CONTEXT
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": BehaviorContext(
+        frozenset({"FR-RES-002"}),
+        frozenset(),
+        _RESEARCH_BENCHMARK_TEST_CONTEXT.document_references,
+    ),
+    **dict.fromkeys(
+        (
+            "tests/domain/statistics/test_statistics_boundaries.py",
+            "tests/domain/statistics/test_statistics_comparison.py",
+            "tests/domain/statistics/test_statistics_contracts.py",
+        ),
+        _STATISTICS_TEST_CONTEXT,
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (*_STATISTICS_TEST_CONTEXT.document_references, ("AGENTS.md", "政策與溝通")),
+    ),
+    "tests/domain/statistics/conftest.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (_TEST_DESIGN_REFERENCE, ("AGENTS.md", "測試與清理")),
+    ),
     **dict.fromkeys(
         (
             "src/tradingdev/app/research.py",
@@ -1285,6 +1356,64 @@ _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
         frozenset({"results"}),
     ),
 }
+
+
+def _statistics_sources(*modules: str) -> tuple[str, ...]:
+    return tuple(f"src/tradingdev/domain/statistics/{module}.py" for module in modules)
+
+
+# Only these reviewed consumers request supporting sources. In particular, this
+# is not a directory-wide rule for existing or future statistics modules/tests.
+_SOURCE_CONTEXTS: dict[str, SourceContext] = {
+    "src/tradingdev/domain/statistics/benchmark.py": SourceContext(
+        _statistics_sources("comparison", "periods", "sharpe", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "src/tradingdev/domain/statistics/comparison.py": SourceContext(
+        _statistics_sources("sharpe", "_validation", "_scaling", "periods")
+    ),
+    "tests/domain/statistics/test_statistics_benchmark.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "periods", "sharpe", "_validation"
+        )
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": SourceContext(
+        _statistics_sources("benchmark", "periods", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_boundaries.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe", "_validation")
+    ),
+    "tests/domain/statistics/test_statistics_contracts.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_comparison.py": SourceContext(
+        _statistics_sources(
+            "comparison", "periods", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe")
+    ),
+    "tests/domain/statistics/conftest.py": SourceContext(
+        _statistics_sources("comparison", "sharpe")
+    ),
+}
+
+
+def source_context_for_path(path: str) -> SourceContext | None:
+    """Return exact registered sources without inferring new responsibilities."""
+    normalized = PurePosixPath(path)
+    if (
+        normalized.is_absolute()
+        or ".." in normalized.parts
+        or normalized.as_posix() != path
+    ):
+        return None
+    return _SOURCE_CONTEXTS.get(path)
 
 
 def behavior_context_for_path(path: str) -> BehaviorContext | None:

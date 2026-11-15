@@ -851,11 +851,8 @@ SRS 只有兩側變更都位於需求條目內才精選契約；同時修改共�
 [test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
 未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
 沒有行為登錄的路徑沿用 owner 的保守背景；未知文件與章節仍保留。
-已明確登錄責任的架構章節，可依固定 base／candidate 的實際改動選取需求與讀者背景，
-不要求先新增 SRS 引用；變更文件全文、差異及原本命中的 SRS 契約仍完整保留。
-`behavior_contexts.selection_basis` 說明責任來自路徑登錄、修改的章節或 SRS 契約。
-混入未知內容、共用前提、引用定義或標題結構變更時，`fallback_scope` 表示仍須加上
-owner 的保守背景；已辨識的責任不會被這個 fallback 抹除。
+排查證據過大或來源缺漏時，可在規劃 JSON 的 `behavior_contexts` 核對需求與背景的
+選取依據；`fallback_scope` 表示仍加入該 owner 的保守背景。
 開發工具另依 `development_contexts` 列出的操作責任選取政策與操作原文，不套用產品需求。
 登錄與選取入口為 [review_scope.py](../tooling/review_scope.py) 的 `DevelopmentContext`、
 `development_context_for_path`、`development_context_for_sections` 與
@@ -887,6 +884,8 @@ diff 另外計量，不因不同來源文字相同就合併。`prompt_overhead_*
 補入指定範圍的完整來源，或核對模型容量後明示提高單批上限，讓必要原文同批並重新審查；
 不能以其他批次已有原文視為通過。必要的完整來源仍可能超出容量而失敗，工具不會截斷
 或省略原文來符合上限。
+已登錄的共用程式來源會自動附入需要它的批次；可從 `source_contexts` 核對來源及
+Git 版本。其他必要來源仍須明示補入；交付清單與雜湊不能代替同批原文。
 
 需追查計量或批次完整性時，正式定義見 [review_plan.py](../tooling/review_plan.py) 的
 `_selected_evidence_size`、`build_review_plan` 與 `ReviewPlan.verify`；分別提供唯一證據

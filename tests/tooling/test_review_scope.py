@@ -19,6 +19,7 @@ from tooling.review_scope import (
     sections_for_scope,
     selection_reason,
     shared_document_context_ranges,
+    source_context_for_path,
     unknown_document_sections,
 )
 
@@ -82,6 +83,26 @@ def test_development_contexts_preserve_owners_and_shared_consumers() -> None:
     ):
         assert development_context_for_path(path) is None
     assert "issue_claim" not in SCOPES
+
+
+def test_research_source_registration_does_not_expand_to_other_statistics_paths() -> (
+    None
+):
+    registered = "src/tradingdev/domain/statistics/comparison.py"
+    assert source_context_for_path(registered) is not None
+    for path in (
+        "src/tradingdev/domain/statistics/periods.py",
+        "src/tradingdev/domain/statistics/future_analysis.py",
+        "tests/domain/statistics/test_future_analysis.py",
+        "./" + registered,
+        "/" + registered,
+        "src/tradingdev/domain/../domain/statistics/comparison.py",
+    ):
+        assert source_context_for_path(path) is None
+    assert (
+        behavior_context_for_path("src/tradingdev/domain/statistics/future_analysis.py")
+        is None
+    )
 
 
 def test_development_sections_keep_unknown_subtrees_ancestors_and_references() -> None:
