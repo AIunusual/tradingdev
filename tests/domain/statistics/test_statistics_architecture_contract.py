@@ -56,6 +56,15 @@ def _docstring_text(path: Path) -> str:
     return " ".join((ast.get_docstring(_module_ast(path)) or "").split())
 
 
+def _function_docstrings(path: Path) -> dict[str, str]:
+    """Public function docstrings, with line wrapping collapsed."""
+    return {
+        node.name: " ".join((ast.get_docstring(node) or "").split())
+        for node in _module_ast(path).body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    }
+
+
 def _inference_entry_points() -> dict[str, str]:
     """Public paired-bootstrap APIs and their declared return annotations."""
     return {
@@ -150,3 +159,44 @@ def test_benchmark_docstring_separates_point_estimates_from_uncertainty() -> Non
     # The old claim conflated dependence with a biased point estimate.
     assert "annualised point estimates are biased" not in doc
     assert "point estimates are biased" not in doc
+
+
+# Criteria from the documentation review: individual bootstrap intervals
+# describe one statistic's uncertainty. For paired, dependent returns,
+# non-overlapping individual intervals do not imply a significant difference,
+# and a paired interval is not unconditionally narrower.
+_RETIRED_INTERVAL_CLAIMS = (
+    "Non-overlapping individual intervals",
+    "conservative screen",
+    "Non-overlapping rows imply a significant difference",
+    "makes the difference interval narrower",
+    "why overlapping individual intervals are not",
+    "overlapping intervals do not imply an",
+)
+
+
+def test_paired_inference_docs_reject_the_interval_implication() -> None:
+    """Individual intervals are not a significance test for paired returns."""
+    docs = {
+        "module": _docstring_text(_COMPARISON),
+        **_function_docstrings(_COMPARISON),
+    }
+    combined = " ".join(docs.values())
+    for claim in _RETIRED_INTERVAL_CLAIMS:
+        assert claim not in combined, f"retired interval claim remains: {claim}"
+
+    module = docs["module"]
+    assert "estimate the uncertainty of each statistic on its own" in module
+    assert "do not establish significance" in module
+    assert "negative correlation" in module
+    assert "difference_interval" in module
+
+    paired = docs["difference_interval_outcome"]
+    assert "negative correlation widens it" in paired
+    assert "formal paired test" in paired
+    assert "cannot decide whether the difference is significant" in paired
+
+    table = docs["interval_table_outcome"]
+    assert "how precise is each statistic's estimate" in table
+    assert "neither overlapping nor non-overlapping rows settle the comparison" in table
+    assert "difference_interval" in table

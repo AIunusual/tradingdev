@@ -4,20 +4,25 @@ All functions take return series supplied by the caller, such as the daily
 returns from :func:`tradingdev.domain.statistics.periods.period_returns`,
 and never read runs, artifacts, or caches.
 
-Why paired: two strategies run on the same market data share its shocks, so
-their returns are usually strongly correlated. The variance of a difference
-is ``var(A) + var(B) - 2 cov(A, B)``, far below ``var(A) + var(B)`` when the
-correlation is high. Comparing two independently bootstrapped intervals
-ignores that covariance. :func:`difference_interval` therefore aligns both
-series on one timeline and resamples the same block indices for both, so
-each resample keeps the pairing of their returns.
+Why paired: two strategies run on the same market data often share its
+shocks, but the sign of that co-movement is not fixed. The variance of a
+difference is ``var(A) + var(B) - 2 cov(A, B)``: below ``var(A) + var(B)``
+when the returns are positively correlated, and above it when they are
+negatively correlated. Comparing individually bootstrapped intervals
+ignores that covariance altogether. :func:`difference_interval` therefore
+aligns both series on one timeline and resamples the same block indices
+for both, so each resample keeps the pairing of their returns.
 
 Reading the results:
 
-* Non-overlapping individual intervals (from :func:`interval_table`) imply
-  a significant difference, but overlapping intervals do not imply an
-  insignificant one. The individual intervals are a conservative screen;
-  decide with :func:`difference_interval`.
+* Individual intervals (from :func:`interval_table`) estimate the
+  uncertainty of each statistic on its own. They do not test whether two
+  strategies differ: they ignore the correlation between the paired
+  series, and with negative correlation the uncertainty of the difference
+  can be larger than the individual intervals suggest, so even
+  non-overlapping intervals do not establish significance. Use
+  :func:`difference_interval`, which resamples both series together, for
+  the paired test.
 * Compare out-of-sample returns only, such as walk-forward test folds.
   In-sample returns of tuned parameters measure which strategy overfits
   more thoroughly, not which one is better.
@@ -271,9 +276,12 @@ def difference_interval_outcome(
     Both series are aligned with :func:`align_returns`, then resampled with
     one :class:`arch.bootstrap.StationaryBootstrap` so every resample draws
     the same period indices for ``a`` and ``b``. This keeps their
-    correlation, which is what makes the difference interval narrower than
-    the individual intervals suggest. This is the formal test; see the
-    module docstring for why overlapping individual intervals are not.
+    correlation, so the interval reflects ``var(A - B)``; positive
+    correlation narrows it relative to independent intervals, while
+    negative correlation widens it. This is the formal paired test.
+    Individual intervals from :func:`interval_table` estimate each
+    statistic separately and ignore that correlation, so they cannot
+    decide whether the difference is significant.
 
     Block size: the blocks must preserve the dependence of the estimator
     of the difference, which is not the dependence of either series. When
@@ -447,11 +455,12 @@ def interval_table_outcome(
     neither the returns nor their squares describe, such as a maximum
     drawdown.
 
-    These intervals answer "how precise is each estimate", not "do two
-    strategies differ". Non-overlapping rows imply a significant difference;
-    overlapping rows do not imply an insignificant one, because the
-    intervals ignore the correlation between strategies. Use
-    :func:`difference_interval` for the comparison itself.
+    These intervals answer "how precise is each statistic's estimate",
+    not "do two strategies differ". They describe each series separately
+    and ignore the correlation between strategies, so neither overlapping
+    nor non-overlapping rows settle the comparison: with negative
+    correlation the uncertainty of the difference can be larger than the
+    rows suggest. Use :func:`difference_interval` for the paired test.
 
     The result maps each name, in input order, to its interval or to an
     :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`. The
