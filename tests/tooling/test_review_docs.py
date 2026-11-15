@@ -1277,7 +1277,9 @@ def test_prompt_limit_counts_unicode_characters_but_evidence_budget_counts_bytes
     repository: tuple[Path, str, str], monkeypatch: MonkeyPatch
 ) -> None:
     repo, base, _ = repository
-    (repo / "src/app.py").write_text("# 繁體中文測試資料\n" * 1_000, encoding="utf-8")
+    (repo / "src/app.py").write_text(
+        '# 繁體中文測試資料 "quoted" \\\n' * 1_000, encoding="utf-8"
+    )
     _git(repo, "add", ".")
     tree = _git(repo, "write-tree")
     evidence = review_docs.build_evidence(repo, base, tree)
@@ -1297,6 +1299,27 @@ def test_prompt_limit_counts_unicode_characters_but_evidence_budget_counts_bytes
     )
     assert plan.manifest["evidence_utf8_bytes"] == byte_count
     assert plan.prompts == (prompt,)
+    character_count = sum(
+        len(content)
+        for key in ("candidate_files", "path_diffs")
+        for content in raw[key].values()
+    )
+    # This single batch delivers each original exactly once. Quotes, backslashes
+    # and newlines are one original character each; JSON escaping is overhead.
+    manifest = plan.manifest
+    assert manifest["evidence_characters"] == character_count < byte_count
+    assert manifest["delivered_original_utf8_bytes"] == byte_count
+    assert manifest["delivered_original_characters"] == character_count
+    assert manifest["repeated_original_utf8_bytes"] == 0
+    assert manifest["repeated_original_characters"] == 0
+    assert manifest["total_prompt_characters"] == len(prompt)
+    batch = manifest["batches"][0]
+    assert batch["original_utf8_bytes"] == byte_count
+    assert batch["original_characters"] == character_count
+    assert batch["prompt_overhead_utf8_bytes"] == manifest["prompt_overhead_utf8_bytes"]
+    assert batch["prompt_overhead_characters"] == manifest["prompt_overhead_characters"]
+    assert manifest["prompt_overhead_utf8_bytes"] == len(prompt.encode()) - byte_count
+    assert manifest["prompt_overhead_characters"] == len(prompt) - character_count
     with pytest.raises(review_docs.ReviewError, match="no evidence was truncated"):
         review_docs.prepare_review(
             base, tree, repo=repo, max_evidence_bytes=byte_count - 1
