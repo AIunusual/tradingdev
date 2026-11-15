@@ -1599,7 +1599,9 @@ def test_shared_srs_edits_keep_other_requirements_contracts(
     )
     assert "FIRST_CONTRACT_ORIGINAL" in context
     assert "SECOND_CONTRACT_ORIGINAL" in context
-    assert owner["behavior_contexts"][path] == {"fallback_scope": "ml"}
+    selected = owner["behavior_contexts"][path]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003"]
 
 
 def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
@@ -1631,7 +1633,9 @@ def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
         ),
     )
     plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
-    assert plan.manifest["behavior_contexts"][requirement] == {"fallback_scope": "ml"}
+    selected = plan.manifest["behavior_contexts"][requirement]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003", "FR-ML-004"]
     text = "".join(
         s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
     )
@@ -2709,3 +2713,123 @@ def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations
             if section.headings[-1:] == (heading,)
         )
         assert any(section["text"] == original_section.text for section in sections)
+
+
+def _edit_performance_architecture(repo: Path) -> str:
+    path = repo / "ARCHITECTURE.md"
+    original = path.read_text(encoding="utf-8")
+    changed = original.replace(
+        "## 績效計算與對話摘要\n",
+        "## 績效計算與對話摘要\n\nPerformance evidence change.\n",
+    )
+    assert changed != original
+    path.write_text(changed, encoding="utf-8")
+    return changed
+
+
+def test_architecture_section_review_preserves_sources_and_selects_its_obligations(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    caller = "src/tradingdev/app/benchmark_service.py"
+    _write(repo, caller, "VALUE = 'before'\n")
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    _write(repo, caller, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    assert plan.manifest["path_owners"]["ARCHITECTURE.md"] == "general"
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert "FR-RES-002" in obligations["requirement_ids"]
+    assert "FR-ML-001" not in obligations["requirement_ids"]
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(b for b in batches if "ARCHITECTURE.md" in b["assigned_paths"])
+    assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+    assert (
+        owner["path_diffs"]["ARCHITECTURE.md"]
+        == original["path_diffs"]["ARCHITECTURE.md"]
+    )
+    audit = next(b for b in batches if b["phase"] == "cross_scope")
+    assert audit["path_diffs"] == original["path_diffs"]
+    for batch in (owner, audit):
+        sections = batch["document_sections"]
+        assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+        assert not any(s["path"] == "docs/requirements/ml.md" for s in sections)
+    plan.verify()
+
+
+@pytest.mark.parametrize(
+    "extra_change",
+    ["unknown", "preamble", "reference", "rename", "delete", "duplicate"],
+)
+def test_architecture_section_review_keeps_uncertain_edits_conservative(
+    real_document_repository: Path, extra_change: str
+) -> None:
+    repo = real_document_repository
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    if extra_change == "unknown":
+        source += "\n## Unregistered responsibility\nNew contract.\n"
+    elif extra_change == "preamble":
+        source = "Shared premise changed.\n\n" + source
+    elif extra_change == "reference":
+        source = source.replace(
+            "Performance evidence change.",
+            "Performance evidence change.\n\n[shared]: docs/requirements/ml.md",
+        )
+    elif extra_change == "rename":
+        source = source.replace("## 績效計算與對話摘要", "## Renamed performance")
+    elif extra_change == "delete":
+        start = source.index("## 績效計算與對話摘要")
+        end = source.index("### 診斷擴充與替換", start)
+        source = source[:start] + source[end:]
+    else:
+        source += "\n## 績效計算與對話摘要\nAmbiguous duplicate.\n"
+    _write(repo, "ARCHITECTURE.md", source)
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    owners = [
+        _payload(p)
+        for p in plan.prompts
+        if "ARCHITECTURE.md" in _payload(p)["assigned_paths"]
+    ]
+    assert owners
+    for owner in owners:
+        assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+        assert (
+            owner["path_diffs"]["ARCHITECTURE.md"]
+            == original["path_diffs"]["ARCHITECTURE.md"]
+        )
+    assert any(
+        s["path"] == "docs/requirements/ml.md"
+        for owner in owners
+        for s in owner["document_sections"]
+    )
+    plan.verify()
+
+
+def test_architecture_section_review_unions_explicit_cross_domain_requirements(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    requirement = repo / "docs/requirements/ml.md"
+    text = requirement.read_text(encoding="utf-8")
+    start = text.index("## FR-ML-003")
+    contract = text.index("- **契約**：", start)
+    end = text.index("\n", contract)
+    text = (
+        text[:end] + " [架構](../../ARCHITECTURE.md#績效計算與對話摘要)。" + text[end:]
+    )
+    requirement.write_text(text, encoding="utf-8")
+    base = _tree(repo)
+    _edit_performance_architecture(repo)
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=1_500_000
+    )
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert {"FR-RES-002", "FR-ML-003"} <= set(obligations["requirement_ids"])
+    sections = [s for p in plan.prompts for s in _payload(p)["document_sections"]]
+    assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+    assert any(s["path"] == "docs/requirements/ml.md" for s in sections)

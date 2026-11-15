@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
+from tooling.documentation import markdown_heading_locations
 from tooling.requirements import (
     RequirementRecord,
     RequirementsError,
@@ -28,8 +30,10 @@ from tooling.review_scope import (
     DevelopmentContext,
     MarkdownSection,
     behavior_context_for_path,
+    behavior_context_for_section,
     development_context_for_path,
     development_context_for_sections,
+    markdown_heading_ranges,
     markdown_sections,
     scope_for_path,
     sections_for_development_context,
@@ -45,7 +49,7 @@ if TYPE_CHECKING:
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 11
+SCOPE_POLICY_VERSION = 12
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -341,98 +345,189 @@ def _edits_within_requirements(
     return _markdown_edits(text, git_lines) <= covered
 
 
+@dataclass(frozen=True)
+class _ResolvedBehaviorContext:
+    """Known obligations plus whether some edits still need owner context."""
+
+    context: BehaviorContext
+    include_owner_context: bool
+    selection_basis: tuple[str, ...]
+
+
+def _document_behavior_context(
+    path: str,
+    raw: dict[str, Any],
+    records: dict[str, RequirementRecord],
+    old_records: dict[str, RequirementRecord],
+) -> _ResolvedBehaviorContext | None:
+    """Resolve every edited line without treating supporting prose as ownership."""
+    before = raw.get("base_document_files", {})
+    files = raw["candidate_files"]
+    old_lines, new_lines = _changed_lines(raw["path_diffs"][path])
+    versions = (
+        (before, old_lines, records | old_records),
+        (files, new_lines, records),
+    )
+    parsed = [
+        markdown_sections(path, source.get(path, "")) for source, _, _ in versions
+    ]
+    occurrences = [Counter(section.headings for section in parts) for parts in parsed]
+    identifiers: set[str] = set()
+    roles: set[str] = set()
+    basis: set[str] = set()
+    complete = True
+    for (sources, git_lines, requirements), parts in zip(versions, parsed, strict=True):
+        text = sources.get(path, "")
+        edits = _markdown_edits(text, git_lines)
+        covered: set[int] = set()
+        guarded = (
+            *markdown_heading_ranges(text),
+            *shared_document_context_ranges(path, text),
+        )
+        if any(edits.intersection(range(start, end + 1)) for start, end in guarded):
+            complete = False
+        for part in parts:
+            changed = edits.intersection(range(part.start_line, part.end_line + 1))
+            if not changed:
+                continue
+            # Every ancestor must identify the same single section on both sides.
+            # A deleted, renamed, new or repeated heading cannot prove that.
+            if not part.headings or any(
+                counts[part.headings[:depth]] != 1
+                for counts in occurrences
+                for depth in range(1, len(part.headings) + 1)
+            ):
+                complete = False
+            profile = behavior_context_for_section(path, part)
+            if profile is not None:
+                identifiers.update(profile.requirement_ids)
+                roles.update(profile.document_scopes)
+                covered.update(changed)
+                basis.add("changed-registered-sections")
+        for identifier, record in requirements.items():
+            for target, fragment in record.contract_references:
+                if target != path:
+                    continue
+                try:
+                    selected = sections_for_reference(path, text, fragment)
+                except ValueError:
+                    # The other immutable side can retain a removed contract.
+                    continue
+                if not any(
+                    edits.intersection(range(part.start_line, part.end_line + 1))
+                    for part in selected
+                ):
+                    continue
+                identifiers.add(identifier)
+                roles.add(scope_for_path(record.source))
+                basis.add("changed-SRS-contracts")
+                responsible = selected
+                if fragment:
+                    line = markdown_heading_locations(text)[fragment]
+                    cited = next(
+                        part
+                        for part in selected
+                        if part.start_line <= line <= part.end_line
+                    )
+                    # Ancestor introductions and reference definitions accompany
+                    # a contract, but are not owned by its cited descendant.
+                    responsible = tuple(
+                        part
+                        for part in selected
+                        if part.start_line >= cited.start_line
+                        and part.headings[: len(cited.headings)] == cited.headings
+                    )
+                covered.update(
+                    line
+                    for part in responsible
+                    for line in range(part.start_line, part.end_line + 1)
+                )
+        complete &= edits <= covered
+    if not basis:
+        return None
+    missing = identifiers - records.keys() - old_records.keys()
+    if missing:
+        raise ReviewError(
+            f"Missing registered behavior requirements for {path}: "
+            + ", ".join(sorted(missing))
+        )
+    return _ResolvedBehaviorContext(
+        BehaviorContext(frozenset(identifiers), frozenset(roles)),
+        include_owner_context=not complete,
+        selection_basis=tuple(sorted(basis)),
+    )
+
+
 def _behavior_contexts(
     raw: dict[str, Any],
     records: dict[str, RequirementRecord],
     old_records: dict[str, RequirementRecord],
-) -> dict[str, BehaviorContext | None]:
+) -> dict[str, _ResolvedBehaviorContext | None]:
     """Use registered source responsibilities and actual document edits.
 
     An unrecognized edit keeps its owner's conservative context. References in
     unchanged requirements do not make their whole book relevant to an edit.
     """
-    contexts: dict[str, BehaviorContext | None] = {}
+    contexts: dict[str, _ResolvedBehaviorContext | None] = {}
     files = raw["candidate_files"]
     before = raw.get("base_document_files", {})
     for path, diff in raw["path_diffs"].items():
         profile = behavior_context_for_path(path)
-        if profile is not None and records:
+        if profile is not None and (records or not profile.requirement_ids):
             missing = profile.requirement_ids - records.keys() - old_records.keys()
             if missing:
                 raise ReviewError(
                     f"Missing registered behavior requirements for {path}: "
                     + ", ".join(sorted(missing))
                 )
-            contexts[path] = profile
+            contexts[path] = _ResolvedBehaviorContext(
+                profile, False, ("registered-path",)
+            )
             continue
         contexts[path] = None
-        if not path.endswith(".md") or not records:
+        if not path.endswith(".md"):
             continue
         # Old evidence formats cannot narrow a changed pre-existing document.
         if path in raw["base_file_blobs"] and path not in before:
             continue
+        if not is_requirements_path(path):
+            contexts[path] = _document_behavior_context(path, raw, records, old_records)
+            continue
         identifiers: set[str] = set()
         old_lines, new_lines = _changed_lines(diff)
-        if is_requirements_path(path):
-            # A changed record must not hide a simultaneous shared premise,
-            # heading or reference-definition edit outside all records.
-            if not all(
-                _edits_within_requirements(path, source.get(path, ""), edits, version)
-                for source, edits, version in (
-                    (before, old_lines, old_records),
-                    (files, new_lines, records),
-                )
-            ):
+        # Keep known changed obligations even when a simultaneous shared edit
+        # requires conservative owner context as well.
+        complete = all(
+            _edits_within_requirements(path, source.get(path, ""), edits, version)
+            for source, edits, version in (
+                (before, old_lines, old_records),
+                (files, new_lines, records),
+            )
+        )
+        for identifier in records.keys() | old_records.keys():
+            current, previous = records.get(identifier), old_records.get(identifier)
+            if not any(r is not None and r.source == path for r in (current, previous)):
                 continue
-            for identifier in records.keys() | old_records.keys():
-                current, previous = records.get(identifier), old_records.get(identifier)
-                if not any(
-                    r is not None and r.source == path for r in (current, previous)
-                ):
-                    continue
-                if (
-                    current is None
-                    or previous is None
-                    or current.source != previous.source
-                    or current.text != previous.text
-                    or current.contract_references != previous.contract_references
-                    or current.verification_paths != previous.verification_paths
-                ):
-                    identifiers.add(identifier)
-        else:
-            for version, edits, source_files in (
-                (records, new_lines, files),
-                (records | old_records, old_lines, files | before),
+            if (
+                current is None
+                or previous is None
+                or current.source != previous.source
+                or current.text != previous.text
+                or current.contract_references != previous.contract_references
+                or current.verification_paths != previous.verification_paths
             ):
-                if path not in source_files:
-                    continue
-                markdown_edits = _markdown_edits(source_files[path], edits)
-                for identifier, record in version.items():
-                    for target, fragment in record.contract_references:
-                        if target != path:
-                            continue
-                        try:
-                            parts = sections_for_reference(
-                                path, source_files[path], fragment
-                            )
-                        except ValueError:
-                            # A removed/renamed target can be selected by the other
-                            # side. Its required original is validated below.
-                            continue
-                        if any(
-                            markdown_edits.intersection(
-                                range(p.start_line, p.end_line + 1)
-                            )
-                            for p in parts
-                        ):
-                            identifiers.add(identifier)
+                identifiers.add(identifier)
         if identifiers:
-            contexts[path] = BehaviorContext(
-                frozenset(identifiers),
-                frozenset(
-                    scope_for_path((records.get(i) or old_records[i]).source)
-                    for i in identifiers
+            contexts[path] = _ResolvedBehaviorContext(
+                BehaviorContext(
+                    frozenset(identifiers),
+                    frozenset(
+                        scope_for_path((records.get(i) or old_records[i]).source)
+                        for i in identifiers
+                    ),
                 ),
+                include_owner_context=not complete,
+                selection_basis=("changed-SRS-requirements",),
             )
     return contexts
 
@@ -693,8 +788,14 @@ def build_review_plan(
             development_sources[path] = source
     common["behavior_contexts"] = {
         path: {
-            "requirement_ids": sorted(profile.requirement_ids),
-            "document_scopes": sorted(profile.document_scopes),
+            "requirement_ids": sorted(profile.context.requirement_ids),
+            "document_scopes": sorted(profile.context.document_scopes),
+            "selection_basis": list(profile.selection_basis),
+            **(
+                {"fallback_scope": owners[path]}
+                if profile.include_owner_context
+                else {}
+            ),
         }
         if profile is not None
         else {"fallback_scope": owners[path]}
@@ -721,13 +822,19 @@ def build_review_plan(
             )
         )
         precise = bool(paths) and all(
-            behavior_contexts.get(path) is not None or path in development_contexts
+            (
+                (profile := behavior_contexts.get(path)) is not None
+                and not profile.include_owner_context
+            )
+            or path in development_contexts
             for path in paths
         )
         identifiers = set().union(
-            *(p.requirement_ids for p in profiles if p is not None)
+            *(p.context.requirement_ids for p in profiles if p is not None)
         )
-        roles = set().union(*(p.document_scopes for p in profiles if p is not None))
+        roles = set().union(
+            *(p.context.document_scopes for p in profiles if p is not None)
+        )
         if precise:
             return identifiers, roles, True, operations
         # A fallback widens this batch; it cannot erase obligations already

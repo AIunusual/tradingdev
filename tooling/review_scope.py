@@ -1008,6 +1008,14 @@ _RUN_DIAGNOSTIC_CONTEXT = BehaviorContext(
     _RUN_LOOKUP_CONTEXT.requirement_ids | {"FR-RES-004"},
     frozenset({"results"}),
 )
+# These are responsibilities of complete editable sections, not selectors for
+# background prose. Keep the full ancestry explicit: shared introductions and
+# similarly named sections elsewhere are not authorized by a leaf title.
+_BEHAVIOR_CHANGE_SECTIONS: dict[str, dict[tuple[str, ...], BehaviorContext]] = {
+    "ARCHITECTURE.md": {
+        ("系統架構", "績效計算與對話摘要"): _RUN_DIAGNOSTIC_CONTEXT,
+    },
+}
 _RUN_REPORT_CONTEXT = BehaviorContext(
     _RUN_DIAGNOSTIC_CONTEXT.requirement_ids | {"FR-RES-003", "NFR-UX-001"},
     frozenset({"results"}),
@@ -1295,6 +1303,21 @@ def behavior_context_for_path(path: str) -> BehaviorContext | None:
     return _BEHAVIOR_CONTEXTS.get(path)
 
 
+def behavior_context_for_section(
+    path: str, section: MarkdownSection
+) -> BehaviorContext | None:
+    """Return an explicit editable-section responsibility, never infer one.
+
+    This does not establish that every edit belongs to that responsibility.
+    The planner checks both immutable versions and preserves owner context for
+    structural, shared or unrecognized edits. Empty requirement sets are valid
+    for documented internal contracts that make no product SRS commitment.
+    """
+    if section.path != path:
+        return None
+    return _BEHAVIOR_CHANGE_SECTIONS.get(path, {}).get(section.headings)
+
+
 def development_context_for_path(path: str) -> DevelopmentContext | None:
     """Return audited operations without changing ownership or SRS obligations."""
     normalized = PurePosixPath(path)
@@ -1420,6 +1443,15 @@ def _parse_sections(
 def markdown_sections(path: str, text: str) -> tuple[MarkdownSection, ...]:
     """Partition original text at document-level headings, retaining the prelude."""
     return _parse_sections(path, text)[0]
+
+
+def markdown_heading_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Inclusive lines of document-level headings, including Setext underlines."""
+    return tuple(
+        (token.map[0] + 1, token.map[1])
+        for token in MarkdownIt("commonmark").parse(text)
+        if token.type == "heading_open" and token.map is not None and token.level == 0
+    )
 
 
 def shared_document_context_ranges(path: str, text: str) -> tuple[tuple[int, int], ...]:

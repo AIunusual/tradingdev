@@ -851,6 +851,11 @@ SRS 只有兩側變更都位於需求條目內才精選契約；同時修改共�
 [test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
 未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
 沒有行為登錄的路徑沿用 owner 的保守背景；未知文件與章節仍保留。
+已明確登錄責任的架構章節，可依固定 base／candidate 的實際改動選取需求與讀者背景，
+不要求先新增 SRS 引用；變更文件全文、差異及原本命中的 SRS 契約仍完整保留。
+`behavior_contexts.selection_basis` 說明責任來自路徑登錄、修改的章節或 SRS 契約。
+混入未知內容、共用前提、引用定義或標題結構變更時，`fallback_scope` 表示仍須加上
+owner 的保守背景；已辨識的責任不會被這個 fallback 抹除。
 開發工具另依 `development_contexts` 列出的操作責任選取政策與操作原文，不套用產品需求。
 登錄與選取入口為 [review_scope.py](../tooling/review_scope.py) 的 `DevelopmentContext`、
 `development_context_for_path`、`development_context_for_sections` 與
