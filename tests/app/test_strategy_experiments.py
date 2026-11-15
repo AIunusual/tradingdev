@@ -17,19 +17,26 @@ from tests.research_fixtures import research_for_config, with_fixture_market_sou
 from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.optimization_trials import OptimizationLedger
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
-from tradingdev.domain.execution import ExecutionManifest, ManifestError
+from tradingdev.domain.execution import (
+    ExecutionManifest,
+    ManifestError,
+    OptimizationSpec,
+)
 from tradingdev.domain.performance.artifacts import bundles_from_pipeline
+from tradingdev.domain.research_scope import optimization_backtest
 from tradingdev.mcp.workers import optimization
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from tradingdev.domain.backtest.base_engine import BaseBacktestEngine
     from tradingdev.domain.strategies.base import BaseStrategy
     from tradingdev.domain.strategies.execution import StrategyExecution
 
@@ -390,25 +397,80 @@ def test_manifest_uses_frozen_defaults_during_check_and_actual_execution(
     _assert_revision_unchanged(experiment)
 
 
-@pytest.mark.parametrize("failure", ["constructor", "mutation", "long_fixture"])
-def test_optimization_candidates_recheck_actual_parameters(
+@pytest.mark.parametrize(
+    "failure, reason",
+    [
+        ("constructor", "selected constructor rejected"),
+        ("mutation", "input_mutated"),
+        ("long_fixture", "invalid_signal_values"),
+    ],
+)
+def test_optimization_records_candidate_failures_from_synthetic_checks(
     experiment: Experiment,
+    monkeypatch: pytest.MonkeyPatch,
     failure: str,
+    reason: str,
 ) -> None:
     config = deepcopy(experiment.config)
     config.pop("validation")
-    manifest = experiment.service.prepare_execution(config, kind="backtest")
-    with pytest.raises(ManifestError, match="contract failed"):
-        optimization._run_single_combo(
-            manifest.config_copy()["strategy"],
-            manifest.strategy_execution,
-            BacktestConfig(**manifest.config_copy()["backtest"]),
-            pd.DataFrame(),
-            {"failure": failure},
-            "total_return",
-            ParallelConfig(),
-            42,
-        )
+    search = OptimizationSpec.model_validate(
+        {
+            "param_ranges": {"failure": [failure]},
+            "optimization_metric": "total_return",
+            "train_start": "2024-01-01",
+            "train_end": "2024-01-02",
+            "test_start": "2024-01-03",
+            "test_end": "2024-01-04",
+        }
+    )
+    manifest = experiment.service.prepare_execution(
+        config, kind="optimization", optimization=search
+    )
+    job_id = "candidate-check"
+    dataset_id = "experiment-fixture"
+    experiment.store.create_job(
+        job_id=job_id, manifest=manifest, extra_payload={"dataset_id": dataset_id}
+    )
+    ledger = OptimizationLedger(experiment.store.store, job_id, manifest, dataset_id)
+    ledger.initialize()
+
+    open_strategy = StrategyFactory.open_from_execution
+
+    @contextmanager
+    def open_for_synthetic_check(
+        factory: StrategyFactory,
+        config: dict[str, Any],
+        execution: StrategyExecution,
+        engine: BaseBacktestEngine | None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Iterator[BaseStrategy]:
+        assert engine is None, "Candidate reached historical execution"
+        with open_strategy(
+            factory, config, execution, engine, *args, **kwargs
+        ) as strategy:
+            yield strategy
+
+    monkeypatch.setattr(
+        StrategyFactory, "open_from_execution", open_for_synthetic_check
+    )
+    runner = optimization.TrialRunner(
+        ledger=ledger,
+        strategy_config=manifest.config_copy()["strategy"],
+        execution=manifest.strategy_execution,
+        config=optimization_backtest(manifest, "train"),
+        data=pd.DataFrame(),
+        parallel=ParallelConfig(),
+        seed=42,
+    )
+
+    assert runner.run(0) is None
+
+    snapshot = ledger.snapshot()
+    assert snapshot is not None
+    (trial,) = snapshot.trials
+    assert trial.state == "failed" and trial.reason and reason in trial.reason
+    assert trial.evidence_hash is None
     _assert_revision_unchanged(experiment)
 
 
