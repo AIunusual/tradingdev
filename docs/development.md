@@ -869,9 +869,13 @@ uv run --no-sync python -m tooling.review_docs \
 未選入審查的文件不占此額度。`source_pool_utf8_bytes` 是本機資料池大小，供診斷使用，
 不代表實際模型輸入或記憶體用量。
 
-JSON 包裝、指引及重複脈絡都計入實際 prompt；每批與合計大小見 `batches` 及
-`total_prompt_utf8_bytes`。分批可能重送原文，因此總輸入不等於唯一證據量，總 prompt
-上限仍適用。UTF-8 bytes 與字元數不是 tokens。
+每批的原文與 prompt 大小見 `batches`；合計大小見 `total_prompt_utf8_bytes` 與
+`total_prompt_characters`。`delivered_original_*` 加總各批來源、diff 與章節原文的每次出現；
+`repeated_original_*` 是交付原文合計減去唯一原文，包含同批重疊章節及跨批重送。
+唯一原文按路徑、Git 版本與 blob 的文件行聯集去重，完整候選檔案涵蓋其候選章節；
+diff 另外計量，不因不同來源文字相同就合併。`prompt_overhead_*` 是實際 prompt
+減去交付原文，包含指引、清單／metadata、JSON 結構與 escaping，不能全算為原文重送。
+上述成本分別提供 UTF-8 bytes 與 Unicode 字元數，兩者都不是 tokens；總 prompt 上限仍適用。
 
 容量規劃通過不保證跨檔對照所需的原文都在同一批。遇到缺少同批證據的 finding，
 補入指定範圍的完整來源，或核對模型容量後明示提高單批上限，讓必要原文同批並重新審查；
@@ -879,7 +883,7 @@ JSON 包裝、指引及重複脈絡都計入實際 prompt；每批與合計大�
 或省略原文來符合上限。
 
 需追查計量或批次完整性時，正式定義見 [review_plan.py](../tooling/review_plan.py) 的
-`_selected_evidence_bytes`、`build_review_plan` 與 `ReviewPlan.verify`；分別提供唯一證據
+`_selected_evidence_size`、`build_review_plan` 與 `ReviewPlan.verify`；分別提供唯一證據
 計量、批次規劃及計畫完整性核對。
 
 通常使用自動推導的範圍；需要調整時，`check-pr.sh` 支援：

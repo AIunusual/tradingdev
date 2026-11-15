@@ -366,6 +366,55 @@ def test_context_partitions_repeat_complete_sources_and_cover_original_sections(
     assert "docs/unregistered_contract.md" in audit[0]["document_inventory"]
     assert all(len(prompt.encode()) <= 20_000 for prompt in plan.prompts)
     assert plan.manifest["evidence_utf8_bytes"] == whole.manifest["evidence_utf8_bytes"]
+    source_originals = (
+        "".join(
+            original["candidate_files"][path]
+            for path in (source, "src/shared_context.py", "src/scoped_context.py")
+        )
+        + original["path_diffs"][source]
+    )
+    unique_originals = (
+        source_originals + original["candidate_files"]["docs/unregistered_contract.md"]
+    )
+    # Each extra partition repeats its complete sources and the contract prelude;
+    # the cross-scope audit repeats the full diff and global explicit context.
+    repeated_originals = (
+        (source_originals + "# Unregistered contract\n\n") * (len(parts) - 1)
+        + original["candidate_files"]["src/shared_context.py"]
+        + original["path_diffs"][source]
+    )
+    assert audit[0]["document_sections"] == []
+    for suffix in ("utf8_bytes", "characters"):
+
+        def measure(text: str, unit: str = suffix) -> int:
+            return len(text.encode("utf-8")) if unit == "utf8_bytes" else len(text)
+
+        assert plan.manifest[f"evidence_{suffix}"] == measure(unique_originals)
+        assert plan.manifest[f"repeated_original_{suffix}"] == measure(
+            repeated_originals
+        )
+        assert plan.manifest[f"delivered_original_{suffix}"] == measure(
+            unique_originals + repeated_originals
+        )
+        overheads = []
+        for batch, entry, prompt in zip(
+            batches, plan.manifest["batches"], plan.prompts, strict=True
+        ):
+            originals = (
+                source_originals
+                + "".join(section["text"] for section in batch["document_sections"])
+                if batch["phase"] == "scope"
+                else original["candidate_files"]["src/shared_context.py"]
+                + original["path_diffs"][source]
+            )
+            assert entry[f"original_{suffix}"] == measure(originals)
+            overhead = measure(prompt) - measure(originals)
+            assert entry[f"prompt_overhead_{suffix}"] == overhead > 0
+            overheads.append(overhead)
+        assert plan.manifest[f"prompt_overhead_{suffix}"] == sum(overheads)
+        assert plan.manifest[f"total_prompt_{suffix}"] == sum(
+            measure(prompt) for prompt in plan.prompts
+        )
     assert "another partition" in plan.prompts[0]
     assert "missing original context" in plan.prompts[0]
     plan.verify()
@@ -840,6 +889,58 @@ def test_context_budget_overflow_calls_no_model(
         )
 
 
+def test_original_sizes_distinguish_versions_overlaps_and_repeated_delivery() -> None:
+    changed = "docs/changed.md"
+    contract = "docs/contract.md"
+    raw = {
+        "candidate_files": {changed: '新\n"\\\n', contract: "甲\n乙\n丙\n"},
+        "base_document_files": {changed: "舊\n", contract: "甲\n乙\n丙\n"},
+    }
+
+    def section(path: str, version: str, start: int, end: int) -> dict[str, Any]:
+        files = raw[
+            "candidate_files" if version == "candidate" else "base_document_files"
+        ]
+        return {
+            "path": path,
+            "version": version,
+            "blob_oid": "same-contract-blob" if path == contract else version,
+            "start_line": start,
+            "end_line": end,
+            "text": "".join(files[path].splitlines(keepends=True)[start - 1 : end]),
+        }
+
+    first = {
+        "candidate_files": {changed: raw["candidate_files"][changed]},
+        "path_diffs": {changed: "-舊\n+新\n"},
+        "document_sections": [
+            section(changed, "candidate", 1, 1),
+            section(changed, "base", 1, 1),
+            section(contract, "candidate", 1, 2),
+            section(contract, "base", 1, 1),
+        ],
+    }
+    second = first | {
+        "document_sections": [
+            section(contract, "candidate", 2, 3),
+            section(contract, "candidate", 2, 2),
+        ]
+    }
+    # Unique originals: changed candidate 7/5, diff 10/6, old changed 4/2,
+    # candidate contract line union 12/6, and old contract 4/2 (bytes/chars).
+    unique = review_plan._selected_evidence_size([first, second], raw)
+    assert (unique.utf8_bytes, unique.characters) == (37, 21)
+    # Actual deliveries also count the full-file/slice and slice/slice overlaps.
+    delivered = [
+        review_plan._text_size(review_plan._original_texts(batch))
+        for batch in (first, second)
+    ]
+    assert [(size.utf8_bytes, size.characters) for size in delivered] == [
+        (37, 21),
+        (29, 17),
+    ]
+
+
 def test_manifest_is_deterministic_bound_to_prompts_and_reports_real_sizes(
     change: tuple[Path, str, str],
 ) -> None:
@@ -904,6 +1005,32 @@ def test_plan_only_cli_works_without_codex_and_does_not_claim_review_passed(
         "strategy": ["src/context.py"],
         "cross_scope": ["README.md"],
     }
+    expected = review_docs.prepare_review(
+        base,
+        tree,
+        repo=repo,
+        review_context_for=(
+            ("strategy", "src/context.py"),
+            ("cross_scope", "README.md"),
+        ),
+    ).manifest
+    for prefix in (
+        "evidence",
+        "delivered_original",
+        "repeated_original",
+        "prompt_overhead",
+        "total_prompt",
+    ):
+        for suffix in ("utf8_bytes", "characters"):
+            key = f"{prefix}_{suffix}"
+            assert manifest[key] == expected[key] > 0
+    for batch, expected_batch in zip(
+        manifest["batches"], expected["batches"], strict=True
+    ):
+        for prefix in ("original", "prompt_overhead"):
+            for suffix in ("utf8_bytes", "characters"):
+                key = f"{prefix}_{suffix}"
+                assert batch[key] == expected_batch[key] > 0
     assert "Documentation review passed" not in result.stdout
 
 

@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tooling.requirements import (
     RequirementRecord,
@@ -39,6 +39,9 @@ from tooling.review_scope import (
     shared_document_context_ranges,
     unknown_document_sections,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
@@ -199,7 +202,37 @@ def _section_dependency_indexes(sections: list[dict[str, Any]]) -> list[list[int
     return result
 
 
-def _selected_evidence_bytes(batches: list[dict[str, Any]], raw: dict[str, Any]) -> int:
+@dataclass(frozen=True)
+class _TextSize:
+    utf8_bytes: int
+    characters: int
+
+    def fields(self, prefix: str) -> dict[str, int]:
+        return {
+            f"{prefix}_utf8_bytes": self.utf8_bytes,
+            f"{prefix}_characters": self.characters,
+        }
+
+
+def _text_size(texts: Iterable[str]) -> _TextSize:
+    byte_count = character_count = 0
+    for text in texts:
+        byte_count += _bytes(text)
+        character_count += len(text)
+    return _TextSize(byte_count, character_count)
+
+
+def _original_texts(batch: dict[str, Any]) -> Iterator[str]:
+    """Every delivered occurrence, including overlapping or repeated originals."""
+    yield from batch["candidate_files"].values()
+    yield from batch["path_diffs"].values()
+    for section in batch["document_sections"]:
+        yield section["text"]
+
+
+def _selected_evidence_size(
+    batches: list[dict[str, Any]], raw: dict[str, Any]
+) -> _TextSize:
     """Count unique delivered originals, not the unselected local source pool.
 
     Full candidate files and per-path diffs are counted once across requests.
@@ -215,7 +248,7 @@ def _selected_evidence_bytes(batches: list[dict[str, Any]], raw: dict[str, Any])
     diffs = {
         path: text for batch in batches for path, text in batch["path_diffs"].items()
     }
-    size = sum(_bytes(text) for text in (*candidates.values(), *diffs.values()))
+    texts = [*candidates.values(), *diffs.values()]
     ranges: dict[tuple[str, str, str], list[tuple[int, int]]] = {}
     for batch in batches:
         for section in batch["document_sections"]:
@@ -235,8 +268,8 @@ def _selected_evidence_bytes(batches: list[dict[str, Any]], raw: dict[str, Any])
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
             else:
                 merged.append((start, end))
-        size += sum(_bytes("".join(lines[start - 1 : end])) for start, end in merged)
-    return size
+        texts.extend("".join(lines[start - 1 : end]) for start, end in merged)
+    return _text_size(texts)
 
 
 def _changed_lines(diff: str) -> tuple[set[int], set[int]]:
@@ -1216,7 +1249,8 @@ def build_review_plan(
                 raise ReviewError(f"Incomplete assigned candidate source: {path}")
             if path in diffs and batch["path_diffs"].get(path) != diffs[path]:
                 raise ReviewError(f"Incomplete assigned change: {path}")
-    selected_bytes = _selected_evidence_bytes(batches, raw)
+    selected_size = _selected_evidence_size(batches, raw)
+    selected_bytes = selected_size.utf8_bytes
     if selected_bytes > max_evidence_bytes:
         raise ReviewError(
             f"Selected documentation evidence is {selected_bytes} bytes, exceeding "
@@ -1231,6 +1265,25 @@ def build_review_plan(
             f"Total review input is {sum(sizes)} UTF-8 bytes across {len(prompts)} "
             f"requests, exceeding {max_total_prompt_bytes}; no model request was made."
         )
+    original_sizes = [_text_size(_original_texts(batch)) for batch in batches]
+    delivered_size = _TextSize(
+        sum(size.utf8_bytes for size in original_sizes),
+        sum(size.characters for size in original_sizes),
+    )
+    repeated_size = _TextSize(
+        delivered_size.utf8_bytes - selected_size.utf8_bytes,
+        delivered_size.characters - selected_size.characters,
+    )
+    overhead_sizes = [
+        _TextSize(
+            _bytes(prompt) - original.utf8_bytes, len(prompt) - original.characters
+        )
+        for prompt, original in zip(prompts, original_sizes, strict=True)
+    ]
+    total_overhead = _TextSize(
+        sum(size.utf8_bytes for size in overhead_sizes),
+        sum(size.characters for size in overhead_sizes),
+    )
     manifest: dict[str, Any] = common | {
         "schema_version": 2,
         "status": "planned_not_reviewed",
@@ -1269,22 +1322,35 @@ def build_review_plan(
                 ],
                 "prompt_utf8_bytes": sizes[i - 1],
                 "prompt_characters": len(prompts[i - 1]),
+                **original_sizes[i - 1].fields("original"),
+                **overhead_sizes[i - 1].fields("prompt_overhead"),
             }
             for i, b in enumerate(batches, start=1)
         ],
-        "evidence_utf8_bytes": selected_bytes,
+        **selected_size.fields("evidence"),
+        **delivered_size.fields("delivered_original"),
+        **repeated_size.fields("repeated_original"),
+        **total_overhead.fields("prompt_overhead"),
         "source_pool_utf8_bytes": _bytes(evidence),
         "max_evidence_bytes": max_evidence_bytes,
         "total_prompt_utf8_bytes": sum(sizes),
+        "total_prompt_characters": sum(len(prompt) for prompt in prompts),
         "max_prompt_bytes": max_prompt_bytes,
         "max_total_prompt_bytes": max_total_prompt_bytes,
         "max_prompt_chars": max_prompt_chars,
         "measurement": (
             "source_pool_utf8_bytes measures local serialized evidence JSON. "
-            "evidence_utf8_bytes measures unique delivered original UTF-8 bytes: "
+            "evidence_* measures unique delivered originals: "
             "complete files, exact diffs and document line unions. Prompt sizes "
             "measure actual serialized request UTF-8 bytes and characters, "
-            "including repeated originals and metadata. None are token counts."
+            "including repeated originals and metadata. delivered_original_* "
+            "counts every original occurrence across all batches; repeated_original_* "
+            "is delivered minus unique originals, including within-batch overlap. "
+            "prompt_overhead_* is prompt size minus delivered originals: instructions, "
+            "metadata, JSON structure and escaping. Deduplication uses "
+            "path/version/blob and document line unions, not text equality "
+            "across different sources. "
+            "UTF-8 bytes and Unicode characters are separate; neither counts tokens."
         ),
         "limitations": (
             "Excludes provider wrapping, output reserve and internal model context. "
