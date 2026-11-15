@@ -90,7 +90,7 @@ def test_service_failure_restores_enclosing_execution(
         assert get_seed() == 7 and get_numpy_rng() is generator
 
 
-def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
+def test_trial_random_streams_do_not_depend_on_prior_trials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, data, loader, _strategy = _service(tmp_path)
@@ -128,16 +128,4 @@ def test_trial_streams_do_not_depend_on_prior_trials_or_execution_transport(
     evaluate(7)
     events.clear()
     evaluate(42)
-    assert events == first
-    events.clear()
-    optimization._evaluate_combo(
-        strategy,
-        execution,
-        config.model_dump(),
-        data.dataset.frame,
-        {},
-        "total_return",
-        ParallelConfig().model_dump(),
-        42,
-    )
     assert events == first

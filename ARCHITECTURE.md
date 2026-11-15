@@ -127,7 +127,8 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 建構子值，不因後續預設值變更重新解釋請求。設定覆寫與完整性規則見
 [Execution Manifest](docs/run_artifacts.md#execution-manifest)。
 
-單次背景回測與最佳化以 job ID 作為 run ID；固定比較由父 job 管理各候選 run，
+單次背景回測與完整最佳化以 job ID 作為 run ID；部分最佳化以 job ID 查詢試驗帳本。
+固定比較由父 job 管理各候選 run，
 沒有父工作的合併資金績效。直接回測 CLI 同步執行保存 run，但不建立背景 job。
 策略、工作與結果的狀態各自獨立。
 
@@ -238,18 +239,19 @@ JobService 與 OptimizationService 共用 ExecutionSubmissionService；提交使
 
 ### 最佳化執行
 
-OptimizationService 固定搜尋候選、訓練／測試期間、指標方向與第一組估時計算時限。
-使用者同意後 worker 才取得行情、搜尋並執行選定參數的樣本外測試，不在 worker 內再等一次確認。
-不可用的目標不參與排名；沒有有效候選則失敗。
+OptimizationService 固定搜尋候選、訓練／測試期間、目標方向與逐次試驗時限。
+使用者同意後，worker 取得行情並以受監督的程序執行試驗。每個執行程序提交自己的
+嘗試狀態及結果，SQLite 試驗帳本提供搜尋覆蓋、排序及測試期的共同來源。
+明確可歸因的候選失敗可繼續搜尋；程序、資料或儲存故障停止工作，保留已提交的試驗。
+完整網格有有限目標才執行保留測試，測試期完成後才進入 RunPublisher 的完整 run 驗證。
 
 最佳化使用自己的日期切分，不能同時套用 walk-forward；固定參數比較不授權擴大搜尋。
-候選合併、期間與計算時限見[Execution Manifest](docs/run_artifacts.md#execution-manifest)，
-使用方式見[README](README.md#使用樣本外驗證與最佳化)。
+保存與查詢見[最佳化試驗產物](docs/run_artifacts.md#optimization-trial-results)。
 
 ### 保存與查詢結果
 
 JobStore 委派 RunPublisher 發布結果後更新工作狀態；固定比較另由父工作保存候選帳本。
-CLI 透過 ArtifactService 保存，均共用儲存 adapters。SQLite 保存索引與摘要，
+CLI 透過 ArtifactService 保存，均共用儲存 adapters。SQLite 保存索引、摘要與最佳化試驗帳本，
 檔案系統保存 revision、快取與完整產物；發佈與狀態更新是不同操作。
 
 RunService 查詢 run 與指標，ArtifactService 探索與讀取檔案。Dashboard 使用已保存的

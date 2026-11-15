@@ -370,9 +370,15 @@ prepared again. Existing files are not migrated or deleted; preserve the origina
 workspace/version when its historical manifest readers are still needed.
 
 Optimization fixes candidate ranges, objective/direction, calendar train/test
-bounds and the first-trial estimation timeout. The timeout limits only that
-training trial; remaining candidates and held-out evaluation do not share it.
-It is separate from MCP preflight's total process budget. Parameter names are
+bounds and the timeout for each training trial and the held-out test. This
+timeout is separate from MCP preflight's total process budget. The first training
+trial provides the estimate when it completes. A known candidate failure leaves
+the estimate unavailable and the search continues with the approved resource
+policy. The supervisor has a separate startup and cleanup allowance. An
+unresponsive process stops the job as an infrastructure fault.
+Older optimization manifests with an estimation-only timeout retain their
+historical identity. Prepare and approve a new plan to execute those settings.
+Parameter names are
 sorted while each caller-supplied option order is preserved. User approval occurs
 before worker launch, not inside the worker.
 
@@ -599,6 +605,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | --- | --- |
 | Job progress or cancellation | `list_jobs`, `get_job_status`, `cancel_job` |
 | Saved result identity and scopes | `list_runs`, `get_run`, `find_runs` |
+| Optimization grid progress and partial trial scope discovery | `get_job_status`, `get_optimization_trials` |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
@@ -745,17 +752,49 @@ dashboard cache publication or lookup.
 Optimization trials share the same loaded frame values, dtypes and index/time
 metadata; held-out evaluation preserves its corresponding test frame too.
 
-Optimization `result.json` includes the best parameters, training metrics,
-out-of-sample metrics, objective and fixed direction. Its complete numerical
-projection remains in SQLite; `get_run` and completed `get_job_status` select a
-summary at read time, so their `metrics` are not the entire `result.json` payload.
-Parameters outside the search grid retain the effective base values captured in
-the manifest, including constructor defaults and any `parameters` overrides
-applied during preparation. Selection uses training results, and only the selected
-parameters are evaluated out of
-sample. Every training trial retains its full result in the performance and
-observation artifacts; selection references the saved winning trial without
-discarding other trials.
+### Optimization trial results
+
+Each approved combination keeps its zero-based Cartesian position, including
+duplicate parameter values. The worker records its start and atomically commits
+complete observations or an attributable candidate failure in the workspace SQLite
+ledger. Records are bound to the job, manifest and, after data load, dataset.
+Complete observations retain saved metric definitions and use the same split,
+parameter, execution context and observation checks as complete optimization runs.
+
+`get_job_status` shows lifecycle and optimization progress when a ledger exists.
+Call `get_optimization_trials(job_id, offset, limit)` for trial states and follow
+`trials.next_offset`. A completed trial can have a null objective. `completed`
+counts full observations, `rankable` counts finite objectives and `search_complete`
+requires observations for the full grid. The leader reflects only ranked evidence
+and ties retain the first approved position. Candidate exceptions and timeouts are
+recorded separately. A generated strategy runtime must identify the exception as
+a callback failure before the worker can continue. A fixed older runtime that
+cannot identify the failure stops the job with its diagnostic.
+Infrastructure faults stop the job with status `failed`;
+successfully committed trials remain available. An attempted trial that never
+committed a result is shown as interrupted once a failed or cancelled job ends.
+
+The held-out test runs only when the full training grid has observations and a
+finite leader. The ledger records its state separately. A job that exhausts its
+candidates without a complete searchable grid, has no finite objective, or incurs
+a known test failure ends as `partial`. A completed held-out test records one
+evaluation on the approved dates and does not establish generalization.
+
+Read available partial metrics using `get_run_metrics(run_id=job_id, scope=...)`
+with an explicit scope from the ledger, such as `trial/0/train`. The response
+reports partial completeness, with no default scope. A failed or unattempted
+scope has an explicit unavailable reason. Ledger integrity errors are reported
+instead of publishing corrupted evidence. Older failed jobs without a ledger return
+evidence unavailable. Partial observations are retained in SQLite; completed-run
+trade/equity, report and ranking tools require their published artifacts.
+
+Only a full grid, finite winner and completed test are published as a successful
+run. Optimization `result.json` includes the winning parameters, train/test
+metrics, objective and fixed direction. Its complete numerical projection remains
+in SQLite; `get_run` and completed `get_job_status` select a summary at read time.
+The complete `performance.json` and `observations.json` preserve all trial and test
+scopes with `test` as the default. Unsearched parameters retain the manifest's
+captured constructor defaults and preparation-time overrides.
 
 ## Performance Scopes and Provenance
 

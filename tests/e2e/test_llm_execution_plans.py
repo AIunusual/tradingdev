@@ -36,6 +36,10 @@ from tests.integration.execution_fixtures import (
     execution_evidence_draft,
 )
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.integration.test_mcp_optimization import (
+    _opposite_trends,
+    prepare_partial_optimization,
+)
 from tests.research_fixtures import research_for_config
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt
@@ -788,3 +792,73 @@ def test_llm_clarifies_ambiguous_reply_then_honors_decline(
             "decision": "decline",
         }
         assert submitted[0].result["code"] == "confirmation_declined"
+
+
+@pytest.mark.live_llm
+def test_llm_reads_partial_optimization_without_rerun(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Ask for saved evidence without naming tools, scope IDs, or the answer."""
+
+    async def inspect_partial(workspace: MCPWorkspace) -> tuple[str, list[ToolCall]]:
+        async with workspace.connect() as client:
+            job_id, _ = await prepare_partial_optimization(client)
+            status = await client.wait_for_job(job_id, timeout=180)
+            assert status["status"] == "partial", status
+            prompt = (
+                f"我之前送出了參數最佳化工作 {job_id}。請查看已保存的結果，"
+                "告訴我哪些組合完成、哪些失敗，列出已完成組合的訓練總報酬，"
+                "並說明搜尋是否完整，以及有沒有執行保留區間測試。只查現有結果。"
+            )
+            options = {
+                "model": pytestconfig.getoption("llm_model"),
+                "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+                "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+            }
+            if pytestconfig.getoption("llm_provider") == "local":
+                return job_id, await run_local_model(
+                    client,
+                    prompt,
+                    base_url=pytestconfig.getoption("llm_base_url"),
+                    temperature=pytestconfig.getoption("llm_temperature"),
+                    **options,
+                )
+        return job_id, codex_calls(await run_codex(workspace.root, prompt, **options))
+
+    with temporary_mcp_workspace() as workspace:
+        workspace.seed_market(_opposite_trends())
+        job_id, calls = asyncio.run(inspect_partial(workspace))
+        assert all(
+            call.name
+            in {
+                "get_job_status",
+                "get_optimization_trials",
+                "get_run_metrics",
+                "get_run",
+                "list_runs",
+                "list_jobs",
+                "get_metric_catalog",
+            }
+            for call in calls
+        ), calls
+        ledger = [
+            call.result["progress"]
+            for call in calls
+            if call.name == "get_optimization_trials"
+            and call.arguments.get("job_id") == job_id
+            and isinstance(call.result, dict)
+            and call.result.get("success")
+        ]
+        assert ledger and ledger[-1]["outcome"] == "partial"
+        assert not ledger[-1]["search_complete"]
+        assert ledger[-1]["test"]["state"] == "not_attempted"
+        values = {
+            call.result["scope"]: call.result["metrics"]["total_return"]
+            for call in calls
+            if call.name == "get_run_metrics"
+            and call.arguments.get("run_id") == job_id
+            and isinstance(call.result, dict)
+            and call.result.get("success")
+            and call.result.get("result_completeness") == "partial"
+        }
+        assert values.keys() >= {"trial/0/train", "trial/2/train"}, calls

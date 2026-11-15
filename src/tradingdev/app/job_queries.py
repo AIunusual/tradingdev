@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.adapters.storage.performance import PerformanceArtifactError
 from tradingdev.app.comparison_service import ComparisonService
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.jobs import JobState, JobSummary
 from tradingdev.app.job_store import TERMINAL_JOB_STATUSES
+from tradingdev.app.optimization_results import OptimizationResults
 from tradingdev.app.pagination import paginate
 from tradingdev.app.run_service import RunService
 
@@ -23,6 +25,7 @@ class JobQueries:
     def __init__(self, job_store: JobStore) -> None:
         self._job_store = job_store
         self._runs = RunService(workspace=job_store.workspace, store=job_store.store)
+        self._optimization = OptimizationResults(job_store.workspace, job_store.store)
 
     def status(self, job_id: str, observation: JobObservation) -> dict[str, Any]:
         """Attach result details to the state returned by lifecycle recovery."""
@@ -68,6 +71,8 @@ class JobQueries:
                 response["detail_error"] = observation.detail_error
             return response
 
+        if job.get("job_type") == "optimization":
+            self._add_optimization_progress(response, job)
         if status == "done":
             run_response = self._runs.get_run(job_id)
             run = run_response.get("run")
@@ -98,17 +103,8 @@ class JobQueries:
                 # Non-metric search outcome fields retain their result contract.
                 stored_run = self._job_store.get_run(job_id)
                 result = stored_run.get("metrics", {}) if stored_run else {}
-                response.update(
-                    {
-                        key: (result or {}).get(key)
-                        for key in (
-                            "best_params",
-                            "optimization_metric",
-                            "direction",
-                            "total_combinations",
-                        )
-                    }
-                )
+                for key in ("optimization_metric", "direction", "total_combinations"):
+                    response.setdefault(key, (result or {}).get(key))
                 if run is not None and run["details_available"]:
                     response["test_metrics"] = run["metrics"]
                     selected_train = run["selected_train_scope"]
@@ -118,20 +114,22 @@ class JobQueries:
                         )
                         if detail.get("success"):
                             response["train_metrics"] = _saved_metric_summary(detail)
+                            response["best_params"] = detail["parameters"]
                         else:
                             response["detail_error"] = {
                                 key: detail[key] for key in ("success", "code", "error")
                             }
                 elif run is not None and run["provenance"] == "legacy_metrics":
+                    response["best_params"] = (result or {}).get("best_params")
                     response["train_metrics"] = run["metrics"].get("train_metrics")
                     response["test_metrics"] = run["metrics"].get("test_metrics")
-        elif status == "failed":
+        elif status in {"failed", "partial", "cancelled"}:
             response["error"] = job.get("error", "Unknown error")
         elif status == "estimating":
             response["total_combinations"] = job.get("total_combinations")
             response["message"] = "Running trial combination to estimate total time..."
         elif status == "optimizing":
-            response["completed"] = job.get("completed", 0)
+            response.setdefault("completed", job.get("completed"))
             response["total_combinations"] = job.get("total_combinations")
             response["estimated_remaining_seconds"] = job.get(
                 "estimated_remaining_seconds"
@@ -139,6 +137,33 @@ class JobQueries:
         else:
             response["data_downloaded"] = job.get("data_downloaded", False)
         return response
+
+    def _add_optimization_progress(
+        self, response: dict[str, Any], job: dict[str, Any]
+    ) -> None:
+        for key in ("time_per_combo", "estimated_total_seconds", "n_parallel_workers"):
+            response[key] = job.get(key)
+        try:
+            view = self._optimization.load(
+                job["job_id"],
+                verify_observations=job["status"] in TERMINAL_JOB_STATUSES,
+            )
+        except PerformanceArtifactError as exc:
+            response["detail_error"] = {
+                "success": False,
+                "code": exc.code,
+                "error": str(exc),
+            }
+            return
+        if view is not None:
+            progress = view.progress()
+            response.update(
+                optimization=progress.model_dump(mode="json"),
+                optimization_metric=progress.objective,
+                direction=progress.direction,
+                completed=progress.completed,
+                total_combinations=progress.total_combinations,
+            )
 
     def list_jobs(self) -> list[dict[str, Any]]:
         """List job summaries newest first."""
@@ -175,8 +200,7 @@ class JobQueries:
             limit=limit,
         )
 
-    @staticmethod
-    def _summarize_job(job: dict[str, Any], now: datetime) -> dict[str, Any]:
+    def _summarize_job(self, job: dict[str, Any], now: datetime) -> dict[str, Any]:
         summary: dict[str, Any] = {
             "job_id": job["job_id"],
             "job_type": job.get("job_type", "backtest"),
@@ -192,8 +216,18 @@ class JobQueries:
             "data_downloaded": job.get("data_downloaded", False),
         }
         if job.get("job_type") == "optimization":
-            summary["total_combinations"] = job.get("total_combinations")
-            summary["completed"] = job.get("completed", 0)
+            try:
+                view = self._optimization.load(job["job_id"], verify_observations=False)
+            except PerformanceArtifactError:
+                # The detailed status exposes verification errors to the caller.
+                return summary
+            if view is None:
+                summary["total_combinations"] = job.get("total_combinations")
+                summary["completed"] = job.get("completed")
+            else:
+                progress = view.progress()
+                summary["total_combinations"] = progress.total_combinations
+                summary["completed"] = progress.completed
         return summary
 
 

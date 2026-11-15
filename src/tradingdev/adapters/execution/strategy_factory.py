@@ -30,6 +30,7 @@ from tradingdev.domain.strategies.execution import (
     finite_strategy_value,
     merge_strategy_parameters,
 )
+from tradingdev.domain.strategies.signals import strategy_callback
 from tradingdev.shared.paths import resolve_workspace_root
 from tradingdev.shared.utils.json_values import strict_json_value
 
@@ -153,6 +154,7 @@ class StrategyFactory:
         parallel_config: ParallelConfig | None = None,
         *,
         parameter_overrides: dict[str, Any] | None = None,
+        classify_callback_error: bool = False,
     ) -> Iterator[BaseStrategy]:
         """Construct from explicit settings; never fill missing strategy defaults."""
         self._check_kind(strategy_cfg, execution)
@@ -175,7 +177,12 @@ class StrategyFactory:
         kwargs = self._execution_kwargs(
             cls, execution, engine, parallel_config, parameter_overrides
         )
-        yield cls(**kwargs)
+        if classify_callback_error:
+            with strategy_callback():
+                instance = cls(**kwargs)
+        else:
+            instance = cls(**kwargs)
+        yield instance
 
     def override_execution(
         self,

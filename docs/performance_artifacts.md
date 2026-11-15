@@ -194,6 +194,10 @@ no attempts save `[]`, meaning recorded but empty. No historical field is guesse
 from paired trades. Filled transitions are checked against native orders and
 accounting identities, and saved account/bar/timestamp/equity arrays must align.
 
+For an incomplete optimization, use the trial ledger to discover explicitly
+queryable scopes. See [optimization trial results](run_artifacts.md#optimization-trial-results)
+for the partial result contract.
+
 `get_run_metrics` defaults to the run's saved default scope; omit `metric_ids` to
 read that scope in full. Unknown scopes and metric IDs produce structured errors
 with discovery information. Summary omission never affects calculation or storage.

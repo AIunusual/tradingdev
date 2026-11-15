@@ -44,6 +44,8 @@ def register(mcp: MCPServer, service: JobService) -> None:
 
         When done, use run_id with get_run for display_metrics; job metrics are raw.
         get_run_metrics supplies saved definitions and display values.
+        For optimization, use get_optimization_trials(job_id) to inspect observed,
+        failed and unattempted candidates, including after a partial or failed job.
         Comparison jobs return all candidate outcomes and counts, without a parent
         run or combined metrics; use generate_report(comparison_job_id=job_id)
         after completion.

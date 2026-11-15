@@ -5,7 +5,7 @@ from __future__ import annotations
 import itertools
 import re
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ObservationsBundle,
         PerformanceBundle,
         PerformanceScope,
+        ScopeObservations,
     )
     from tradingdev.domain.research_evidence import BoundParameterProvenance
 
@@ -228,7 +229,6 @@ def _verify_optimization(
     selected = performance.selected_train_scope
     if selected not in expected_ids[:-1]:
         raise ManifestError("Research optimization has no selected training scope")
-    config = manifest.config_copy()
     winner: str | None = None
     winner_value: float | None = None
     for index, parameters in enumerate(combos):
@@ -253,42 +253,90 @@ def _verify_optimization(
             "Research test parameters differ from the selected training scope"
         )
     for scope_id in expected_ids:
-        scope = performance.scopes[scope_id]
-        split = "test" if scope_id == "test" else "train"
-        start = search.test_start if split == "test" else search.train_start
-        end = search.test_end if split == "test" else search.train_end
-        backtest = BacktestConfig.model_validate(
-            {
-                **config["backtest"],
-                "start_date": start.isoformat(),
-                "end_date": f"{end.isoformat()}T23:59:59.999999",
-            }
-        ).model_dump(mode="json")
-        if (
-            scope.kind != "backtest"
-            or scope.fold_index is not None
-            or scope.split != split
-            or scope.mode != backtest["mode"]
-            or canonical(scope.metadata.get("execution_context"))
-            != canonical({**backtest, "random_seed": config.get("random_seed")})
-        ):
-            raise ManifestError(
-                "Research optimization scope differs from its execution range"
-            )
-        effective_scope_parameters(manifest, scope)
-        _verify_dates(
-            observations,
-            scope_id,
-            start.isoformat(),
-            f"{end.isoformat()}T23:59:59.999999",
+        verify_optimization_observations(
+            manifest,
+            performance.scopes[scope_id],
+            observations.scopes[scope_id],
+            split="test" if scope_id == "test" else "train",
         )
+
+
+def verify_optimization_observations(
+    manifest: ExecutionManifest,
+    scope: PerformanceScope,
+    observations: ScopeObservations,
+    *,
+    split: Literal["train", "test"],
+) -> None:
+    """Verify one observation with the same rules for complete and partial searches."""
+    expected = optimization_backtest(manifest, split)
+    if (
+        scope.kind != "backtest"
+        or scope.fold_index is not None
+        or scope.split != split
+        or scope.mode != expected.mode
+        or canonical(scope.metadata.get("execution_context"))
+        != canonical(
+            {
+                **expected.model_dump(mode="json"),
+                "random_seed": manifest.config_copy().get("random_seed"),
+            }
+        )
+    ):
+        raise ManifestError(
+            "Research optimization scope differs from its execution range"
+        )
+    effective_scope_parameters(manifest, scope)
+    start, end = optimization_date_bounds(expected)
+    if (
+        not observations.timestamps
+        or pd.Timestamp(observations.timestamps[0]) < start
+        or pd.Timestamp(observations.timestamps[-1]) >= end
+    ):
+        raise ManifestError(
+            "Optimization observations fall outside the approved calendar days"
+        )
+
+
+def optimization_backtest(
+    manifest: ExecutionManifest, split: Literal["train", "test"]
+) -> BacktestConfig:
+    """Resolve the frozen backtest configuration for an optimization split."""
+    search = manifest.optimization
+    if search is None:
+        raise ManifestError("Missing optimization policy")
+    start = search.test_start if split == "test" else search.train_start
+    end = search.test_end if split == "test" else search.train_end
+    return BacktestConfig.model_validate(
+        {
+            **manifest.config_copy()["backtest"],
+            "start_date": start.isoformat(),
+            "end_date": f"{end.isoformat()}T23:59:59.999999",
+        }
+    )
+
+
+def optimization_date_bounds(
+    config: BacktestConfig,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """The approved dates are complete UTC calendar days."""
+    return (
+        pd.Timestamp(config.start_date, tz="UTC"),
+        pd.Timestamp(config.end_date.date(), tz="UTC") + pd.Timedelta(days=1),
+    )
 
 
 def _verify_dates(
     observations: ObservationsBundle, scope_id: str, start: str, end: str
 ) -> None:
     scope = observations.scopes.get(scope_id)
-    if scope is None or not scope.timestamps:
+    if scope is None:
+        raise ManifestError("Research scope has no recorded timestamps")
+    _verify_observation_dates(scope, start, end)
+
+
+def _verify_observation_dates(scope: ScopeObservations, start: str, end: str) -> None:
+    if not scope.timestamps:
         raise ManifestError("Research scope has no recorded timestamps")
     first = pd.Timestamp(start)
     last = pd.Timestamp(end)

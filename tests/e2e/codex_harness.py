@@ -47,6 +47,7 @@ LIFECYCLE_TOOLS = [
     "get_run",
     "get_metric_catalog",
     "get_run_metrics",
+    "get_optimization_trials",
     "find_runs",
     "get_run_trades",
     "get_run_equity",

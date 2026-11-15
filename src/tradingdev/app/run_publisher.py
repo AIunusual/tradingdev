@@ -546,7 +546,9 @@ class RunPublisher:
             != (executed.manifest_hash if executed is not None else None)
         ):
             raise ManifestError("Performance artifacts differ from the executed result")
-        if evidence is not None:
+        if evidence is not None or (
+            executed is not None and executed.optimization is not None
+        ):
             if details is None or executed is None:
                 raise ManifestError(
                     "Research publication requires complete performance scopes"

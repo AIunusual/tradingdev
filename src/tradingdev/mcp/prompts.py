@@ -97,6 +97,8 @@ Strategy development workflow
      comparability before comparing or rerunning. Query saved equity/trades/executions/
      account states as needed, respecting availability and accounting limits.
      Never invent absent records or call an open trade's final mark an executed exit.
+   - For incomplete optimization, get_optimization_trials shows grid and test status.
+     Read saved scopes with get_run_metrics(job ID, explicit scope). Qualify any leader.
    - Inspect successful comparison children and retain every failed, cancelled or
      unexecuted candidate with its reason; neither omit them nor infer zero returns.
 

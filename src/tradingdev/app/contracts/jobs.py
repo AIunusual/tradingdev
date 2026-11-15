@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field, JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.app.contracts.optimization import OptimizationProgress
 from tradingdev.domain.comparison_results import CandidateStatus
 
 type JobState = Literal[
@@ -15,6 +16,7 @@ type JobState = Literal[
     "optimizing",
     "testing_oos",
     "done",
+    "partial",
     "failed",
     "cancelled",
     "estimation_timeout",
@@ -87,6 +89,7 @@ class JobStatus(ContractModel):
     run_id: str | None = None
     metrics: dict[str, JsonValue] | None = None
     comparison: ComparisonJobStatus | None = None
+    optimization: OptimizationProgress | None = None
     details_available: bool | None = None
     provenance: (
         Literal["performance_artifact", "legacy_metrics", "invalid_artifact"] | None

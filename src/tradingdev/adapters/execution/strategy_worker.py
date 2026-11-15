@@ -22,7 +22,9 @@ from tradingdev.domain.strategies.base import BaseStrategy
 from tradingdev.domain.strategies.execution import finite_strategy_value
 from tradingdev.domain.strategies.signals import (
     SignalContractError,
+    StrategyCallbackError,
     generate_checked_signals,
+    strategy_callback,
 )
 
 
@@ -117,7 +119,8 @@ def serve(message_bytes: int) -> None:
                     response.value = finite_strategy_value(kwargs)
                     if request.operation == "construct":
                         stack.enter_context(execution_randomness(request.random_seed))
-                        strategy = cls(**kwargs)
+                        with strategy_callback():
+                            strategy = cls(**kwargs)
                 else:
                     if strategy is None:
                         raise ValueError("The strategy has not been constructed")
@@ -128,18 +131,25 @@ def serve(message_bytes: int) -> None:
                         if request.operation == "fit":
                             strategy.fit(frame)
                         else:
-                            result = generate_checked_signals(strategy, frame)
+                            result = generate_checked_signals(
+                                strategy, frame, classify_callback_error=True
+                            )
                             response.frame = encode_frame(result)
                     elif request.operation == "parameters":
-                        response.value = finite_strategy_value(
-                            strategy.get_parameters()
-                        )
+                        with strategy_callback():
+                            parameters = strategy.get_parameters()
+                        response.value = finite_strategy_value(parameters)
                     elif request.operation == "trace":
-                        response.value = finite_strategy_value(strategy.rolling_trace())
+                        with strategy_callback():
+                            trace = strategy.rolling_trace()
+                        response.value = finite_strategy_value(trace)
             except SignalContractError as error:
                 response.error = str(error)
                 response.diagnostics = list(error.diagnostics)
                 response.signal_analysis = error.analysis
+            except StrategyCallbackError as error:
+                response.error = str(error)
+                response.error_kind = "strategy_callback"
             except (
                 BaseException
             ) as error:  # Generated SystemExit is an operation failure.

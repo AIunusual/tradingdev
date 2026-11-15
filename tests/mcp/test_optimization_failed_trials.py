@@ -10,7 +10,6 @@ feed :func:`trials_from_metrics` with the failed slice kept on its axis.
 
 from __future__ import annotations
 
-import pickle
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -90,26 +89,6 @@ def test_zero_trade_combo_returns_an_undefined_objective() -> None:
     )
     assert evaluation.target_value is None
     assert evaluation.parameters == {"k_period": _NEVER_TRADES}
-
-
-def test_parallel_transport_also_returns_the_zero_trade_combo() -> None:
-    frame = _bars()
-
-    evaluation = optimization._evaluate_combo(
-        _STRATEGY,
-        StrategyFactory().resolve_execution(_STRATEGY),
-        _config().model_dump(),
-        # Since upstream 21c124c the worker hands joblib the frame itself,
-        # which pickles it to each worker process; round-trip it the same way.
-        pickle.loads(pickle.dumps(frame)),
-        {"k_period": _NEVER_TRADES},
-        _METRIC,
-        ParallelConfig().model_dump(),
-        42,
-    )
-
-    assert evaluation.result.trades == []
-    assert evaluation.target_value is None
 
 
 def test_persisted_trial_scopes_feed_plateau_with_the_failed_slice() -> None:

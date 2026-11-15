@@ -28,6 +28,8 @@ from tradingdev.shared.utils.json_values import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from tradingdev.domain.backtest.pipeline_result import PipelineResult
     from tradingdev.domain.backtest.result import BacktestResult
 
@@ -237,7 +239,9 @@ class ScopeObservations(ArtifactModel):
                 raise ValueError(
                     "Timestamps and equity observations have different lengths"
                 )
-            parsed = pd.to_datetime(self.timestamps, utc=True, errors="raise")
+            parsed = pd.to_datetime(
+                self.timestamps, utc=True, errors="raise", format="ISO8601"
+            )
             if (
                 parsed.hasnans
                 or not parsed.is_monotonic_increasing
@@ -418,18 +422,13 @@ def build_artifacts(
     keys |= {
         key for benchmark in frozen_benchmarks.values() for key in benchmark.values
     }
-    definitions = {
-        key: MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key]))
-        for key in sorted(keys)
-        if key in METRIC_CATALOG
-    }
     return PerformanceArtifacts(
         performance=PerformanceBundle(
             run_id=run_id,
             manifest_hash=manifest_hash,
             default_scope=default_scope,
             scopes=scopes,
-            definitions=definitions,
+            definitions=metric_definition_snapshots(keys),
             selected_train_scope=selected_train_scope,
             benchmarks=frozen_benchmarks,
         ),
@@ -437,6 +436,17 @@ def build_artifacts(
             run_id=run_id, manifest_hash=manifest_hash, scopes=observations
         ),
     )
+
+
+def metric_definition_snapshots(
+    metric_ids: Iterable[str],
+) -> dict[str, MetricDefinitionSnapshot]:
+    """Freeze the producer's definitions for the exact metrics recorded."""
+    return {
+        key: MetricDefinitionSnapshot.model_validate(asdict(METRIC_CATALOG[key]))
+        for key in sorted(metric_ids)
+        if key in METRIC_CATALOG
+    }
 
 
 def validate_projection(
