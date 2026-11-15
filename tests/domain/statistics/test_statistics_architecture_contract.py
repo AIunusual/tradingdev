@@ -134,7 +134,7 @@ def test_method_semantics_remain_in_the_module_docstrings() -> None:
     assert "common period" in comparison_doc
 
     # Benchmark interpretation guidance stays with the implementation.
-    for term in ("active return", "excess return", "average net exposure", "costs"):
+    for term in ("active return", "excess return", "costs"):
         assert term in benchmark_doc, f"benchmark docstring lost guidance: {term}"
 
 
@@ -161,42 +161,13 @@ def test_benchmark_docstring_separates_point_estimates_from_uncertainty() -> Non
     assert "point estimates are biased" not in doc
 
 
-# Criteria from the documentation review: individual bootstrap intervals
-# describe one statistic's uncertainty. For paired, dependent returns,
-# non-overlapping individual intervals do not imply a significant difference,
-# and a paired interval is not unconditionally narrower.
-_RETIRED_INTERVAL_CLAIMS = (
-    "Non-overlapping individual intervals",
-    "conservative screen",
-    "Non-overlapping rows imply a significant difference",
-    "makes the difference interval narrower",
-    "why overlapping individual intervals are not",
-    "overlapping intervals do not imply an",
-)
+def test_individual_interval_contract_points_to_paired_comparison() -> None:
+    module_doc = ast.get_docstring(_module_ast(_COMPARISON)) or ""
+    table_outcome_doc = _function_docstrings(_COMPARISON)["interval_table_outcome"]
+    paired_link = ":func:`difference_interval`"
 
-
-def test_paired_inference_docs_reject_the_interval_implication() -> None:
-    """Individual intervals are not a significance test for paired returns."""
-    docs = {
-        "module": _docstring_text(_COMPARISON),
-        **_function_docstrings(_COMPARISON),
-    }
-    combined = " ".join(docs.values())
-    for claim in _RETIRED_INTERVAL_CLAIMS:
-        assert claim not in combined, f"retired interval claim remains: {claim}"
-
-    module = docs["module"]
-    assert "estimate the uncertainty of each statistic on its own" in module
-    assert "do not establish significance" in module
-    assert "negative correlation" in module
-    assert "difference_interval" in module
-
-    paired = docs["difference_interval_outcome"]
-    assert "negative correlation widens it" in paired
-    assert "formal paired test" in paired
-    assert "cannot decide whether the difference is significant" in paired
-
-    table = docs["interval_table_outcome"]
-    assert "how precise is each statistic's estimate" in table
-    assert "neither overlapping nor non-overlapping rows settle the comparison" in table
-    assert "difference_interval" in table
+    assert any(
+        ":func:`interval_table`" in paragraph and paired_link in paragraph
+        for paragraph in module_doc.split("\n\n")
+    )
+    assert paired_link in table_outcome_doc

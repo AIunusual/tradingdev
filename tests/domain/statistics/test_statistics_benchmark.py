@@ -139,6 +139,19 @@ class TestRegression:
         assert result.beta == pytest.approx(k, abs=1e-12)
         assert result.alpha_annualised == pytest.approx(0.0, abs=1e-12)
 
+    def test_beta_can_differ_from_mean_exposure_to_the_same_instrument(self) -> None:
+        benchmark = _daily([0.01, -0.01, 0.03, -0.03])
+        exposure = np.array([1.0, 1.0, 0.0, 0.0])
+
+        result = compare_to_benchmark(
+            exposure * benchmark, benchmark, periods_per_year=_DAILY
+        )
+
+        # Both return series have mean zero. The strategy is only invested
+        # for the two 1% moves, so beta is 1**2 / (1**2 + 3**2).
+        assert exposure.mean() == 0.5
+        assert result.beta == pytest.approx(0.1)
+
     def test_formulas_on_known_data(self) -> None:
         benchmark = _benchmark()
         strategy = _strategy_on(benchmark)

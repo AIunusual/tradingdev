@@ -4,25 +4,22 @@ All functions take return series supplied by the caller, such as the daily
 returns from :func:`tradingdev.domain.statistics.periods.period_returns`,
 and never read runs, artifacts, or caches.
 
-Why paired: two strategies run on the same market data often share its
-shocks, but the sign of that co-movement is not fixed. The variance of a
-difference is ``var(A) + var(B) - 2 cov(A, B)``: below ``var(A) + var(B)``
-when the returns are positively correlated, and above it when they are
-negatively correlated. Comparing individually bootstrapped intervals
-ignores that covariance altogether. :func:`difference_interval` therefore
-aligns both series on one timeline and resamples the same block indices
-for both, so each resample keeps the pairing of their returns.
+Why paired: :func:`difference_interval` aligns both series on one timeline
+and draws the same block indices for both. Let ``T_a`` and ``T_b`` be the
+statistic estimates across paired resamples. The variance of their difference
+is ``var(T_a) + var(T_b) - 2 * cov(T_a, T_b)``. With the marginal variances
+held fixed, positive covariance reduces this variance and negative covariance
+increases it. The percentile bounds depend on the distribution of the paired
+differences. The Pearson correlation of the original returns alone cannot
+determine the width of that interval.
 
 Reading the results:
 
-* Individual intervals (from :func:`interval_table`) estimate the
-  uncertainty of each statistic on its own. They do not test whether two
-  strategies differ: they ignore the correlation between the paired
-  series, and with negative correlation the uncertainty of the difference
-  can be larger than the individual intervals suggest, so even
-  non-overlapping intervals do not establish significance. Use
-  :func:`difference_interval`, which resamples both series together, for
-  the paired test.
+* Individual intervals (from :func:`interval_table`) describe each
+  statistic's marginal uncertainty, with no guarantee of simultaneous
+  coverage. The overlap or separation of those intervals does not settle
+  whether the statistics differ. Use :func:`difference_interval` for
+  inference on their paired difference.
 * Compare out-of-sample returns only, such as walk-forward test folds.
   In-sample returns of tuned parameters measure which strategy overfits
   more thoroughly, not which one is better.
@@ -275,13 +272,12 @@ def difference_interval_outcome(
 
     Both series are aligned with :func:`align_returns`, then resampled with
     one :class:`arch.bootstrap.StationaryBootstrap` so every resample draws
-    the same period indices for ``a`` and ``b``. This keeps their
-    correlation, so the interval reflects ``var(A - B)``; positive
-    correlation narrows it relative to independent intervals, while
-    negative correlation widens it. This is the formal paired test.
-    Individual intervals from :func:`interval_table` estimate each
-    statistic separately and ignore that correlation, so they cannot
-    decide whether the difference is significant.
+    the same period indices for ``a`` and ``b``, preserving the pairing of
+    the two statistic estimates. The bounds are percentiles of their
+    differences across resamples. :attr:`DifferenceInterval.correlation`
+    describes the aligned input returns. For example, if ``b = -a``,
+    return correlation can be -1 while the standard deviations are equal
+    in every paired resample, giving a zero-width difference interval.
 
     Block size: the blocks must preserve the dependence of the estimator
     of the difference, which is not the dependence of either series. When
@@ -310,11 +306,13 @@ def difference_interval_outcome(
       statistic's sensitivity to each period.
     * Statistics too expensive to evaluate ``2 * n`` more times.
 
-    Without one, the estimated block length may be too short, and a block
-    length that is too short narrows the interval and lowers the p-value,
-    which is the false positive this test is meant to prevent. A block
-    size that is too long costs only some precision. An explicit
-    ``block_size`` is used as given and reported back unchanged.
+    Blocks that are too short can miss dependence and make the interval
+    too narrow. Excessively long blocks can leave too few block restarts
+    and produce a nearly degenerate interval. For example, when a resample
+    is a single circular block spanning the sample, its mean equals the
+    sample mean regardless of the starting position. Either extreme can
+    impair coverage. An explicit ``block_size`` is used as given and
+    reported back unchanged.
 
     p-value: the smallest ``1 - confidence`` at which the percentile
     interval excludes zero, obtained by inverting the same linearly
@@ -445,8 +443,8 @@ def interval_table_outcome(
     The series are aligned with :func:`align_returns` first, so every row
     covers the same periods, and resampled jointly with one block length:
     the largest Politis and White estimate over the series and their
-    squares, so neither a series' own dependence nor the persistence of its
-    volatility is cut short. This is the rule of
+    squares, to account for dependence in returns and volatility.
+    This is the rule of
     :func:`~tradingdev.domain.statistics.sharpe.sharpe_interval_outcome`,
     whose docstring gives its measured coverage: better than blocks fitted
     to the returns alone when volatility clusters, still below the nominal
@@ -455,12 +453,11 @@ def interval_table_outcome(
     neither the returns nor their squares describe, such as a maximum
     drawdown.
 
-    These intervals answer "how precise is each statistic's estimate",
-    not "do two strategies differ". They describe each series separately
-    and ignore the correlation between strategies, so neither overlapping
-    nor non-overlapping rows settle the comparison: with negative
-    correlation the uncertainty of the difference can be larger than the
-    rows suggest. Use :func:`difference_interval` for the paired test.
+    Each row describes one statistic's marginal uncertainty. Neither
+    overlapping nor separated rows give inference on a paired difference,
+    which depends on the joint distribution of the two estimates. Use
+    :func:`difference_interval` to estimate that difference and its
+    interval. The rows have no simultaneous coverage guarantee.
 
     The result maps each name, in input order, to its interval or to an
     :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`. The

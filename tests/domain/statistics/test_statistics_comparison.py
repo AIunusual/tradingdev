@@ -247,6 +247,26 @@ class TestDifferenceInterval:
         separate = (row_a.upper - row_a.lower) + (row_b.upper - row_b.lower)
         assert paired.upper - paired.lower < 0.25 * separate
 
+    def test_opposite_returns_have_a_zero_width_std_difference(self) -> None:
+        a = _daily(np.arange(30, dtype=float) / 1000)
+        b = -a
+
+        paired = difference_interval(a, b, np.std, reps=200, seed=0, block_size=2)
+        marginals = interval_table(
+            {"a": a, "b": b}, np.std, reps=200, seed=0, block_size=2
+        )
+
+        assert paired is not None
+        assert paired.correlation == pytest.approx(-1.0)
+        # Negating every return leaves the standard deviation of each resample
+        # unchanged, even though an individual standard deviation can vary.
+        assert (paired.difference, paired.lower, paired.upper) == (0.0, 0.0, 0.0)
+        assert marginals is not None
+        assert set(marginals) == {"a", "b"}
+        for row in marginals.values():
+            assert row is not None
+            assert row.lower < row.upper
+
     def test_reports_the_pearson_correlation(self, frequency: _Frequency) -> None:
         a, b = _correlated_pair(1000, rho=0.9, edge=0.0, seed=7, frequency=frequency)
         expected = float(np.corrcoef(a.to_numpy(), b.to_numpy())[0, 1])
@@ -650,6 +670,21 @@ class TestDifferenceDependence:
         # The jackknife alone would take 2 * 1000 calls; without it there are
         # two per resample plus a few on the full sample.
         assert calls < 2 * 100 + 10
+
+    def test_excessive_block_length_can_collapse_a_mean_interval(self) -> None:
+        mean = 0.0005
+        a = _daily(np.tile([-0.01, 0.01], 50) + mean)
+        b = a * 0
+
+        short = difference_interval(a, b, np.mean, reps=200, seed=0, block_size=1)
+        long = difference_interval(a, b, np.mean, reps=200, seed=0, block_size=10**9)
+
+        assert short is not None and long is not None
+        assert short.lower < 0 < short.upper
+        # With this seed the long blocks wrap around the full sample, so each
+        # resample retains all observations and their common mean.
+        assert long.lower == pytest.approx(mean)
+        assert long.upper == pytest.approx(mean)
 
     def test_undefined_leave_one_out_falls_back_to_the_raw_difference(
         self,

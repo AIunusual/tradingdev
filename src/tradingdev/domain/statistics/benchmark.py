@@ -46,14 +46,16 @@ strategy co-moves with the benchmark (:func:`compare_to_benchmark`).
 
 Reading the results:
 
-* Beta here is not systematic risk. When the strategy trades the same
-  instrument as the benchmark, the regression slope mostly measures the
-  strategy's average net exposure to that instrument (1.0 always long, 0.0
-  flat on average or balanced long and short, negative net short), not a
-  market beta in the CAPM sense. Alpha is correspondingly the return not
-  explained by that average exposure, which includes any timing skill. For
-  a different instrument, such as the product's BTC/USDT benchmark of an
-  ETH strategy, neither reading holds.
+* Beta measures the fitted linear sensitivity of strategy returns to
+  benchmark returns. For the same instrument and a benchmark with
+  sufficient variation, beta equals a fixed exposure when strategy returns
+  equal that exposure times benchmark returns plus a constant. With
+  time-varying positions, even if strategy returns are simply the product
+  of exposure and benchmark returns ``b``, the slope is
+  ``cov(exposure * b, b) / var(b)`` and can differ from the time average
+  of the positions. Alpha is the fitted intercept, scaled arithmetically
+  to an annual figure. Attributing it to timing skill requires evidence
+  beyond this regression.
 * The benchmark series here pays no transaction costs and the strategy
   series supplied by the caller does. That is deliberate: costs are part
   of what a strategy has to overcome to beat holding the asset. The
@@ -132,10 +134,11 @@ class BenchmarkComparison:
 
     Attributes:
         n_periods: Number of periods both series cover.
-        beta: Least-squares slope of strategy on benchmark returns; the
-            average net exposure, not systematic risk (see the module
-            docstring). ``None`` with fewer than two periods or benchmark
-            returns constant within ``NEGLIGIBLE_SPREAD``.
+        beta: Least-squares slope of strategy on benchmark returns, giving
+            fitted linear sensitivity. See the module docstring for the
+            assumptions relating it to fixed exposure. ``None`` with fewer
+            than two periods or benchmark returns constant within
+            ``NEGLIGIBLE_SPREAD``.
         alpha_annualised: Regression intercept times ``periods_per_year``;
             ``None`` when ``beta`` is.
         active_return_annualised: Mean strategy return minus mean benchmark
