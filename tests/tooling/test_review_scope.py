@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from tooling.review_scope import (
+    DEVELOPMENT_OPERATIONS,
     SCOPES,
     BehaviorContext,
     DevelopmentContext,
@@ -19,6 +20,7 @@ from tooling.review_scope import (
     sections_for_scope,
     selection_reason,
     shared_document_context_ranges,
+    source_context_for_path,
     unknown_document_sections,
 )
 
@@ -82,6 +84,26 @@ def test_development_contexts_preserve_owners_and_shared_consumers() -> None:
     ):
         assert development_context_for_path(path) is None
     assert "issue_claim" not in SCOPES
+
+
+def test_research_source_registration_does_not_expand_to_other_statistics_paths() -> (
+    None
+):
+    registered = "src/tradingdev/domain/statistics/comparison.py"
+    assert source_context_for_path(registered) is not None
+    for path in (
+        "src/tradingdev/domain/statistics/periods.py",
+        "src/tradingdev/domain/statistics/future_analysis.py",
+        "tests/domain/statistics/test_future_analysis.py",
+        "./" + registered,
+        "/" + registered,
+        "src/tradingdev/domain/../domain/statistics/comparison.py",
+    ):
+        assert source_context_for_path(path) is None
+    assert (
+        behavior_context_for_path("src/tradingdev/domain/statistics/future_analysis.py")
+        is None
+    )
 
 
 def test_development_sections_keep_unknown_subtrees_ancestors_and_references() -> None:
@@ -891,6 +913,9 @@ def test_known_components_receive_their_actual_contracts(
                 "SRS 維護與檢核",
                 "測試證據與文件修正",
                 "檢查期間的主線更新",
+                "文件審查設定",
+                "規劃證據與補充來源",
+                "檢查失敗與程序清理",
             ),
             {"tooling", "presentation"},
         ),
@@ -941,6 +966,25 @@ def test_registered_operational_sections_reach_their_responsible_reviewers(
         assert "Retain complete new evidence." in "".join(
             s.text for s in sections_for_scope(scope, path, expanded)
         )
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guidance_stays_with_candidate_review(heading: str) -> None:
+    path = "docs/development.md"
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    required = next(
+        section
+        for section in markdown_sections(path, text)
+        if section.headings[-1:] == (heading,)
+    )
+    for operation in DEVELOPMENT_OPERATIONS:
+        selected = sections_for_development_context(
+            DevelopmentContext(frozenset({operation})), path, text
+        )
+        assert (required in selected) == (operation == "candidate_review")
 
 
 def test_editor_guide_is_scoped_but_product_overviews_remain_shared() -> None:

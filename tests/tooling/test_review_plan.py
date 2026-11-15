@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from tooling import review_docs, review_plan
+from tooling.git.change_scope import classify_changes
 from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
@@ -493,7 +494,7 @@ def test_context_partitions_keep_selected_ancestor_prose_with_each_child(
             f"## Repeated parent\nPARENT_{i}_PREMISE\n"
             + "P" * parent_size
             + f"\n\n### Child {i}\nCHILD_{i}_OBLIGATION\n"
-            + "C" * 6_000
+            + "C" * 5_500
             + "\n\n"
             for i in range(2)
         ),
@@ -763,7 +764,9 @@ def test_context_partition_manifest_rejects_incomplete_coverage(
     monkeypatch.setattr(
         review_plan, "_digest", lambda _value: plan.manifest["plan_hash"]
     )
-    with pytest.raises(ReviewError, match="ownership|original sections|partition"):
+    with pytest.raises(
+        ReviewError, match="ownership|original sections|partition|batches"
+    ):
         plan.verify()
 
 
@@ -1599,7 +1602,9 @@ def test_shared_srs_edits_keep_other_requirements_contracts(
     )
     assert "FIRST_CONTRACT_ORIGINAL" in context
     assert "SECOND_CONTRACT_ORIGINAL" in context
-    assert owner["behavior_contexts"][path] == {"fallback_scope": "ml"}
+    selected = owner["behavior_contexts"][path]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003"]
 
 
 def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
@@ -1631,7 +1636,9 @@ def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
         ),
     )
     plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
-    assert plan.manifest["behavior_contexts"][requirement] == {"fallback_scope": "ml"}
+    selected = plan.manifest["behavior_contexts"][requirement]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003", "FR-ML-004"]
     text = "".join(
         s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
     )
@@ -1880,6 +1887,15 @@ def test_development_operations_select_exact_real_guidance_and_complete_sources(
         ("docs/development.md", "注意事項"),
         ("ARCHITECTURE.md", "Repository 開發工具與研究原型"),
     )
+    review_operations = (
+        "文件審查設定",
+        "規劃證據與補充來源",
+        "檢查失敗與程序清理",
+    )
+    if "candidate_review" in operations:
+        required += tuple(("docs/development.md", title) for title in review_operations)
+    else:
+        excluded += review_operations
     for path, heading in required:
         expected = next(
             section
@@ -2105,6 +2121,42 @@ def test_tool_and_operational_document_edits_narrow_only_reviewed_responsibiliti
         if s["path"] == "README.md" and s["headings"]
     }
     assert ("手動啟動並使用 HTTP 連接" in readme_headings) is not precise
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guide_edits_keep_candidate_review_responsibility(
+    real_document_repository: Path,
+    heading: str,
+) -> None:
+    repo = real_document_repository
+    document = "docs/development.md"
+    base = _tree(repo)
+    text = (repo / document).read_text()
+    section = next(
+        part
+        for part in markdown_sections(document, text)
+        if part.headings[-1:] == (heading,)
+    )
+    revised = text.replace(
+        section.text, section.text.rstrip() + "\n\n操作修訂。\n\n", 1
+    )
+    _write(repo, document, revised)
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw))
+    profile = plan.manifest["development_contexts"][document]
+    assert profile["operations"] == ["candidate_review"]
+    assert profile["selection_basis"] == "changed-operational-sections"
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if document in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    for batch in owners:
+        assert batch["candidate_files"][document] == revised
+        assert batch["path_diffs"][document] == raw["path_diffs"][document]
 
 
 def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
@@ -2709,3 +2761,423 @@ def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations
             if section.headings[-1:] == (heading,)
         )
         assert any(section["text"] == original_section.text for section in sections)
+
+
+def _edit_performance_architecture(repo: Path) -> str:
+    path = repo / "ARCHITECTURE.md"
+    original = path.read_text(encoding="utf-8")
+    changed = original.replace(
+        "## 績效計算與對話摘要\n",
+        "## 績效計算與對話摘要\n\nPerformance evidence change.\n",
+    )
+    assert changed != original
+    path.write_text(changed, encoding="utf-8")
+    return changed
+
+
+def test_architecture_section_review_preserves_sources_and_selects_its_obligations(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    caller = "src/tradingdev/app/benchmark_service.py"
+    _write(repo, caller, "VALUE = 'before'\n")
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    _write(repo, caller, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    assert plan.manifest["path_owners"]["ARCHITECTURE.md"] == "general"
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert "FR-RES-002" in obligations["requirement_ids"]
+    assert "FR-ML-001" not in obligations["requirement_ids"]
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(b for b in batches if "ARCHITECTURE.md" in b["assigned_paths"])
+    assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+    assert (
+        owner["path_diffs"]["ARCHITECTURE.md"]
+        == original["path_diffs"]["ARCHITECTURE.md"]
+    )
+    audit = next(b for b in batches if b["phase"] == "cross_scope")
+    assert audit["path_diffs"] == original["path_diffs"]
+    for batch in (owner, audit):
+        sections = batch["document_sections"]
+        assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+        assert not any(s["path"] == "docs/requirements/ml.md" for s in sections)
+    plan.verify()
+
+
+@pytest.mark.parametrize(
+    "extra_change",
+    ["unknown", "preamble", "reference", "rename", "delete", "duplicate"],
+)
+def test_architecture_section_review_keeps_uncertain_edits_conservative(
+    real_document_repository: Path, extra_change: str
+) -> None:
+    repo = real_document_repository
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    if extra_change == "unknown":
+        source += "\n## Unregistered responsibility\nNew contract.\n"
+    elif extra_change == "preamble":
+        source = "Shared premise changed.\n\n" + source
+    elif extra_change == "reference":
+        source = source.replace(
+            "Performance evidence change.",
+            "Performance evidence change.\n\n[shared]: docs/requirements/ml.md",
+        )
+    elif extra_change == "rename":
+        source = source.replace("## 績效計算與對話摘要", "## Renamed performance")
+    elif extra_change == "delete":
+        start = source.index("## 績效計算與對話摘要")
+        end = source.index("### 診斷擴充與替換", start)
+        source = source[:start] + source[end:]
+    else:
+        source += "\n## 績效計算與對話摘要\nAmbiguous duplicate.\n"
+    _write(repo, "ARCHITECTURE.md", source)
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    owners = [
+        _payload(p)
+        for p in plan.prompts
+        if "ARCHITECTURE.md" in _payload(p)["assigned_paths"]
+    ]
+    assert owners
+    for owner in owners:
+        assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+        assert (
+            owner["path_diffs"]["ARCHITECTURE.md"]
+            == original["path_diffs"]["ARCHITECTURE.md"]
+        )
+    assert any(
+        s["path"] == "docs/requirements/ml.md"
+        for owner in owners
+        for s in owner["document_sections"]
+    )
+    plan.verify()
+
+
+def test_architecture_section_review_unions_explicit_cross_domain_requirements(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    requirement = repo / "docs/requirements/ml.md"
+    text = requirement.read_text(encoding="utf-8")
+    start = text.index("## FR-ML-003")
+    contract = text.index("- **契約**：", start)
+    end = text.index("\n", contract)
+    text = (
+        text[:end] + " [架構](../../ARCHITECTURE.md#績效計算與對話摘要)。" + text[end:]
+    )
+    requirement.write_text(text, encoding="utf-8")
+    base = _tree(repo)
+    _edit_performance_architecture(repo)
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=1_500_000
+    )
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert {"FR-RES-002", "FR-ML-003"} <= set(obligations["requirement_ids"])
+    sections = [s for p in plan.prompts for s in _payload(p)["document_sections"]]
+    assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+    assert any(s["path"] == "docs/requirements/ml.md" for s in sections)
+
+
+STATISTICS = "src/tradingdev/domain/statistics/"
+COMPARISON = STATISTICS + "comparison.py"
+SHARPE = STATISTICS + "sharpe.py"
+STATISTICS_TESTS = "tests/domain/statistics/"
+
+
+@pytest.fixture
+def statistics_review_repository(real_document_repository: Path) -> Path:
+    repo = real_document_repository
+    root = Path(__file__).resolve().parents[2]
+    for source in (root / STATISTICS).glob("*.py"):
+        _write(repo, source.relative_to(root).as_posix(), source.read_text())
+    product = "src/tradingdev/domain/benchmark.py"
+    _write(repo, product, (root / product).read_text())
+    for path in (
+        COMPARISON,
+        STATISTICS + "benchmark.py",
+        *(
+            STATISTICS_TESTS + name
+            for name in (
+                "conftest.py",
+                "test_statistics_architecture_contract.py",
+                "test_statistics_benchmark.py",
+                "test_statistics_benchmark_boundary.py",
+                "test_statistics_boundaries.py",
+                "test_statistics_comparison.py",
+                "test_statistics_contracts.py",
+            )
+        ),
+    ):
+        _write(repo, path, "VALUE = 'before'\n")
+    return repo
+
+
+def test_registered_research_review_delivers_immutable_shared_sources(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'candidate comparison'\n")
+    tree = _tree(repo)
+    expected = (repo / SHARPE).read_text()
+    _write(repo, SHARPE, "UNCOMMITTED = 'must not enter review'\n")
+    raw = json.loads(build_evidence(repo, base, tree))
+    plan = build_review_plan(json.dumps(raw))
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if COMPARISON in batch["assigned_paths"]]
+    assert owners
+    for batch in owners:
+        assert batch["candidate_files"][SHARPE] == expected
+        assert STATISTICS + "_validation.py" in batch["candidate_files"]
+        assert batch["path_diffs"][COMPARISON] == raw["path_diffs"][COMPARISON]
+        assert SHARPE not in batch["path_diffs"]
+        assert "UNCOMMITTED" not in json.dumps(batch)
+    assert plan.manifest["behavior_contexts"][COMPARISON]["requirement_ids"] == []
+    assert SHARPE not in plan.manifest["path_owners"]
+    assert any(
+        "績效計算與對話摘要" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert not any(
+        section["path"] == "docs/requirements/ml.md"
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    plan.verify()
+
+
+@pytest.mark.parametrize("boundary", [False, True])
+def test_statistics_product_boundary_preserves_its_own_obligation(
+    statistics_review_repository: Path,
+    boundary: bool,
+) -> None:
+    repo = statistics_review_repository
+    path = STATISTICS_TESTS + (
+        "test_statistics_benchmark_boundary.py"
+        if boundary
+        else "test_statistics_benchmark.py"
+    )
+    base = _tree(repo)
+    _write(repo, path, "VALUE = 'changed test'\n")
+    plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
+    identifiers = plan.manifest["behavior_contexts"][path]["requirement_ids"]
+    assert ("FR-RES-002" in identifiers) is boundary
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if path in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    assert all(
+        STATISTICS + "benchmark.py" in batch["candidate_files"] for batch in owners
+    )
+    if boundary:
+        assert all(
+            "src/tradingdev/domain/benchmark.py" in batch["candidate_files"]
+            for batch in owners
+        )
+        assert any(
+            section["path"] == "docs/performance_artifacts.md"
+            and "Benchmarks" in section["headings"]
+            for batch in owners
+            for section in batch["document_sections"]
+        )
+
+
+def test_statistics_fixture_keeps_test_guidance_and_full_delivery_profile(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    path = STATISTICS_TESTS + "conftest.py"
+    base = _tree(repo)
+    _write(repo, path, "VALUE = 'changed seed policy'\n")
+    tree = _tree(repo)
+    plan = build_review_plan(build_evidence(repo, base, tree))
+    assert classify_changes(repo, base, tree).delivery_profile == "full"
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if path in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    assert any(
+        "測試設計與精簡" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert any(
+        section["path"] == "AGENTS.md" and "測試與清理" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert all(SHARPE in batch["candidate_files"] for batch in owners)
+
+
+@pytest.mark.parametrize("fault", ["missing", "symlink", "binary", "non_utf8"])
+def test_registered_source_cannot_be_missing_or_non_regular_text(
+    statistics_review_repository: Path,
+    fault: str,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new'\n")
+    helper = repo / SHARPE
+    if fault in {"missing", "symlink"}:
+        helper.unlink()
+        if fault == "symlink":
+            helper.symlink_to("periods.py")
+    elif fault == "binary":
+        helper.write_bytes(b"not\0text")
+    else:
+        helper.write_bytes(b"not utf-8: \xff")
+    with pytest.raises(ReviewError):
+        build_evidence(repo, base, _tree(repo))
+
+
+@pytest.mark.parametrize("fault", ["mapping", "text", "blob", "mode", "altered_text"])
+def test_registered_source_provenance_is_required_before_model_use(
+    statistics_review_repository: Path,
+    fault: str,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    if fault == "mapping":
+        raw.pop("source_contexts", None)
+    elif fault == "altered_text":
+        raw["candidate_files"][SHARPE] = "FORGED = 'not the blob'\n"
+    else:
+        key = {
+            "text": "candidate_files",
+            "blob": "candidate_file_blobs",
+            "mode": "candidate_file_modes",
+        }[fault]
+        raw[key].pop(SHARPE, None)
+    with pytest.raises(ReviewError):
+        build_review_plan(json.dumps(raw))
+
+
+def test_deleted_registered_source_uses_base_dependencies(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    expected = (repo / SHARPE).read_text()
+    base = _tree(repo)
+    (repo / COMPARISON).unlink()
+    _write(repo, SHARPE, "VALUE = 'new helper after removal'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw), max_prompt_bytes=1_500_000)
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if COMPARISON in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    for batch in owners:
+        assert batch["base_source_files"][SHARPE] == expected
+        assert COMPARISON not in batch["candidate_files"]
+        assert batch["path_diffs"][COMPARISON] == raw["path_diffs"][COMPARISON]
+    assert plan.manifest["evidence_utf8_bytes"] >= len(expected.encode())
+    plan.verify()
+
+
+def test_statistics_rename_does_not_register_the_new_unknown_path(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    renamed = STATISTICS + "future_comparison.py"
+    (repo / COMPARISON).rename(repo / renamed)
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=1_500_000
+    )
+    assert plan.manifest["behavior_contexts"][renamed] == {"fallback_scope": "results"}
+    assert {COMPARISON, renamed} <= plan.manifest["path_owners"].keys()
+
+
+def test_registered_sources_stay_complete_in_partitions_and_scoped_to_their_users(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    other_path = "src/tradingdev/mcp/tools/strategy_cleanup.py"
+    _write(repo, other_path, "VALUE = 'old cleanup'\n")
+    _write(
+        repo,
+        "docs/new_statistics_contract.md",
+        "# Unregistered contract\nDo not silently drop unknown evidence.\n"
+        + "".join(f"\n## Section {i}\n" + str(i) * 45_000 + "\n" for i in range(6)),
+    )
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new comparison'\n")
+    _write(repo, other_path, "VALUE = 'new cleanup'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw))
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if COMPARISON in batch["assigned_paths"]]
+    assert len(owners) > 1
+    for batch in owners:
+        assert batch["candidate_files"][SHARPE] == raw["candidate_files"][SHARPE]
+    delivered = "".join(
+        section["text"] for batch in owners for section in batch["document_sections"]
+    )
+    for i in range(6):
+        assert str(i) * 45_000 in delivered
+    for batch in batches:
+        if other_path in batch["assigned_paths"]:
+            assert SHARPE not in batch["candidate_files"]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert audit["path_diffs"] == raw["path_diffs"]
+    assert SHARPE not in audit["candidate_files"]
+    assert any(
+        item["path"] == SHARPE and item["version"] == "candidate"
+        for item in audit["delivered_source_inventory"]
+    )
+    plan.verify()
+
+
+def test_registered_source_over_budget_is_not_truncated(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    _write(repo, SHARPE, "# Immutable required source\n" + "x" * 250_000)
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new comparison'\n")
+    evidence = build_evidence(repo, base, _tree(repo))
+    assert len(json.loads(evidence)["candidate_files"][SHARPE]) > 250_000
+    with pytest.raises(ReviewError, match="cannot fit"):
+        build_review_plan(evidence)
+
+
+@pytest.mark.parametrize("shadow", ["same-title", "slug-collision", "quoted-heading"])
+def test_registered_document_reference_rejects_shadowed_fragments(
+    statistics_review_repository: Path,
+    shadow: str,
+) -> None:
+    repo = statistics_review_repository
+    title = "績效計算與對話摘要"
+    inserted = (
+        f"> ### {title}\n> Wrong quoted contract.\n"
+        if shadow == "quoted-heading"
+        else (
+            f"### {title}{'！' if shadow == 'slug-collision' else ''}\n"
+            "Wrong nested contract.\n"
+        )
+    )
+    path = repo / "ARCHITECTURE.md"
+    text = path.read_text()
+    parent = "## 系統邊界與模組責任\n"
+    assert parent in text
+    path.write_text(text.replace(parent, parent + inserted, 1))
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'changed comparison'\n")
+    # Both immutable versions already have the shadow. Only the research source
+    # changes, so document-change fallback cannot conceal a wrong reference.
+    with pytest.raises(ReviewError, match="Ambiguous registered document context"):
+        build_review_plan(build_evidence(repo, base, _tree(repo)))

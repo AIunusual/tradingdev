@@ -1190,7 +1190,9 @@ def test_batches_keep_complete_registered_presentation_context_together(
     evidence["candidate_files"].update(context)
     evidence["presentation_context_paths"] = sorted(context)
     _candidate_metadata(evidence)
-    monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 30_000)
+    # One complete source plus the review envelope fits; the indivisible deck
+    # below must still fail when one required member alone uses 30,000 chars.
+    monkeypatch.setattr(review_docs, "MAX_PROMPT_CHARS", 32_000)
 
     prompts = review_docs.build_review_prompts(json.dumps(evidence))
 

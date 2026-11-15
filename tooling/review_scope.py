@@ -52,10 +52,24 @@ class BehaviorContext:
 
     Requirement records own their contract references. Document scopes select
     general reader context only; they do not expand all contracts of an owner.
+    Explicit document references select maintained originals without assigning
+    an independent research API a saved-product requirement.
     """
 
     requirement_ids: frozenset[str]
     document_scopes: frozenset[str]
+    document_references: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceContext:
+    """Complete supporting sources required by one reviewed changed path.
+
+    This selects evidence only: it does not change ownership, product
+    obligations, explicit context or the checks required for delivery.
+    """
+
+    required_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -217,6 +231,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "SRS 維護與檢核",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
         ),
         **_headings(
             {"presentation"},
@@ -475,6 +492,9 @@ _DEVELOPMENT_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "2. 在 GitHub 建立 PR，交由審閱者檢查",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
             "3. 在 GitHub 審閱並合併",
             "尚未建立 PR 的本機檢查",
         ),
@@ -534,6 +554,9 @@ _DEVELOPMENT_CHANGE_HEADINGS = {
             "2. 在 GitHub 建立 PR，交由審閱者檢查",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
             "3. 在 GitHub 審閱並合併",
             "尚未建立 PR 的本機檢查",
             "執行離線測試",
@@ -1008,6 +1031,14 @@ _RUN_DIAGNOSTIC_CONTEXT = BehaviorContext(
     _RUN_LOOKUP_CONTEXT.requirement_ids | {"FR-RES-004"},
     frozenset({"results"}),
 )
+# These are responsibilities of complete editable sections, not selectors for
+# background prose. Keep the full ancestry explicit: shared introductions and
+# similarly named sections elsewhere are not authorized by a leaf title.
+_BEHAVIOR_CHANGE_SECTIONS: dict[str, dict[tuple[str, ...], BehaviorContext]] = {
+    "ARCHITECTURE.md": {
+        ("系統架構", "績效計算與對話摘要"): _RUN_DIAGNOSTIC_CONTEXT,
+    },
+}
 _RUN_REPORT_CONTEXT = BehaviorContext(
     _RUN_DIAGNOSTIC_CONTEXT.requirement_ids | {"FR-RES-003", "NFR-UX-001"},
     frozenset({"results"}),
@@ -1041,11 +1072,68 @@ _ARTIFACT_INTERFACE_CONTEXT = BehaviorContext(
     frozenset({"results"}),
 )
 
+_STATISTICS_ARCHITECTURE_REFERENCE = (
+    "ARCHITECTURE.md",
+    "績效計算與對話摘要",
+)
+_TEST_DESIGN_REFERENCE = ("docs/development.md", "測試設計與精簡")
+_PRODUCT_BENCHMARK_REFERENCE = ("docs/performance_artifacts.md", "benchmarks")
+_STATISTICS_API_CONTEXT = BehaviorContext(
+    frozenset(), frozenset(), (_STATISTICS_ARCHITECTURE_REFERENCE,)
+)
+_STATISTICS_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _TEST_DESIGN_REFERENCE),
+)
+_RESEARCH_BENCHMARK_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _PRODUCT_BENCHMARK_REFERENCE),
+)
+_RESEARCH_BENCHMARK_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (
+        _STATISTICS_ARCHITECTURE_REFERENCE,
+        _PRODUCT_BENCHMARK_REFERENCE,
+        _TEST_DESIGN_REFERENCE,
+    ),
+)
+
 # These modules have reviewed behavior responsibilities. Do not infer context
 # from a layer prefix or a topic-looking filename: an unregistered path retains
 # the conservative owner-based fallback. Changed Markdown is selected from its
 # actual changed sections, not assigned a whole-document behavior here.
 _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    "src/tradingdev/domain/statistics/benchmark.py": _RESEARCH_BENCHMARK_CONTEXT,
+    "src/tradingdev/domain/statistics/comparison.py": _STATISTICS_API_CONTEXT,
+    "tests/domain/statistics/test_statistics_benchmark.py": (
+        _RESEARCH_BENCHMARK_TEST_CONTEXT
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": BehaviorContext(
+        frozenset({"FR-RES-002"}),
+        frozenset(),
+        _RESEARCH_BENCHMARK_TEST_CONTEXT.document_references,
+    ),
+    **dict.fromkeys(
+        (
+            "tests/domain/statistics/test_statistics_boundaries.py",
+            "tests/domain/statistics/test_statistics_comparison.py",
+            "tests/domain/statistics/test_statistics_contracts.py",
+        ),
+        _STATISTICS_TEST_CONTEXT,
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (*_STATISTICS_TEST_CONTEXT.document_references, ("AGENTS.md", "政策與溝通")),
+    ),
+    "tests/domain/statistics/conftest.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (_TEST_DESIGN_REFERENCE, ("AGENTS.md", "測試與清理")),
+    ),
     **dict.fromkeys(
         (
             "src/tradingdev/app/research.py",
@@ -1279,6 +1367,64 @@ _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
 }
 
 
+def _statistics_sources(*modules: str) -> tuple[str, ...]:
+    return tuple(f"src/tradingdev/domain/statistics/{module}.py" for module in modules)
+
+
+# Only these reviewed consumers request supporting sources. In particular, this
+# is not a directory-wide rule for existing or future statistics modules/tests.
+_SOURCE_CONTEXTS: dict[str, SourceContext] = {
+    "src/tradingdev/domain/statistics/benchmark.py": SourceContext(
+        _statistics_sources("comparison", "periods", "sharpe", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "src/tradingdev/domain/statistics/comparison.py": SourceContext(
+        _statistics_sources("sharpe", "_validation", "_scaling", "periods")
+    ),
+    "tests/domain/statistics/test_statistics_benchmark.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "periods", "sharpe", "_validation"
+        )
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": SourceContext(
+        _statistics_sources("benchmark", "periods", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_boundaries.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe", "_validation")
+    ),
+    "tests/domain/statistics/test_statistics_contracts.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_comparison.py": SourceContext(
+        _statistics_sources(
+            "comparison", "periods", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe")
+    ),
+    "tests/domain/statistics/conftest.py": SourceContext(
+        _statistics_sources("comparison", "sharpe")
+    ),
+}
+
+
+def source_context_for_path(path: str) -> SourceContext | None:
+    """Return exact registered sources without inferring new responsibilities."""
+    normalized = PurePosixPath(path)
+    if (
+        normalized.is_absolute()
+        or ".." in normalized.parts
+        or normalized.as_posix() != path
+    ):
+        return None
+    return _SOURCE_CONTEXTS.get(path)
+
+
 def behavior_context_for_path(path: str) -> BehaviorContext | None:
     """Return a reviewed behavior, or None to retain conservative context.
 
@@ -1293,6 +1439,21 @@ def behavior_context_for_path(path: str) -> BehaviorContext | None:
     ):
         return None
     return _BEHAVIOR_CONTEXTS.get(path)
+
+
+def behavior_context_for_section(
+    path: str, section: MarkdownSection
+) -> BehaviorContext | None:
+    """Return an explicit editable-section responsibility, never infer one.
+
+    This does not establish that every edit belongs to that responsibility.
+    The planner checks both immutable versions and preserves owner context for
+    structural, shared or unrecognized edits. Empty requirement sets are valid
+    for documented internal contracts that make no product SRS commitment.
+    """
+    if section.path != path:
+        return None
+    return _BEHAVIOR_CHANGE_SECTIONS.get(path, {}).get(section.headings)
 
 
 def development_context_for_path(path: str) -> DevelopmentContext | None:
@@ -1420,6 +1581,15 @@ def _parse_sections(
 def markdown_sections(path: str, text: str) -> tuple[MarkdownSection, ...]:
     """Partition original text at document-level headings, retaining the prelude."""
     return _parse_sections(path, text)[0]
+
+
+def markdown_heading_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Inclusive lines of document-level headings, including Setext underlines."""
+    return tuple(
+        (token.map[0] + 1, token.map[1])
+        for token in MarkdownIt("commonmark").parse(text)
+        if token.type == "heading_open" and token.map is not None and token.level == 0
+    )
 
 
 def shared_document_context_ranges(path: str, text: str) -> tuple[tuple[int, int], ...]:
