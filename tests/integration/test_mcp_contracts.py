@@ -33,6 +33,7 @@ _READ_ONLY_TOOLS = {
     "get_run",
     "get_metric_catalog",
     "get_run_metrics",
+    "get_optimization_trials",
     "find_runs",
     "get_run_trades",
     "get_run_equity",
@@ -220,6 +221,7 @@ async def test_application_errors_follow_advertised_output_schemas(
                 False,
             ),
             ("get_run_metrics", {"run_id": "missing_run"}, "success", False),
+            ("get_optimization_trials", missing_job, "success", False),
             (
                 "get_artifact",
                 {"artifact_id": "missing_artifact"},

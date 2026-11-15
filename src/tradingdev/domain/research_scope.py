@@ -294,7 +294,7 @@ def verify_optimization_observations(
         or pd.Timestamp(observations.timestamps[-1]) >= end
     ):
         raise ManifestError(
-            "Optimization observations fall outside the approved calendar days"
+            "Research observations lie outside the approved scope range"
         )
 
 
