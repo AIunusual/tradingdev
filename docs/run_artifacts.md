@@ -143,7 +143,9 @@ fold checks do not reconstruct the original dataset or prove its split geometry.
 
 ## SQLite Tables
 
-The core index stores jobs, completed runs, registered artifacts and job events.
+The core index stores jobs, completed runs, registered artifacts, job events and
+the per-job optimization ledger in `optimization_trials`. See
+[Optimization trial results](#optimization-trial-results) for ledger behavior.
 Plans and editable notes have separate table-owning stores; use the
 [table definitions](#artifact-references) for exact columns and JSON payloads.
 Schema initialization is not permission to migrate old execution evidence.
@@ -769,11 +771,14 @@ requires observations for the full grid. The leader reflects only ranked evidenc
 and ties retain the first approved position.
 
 Candidate exceptions and timeouts are recorded separately. Ordinary exceptions
-from bundled strategy callbacks are recorded as candidate failures, and the
-worker continues with the approved grid. For generated strategies, the worker
-can continue after a callback exception when the runtime classifies it as a
-callback failure and confirms cleanup. If a pinned older runtime cannot
-classify the exception, the worker stops the job and reports the diagnostic.
+raised within bundled strategy callbacks are recorded as candidate failures.
+Generated strategies also run signal checks on synthetic data for the candidate's
+parameters. The worker records signal-contract errors as candidate failures.
+It also records generated callback failures and runtime timeouts when the
+runtime supplies the classification and cleanup is verified. A recorded training
+candidate failure allows the worker to continue through the approved grid.
+Other errors from the synthetic checks, such as invalid execution settings or
+an exception the pinned runtime cannot classify, stop the job with a diagnostic.
 
 Infrastructure faults stop the job with status `failed`. Successfully committed
 trials remain available. An attempted trial that never committed a result is
