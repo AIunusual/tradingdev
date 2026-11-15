@@ -181,8 +181,9 @@ def register(mcp: MCPServer, service: RunService) -> None:
         Use display_metrics for presentation; percent signs are already included.
         Unknown IDs/scopes return available choices. No strategy is rerun.
         Fold summaries are distributions across folds, not whole-period returns.
-        Rolling traces are summaries with artifact_id and json_pointer;
-        get_artifact(include_content=true) pages the complete saved evidence.
+        Rolling traces are summaries. Published runs include artifact_id and
+        json_pointer for retrieving the full trace with get_artifact.
+        Partial optimization scopes report why full trace retrieval is unavailable.
         """
         payload = service.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:
