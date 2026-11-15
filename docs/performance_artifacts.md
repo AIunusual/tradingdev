@@ -124,12 +124,20 @@ It retains scalar geometry and scored counts, plus `roll_count`,
 `trained_roll_count` and `unscored_bar_count` (null when the corresponding list
 was not recorded; trained count is also null if any training flag is missing or
 not a boolean). `representation: "summary"` and `content_included: false`
-make the omission explicit. `rolls` and `unscored_bars` remain complete in
-`performance.json`; they are not copied into normal query responses.
-Use the returned `artifact_id` with `get_artifact(include_content=true)` and
-its bounded text pagination; `json_pointer` identifies the trace in the saved
-JSON document, with JSON Pointer escaping for slash/tilde path components.
-Queries do not rewrite the artifact or replace report evidence with this summary.
+make the omission explicit.
+
+For published runs, `rolls` and `unscored_bars` remain complete in
+`performance.json`. Use the returned `artifact_id` with
+`get_artifact(include_content=true)` and its bounded text pagination.
+`json_pointer` locates the trace in the saved JSON document, with JSON Pointer
+escaping for slash and tilde in path components.
+The saved trace remains the source for reports.
+
+For partial optimization scopes, `get_run_metrics` summarizes the trace from
+the SQLite trial ledger and sets
+`content_unavailable_reason: "partial_optimization_ledger"`. The response omits
+`artifact_id` and `json_pointer`. The current query API exposes only the summary
+for these scopes.
 
 Coordinates are positions rather than timestamps, and they use two frames.
 `train_start` and `train_end` are positions in the concatenated

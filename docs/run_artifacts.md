@@ -766,13 +766,18 @@ Call `get_optimization_trials(job_id, offset, limit)` for trial states and follo
 `trials.next_offset`. A completed trial can have a null objective. `completed`
 counts full observations, `rankable` counts finite objectives and `search_complete`
 requires observations for the full grid. The leader reflects only ranked evidence
-and ties retain the first approved position. Candidate exceptions and timeouts are
-recorded separately. A generated strategy runtime must identify the exception as
-a callback failure before the worker can continue. A fixed older runtime that
-cannot identify the failure stops the job with its diagnostic.
-Infrastructure faults stop the job with status `failed`;
-successfully committed trials remain available. An attempted trial that never
-committed a result is shown as interrupted once a failed or cancelled job ends.
+and ties retain the first approved position.
+
+Candidate exceptions and timeouts are recorded separately. Ordinary exceptions
+from bundled strategy callbacks are recorded as candidate failures, and the
+worker continues with the approved grid. For generated strategies, the worker
+can continue after a callback exception when the runtime classifies it as a
+callback failure and confirms cleanup. If a pinned older runtime cannot
+classify the exception, the worker stops the job and reports the diagnostic.
+
+Infrastructure faults stop the job with status `failed`. Successfully committed
+trials remain available. An attempted trial that never committed a result is
+shown as interrupted once a failed or cancelled job ends.
 
 The held-out test runs only when the full training grid has observations and a
 finite leader. The ledger records its state separately. A job that exhausts its
