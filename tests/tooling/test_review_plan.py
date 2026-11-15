@@ -1887,6 +1887,15 @@ def test_development_operations_select_exact_real_guidance_and_complete_sources(
         ("docs/development.md", "注意事項"),
         ("ARCHITECTURE.md", "Repository 開發工具與研究原型"),
     )
+    review_operations = (
+        "文件審查設定",
+        "規劃證據與補充來源",
+        "檢查失敗與程序清理",
+    )
+    if "candidate_review" in operations:
+        required += tuple(("docs/development.md", title) for title in review_operations)
+    else:
+        excluded += review_operations
     for path, heading in required:
         expected = next(
             section
@@ -2112,6 +2121,42 @@ def test_tool_and_operational_document_edits_narrow_only_reviewed_responsibiliti
         if s["path"] == "README.md" and s["headings"]
     }
     assert ("手動啟動並使用 HTTP 連接" in readme_headings) is not precise
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guide_edits_keep_candidate_review_responsibility(
+    real_document_repository: Path,
+    heading: str,
+) -> None:
+    repo = real_document_repository
+    document = "docs/development.md"
+    base = _tree(repo)
+    text = (repo / document).read_text()
+    section = next(
+        part
+        for part in markdown_sections(document, text)
+        if part.headings[-1:] == (heading,)
+    )
+    revised = text.replace(
+        section.text, section.text.rstrip() + "\n\n操作修訂。\n\n", 1
+    )
+    _write(repo, document, revised)
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw))
+    profile = plan.manifest["development_contexts"][document]
+    assert profile["operations"] == ["candidate_review"]
+    assert profile["selection_basis"] == "changed-operational-sections"
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if document in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    for batch in owners:
+        assert batch["candidate_files"][document] == revised
+        assert batch["path_diffs"][document] == raw["path_diffs"][document]
 
 
 def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(

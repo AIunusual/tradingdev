@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 13
+SCOPE_POLICY_VERSION = 14
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
