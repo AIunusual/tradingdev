@@ -1554,6 +1554,54 @@ def test_changed_requirement_selects_its_contract_without_expanding_its_book(
     )
 
 
+@pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize(
+    "common_edit", ["modify-preface", "remove-preface", "appendix"]
+)
+def test_shared_srs_edits_keep_other_requirements_contracts(
+    behavior_requirement_change: tuple[Path, str, str, str],
+    common_edit: str,
+    ending: str,
+) -> None:
+    repo, _, first, second = behavior_requirement_change
+    path = "docs/requirements/ml.md"
+    heading = "# ML requirements\n\n"
+    premise = (
+        "All requirements apply to saved evaluations and reports."
+        + "\u2028 Shared premise." * 6
+        + "\n\n"
+    )
+    _write(repo, path, (heading + premise + first + second).replace("\n", ending))
+    base = _tree(repo)
+    revised = first.replace("original signal obligation", "revised signal obligation")
+    if common_edit == "modify-preface":
+        premise = premise.replace(
+            "saved evaluations and reports", "evaluations only; reports are excluded"
+        )
+    elif common_edit == "remove-preface":
+        premise = ""
+    appendix = (
+        "## Shared applicability\nReports no longer follow this chapter.\n"
+        if common_edit == "appendix"
+        else ""
+    )
+    current = (heading + premise + revised + second + appendix).replace("\n", ending)
+    _write(repo, path, current)
+    evidence = build_evidence(repo, base, _tree(repo))
+    original = json.loads(evidence)
+    plan = build_review_plan(evidence)
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(batch for batch in batches if path in batch["assigned_paths"])
+    assert owner["candidate_files"][path] == current
+    assert owner["path_diffs"][path] == original["path_diffs"][path]
+    context = "".join(
+        section["text"] for batch in batches for section in batch["document_sections"]
+    )
+    assert "FIRST_CONTRACT_ORIGINAL" in context
+    assert "SECOND_CONTRACT_ORIGINAL" in context
+    assert owner["behavior_contexts"][path] == {"fallback_scope": "ml"}
+
+
 def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
     behavior_requirement_change: tuple[Path, str, str, str],
 ) -> None:
@@ -1583,10 +1631,7 @@ def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
         ),
     )
     plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
-    assert plan.manifest["behavior_contexts"][requirement]["requirement_ids"] == [
-        "FR-ML-003",
-        "FR-ML-004",
-    ]
+    assert plan.manifest["behavior_contexts"][requirement] == {"fallback_scope": "ml"}
     text = "".join(
         s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
     )

@@ -844,6 +844,7 @@ uv run --no-sync python -m tooling.review_docs \
 `requirement_contracts` 可核對變更路徑、需求及契約的選取關係；每批依實際指派的檔案
 取聯集。文件變更比對固定 base 與 candidate 的需求／契約章節；刪除需求或移除引用時
 保留必要的 base 原文。變更檔案及原始 diff 仍完整交付，背景切片不裁減其內容。
+SRS 只有兩側變更都位於需求條目內才精選契約；同時修改共用前提、標題或條目外引用定義時，沿用 owner 的保守背景。
 新模組落入 `general` 時，先依實際使用端與契約判斷責任；已確認的歸屬由
 [review_scope.py](../tooling/review_scope.py) 登錄，並在
 [test_review_scope.py](../tests/tooling/test_review_scope.py) 與

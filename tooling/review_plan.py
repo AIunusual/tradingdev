@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 10
+SCOPE_POLICY_VERSION = 11
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -325,6 +325,22 @@ def _requirement_records(files: dict[str, str]) -> dict[str, RequirementRecord]:
     return records
 
 
+def _edits_within_requirements(
+    path: str,
+    text: str,
+    git_lines: set[int],
+    records: dict[str, RequirementRecord],
+) -> bool:
+    """Keep shared SRS prose conservative on either immutable side of a change."""
+    covered = {
+        line
+        for record in records.values()
+        if record.source == path
+        for line in range(record.start_line, record.end_line + 1)
+    }
+    return _markdown_edits(text, git_lines) <= covered
+
+
 def _behavior_contexts(
     raw: dict[str, Any],
     records: dict[str, RequirementRecord],
@@ -356,7 +372,18 @@ def _behavior_contexts(
         if path in raw["base_file_blobs"] and path not in before:
             continue
         identifiers: set[str] = set()
+        old_lines, new_lines = _changed_lines(diff)
         if is_requirements_path(path):
+            # A changed record must not hide a simultaneous shared premise,
+            # heading or reference-definition edit outside all records.
+            if not all(
+                _edits_within_requirements(path, source.get(path, ""), edits, version)
+                for source, edits, version in (
+                    (before, old_lines, old_records),
+                    (files, new_lines, records),
+                )
+            ):
+                continue
             for identifier in records.keys() | old_records.keys():
                 current, previous = records.get(identifier), old_records.get(identifier)
                 if not any(
@@ -373,7 +400,6 @@ def _behavior_contexts(
                 ):
                     identifiers.add(identifier)
         else:
-            old_lines, new_lines = _changed_lines(diff)
             for version, edits, source_files in (
                 (records, new_lines, files),
                 (records | old_records, old_lines, files | before),
