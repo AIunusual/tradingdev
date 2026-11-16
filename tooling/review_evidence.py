@@ -67,7 +67,11 @@ def _relevant(path: str) -> bool:
     if candidate.parts[0] in {"workspace", ".git", ".venv"}:
         return False
     return (
-        path.startswith(
+        # Registered presentation operations include nonstandard text formats,
+        # such as wrangler.jsonc. Keep this aligned with their context selector
+        # without treating unknown JSONC files or binary deck assets as text.
+        path in _PRESENTATION_OPERATION_PATHS
+        or path.startswith(
             ("scripts/", "tooling/", "research/", ".githooks/", ".Codex/hooks/")
         )
         or candidate.suffix
@@ -379,7 +383,8 @@ def build_evidence(
         "exclusion_reasons": {path: _exclusion_reason(path) for path in excluded},
         "selection": (
             "All changed scripts (including extensionless Git hooks), source, "
-            "configuration, Markdown, HTML and CSS text files; docs/.nojekyll; "
+            "configuration, Markdown, HTML and CSS text files; registered "
+            "presentation operation files, including wrangler.jsonc; "
             "all candidate README, ARCHITECTURE, agent policies and docs/**/*.md. "
             "Registered presentation operation changes include the editing guide. "
             "Artwork, renderer and unclassified presentation changes additionally "

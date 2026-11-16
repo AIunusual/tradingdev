@@ -318,6 +318,68 @@ def _write_presentation(repo: Path) -> dict[str, str]:
     return files
 
 
+@pytest.mark.parametrize("change", ["modify", "delete", "rename-out", "rename-in"])
+def test_registered_presentation_configuration_preserves_both_git_sides(
+    repository: tuple[Path, str, str], change: str
+) -> None:
+    repo, _, _ = repository
+    _write_presentation(repo)
+    registered = "wrangler.jsonc"
+    ordinary = "cloudflare.json"
+    old_path = ordinary if change == "rename-in" else registered
+    old_content = '{\n  // Deployment configuration\n  "name": "old-site"\n}\n'
+    (repo / old_path).write_text(old_content, encoding="utf-8")
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    (repo / "src/app.py").write_text("VALUE = 'mixed-change'\n", encoding="utf-8")
+    new_path = ordinary if change == "rename-out" else registered
+    if change != "modify":
+        (repo / old_path).unlink()
+    content = old_content.replace("old-site", "新部署")
+    if change != "delete":
+        (repo / new_path).write_text(content, encoding="utf-8")
+    (repo / "unregistered.jsonc").write_text("UNREGISTERED_CONFIG\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    if change != "delete":
+        (repo / new_path).write_text("UNSTAGED_CONFIG\n", encoding="utf-8")
+
+    raw = review_docs.build_evidence(repo, base, tree)
+    evidence = json.loads(raw)
+    selected_paths = {old_path} if change == "delete" else {old_path, new_path}
+    assert selected_paths <= evidence["path_diffs"].keys()
+    assert "src/app.py" in evidence["path_diffs"]
+    assert "unregistered.jsonc" in evidence["excluded_from_content"]
+    assert (
+        "Outside the supported text"
+        in evidence["exclusion_reasons"]["unregistered.jsonc"]
+    )
+    assert selected_paths.isdisjoint(evidence["excluded_from_content"])
+    assert '"name": "old-site"' in evidence["path_diffs"][old_path]
+    if change != "modify":
+        assert "deleted file" in evidence["path_diffs"][old_path]
+        assert old_path not in evidence["candidate_files"]
+    if change != "delete":
+        assert evidence["candidate_files"][new_path] == content
+        assert '"name": "新部署"' in evidence["path_diffs"][new_path]
+    assert "UNSTAGED_CONFIG" not in raw
+    assert "UNREGISTERED_CONFIG" not in raw
+
+    plan = review_docs.prepare_review(base, tree, repo=repo)
+    batches = [json.loads(prompt.rsplit("\n\n", 1)[-1]) for prompt in plan.prompts]
+    for path in selected_paths:
+        owner = next(batch for batch in batches if path in batch["assigned_paths"])
+        assert owner["path_diffs"][path] == evidence["path_diffs"][path]
+        if path in evidence["candidate_files"]:
+            assert owner["candidate_files"][path] == evidence["candidate_files"][path]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert all(
+        audit["path_diffs"][path] == evidence["path_diffs"][path]
+        for path in selected_paths
+    )
+    assert plan.manifest["path_owners"][registered] == "presentation"
+
+
 @pytest.mark.parametrize("changed_name", ["slides.md", "theme.css"])
 def test_registered_presentation_includes_unchanged_candidate_context(
     repository: tuple[Path, str, str], changed_name: str
@@ -1050,7 +1112,11 @@ def _assert_original_assignment_evidence(
             assert paths == []
             assert batch["path_diffs"] == evidence["path_diffs"]
             assert (
-                batch["candidate_tree_inventory"]
+                sorted(
+                    prefix + filename
+                    for prefix, filenames in batch["candidate_tree_inventory"].items()
+                    for filename in filenames
+                )
                 == evidence["candidate_tree_inventory"]
             )
             assert batch["candidate_files"] == {
@@ -1272,6 +1338,47 @@ def test_large_evidence_preserves_owned_sources_original_sections_and_cross_audi
     _assert_original_assignment_evidence(
         [record["prompt"] for record in records], evidence
     )
+    _assert_reviewer_cleanup(records)
+
+
+def test_each_cross_scope_context_partition_requires_its_own_passing_verdict(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repo, _, _ = repository
+    source = repo / "tooling/git/claim_issue.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 'old'\n")
+    document = repo / "docs/development.md"
+    document.parent.mkdir()
+    document.write_text(
+        "# 開發指南\n共用前提。\n\n## 接手 issue\n必要前提。\n"
+        + "".join(f"\n### Operation {i}\n" + str(i) * 6_000 + "\n" for i in range(4))
+    )
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    source.write_text("VALUE = 'new'\n")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    plan = review_docs.prepare_review(base, tree, repo=repo, max_prompt_bytes=20_000)
+    audits = [
+        batch["index"]
+        for batch in plan.manifest["batches"]
+        if batch["phase"] == "cross_scope"
+    ]
+    assert len(audits) > 1
+    monkeypatch.setenv(
+        "REVIEW_FAKE_BATCH_MODES", json.dumps({str(audits[-1]): "outdated"})
+    )
+    with pytest.raises(review_docs.ReviewError, match="Documentation needs updates"):
+        review_docs.review(base, tree, repo=repo, max_prompt_bytes=20_000)
+    records = _records(fake_codex)
+    reviewed = [
+        json.loads(record["prompt"].rsplit("\n\n", 1)[-1])["batch"]["index"]
+        for record in records
+    ]
+    assert set(audits) <= set(reviewed)
     _assert_reviewer_cleanup(records)
 
 
