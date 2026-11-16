@@ -763,13 +763,14 @@ ledger. Records are bound to the job, manifest and, after data load, dataset.
 Complete observations retain saved metric definitions and use the same split,
 parameter, execution context and observation checks as complete optimization runs.
 
-When a ledger exists, `list_jobs` derives completed and total counts from it.
+With a valid ledger, `list_jobs` derives completed and total counts from it.
 `get_job_status` exposes the full `optimization` projection defined by
 [`OptimizationProgress`](../src/tradingdev/app/contracts/optimization.py)
 alongside lifecycle status. Its outcome is `partial` for failed or cancelled jobs
 too; it does not change their lifecycle status.
-When a completed job's published run verifies but its ledger fails verification,
-the response still exposes the run and reports the ledger error in `detail_error`.
+If ledger verification fails, `list_jobs` omits those counts and `get_job_status`
+reports `detail_error`; a completed job still exposes its published run when that
+run verifies.
 Call `get_optimization_trials(job_id, offset, limit)` for trial states and follow
 `trials.next_offset`. A completed trial can have a null objective. `completed`
 counts full observations, `rankable` counts finite objectives and `search_complete`
