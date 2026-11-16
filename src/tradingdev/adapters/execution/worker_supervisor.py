@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,12 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload), encoding="utf-8")
     temporary.replace(path)
+
+
+def _describe_failure(error: BaseException) -> str:
+    if isinstance(error, BaseExceptionGroup):
+        return "".join(traceback.format_exception(error)).rstrip()
+    return f"{type(error).__name__}: {error}"
 
 
 def _child_exited(proc: subprocess.Popen[bytes]) -> bool:
@@ -206,7 +213,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
                 break
             time.sleep(_POLL_SECONDS)
     except BaseException as error:
-        failure = f"{type(error).__name__}: {error}"
+        failure = _describe_failure(error)
     finally:
         if child is not None:
             try:
@@ -214,7 +221,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
             except BaseException as error:
                 cleaned = False
                 prefix = f"{failure}; " if failure else ""
-                failure = f"{prefix}{type(error).__name__}: {error}"
+                failure = f"{prefix}{_describe_failure(error)}"
         runtime_root = control / "runtime"
         if any(runtime_root.glob("*.json")):
             try:
@@ -232,7 +239,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
             except BaseException as error:
                 cleaned = False
                 prefix = f"{failure}; " if failure else ""
-                failure = f"{prefix}{type(error).__name__}: {error}"
+                failure = f"{prefix}{_describe_failure(error)}"
         if not ready:
             _write_json(control / "ready.json", {"error": failure})
         _write_json(

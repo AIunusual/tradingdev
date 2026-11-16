@@ -298,6 +298,31 @@ def test_supervisor_reports_cleanup_failure_without_success_ack(
     }
 
 
+def test_supervisor_preserves_nested_cleanup_failure_reasons(
+    control: Path, monkeypatch: pytest.MonkeyPatch, owned_child: Mock
+) -> None:
+    _start(control)
+    monkeypatch.setattr(subprocess, "Popen", Mock(return_value=owned_child))
+    monkeypatch.setattr(signal, "signal", Mock())
+    monkeypatch.setattr(supervisor, "_child_exited", lambda _child: True)
+    failure = ExceptionGroup(
+        "Worker process group cleanup failed",
+        [
+            PermissionError("process inventory denied"),
+            ExceptionGroup("kill failed", [TimeoutError("descendant still active")]),
+        ],
+    )
+    monkeypatch.setattr(supervisor, "terminate_owned_group", Mock(side_effect=failure))
+
+    supervisor.supervise(control, "test.worker", [])
+
+    finished = json.loads((control / "finished.json").read_text())
+    assert finished["cleaned"] is False
+    assert finished["returncode"] is None
+    assert "PermissionError: process inventory denied" in finished["error"]
+    assert "TimeoutError: descendant still active" in finished["error"]
+
+
 @pytest.mark.parametrize("leader_exits", [False, True])
 def test_real_owned_group_cleanup_waits_for_descendants(
     tmp_path: Path, leader_exits: bool
