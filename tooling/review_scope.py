@@ -52,10 +52,24 @@ class BehaviorContext:
 
     Requirement records own their contract references. Document scopes select
     general reader context only; they do not expand all contracts of an owner.
+    Explicit document references select maintained originals without assigning
+    an independent research API a saved-product requirement.
     """
 
     requirement_ids: frozenset[str]
     document_scopes: frozenset[str]
+    document_references: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceContext:
+    """Complete supporting sources required by one reviewed changed path.
+
+    This selects evidence only: it does not change ownership, product
+    obligations, explicit context or the checks required for delivery.
+    """
+
+    required_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -217,6 +231,9 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "SRS 維護與檢核",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
         ),
         **_headings(
             {"presentation"},
@@ -476,6 +493,9 @@ _DEVELOPMENT_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
             "2. 在 GitHub 建立 PR，交由審閱者檢查",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
             "3. 在 GitHub 審閱並合併",
             "尚未建立 PR 的本機檢查",
         ),
@@ -535,6 +555,9 @@ _DEVELOPMENT_CHANGE_HEADINGS = {
             "2. 在 GitHub 建立 PR，交由審閱者檢查",
             "測試證據與文件修正",
             "檢查期間的主線更新",
+            "文件審查設定",
+            "規劃證據與補充來源",
+            "檢查失敗與程序清理",
             "3. 在 GitHub 審閱並合併",
             "尚未建立 PR 的本機檢查",
             "執行離線測試",
@@ -975,6 +998,10 @@ _DATA_LOOKUP_CONTEXT = BehaviorContext(
     frozenset({"FR-DATA-001", "FR-DATA-002", "NFR-OPS-002", "NFR-API-001"}),
     frozenset({"data"}),
 )
+_MARKET_DATA_DOCUMENT_CONTEXT = BehaviorContext(
+    _DATA_LOOKUP_CONTEXT.requirement_ids | {"FR-DATA-003"},
+    _DATA_LOOKUP_CONTEXT.document_scopes,
+)
 _DRAFT_CLEANUP_CONTEXT = BehaviorContext(
     frozenset({"FR-STR-005"}),
     frozenset({"strategy"}),
@@ -1009,6 +1036,61 @@ _RUN_DIAGNOSTIC_CONTEXT = BehaviorContext(
     _RUN_LOOKUP_CONTEXT.requirement_ids | {"FR-RES-004"},
     frozenset({"results"}),
 )
+_PARAMETER_SEARCH_CONTEXT = BehaviorContext(
+    frozenset({"FR-STR-004", "FR-EXEC-001", "FR-EXEC-006"}),
+    frozenset({"execution"}),
+)
+_VALIDATION_SEARCH_CONTEXT = BehaviorContext(
+    _PARAMETER_SEARCH_CONTEXT.requirement_ids
+    | {"FR-EXEC-003", "FR-EXEC-005", "FR-RES-002"},
+    frozenset({"execution", "results"}),
+)
+_RESEARCH_IDENTITIES_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-002",
+            "FR-STR-004",
+            "FR-EXEC-001",
+            "FR-EXEC-004",
+            "FR-EXEC-006",
+            "FR-EXEC-007",
+            "FR-RES-001",
+            "FR-ML-001",
+            "FR-ML-002",
+            "NFR-DATA-001",
+        }
+    ),
+    frozenset({"strategy", "execution", "results", "ml"}),
+)
+_RESULT_PUBLICATION_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids
+    | {"FR-EXEC-004", "FR-EXEC-007", "FR-RES-004", "FR-RES-005"},
+    frozenset({"execution", "results"}),
+    (("docs/run_artifacts.md", "sqlite-tables"),),
+)
+# SQLiteStore owns shared connections and the jobs/runs/artifacts/events index.
+# Plans, notes, archives and conversations use those connections; draft cleanup
+# also reads raw jobs and run references. Keep these consumers even when a change
+# touches only one table. Independent ML datasets/models do not use this store.
+_SQLITE_STORAGE_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids
+    | {
+        "FR-STR-005",
+        "FR-EXEC-001",
+        "FR-EXEC-002",
+        "FR-EXEC-004",
+        "FR-EXEC-007",
+        "FR-RES-004",
+        "FR-RES-005",
+        "FR-RES-006",
+    },
+    frozenset({"execution", "results"}),
+    (
+        ("docs/run_artifacts.md", "sqlite-tables"),
+        ("docs/run_artifacts.md", "json-values"),
+        ("ARCHITECTURE.md", "設定與儲存一致性"),
+    ),
+)
 _RUN_REPORT_CONTEXT = BehaviorContext(
     _RUN_DIAGNOSTIC_CONTEXT.requirement_ids | {"FR-RES-003", "NFR-UX-001"},
     frozenset({"results"}),
@@ -1042,11 +1124,275 @@ _ARTIFACT_INTERFACE_CONTEXT = BehaviorContext(
     frozenset({"results"}),
 )
 
+_STRATEGY_AUTHORING_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-001",
+            "FR-STR-002",
+            "FR-STR-003",
+            "FR-STR-004",
+            "FR-EXEC-001",
+            "NFR-OPS-001",
+            "NFR-SAFE-001",
+        }
+    ),
+    frozenset({"strategy", "execution"}),
+)
+_EXECUTION_WORKFLOW_CONTEXT = BehaviorContext(
+    _SUBMITTED_RESEARCH_WORKFLOW_CONTEXT.requirement_ids
+    | {"FR-STR-003", "FR-EXEC-003", "FR-EXEC-005", "NFR-OPS-001", "NFR-UX-001"},
+    frozenset({"strategy", "execution", "results"}),
+)
+_RUNTIME_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-003",
+            "FR-EXEC-003",
+            "FR-EXEC-007",
+            "NFR-OPS-001",
+            "NFR-OPS-002",
+            "NFR-SAFE-001",
+            "NFR-REPRO-001",
+        }
+    ),
+    frozenset({"strategy", "execution"}),
+)
+_CODEX_RECORDING_CONTEXT = BehaviorContext(
+    _CONVERSATION_CONTEXT.requirement_ids
+    | {"FR-EXEC-002", "FR-EXEC-007", "NFR-API-001", "NFR-OPS-001"},
+    frozenset({"interfaces", "results"}),
+)
+_NOTE_DELIVERY_CONTEXT = BehaviorContext(
+    _NOTE_CONTEXT.requirement_ids | {"FR-RES-004", "NFR-DATA-001"},
+    frozenset({"results"}),
+    (("docs/development.md", "研究成果工程回饋"),),
+)
+
+# Responsibilities cover whole editable sections, not only a particular diff's
+# sentences. Shared introductions, deployment/workspace settings and unregistered
+# sections retain conservative context; exact ancestry prevents leaf-title reuse.
+# The planner still checks both versions and unions explicit SRS dependants.
+_BEHAVIOR_CHANGE_SECTIONS: dict[str, dict[tuple[str, ...], BehaviorContext]] = {
+    "README.md": {
+        ("TradingDev", "完成第一次回測"): BehaviorContext(
+            _EXECUTION_WORKFLOW_CONTEXT.requirement_ids
+            | {"FR-STR-001", "FR-RES-002", "FR-RES-004"},
+            _EXECUTION_WORKFLOW_CONTEXT.document_scopes,
+        ),
+        ("TradingDev", "建立與研究自己的策略", "把交易規則交給助手"): (
+            _STRATEGY_AUTHORING_CONTEXT
+        ),
+        ("TradingDev", "建立與研究自己的策略", "比較參數"): BehaviorContext(
+            frozenset(
+                {
+                    "FR-STR-004",
+                    "FR-EXEC-001",
+                    "FR-EXEC-002",
+                    "FR-EXEC-004",
+                    "FR-RES-003",
+                }
+            ),
+            frozenset({"execution", "results"}),
+        ),
+        ("TradingDev", "建立與研究自己的策略", "使用樣本外驗證與最佳化"): (
+            _VALIDATION_SEARCH_CONTEXT
+        ),
+        ("TradingDev", "研究機器學習訊號"): BehaviorContext(
+            _ML_WORKFLOW_CONTEXT.requirement_ids | {"FR-DATA-001"},
+            _ML_WORKFLOW_CONTEXT.document_scopes,
+        ),
+        **{
+            ("TradingDev", "查看結果與圖表", heading): context
+            for heading, context in {
+                "在對話中查詢": BehaviorContext(
+                    _RUN_REPORT_CONTEXT.requirement_ids
+                    | {
+                        "FR-EXEC-003",
+                        "FR-EXEC-005",
+                        "FR-EXEC-006",
+                        "FR-EXEC-007",
+                        "NFR-REPRO-001",
+                    },
+                    frozenset({"execution", "results"}),
+                ),
+                "交易紀錄與 HTML 報告": _SHARED_REPORT_CONTEXT,
+                "保存研究筆記與打包分享": _NOTE_DELIVERY_CONTEXT,
+                "自動保存 Codex CLI 對話": _CODEX_RECORDING_CONTEXT,
+                "閱讀保存的對話": _CONVERSATION_CONTEXT,
+                "開啟 Dashboard": _RUN_REPORT_CONTEXT,
+            }.items()
+        },
+        ("TradingDev", "資料與工作區", "行情來源與下載"): _MARKET_DATA_DOCUMENT_CONTEXT,
+        ("TradingDev", "資料與工作區", "升級舊工作區"): BehaviorContext(
+            frozenset({"FR-EXEC-001", "FR-EXEC-006", "FR-EXEC-007", "NFR-DATA-001"}),
+            frozenset({"execution", "results"}),
+        ),
+        ("TradingDev", "終端機用法", "直接執行設定檔"): BehaviorContext(
+            frozenset(
+                {
+                    "FR-STR-003",
+                    "FR-STR-004",
+                    "FR-EXEC-001",
+                    "FR-EXEC-003",
+                    "FR-EXEC-005",
+                    "FR-RES-001",
+                }
+            ),
+            frozenset({"strategy", "execution", "results"}),
+        ),
+        ("TradingDev", "終端機用法", "從已保存的結果產生報告"): _SHARED_REPORT_CONTEXT,
+        ("TradingDev", "終端機用法", "從終端機操作研究筆記"): _NOTE_CONTEXT,
+    },
+    "ARCHITECTURE.md": {
+        ("系統架構", "核心概念與身分"): _RESEARCH_IDENTITIES_CONTEXT,
+        **{
+            ("系統架構", "從策略建立到結果查詢", heading): context
+            for heading, context in {
+                "研究需求與有效設定": BehaviorContext(
+                    _RESEARCH_POLICY_CONTEXT.requirement_ids
+                    | {"FR-EXEC-001", "FR-EXEC-005", "FR-RES-001", "NFR-DATA-001"},
+                    _RESEARCH_POLICY_CONTEXT.document_scopes,
+                ),
+                "建立與驗證策略": BehaviorContext(
+                    _STRATEGY_AUTHORING_CONTEXT.requirement_ids | {"FR-STR-005"},
+                    _STRATEGY_AUTHORING_CONTEXT.document_scopes,
+                ),
+                "準備、確認與執行回測": _EXECUTION_WORKFLOW_CONTEXT,
+                "最佳化執行": BehaviorContext(
+                    _PARAMETER_SEARCH_CONTEXT.requirement_ids
+                    | {"FR-EXEC-004", "FR-EXEC-005"},
+                    _PARAMETER_SEARCH_CONTEXT.document_scopes,
+                ),
+                "保存與查詢結果": _RESULT_PUBLICATION_CONTEXT,
+                "行情快取": _MARKET_DATA_DOCUMENT_CONTEXT,
+                "獨立行情取樣": BehaviorContext(
+                    frozenset({"FR-DATA-002", "FR-DATA-003", "NFR-OPS-002"}),
+                    frozenset({"data"}),
+                ),
+            }.items()
+        },
+        ("系統架構", "ML 訊號研究"): BehaviorContext(
+            _ML_ROLLING_WORKFLOW_CONTEXT.requirement_ids,
+            _ML_ROLLING_WORKFLOW_CONTEXT.document_scopes,
+            (("docs/ml_research.md", "rolling-retraining-schemes"),),
+        ),
+        ("系統架構", "績效計算與對話摘要"): _RUN_DIAGNOSTIC_CONTEXT,
+        **{
+            ("系統架構", "績效計算與對話摘要", heading): context
+            for heading, context in {
+                "診斷擴充與替換": _RUN_DIAGNOSTIC_CONTEXT,
+                "研究筆記與可攜封存": _NOTE_DELIVERY_CONTEXT,
+                "可見對話紀錄": _CODEX_RECORDING_CONTEXT,
+            }.items()
+        },
+        **{
+            ("系統架構", "一致性、程序管理與保證範圍", heading): context
+            for heading, context in {
+                "歷史查詢與報告組裝": _SHARED_REPORT_CONTEXT,
+                "設定與儲存一致性": BehaviorContext(
+                    frozenset(
+                        {"FR-STR-004", "FR-RES-001", "NFR-DATA-001", "NFR-REPRO-001"}
+                    ),
+                    frozenset({"execution", "results"}),
+                ),
+                "MCP 回覆契約": BehaviorContext(
+                    frozenset(
+                        {
+                            "FR-RES-001",
+                            "FR-ML-002",
+                            "NFR-API-001",
+                            "NFR-OPS-001",
+                            "NFR-OPS-002",
+                        }
+                    ),
+                    frozenset({"interfaces", "results", "ml"}),
+                ),
+                "程序控制與清理": _RUNTIME_CONTEXT,
+                "容器執行 adapter": BehaviorContext(
+                    _RUNTIME_CONTEXT.requirement_ids,
+                    _RUNTIME_CONTEXT.document_scopes,
+                    (("docs/development.md", "容器建置與驗證"),),
+                ),
+                "可重現性與策略執行安全": BehaviorContext(
+                    frozenset(
+                        {
+                            "FR-RES-001",
+                            "FR-ML-002",
+                            "NFR-DATA-001",
+                            "NFR-REPRO-001",
+                            "NFR-SAFE-001",
+                        }
+                    ),
+                    frozenset({"execution", "results", "ml"}),
+                ),
+            }.items()
+        },
+    },
+}
+
+_STATISTICS_ARCHITECTURE_REFERENCE = (
+    "ARCHITECTURE.md",
+    "績效計算與對話摘要",
+)
+_TEST_DESIGN_REFERENCE = ("docs/development.md", "測試設計與精簡")
+_PRODUCT_BENCHMARK_REFERENCE = ("docs/performance_artifacts.md", "benchmarks")
+_STATISTICS_API_CONTEXT = BehaviorContext(
+    frozenset(), frozenset(), (_STATISTICS_ARCHITECTURE_REFERENCE,)
+)
+_STATISTICS_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _TEST_DESIGN_REFERENCE),
+)
+_RESEARCH_BENCHMARK_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (_STATISTICS_ARCHITECTURE_REFERENCE, _PRODUCT_BENCHMARK_REFERENCE),
+)
+_RESEARCH_BENCHMARK_TEST_CONTEXT = BehaviorContext(
+    frozenset(),
+    frozenset(),
+    (
+        _STATISTICS_ARCHITECTURE_REFERENCE,
+        _PRODUCT_BENCHMARK_REFERENCE,
+        _TEST_DESIGN_REFERENCE,
+    ),
+)
+
 # These modules have reviewed behavior responsibilities. Do not infer context
 # from a layer prefix or a topic-looking filename: an unregistered path retains
 # the conservative owner-based fallback. Changed Markdown is selected from its
 # actual changed sections, not assigned a whole-document behavior here.
 _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    "src/tradingdev/adapters/storage/sqlite.py": _SQLITE_STORAGE_CONTEXT,
+    "src/tradingdev/domain/statistics/benchmark.py": _RESEARCH_BENCHMARK_CONTEXT,
+    "src/tradingdev/domain/statistics/comparison.py": _STATISTICS_API_CONTEXT,
+    "tests/domain/statistics/test_statistics_benchmark.py": (
+        _RESEARCH_BENCHMARK_TEST_CONTEXT
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": BehaviorContext(
+        frozenset({"FR-RES-002"}),
+        frozenset(),
+        _RESEARCH_BENCHMARK_TEST_CONTEXT.document_references,
+    ),
+    **dict.fromkeys(
+        (
+            "tests/domain/statistics/test_statistics_boundaries.py",
+            "tests/domain/statistics/test_statistics_comparison.py",
+            "tests/domain/statistics/test_statistics_contracts.py",
+        ),
+        _STATISTICS_TEST_CONTEXT,
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (*_STATISTICS_TEST_CONTEXT.document_references, ("AGENTS.md", "政策與溝通")),
+    ),
+    "tests/domain/statistics/conftest.py": BehaviorContext(
+        frozenset(),
+        frozenset(),
+        (_TEST_DESIGN_REFERENCE, ("AGENTS.md", "測試與清理")),
+    ),
     **dict.fromkeys(
         (
             "src/tradingdev/app/research.py",
@@ -1280,6 +1626,64 @@ _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
 }
 
 
+def _statistics_sources(*modules: str) -> tuple[str, ...]:
+    return tuple(f"src/tradingdev/domain/statistics/{module}.py" for module in modules)
+
+
+# Only these reviewed consumers request supporting sources. In particular, this
+# is not a directory-wide rule for existing or future statistics modules/tests.
+_SOURCE_CONTEXTS: dict[str, SourceContext] = {
+    "src/tradingdev/domain/statistics/benchmark.py": SourceContext(
+        _statistics_sources("comparison", "periods", "sharpe", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "src/tradingdev/domain/statistics/comparison.py": SourceContext(
+        _statistics_sources("sharpe", "_validation", "_scaling", "periods")
+    ),
+    "tests/domain/statistics/test_statistics_benchmark.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "periods", "sharpe", "_validation"
+        )
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_benchmark_boundary.py": SourceContext(
+        _statistics_sources("benchmark", "periods", "_validation")
+        + ("src/tradingdev/domain/benchmark.py",)
+    ),
+    "tests/domain/statistics/test_statistics_boundaries.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe", "_validation")
+    ),
+    "tests/domain/statistics/test_statistics_contracts.py": SourceContext(
+        _statistics_sources(
+            "benchmark", "comparison", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_comparison.py": SourceContext(
+        _statistics_sources(
+            "comparison", "periods", "sharpe", "_validation", "_scaling"
+        )
+    ),
+    "tests/domain/statistics/test_statistics_architecture_contract.py": SourceContext(
+        _statistics_sources("benchmark", "comparison", "sharpe")
+    ),
+    "tests/domain/statistics/conftest.py": SourceContext(
+        _statistics_sources("comparison", "sharpe")
+    ),
+}
+
+
+def source_context_for_path(path: str) -> SourceContext | None:
+    """Return exact registered sources without inferring new responsibilities."""
+    normalized = PurePosixPath(path)
+    if (
+        normalized.is_absolute()
+        or ".." in normalized.parts
+        or normalized.as_posix() != path
+    ):
+        return None
+    return _SOURCE_CONTEXTS.get(path)
+
+
 def behavior_context_for_path(path: str) -> BehaviorContext | None:
     """Return a reviewed behavior, or None to retain conservative context.
 
@@ -1294,6 +1698,21 @@ def behavior_context_for_path(path: str) -> BehaviorContext | None:
     ):
         return None
     return _BEHAVIOR_CONTEXTS.get(path)
+
+
+def behavior_context_for_section(
+    path: str, section: MarkdownSection
+) -> BehaviorContext | None:
+    """Return an explicit editable-section responsibility, never infer one.
+
+    This does not establish that every edit belongs to that responsibility.
+    The planner checks both immutable versions and preserves owner context for
+    structural, shared or unrecognized edits. Empty requirement sets are valid
+    for documented internal contracts that make no product SRS commitment.
+    """
+    if section.path != path:
+        return None
+    return _BEHAVIOR_CHANGE_SECTIONS.get(path, {}).get(section.headings)
 
 
 def development_context_for_path(path: str) -> DevelopmentContext | None:
@@ -1421,6 +1840,15 @@ def _parse_sections(
 def markdown_sections(path: str, text: str) -> tuple[MarkdownSection, ...]:
     """Partition original text at document-level headings, retaining the prelude."""
     return _parse_sections(path, text)[0]
+
+
+def markdown_heading_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Inclusive lines of document-level headings, including Setext underlines."""
+    return tuple(
+        (token.map[0] + 1, token.map[1])
+        for token in MarkdownIt("commonmark").parse(text)
+        if token.type == "heading_open" and token.map is not None and token.level == 0
+    )
 
 
 def shared_document_context_ranges(path: str, text: str) -> tuple[tuple[int, int], ...]:
@@ -1619,4 +2047,4 @@ def sections_for_reference(
         if not section.headings
         or any(section.start_line <= line <= section.end_line for line in references)
     )
-    return tuple(section for index, section in enumerate(sections) if index in selected)
+    return _with_ancestor_sections(sections, selected)

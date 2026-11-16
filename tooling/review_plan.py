@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
+from tooling.documentation import heading_slug, markdown_heading_locations
 from tooling.requirements import (
     RequirementRecord,
     RequirementsError,
@@ -28,8 +30,10 @@ from tooling.review_scope import (
     DevelopmentContext,
     MarkdownSection,
     behavior_context_for_path,
+    behavior_context_for_section,
     development_context_for_path,
     development_context_for_sections,
+    markdown_heading_ranges,
     markdown_sections,
     scope_for_path,
     sections_for_development_context,
@@ -37,6 +41,7 @@ from tooling.review_scope import (
     sections_for_scope,
     selection_reason,
     shared_document_context_ranges,
+    source_context_for_path,
     unknown_document_sections,
 )
 
@@ -45,7 +50,7 @@ if TYPE_CHECKING:
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 11
+SCOPE_POLICY_VERSION = 15
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -106,13 +111,20 @@ REVIEW_INSTRUCTIONS = (
 )
 SCOPE_INSTRUCTIONS = (
     "This scope batch contains complete assigned candidate files and their exact "
-    "per-path diffs, plus selected original document sections. Its inventory "
+    "per-path diffs, plus selected original document sections and registered "
+    "supporting sources. Supporting sources are context, not additional assigned "
+    "changes. base_source_files holds fixed base-version support for deleted "
+    "anchors, not files restored to the candidate tree. Its inventory "
     "identifies other scopes, not evidence silently truncated from this batch. "
     "Review all assigned paths and their documented effects. changed_paths is "
-    "the complete actual Git change inventory; unchanged_presentation_context_paths "
-    "identifies required deck references that remain assigned with their full "
-    "original content. Assignment alone does not mean a file changed. Use the "
-    "complete candidate_tree_inventory to check tracked-file existence: a changed "
+    "the complete actual Git change inventory; presentation_context_paths "
+    "identifies required deck references assigned with their full original content. "
+    "unchanged_presentation_context_paths is the subset absent from changed_paths. "
+    "Assignment alone does not mean a file changed. Use the "
+    "complete candidate_tree_inventory to check tracked-file existence: concatenate "
+    "each directory-prefix key with each filename in its list (the empty prefix "
+    "means the repository root). This lossless inventory includes every tracked "
+    "candidate path. A changed "
     "path absent from that inventory was deleted, not retained because its name "
     "appears in changed_paths. The owning scope still receives its exact deletion "
     "diff; the inventory does not replace source evidence for semantic claims. Use the "
@@ -122,7 +134,8 @@ SCOPE_INSTRUCTIONS = (
     "needed for a concrete cross-file question is a finding, not permission to "
     "assume another reviewer checked it. A source_unit can have several "
     "context_partition requests: each repeats its complete assigned files, exact "
-    "diffs and mandatory explicit context. assigned_document_sections identifies "
+    "diffs, supporting sources and mandatory explicit context. "
+    "assigned_document_sections identifies "
     "zero-based entries in document_sections assigned to this request; selected "
     "ancestor sections, document preludes and link definitions accompany their "
     "dependent sections with complete original prose, even when another request "
@@ -139,7 +152,23 @@ CROSS_SCOPE_INSTRUCTIONS = (
     "interfaces, callers, storage, documentation and development procedures. "
     "Scope batches separately receive complete candidate sources and relevant "
     "document originals; their conclusions or summaries are not a substitute for "
-    "this audit. Report any necessary additional original context explicitly.\n\n"
+    "this audit. delivered_source_inventory identifies supporting sources actually "
+    "delivered to scope batches; their identities do not replace their originals. "
+    "candidate_tree_inventory losslessly groups filenames by directory prefix: "
+    "concatenate each prefix key with each listed filename to recover every "
+    "tracked path. document_inventory maps each document path and Git version "
+    "to the original line ranges delivered to scope reviewers; this coverage "
+    "index is not source evidence. The complete mechanical provenance and "
+    "selection diagnostics remain in the plan manifest. "
+    "A cross-scope audit can have several context_partition requests. Every "
+    "request repeats the complete original diff, inventories and explicit source "
+    "context; only document_sections are partitioned. assigned_document_sections "
+    "identifies the zero-based sections assigned here. Their selected ancestors, "
+    "preludes and reference definitions accompany them as original context. "
+    "Review the complete change against the assigned sections and their premises. "
+    "Every partition must pass independently; another partition's verdict or "
+    "source inventory cannot supply missing original evidence. Report any necessary "
+    "additional original context explicitly.\n\n"
 )
 
 
@@ -153,6 +182,74 @@ def _digest(value: Any) -> str:
 
 def _bytes(value: str) -> int:
     return len(value.encode("utf-8"))
+
+
+def _expected_source_contexts(
+    changed_paths: Iterable[str], candidate_paths: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """Recompute required support from registered anchors, not supplied metadata."""
+    present = set(candidate_paths)
+    return {
+        path: {
+            "version": "candidate" if path in present else "base",
+            "paths": sorted(set(context.required_paths)),
+        }
+        for path in sorted(changed_paths)
+        if (context := source_context_for_path(path)) is not None
+    }
+
+
+def _check_git_blob(path: str, text: object, oid: object, mode: object) -> None:
+    """Verify a fixed text blob; symlinks supply target text and are never followed."""
+    if (
+        not isinstance(text, str)
+        or "\0" in text
+        or not isinstance(mode, str)
+        or mode not in {"100644", "100755", "120000"}
+    ):
+        raise ReviewError(f"Review source is not a text Git blob: {path}")
+    if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid):
+        raise ReviewError(f"Review source lacks a blob identity: {path}")
+    try:
+        content = text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ReviewError(f"Review source is not UTF-8: {path}") from error
+    payload = f"blob {len(content)}\0".encode("ascii") + content
+    digest = hashlib.new("sha1" if len(oid) == 40 else "sha256", payload).hexdigest()
+    if digest != oid:
+        raise ReviewError(f"Review source differs from its Git blob: {path}")
+
+
+def _check_source_blob(path: str, text: object, oid: object, mode: object) -> None:
+    """Supporting context must supply regular source text, not a link target."""
+    if not isinstance(mode, str) or mode not in {"100644", "100755"}:
+        raise ReviewError(f"Required supporting source is not regular text: {path}")
+    _check_git_blob(path, text, oid, mode)
+
+
+def _source_requirements(
+    contexts: dict[str, dict[str, Any]], anchors: Iterable[str]
+) -> set[tuple[str, str]]:
+    return {
+        (contexts[anchor]["version"], path)
+        for anchor in anchors
+        if anchor in contexts
+        for path in contexts[anchor]["paths"]
+    }
+
+
+def _source_inventory(
+    raw: dict[str, Any], required: set[tuple[str, str]]
+) -> list[dict[str, str]]:
+    return [
+        {
+            "version": version,
+            "path": path,
+            "blob_oid": raw[f"{version}_file_blobs"][path],
+            "mode": raw[f"{version}_file_modes"][path],
+        }
+        for version, path in sorted(required)
+    ]
 
 
 def _section_ancestor_indexes(sections: list[dict[str, Any]]) -> list[list[int]]:
@@ -225,6 +322,7 @@ def _text_size(texts: Iterable[str]) -> _TextSize:
 def _original_texts(batch: dict[str, Any]) -> Iterator[str]:
     """Every delivered occurrence, including overlapping or repeated originals."""
     yield from batch["candidate_files"].values()
+    yield from batch.get("base_source_files", {}).values()
     yield from batch["path_diffs"].values()
     for section in batch["document_sections"]:
         yield section["text"]
@@ -235,7 +333,7 @@ def _selected_evidence_size(
 ) -> _TextSize:
     """Count unique delivered originals, not the unselected local source pool.
 
-    Full candidate files and per-path diffs are counted once across requests.
+    Full files from each Git version and per-path diffs count once across requests.
     Document slices count their line union per path, Git version and blob; a
     delivered full candidate already covers its candidate-version slices.
     JSON packaging and repeated context remain subject to the prompt budgets.
@@ -245,15 +343,20 @@ def _selected_evidence_size(
         for batch in batches
         for path, text in batch["candidate_files"].items()
     }
+    base_sources = {
+        path: text
+        for batch in batches
+        for path, text in batch.get("base_source_files", {}).items()
+    }
     diffs = {
         path: text for batch in batches for path, text in batch["path_diffs"].items()
     }
-    texts = [*candidates.values(), *diffs.values()]
+    texts = [*candidates.values(), *base_sources.values(), *diffs.values()]
     ranges: dict[tuple[str, str, str], list[tuple[int, int]]] = {}
     for batch in batches:
         for section in batch["document_sections"]:
             version, path = section["version"], section["path"]
-            if version == "candidate" and path in candidates:
+            if path in (candidates if version == "candidate" else base_sources):
                 continue
             key = (version, path, section["blob_oid"])
             ranges.setdefault(key, []).append(
@@ -341,98 +444,206 @@ def _edits_within_requirements(
     return _markdown_edits(text, git_lines) <= covered
 
 
+@dataclass(frozen=True)
+class _ResolvedBehaviorContext:
+    """Known obligations plus whether some edits still need owner context."""
+
+    context: BehaviorContext
+    include_owner_context: bool
+    selection_basis: tuple[str, ...]
+
+
+def _precise_document_edits(
+    path: str,
+    text: str,
+    edits: set[int],
+    parts: tuple[MarkdownSection, ...],
+    occurrences: list[Counter[tuple[str, ...]]],
+) -> bool:
+    """Narrow only stable, uniquely identified sections on both Git versions."""
+    guarded = (
+        *markdown_heading_ranges(text),
+        *shared_document_context_ranges(path, text),
+    )
+    if any(edits.intersection(range(start, end + 1)) for start, end in guarded):
+        return False
+    return all(
+        bool(part.headings)
+        and all(
+            counts[part.headings[:depth]] == 1
+            for counts in occurrences
+            for depth in range(1, len(part.headings) + 1)
+        )
+        for part in parts
+        if edits.intersection(range(part.start_line, part.end_line + 1))
+    )
+
+
+def _document_behavior_context(
+    path: str,
+    raw: dict[str, Any],
+    records: dict[str, RequirementRecord],
+    old_records: dict[str, RequirementRecord],
+) -> _ResolvedBehaviorContext | None:
+    """Resolve every edited line without treating supporting prose as ownership."""
+    before = raw.get("base_document_files", {})
+    files = raw["candidate_files"]
+    old_lines, new_lines = _changed_lines(raw["path_diffs"][path])
+    versions = (
+        (before, old_lines, records | old_records),
+        (files, new_lines, records),
+    )
+    parsed = [
+        markdown_sections(path, source.get(path, "")) for source, _, _ in versions
+    ]
+    occurrences = [Counter(section.headings for section in parts) for parts in parsed]
+    identifiers: set[str] = set()
+    roles: set[str] = set()
+    document_references: set[tuple[str, str]] = set()
+    basis: set[str] = set()
+    complete = True
+    for (sources, git_lines, requirements), parts in zip(versions, parsed, strict=True):
+        text = sources.get(path, "")
+        edits = _markdown_edits(text, git_lines)
+        covered: set[int] = set()
+        complete &= _precise_document_edits(path, text, edits, parts, occurrences)
+        for part in parts:
+            changed = edits.intersection(range(part.start_line, part.end_line + 1))
+            if not changed:
+                continue
+            profile = behavior_context_for_section(path, part)
+            if profile is not None:
+                identifiers.update(profile.requirement_ids)
+                roles.update(profile.document_scopes)
+                document_references.update(profile.document_references)
+                covered.update(changed)
+                basis.add("changed-registered-sections")
+        for identifier, record in requirements.items():
+            for target, fragment in record.contract_references:
+                if target != path:
+                    continue
+                try:
+                    selected = sections_for_reference(path, text, fragment)
+                except ValueError:
+                    # The other immutable side can retain a removed contract.
+                    continue
+                if not any(
+                    edits.intersection(range(part.start_line, part.end_line + 1))
+                    for part in selected
+                ):
+                    continue
+                identifiers.add(identifier)
+                roles.add(scope_for_path(record.source))
+                basis.add("changed-SRS-contracts")
+                responsible = selected
+                if fragment:
+                    line = markdown_heading_locations(text)[fragment]
+                    cited = next(
+                        part
+                        for part in selected
+                        if part.start_line <= line <= part.end_line
+                    )
+                    # Ancestor introductions and reference definitions accompany
+                    # a contract, but are not owned by its cited descendant.
+                    responsible = tuple(
+                        part
+                        for part in selected
+                        if part.start_line >= cited.start_line
+                        and part.headings[: len(cited.headings)] == cited.headings
+                    )
+                covered.update(
+                    line
+                    for part in responsible
+                    for line in range(part.start_line, part.end_line + 1)
+                )
+        complete &= edits <= covered
+    if not basis:
+        return None
+    missing = identifiers - records.keys() - old_records.keys()
+    if missing:
+        raise ReviewError(
+            f"Missing registered behavior requirements for {path}: "
+            + ", ".join(sorted(missing))
+        )
+    return _ResolvedBehaviorContext(
+        BehaviorContext(
+            frozenset(identifiers), frozenset(roles), tuple(sorted(document_references))
+        ),
+        include_owner_context=not complete,
+        selection_basis=tuple(sorted(basis)),
+    )
+
+
 def _behavior_contexts(
     raw: dict[str, Any],
     records: dict[str, RequirementRecord],
     old_records: dict[str, RequirementRecord],
-) -> dict[str, BehaviorContext | None]:
+) -> dict[str, _ResolvedBehaviorContext | None]:
     """Use registered source responsibilities and actual document edits.
 
     An unrecognized edit keeps its owner's conservative context. References in
     unchanged requirements do not make their whole book relevant to an edit.
     """
-    contexts: dict[str, BehaviorContext | None] = {}
+    contexts: dict[str, _ResolvedBehaviorContext | None] = {}
     files = raw["candidate_files"]
     before = raw.get("base_document_files", {})
     for path, diff in raw["path_diffs"].items():
         profile = behavior_context_for_path(path)
-        if profile is not None and records:
+        if profile is not None and (records or not profile.requirement_ids):
             missing = profile.requirement_ids - records.keys() - old_records.keys()
             if missing:
                 raise ReviewError(
                     f"Missing registered behavior requirements for {path}: "
                     + ", ".join(sorted(missing))
                 )
-            contexts[path] = profile
+            contexts[path] = _ResolvedBehaviorContext(
+                profile, False, ("registered-path",)
+            )
             continue
         contexts[path] = None
-        if not path.endswith(".md") or not records:
+        if not path.endswith(".md"):
             continue
         # Old evidence formats cannot narrow a changed pre-existing document.
         if path in raw["base_file_blobs"] and path not in before:
             continue
+        if not is_requirements_path(path):
+            contexts[path] = _document_behavior_context(path, raw, records, old_records)
+            continue
         identifiers: set[str] = set()
         old_lines, new_lines = _changed_lines(diff)
-        if is_requirements_path(path):
-            # A changed record must not hide a simultaneous shared premise,
-            # heading or reference-definition edit outside all records.
-            if not all(
-                _edits_within_requirements(path, source.get(path, ""), edits, version)
-                for source, edits, version in (
-                    (before, old_lines, old_records),
-                    (files, new_lines, records),
-                )
-            ):
+        # Keep known changed obligations even when a simultaneous shared edit
+        # requires conservative owner context as well.
+        complete = all(
+            _edits_within_requirements(path, source.get(path, ""), edits, version)
+            for source, edits, version in (
+                (before, old_lines, old_records),
+                (files, new_lines, records),
+            )
+        )
+        for identifier in records.keys() | old_records.keys():
+            current, previous = records.get(identifier), old_records.get(identifier)
+            if not any(r is not None and r.source == path for r in (current, previous)):
                 continue
-            for identifier in records.keys() | old_records.keys():
-                current, previous = records.get(identifier), old_records.get(identifier)
-                if not any(
-                    r is not None and r.source == path for r in (current, previous)
-                ):
-                    continue
-                if (
-                    current is None
-                    or previous is None
-                    or current.source != previous.source
-                    or current.text != previous.text
-                    or current.contract_references != previous.contract_references
-                    or current.verification_paths != previous.verification_paths
-                ):
-                    identifiers.add(identifier)
-        else:
-            for version, edits, source_files in (
-                (records, new_lines, files),
-                (records | old_records, old_lines, files | before),
+            if (
+                current is None
+                or previous is None
+                or current.source != previous.source
+                or current.text != previous.text
+                or current.contract_references != previous.contract_references
+                or current.verification_paths != previous.verification_paths
             ):
-                if path not in source_files:
-                    continue
-                markdown_edits = _markdown_edits(source_files[path], edits)
-                for identifier, record in version.items():
-                    for target, fragment in record.contract_references:
-                        if target != path:
-                            continue
-                        try:
-                            parts = sections_for_reference(
-                                path, source_files[path], fragment
-                            )
-                        except ValueError:
-                            # A removed/renamed target can be selected by the other
-                            # side. Its required original is validated below.
-                            continue
-                        if any(
-                            markdown_edits.intersection(
-                                range(p.start_line, p.end_line + 1)
-                            )
-                            for p in parts
-                        ):
-                            identifiers.add(identifier)
+                identifiers.add(identifier)
         if identifiers:
-            contexts[path] = BehaviorContext(
-                frozenset(identifiers),
-                frozenset(
-                    scope_for_path((records.get(i) or old_records[i]).source)
-                    for i in identifiers
+            contexts[path] = _ResolvedBehaviorContext(
+                BehaviorContext(
+                    frozenset(identifiers),
+                    frozenset(
+                        scope_for_path((records.get(i) or old_records[i]).source)
+                        for i in identifiers
+                    ),
                 ),
+                include_owner_context=not complete,
+                selection_basis=("changed-SRS-requirements",),
             )
     return contexts
 
@@ -450,24 +661,193 @@ def _development_document_context(
     ):
         return None
     old_lines, new_lines = _changed_lines(raw["path_diffs"][path])
-    candidate_sections = markdown_sections(path, raw["candidate_files"].get(path, ""))
-    candidate_headings = {section.headings for section in candidate_sections}
+    versions = (
+        (before.get(path, ""), old_lines),
+        (raw["candidate_files"].get(path, ""), new_lines),
+    )
+    parsed = [markdown_sections(path, text) for text, _ in versions]
+    occurrences = [Counter(section.headings for section in parts) for parts in parsed]
     edited: list[MarkdownSection] = []
-    for source, lines in ((before, old_lines), (raw["candidate_files"], new_lines)):
-        if path not in source:
-            continue
-        edits = _markdown_edits(source[path], lines)
+    for (text, lines), parts in zip(versions, parsed, strict=True):
+        edits = _markdown_edits(text, lines)
+        if not _precise_document_edits(path, text, edits, parts, occurrences):
+            return None
         touched = [
             section
-            for section in markdown_sections(path, source[path])
+            for section in parts
             if edits.intersection(range(section.start_line, section.end_line + 1))
         ]
-        # A removed/renamed section may depend on old ancestor prose no longer
-        # present in the full candidate. Do not narrow that deletion's context.
-        if any(section.headings not in candidate_headings for section in touched):
-            return None
         edited.extend(touched)
     return development_context_for_sections(path, edited)
+
+
+def _section_metadata(section: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in section.items() if key != "text"}
+
+
+def _group_tree_paths(paths: list[str]) -> dict[str, list[str]]:
+    """A readable lossless inventory without repeating each directory prefix."""
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        directory, separator, filename = path.rpartition("/")
+        groups.setdefault(directory + separator, []).append(filename)
+    return groups
+
+
+def _model_document_inventory(
+    inventory: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, list[list[int]]]]:
+    projected: dict[str, dict[str, list[list[int]]]] = {}
+    for path, sections in inventory.items():
+        versions = projected.setdefault(path, {})
+        for section in sections:
+            versions.setdefault(section["version"], []).append(
+                [section["start_line"], section["end_line"]]
+            )
+    return projected
+
+
+def _model_payload(batch: dict[str, Any]) -> dict[str, Any]:
+    """Keep originals and readable coverage; retain planner details in the manifest."""
+    payload = {
+        key: value
+        for key, value in batch.items()
+        if key
+        not in {
+            "evidence_hash",
+            "scope_policy_version",
+            "automatic_document_paths",
+            "available_document_paths",
+            "behavior_contexts",
+            "development_contexts",
+        }
+    }
+    payload["candidate_tree_inventory"] = _group_tree_paths(
+        batch["candidate_tree_inventory"]
+    )
+    if "document_inventory" in batch:
+        payload["document_inventory"] = _model_document_inventory(
+            batch["document_inventory"]
+        )
+    return payload
+
+
+def _context_core(batch: dict[str, Any]) -> dict[str, Any]:
+    """The originals and inventory that must remain identical in every partition."""
+    return {
+        key: value
+        for key, value in batch.items()
+        if key
+        not in {
+            "document_sections",
+            "assigned_document_sections",
+            "context_partition",
+            "source_unit",
+            "batch",
+        }
+    }
+
+
+def _context_manifest(batch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "core_hash": _digest(_context_core(_model_payload(batch))),
+        "document_sections": [
+            _section_metadata(section) for section in batch["document_sections"]
+        ],
+        "document_text_hashes": {
+            _json(_section_metadata(section)): hashlib.sha256(
+                section["text"].encode()
+            ).hexdigest()
+            for section in batch["document_sections"]
+        },
+        **{
+            f"{version}_file_{kind}": {
+                path: batch[f"{version}_file_{kind}"][path]
+                for path in batch[source_key]
+            }
+            for version, source_key in (
+                ("candidate", "candidate_files"),
+                ("base", "base_source_files"),
+            )
+            for kind in ("blobs", "modes")
+        },
+    }
+
+
+def _verify_fixed_context(
+    content: dict[str, Any], unit: dict[str, Any], regular_context: set[str]
+) -> None:
+    if _digest(_context_core(content)) != unit["core_hash"]:
+        raise ReviewError("Review complete diff or fixed source context changed.")
+    for section in content["document_sections"]:
+        key = _json(_section_metadata(section))
+        if hashlib.sha256(section["text"].encode()).hexdigest() != unit[
+            "document_text_hashes"
+        ].get(key):
+            raise ReviewError("Review original document text changed.")
+    for version, source_key in (
+        ("candidate", "candidate_files"),
+        ("base", "base_source_files"),
+    ):
+        expected_files = unit[f"{version}_file_blobs"]
+        if content[source_key].keys() != expected_files.keys():
+            raise ReviewError("Review mandatory sources changed.")
+        for path, oid in expected_files.items():
+            checker = (
+                _check_git_blob
+                if version == "candidate"
+                and path in content["assigned_paths"]
+                and path not in regular_context
+                else _check_source_blob
+            )
+            checker(
+                path,
+                content[source_key][path],
+                oid,
+                unit[f"{version}_file_modes"][path],
+            )
+
+
+def _verify_context_parts(
+    originals: list[dict[str, Any]], parts: list[dict[str, Any]]
+) -> None:
+    """Check exact assignments and their selected original dependencies."""
+    positions = {_json(section): index for index, section in enumerate(originals)}
+    dependencies = _section_dependency_indexes(originals)
+    assigned_sections = []
+    for number, part in enumerate(parts, start=1):
+        if part["context_partition"] != {"index": number, "count": len(parts)}:
+            raise ReviewError("Review context partition numbering is inconsistent.")
+        delivered = part["document_sections"]
+        assignments = part["assigned_document_sections"]
+        if (
+            any(
+                type(index) is not int or not 0 <= index < len(delivered)
+                for index in assignments
+            )
+            or assignments != sorted(set(assignments))
+            or any(_json(section) not in positions for section in delivered)
+        ):
+            raise ReviewError(
+                "Review context partition section assignments are invalid."
+            )
+        owned = [delivered[index] for index in assignments]
+        assigned_sections.extend(owned)
+        required = {positions[_json(section)] for section in owned}
+        required.update(
+            dependency
+            for index in tuple(required)
+            for dependency in dependencies[index]
+        )
+        if delivered != [originals[index] for index in sorted(required)]:
+            raise ReviewError(
+                "Review context partition omitted required original "
+                "context dependencies."
+            )
+    if assigned_sections != originals:
+        raise ReviewError(
+            "Review context partitions omit or duplicate original sections."
+        )
 
 
 @dataclass(frozen=True)
@@ -487,7 +867,150 @@ class ReviewPlan:
             self.manifest["prompt_hashes"]
         ):
             raise ReviewError("Review prompts differ from the prepared plan.")
+        contexts = _expected_source_contexts(
+            set(self.manifest["changed_paths"])
+            - set(self.manifest["excluded_from_content"]),
+            self.manifest["candidate_tree_inventory"],
+        )
+        if contexts != self.manifest.get("source_contexts", {}):
+            raise ReviewError("Review supporting source obligations changed.")
+        inventory = self.manifest.get("delivered_source_inventory", [])
+        required_sources = _source_requirements(contexts, contexts)
+        regular_context = (
+            set(self.manifest["automatic_document_paths"])
+            | set(self.manifest["additional_context_paths"])
+            | {
+                path
+                for paths in self.manifest["scoped_context_paths"].values()
+                for path in paths
+            }
+            | set(self.manifest["presentation_context_paths"])
+            | {path for version, path in required_sources if version == "candidate"}
+        )
+        if [(item["version"], item["path"]) for item in inventory] != sorted(
+            required_sources
+        ):
+            raise ReviewError("Review supporting source inventory is incomplete.")
+        if len(self.prompts) != len(self.manifest["batches"]):
+            raise ReviewError("Review batches and prepared prompts differ.")
+        audit = self.manifest.get("cross_scope_audit")
+        audit_parts = []
         units = self.manifest["source_units"]
+        unit_by_id = {unit["id"]: unit for unit in units}
+        contents = []
+        for prompt, batch in zip(self.prompts, self.manifest["batches"], strict=True):
+            instruction = (
+                SCOPE_INSTRUCTIONS
+                if batch["phase"] == "scope"
+                else CROSS_SCOPE_INSTRUCTIONS
+            )
+            prefix = REVIEW_INSTRUCTIONS + instruction
+            if not prompt.startswith(prefix):
+                raise ReviewError("Review batch instructions changed.")
+            content = json.loads(prompt[len(prefix) :])
+            contents.append(content)
+            for key in (
+                "phase",
+                "scope",
+                "source_unit",
+                "assigned_paths",
+                "candidate_file_blobs",
+                "candidate_file_modes",
+                "base_file_blobs",
+                "base_file_modes",
+            ):
+                if _json(content.get(key)) != _json(batch.get(key)):
+                    raise ReviewError(f"Review prompt and manifest disagree on {key}.")
+            for key in (
+                "base_tree",
+                "candidate_tree",
+                "changed_paths",
+                "path_owners",
+                "excluded_from_content",
+                "exclusion_reasons",
+                "scoped_context_paths",
+                "presentation_context_paths",
+                "unchanged_presentation_context_paths",
+                "requirement_context_paths",
+            ):
+                if _json(content.get(key)) != _json(self.manifest.get(key)):
+                    raise ReviewError(f"Review prompt and manifest disagree on {key}.")
+            if content.get("candidate_tree_inventory") != _group_tree_paths(
+                self.manifest["candidate_tree_inventory"]
+            ):
+                raise ReviewError("Review candidate tree inventory changed.")
+            if (
+                content.get("context_partition") != batch.get("context_partition")
+                or content.get("assigned_document_sections")
+                != batch.get("assigned_document_sections")
+                or _json(
+                    [
+                        _section_metadata(section)
+                        for section in content["document_sections"]
+                    ]
+                )
+                != _json(batch["document_sections"])
+            ):
+                raise ReviewError(
+                    "Review prompt required original sections differ from "
+                    "their partition."
+                )
+            expected = (
+                required_sources
+                if batch["phase"] == "cross_scope"
+                else _source_requirements(contexts, batch["assigned_paths"])
+            )
+            delivered = [
+                item
+                for item in inventory
+                if (item["version"], item["path"]) in expected
+            ]
+            if (
+                batch.get("delivered_source_inventory", []) != delivered
+                or content.get("delivered_source_inventory", []) != delivered
+                or content.get("source_contexts", {}) != contexts
+            ):
+                raise ReviewError("Review batch supporting source coverage changed.")
+            if batch["phase"] == "cross_scope":
+                if audit is None:
+                    raise ReviewError(
+                        "Review cross-scope audit has no context manifest."
+                    )
+                if content.get("document_inventory") != _model_document_inventory(
+                    audit["document_inventory"]
+                ):
+                    raise ReviewError("Review document inventory changed.")
+                _verify_fixed_context(content, audit, regular_context)
+                audit_parts.append(batch)
+                continue
+            unit = unit_by_id.get(batch.get("source_unit"))
+            if unit is None:
+                raise ReviewError("Review scope batch has no source unit.")
+            _verify_fixed_context(content, unit, regular_context)
+            for item in delivered:
+                version, path = item["version"], item["path"]
+                source_key = (
+                    "candidate_files" if version == "candidate" else "base_source_files"
+                )
+                blob_key, mode_key = f"{version}_file_blobs", f"{version}_file_modes"
+                if any(
+                    section.get(key, {}).get(path) != item[identity]
+                    for section in (batch, content)
+                    for key, identity in ((blob_key, "blob_oid"), (mode_key, "mode"))
+                ):
+                    raise ReviewError(
+                        f"Review supporting source identity changed: {path}"
+                    )
+                _check_source_blob(
+                    path,
+                    content.get(source_key, {}).get(path),
+                    item["blob_oid"],
+                    item["mode"],
+                )
+        if audit is not None:
+            if not audit_parts:
+                raise ReviewError("Review cross-scope audit has missing partitions.")
+            _verify_context_parts(audit["document_sections"], audit_parts)
         if [unit["id"] for unit in units] != list(range(1, len(units) + 1)):
             raise ReviewError("Review source-unit identities are inconsistent.")
         assigned = [path for unit in units for path in unit["assigned_paths"]]
@@ -514,43 +1037,56 @@ class ReviewPlan:
                 for path in unit["assigned_paths"]
             ):
                 raise ReviewError("Review context partition ownership is inconsistent.")
-            originals = unit["document_sections"]
-            positions = {
-                _json(section): index for index, section in enumerate(originals)
+            if any(
+                part.get("delivered_source_inventory", [])
+                != unit.get("delivered_source_inventory", [])
+                for part in parts
+            ):
+                raise ReviewError("Review context partitions omit supporting sources.")
+            _verify_context_parts(unit["document_sections"], parts)
+        originals = [_text_size(_original_texts(content)) for content in contents]
+        for number, (prompt, content, batch, original) in enumerate(
+            zip(
+                self.prompts, contents, self.manifest["batches"], originals, strict=True
+            ),
+            start=1,
+        ):
+            if content.get("batch") != {"index": number, "count": len(contents)}:
+                raise ReviewError("Review request numbering changed.")
+            measurements = {
+                "prompt_utf8_bytes": _bytes(prompt),
+                "prompt_characters": len(prompt),
+                **original.fields("original"),
+                **_TextSize(
+                    _bytes(prompt) - original.utf8_bytes,
+                    len(prompt) - original.characters,
+                ).fields("prompt_overhead"),
             }
-            dependencies = _section_dependency_indexes(originals)
-            assigned_sections = []
-            for part in parts:
-                delivered = part["document_sections"]
-                assignments = part["assigned_document_sections"]
-                if (
-                    assignments != sorted(set(assignments))
-                    or any(
-                        type(index) is not int or not 0 <= index < len(delivered)
-                        for index in assignments
-                    )
-                    or any(_json(section) not in positions for section in delivered)
-                ):
-                    raise ReviewError(
-                        "Review context partition section assignments are invalid."
-                    )
-                owned = [delivered[index] for index in assignments]
-                assigned_sections.extend(owned)
-                required = {positions[_json(section)] for section in owned}
-                required.update(
-                    dependency
-                    for index in tuple(required)
-                    for dependency in dependencies[index]
-                )
-                if delivered != [originals[index] for index in sorted(required)]:
-                    raise ReviewError(
-                        "Review context partition omitted required original "
-                        "context dependencies."
-                    )
-            if assigned_sections != originals:
-                raise ReviewError(
-                    "Review context partitions omit or duplicate original sections."
-                )
+            if any(batch.get(key) != value for key, value in measurements.items()):
+                raise ReviewError("Review prompt measurements changed.")
+            if (
+                _bytes(prompt) > self.manifest["max_prompt_bytes"]
+                or len(prompt) > self.manifest["max_prompt_chars"]
+            ):
+                raise ReviewError("Review prompt exceeds its prepared capacity.")
+        for suffix, measure in (("utf8_bytes", _bytes), ("characters", len)):
+            total = sum(measure(prompt) for prompt in self.prompts)
+            delivered = sum(getattr(original, suffix) for original in originals)
+            if (
+                self.manifest[f"total_prompt_{suffix}"] != total
+                or self.manifest[f"delivered_original_{suffix}"] != delivered
+                or self.manifest[f"prompt_overhead_{suffix}"] != total - delivered
+                or self.manifest[f"repeated_original_{suffix}"]
+                != delivered - self.manifest[f"evidence_{suffix}"]
+            ):
+                raise ReviewError("Review total measurements changed.")
+        if (
+            self.manifest["total_prompt_utf8_bytes"]
+            > self.manifest["max_total_prompt_bytes"]
+        ):
+            raise ReviewError("Review total input exceeds its prepared capacity.")
+        if self.manifest["evidence_utf8_bytes"] > self.manifest["max_evidence_bytes"]:
+            raise ReviewError("Review evidence exceeds its prepared capacity.")
 
 
 def build_review_plan(
@@ -581,6 +1117,30 @@ def build_review_plan(
     for path in diffs:
         if path in raw["candidate_tree_inventory"] and path not in files:
             raise ReviewError(f"Missing complete changed candidate file: {path}")
+    source_contexts = _expected_source_contexts(diffs, raw["candidate_tree_inventory"])
+    if raw.get("source_contexts", {}) != source_contexts:
+        raise ReviewError("Registered supporting source provenance is inconsistent.")
+    required_sources = _source_requirements(source_contexts, diffs)
+    base_sources = raw.get("base_source_files", {})
+    if not isinstance(base_sources, dict):
+        raise ReviewError("Invalid base supporting source evidence.")
+    for version, path in required_sources:
+        sources = files if version == "candidate" else base_sources
+        if version == "candidate" and path not in raw["candidate_tree_inventory"]:
+            raise ReviewError(
+                f"Required supporting source is absent from candidate: {path}"
+            )
+        blobs = raw.get(f"{version}_file_blobs", {})
+        modes = raw.get(f"{version}_file_modes", {})
+        if not isinstance(blobs, dict) or not isinstance(modes, dict):
+            raise ReviewError(f"Invalid supporting source identity mapping: {version}")
+        _check_source_blob(
+            path,
+            sources.get(path),
+            blobs.get(path),
+            modes.get(path),
+        )
+    source_inventory = _source_inventory(raw, required_sources)
     presentation = set(raw.get("presentation_context_paths", []))
     additional = set(raw.get("additional_context_paths", []))
     scoped_raw = raw.get("scoped_context_paths", {})
@@ -667,6 +1227,7 @@ def build_review_plan(
         "evidence_hash": hashlib.sha256(evidence.encode()).hexdigest(),
         "scope_policy_version": SCOPE_POLICY_VERSION,
         "changed_paths": sorted(changed),
+        "presentation_context_paths": sorted(presentation),
         "unchanged_presentation_context_paths": sorted(presentation - changed),
         "path_owners": owners,
         "scoped_context_paths": context_mapping,
@@ -674,6 +1235,7 @@ def build_review_plan(
         "available_document_paths": sorted(doc_index),
         "excluded_from_content": raw["excluded_from_content"],
         "exclusion_reasons": raw.get("exclusion_reasons", {}),
+        "source_contexts": source_contexts,
     }
 
     records = _requirement_records(files)
@@ -693,8 +1255,15 @@ def build_review_plan(
             development_sources[path] = source
     common["behavior_contexts"] = {
         path: {
-            "requirement_ids": sorted(profile.requirement_ids),
-            "document_scopes": sorted(profile.document_scopes),
+            "requirement_ids": sorted(profile.context.requirement_ids),
+            "document_scopes": sorted(profile.context.document_scopes),
+            "document_references": list(profile.context.document_references),
+            "selection_basis": list(profile.selection_basis),
+            **(
+                {"fallback_scope": owners[path]}
+                if profile.include_owner_context
+                else {}
+            ),
         }
         if profile is not None
         else {"fallback_scope": owners[path]}
@@ -711,7 +1280,7 @@ def build_review_plan(
 
     def context_selection(
         scope: str, paths: list[str]
-    ) -> tuple[set[str], set[str], bool, frozenset[str]]:
+    ) -> tuple[set[str], set[str], bool, frozenset[str], set[tuple[str, str]]]:
         profiles = [behavior_contexts.get(path) for path in paths]
         operations = frozenset().union(
             *(
@@ -721,15 +1290,24 @@ def build_review_plan(
             )
         )
         precise = bool(paths) and all(
-            behavior_contexts.get(path) is not None or path in development_contexts
+            (
+                (profile := behavior_contexts.get(path)) is not None
+                and not profile.include_owner_context
+            )
+            or path in development_contexts
             for path in paths
         )
         identifiers = set().union(
-            *(p.requirement_ids for p in profiles if p is not None)
+            *(p.context.requirement_ids for p in profiles if p is not None)
         )
-        roles = set().union(*(p.document_scopes for p in profiles if p is not None))
+        roles = set().union(
+            *(p.context.document_scopes for p in profiles if p is not None)
+        )
+        references = set().union(
+            *(set(p.context.document_references) for p in profiles if p is not None)
+        )
         if precise:
-            return identifiers, roles, True, operations
+            return identifiers, roles, True, operations, references
         # A fallback widens this batch; it cannot erase obligations already
         # identified for other assigned files, including cross-domain consumers.
         identifiers.update(
@@ -743,7 +1321,7 @@ def build_review_plan(
             for identifier, record in old_records.items()
             if record.source in paths
         )
-        return identifiers, roles | {scope}, False, operations
+        return identifiers, roles | {scope}, False, operations, references
 
     scope_selections = {
         scope: context_selection(
@@ -761,7 +1339,7 @@ def build_review_plan(
                 for target, _ in record.contract_references
             }
         )
-        for scope, (identifiers, _, _, _) in scope_selections.items()
+        for scope, (identifiers, _, _, _, _) in scope_selections.items()
     }
     common["requirement_context_paths"]["cross_scope"] = sorted(
         set().union(
@@ -809,6 +1387,7 @@ def build_review_plan(
     ) -> list[dict[str, Any]]:
         if scope == "cross_scope":
             identifiers = set().union(*(s[0] for s in scope_selections.values()))
+            references = set().union(*(s[4] for s in scope_selections.values()))
             roles: set[str] = set()
             precise = all(s[2] for s in scope_selections.values())
             # Mandatory unchanged deck references do not by themselves add a
@@ -821,7 +1400,9 @@ def build_review_plan(
                 )
             )
         else:
-            identifiers, roles, precise, operations = context_selection(scope, paths)
+            identifiers, roles, precise, operations, references = context_selection(
+                scope, paths
+            )
         sections: dict[tuple[str, str, int, int], dict[str, Any]] = {}
 
         def add_section(
@@ -866,14 +1447,13 @@ def build_review_plan(
             if scope == "cross_scope":
                 chosen: tuple[MarkdownSection, ...] = ()
             elif precise:
-                chosen = tuple(
+                # Unknown evidence remains conservative even when a registered
+                # internal contract needs no broad reader scope or product SRS.
+                chosen = unknown_sections(path) + tuple(
                     part
                     for role in roles
-                    for part in (
-                        role_sections(role, path)
-                        if path in general_documents
-                        else unknown_sections(path)
-                    )
+                    if path in general_documents
+                    for part in role_sections(role, path)
                 )
             else:
                 chosen = tuple(
@@ -907,6 +1487,61 @@ def build_review_plan(
                         "development-operation-context",
                     )
 
+        for target, fragment in sorted(references):
+            if (
+                target not in files
+                or raw["candidate_file_modes"].get(target) != "100644"
+            ):
+                raise ReviewError(
+                    f"Missing regular registered document context: {target}"
+                )
+            try:
+                required = reference_sections("candidate", target, fragment)
+            except ValueError as error:
+                raise ReviewError(str(error)) from error
+            if fragment:
+                line = markdown_heading_locations(files[target])[fragment]
+                cited = next(
+                    part
+                    for part in required
+                    if part.start_line <= line <= part.end_line
+                )
+                document_sections = markdown_sections(target, files[target])
+                counts = Counter(part.headings for part in document_sections)
+                # Link slugs are document-wide, independent of heading ancestry.
+                # A matching heading under another parent, or punctuation that
+                # yields the same slug, must not silently redirect this contract.
+                # Container headings are valid links but do not own the enclosing
+                # document-level section, so they cannot authorize its selection.
+                if (
+                    line != cited.start_line
+                    or not cited.headings
+                    or heading_slug(cited.headings[-1]) != fragment
+                    or sum(
+                        bool(part.headings)
+                        and heading_slug(part.headings[-1]) == fragment
+                        for part in document_sections
+                    )
+                    != 1
+                    or any(
+                        counts[cited.headings[:depth]] != 1
+                        for depth in range(1, len(cited.headings) + 1)
+                    )
+                ):
+                    raise ReviewError(
+                        f"Ambiguous registered document context: {target}#{fragment}"
+                    )
+            for part in required:
+                add_section(
+                    "candidate",
+                    target,
+                    part.start_line,
+                    part.end_line,
+                    part.headings,
+                    part.text,
+                    "registered-document-context",
+                )
+
         for identifier in sorted(identifiers):
             for version, record in (
                 ("candidate", records.get(identifier)),
@@ -927,10 +1562,31 @@ def build_review_plan(
                     )
                 ):
                     continue
+                requirement_source = (
+                    before[record.source] if version == "base" else files[record.source]
+                )
+                requirement_fragment = next(
+                    (
+                        fragment
+                        for fragment, line in markdown_heading_locations(
+                            requirement_source
+                        ).items()
+                        if line == record.start_line
+                    ),
+                    None,
+                )
+                if requirement_fragment is None:
+                    raise ReviewError(
+                        "Missing original requirement heading location: "
+                        f"{record.source}:{record.start_line}"
+                    )
+                requirement_context = reference_sections(
+                    version, record.source, requirement_fragment
+                )
                 requirement_headings = next(
                     (
                         part.headings
-                        for part in reference_sections(version, record.source, "")
+                        for part in requirement_context
                         if part.start_line <= record.start_line <= part.end_line
                     ),
                     None,
@@ -949,6 +1605,24 @@ def build_review_plan(
                     record.text,
                     "affected-requirement",
                 )
+                # A precise requirement still depends on its chapter's original
+                # premises and shared link definitions. Select their actual
+                # sections without widening to unrelated sibling requirements.
+                for part in requirement_context:
+                    if (
+                        record.start_line <= part.start_line
+                        and part.end_line <= record.end_line
+                    ):
+                        continue
+                    add_section(
+                        version,
+                        record.source,
+                        part.start_line,
+                        part.end_line,
+                        part.headings,
+                        part.text,
+                        "affected-requirement-context",
+                    )
                 for target, fragment in record.contract_references:
                     source_version = (
                         "base"
@@ -984,6 +1658,9 @@ def build_review_plan(
     def scope_batch(scope: str, paths: list[str]) -> dict[str, Any]:
         assigned = set(paths)
         included = assigned | additional | scoped.get(scope, set())
+        supporting = _source_requirements(source_contexts, paths)
+        included.update(path for version, path in supporting if version == "candidate")
+        base_included = {path for version, path in supporting if version == "base"}
         if scope == "presentation":
             included |= presentation
         sections = document_context(scope, included, paths)
@@ -993,6 +1670,8 @@ def build_review_plan(
             "assigned_paths": paths,
             "path_diffs": {p: diffs[p] for p in paths if p in diffs},
             "candidate_files": {p: files[p] for p in sorted(included) if p in files},
+            "base_source_files": {p: base_sources[p] for p in sorted(base_included)},
+            "delivered_source_inventory": _source_inventory(raw, supporting),
             "candidate_file_blobs": {
                 p: raw["candidate_file_blobs"][p] for p in included if p in files
             },
@@ -1001,12 +1680,12 @@ def build_review_plan(
             },
             "base_file_blobs": {
                 p: raw["base_file_blobs"][p]
-                for p in paths
+                for p in assigned | base_included
                 if p in raw["base_file_blobs"]
             },
             "base_file_modes": {
                 p: raw["base_file_modes"][p]
-                for p in paths
+                for p in assigned | base_included
                 if p in raw["base_file_modes"]
             },
             "additional_context_paths": sorted(additional),
@@ -1023,26 +1702,45 @@ def build_review_plan(
         return (
             REVIEW_INSTRUCTIONS
             + instruction
-            + _json(batch | {"batch": {"index": index, "count": count}})
+            + _json(_model_payload(batch) | {"batch": {"index": index, "count": count}})
         )
 
-    def fits(batch: dict[str, Any]) -> bool:
+    def reserved_prompt(batch: dict[str, Any]) -> str:
         # Every request consumes at least one byte. The total budget therefore
         # bounds request/partition counts even when one source needs many parts.
         upper = max_total_prompt_bytes
-        reserved = batch
+        reserved = batch | {"context_partition": {"index": upper, "count": upper}}
         if batch["phase"] == "scope":
-            reserved = batch | {
-                "source_unit": upper,
-                "context_partition": {"index": upper, "count": upper},
-            }
-        prompt = render(reserved, upper, upper)
+            reserved["source_unit"] = upper
+        return render(reserved, upper, upper)
+
+    def fits(batch: dict[str, Any]) -> bool:
+        prompt = reserved_prompt(batch)
         return _bytes(prompt) <= max_prompt_bytes and len(prompt) <= max_prompt_chars
 
-    def capacity_error(subject: str) -> ReviewError:
+    def capacity_error(subject: str, batch: dict[str, Any]) -> ReviewError:
+        prompt = reserved_prompt(batch)
+        components = {
+            "diffs": _text_size(batch["path_diffs"].values()),
+            "candidate_sources": _text_size(batch["candidate_files"].values()),
+            "base_sources": _text_size(batch.get("base_source_files", {}).values()),
+            "document_sections": _text_size(
+                s["text"] for s in batch["document_sections"]
+            ),
+        }
+        originals = _text_size(_original_texts(batch))
+        components["instructions_metadata_json"] = _TextSize(
+            _bytes(prompt) - originals.utf8_bytes, len(prompt) - originals.characters
+        )
+        detail = "; ".join(
+            f"{name}={size.utf8_bytes} bytes/{size.characters} characters"
+            for name, size in components.items()
+        )
         return ReviewError(
             f"{subject} cannot fit the per-request review budget "
             f"({max_prompt_bytes} UTF-8 bytes / {max_prompt_chars} characters). "
+            f"Measured prompt, including reserved numbering: {_bytes(prompt)} UTF-8 "
+            f"bytes / {len(prompt)} characters; {detail}. "
             "Adjust the explicit budget after checking model capacity or split the "
             "change. No evidence was truncated and no model request was made."
         )
@@ -1050,7 +1748,7 @@ def build_review_plan(
     batches: list[dict[str, Any]] = []
     source_units: list[dict[str, Any]] = []
 
-    def partition_source_unit(
+    def partition_document_context(
         batch: dict[str, Any], *, required: bool = True
     ) -> list[dict[str, Any]]:
         """Partition only context; every request retains all mandatory originals."""
@@ -1076,13 +1774,15 @@ def build_review_plan(
         else:
             template = context_part([])
             subject = (
-                f"Scope {batch['scope']!r}, required file group "
+                "Complete cross-scope diff and mandatory context"
+                if batch["phase"] == "cross_scope"
+                else f"Scope {batch['scope']!r}, required file group "
                 f"{batch['assigned_paths']!r}"
             )
             if not fits(template):
                 if not required:
                     return []
-                raise capacity_error(subject)
+                raise capacity_error(subject, template)
             group: list[int] = []
             for section_index, section in enumerate(complete_sections):
                 combined = context_part([*group, section_index])
@@ -1098,7 +1798,8 @@ def build_review_plan(
                     raise capacity_error(
                         f"{subject}, original document section {section['path']!r}"
                         f":{section['start_line']}-{section['end_line']} "
-                        "and selected context dependencies"
+                        "and selected context dependencies",
+                        single,
                     )
                 group = [section_index]
             if group:
@@ -1128,7 +1829,7 @@ def build_review_plan(
     def append_source_unit(batch: dict[str, Any]) -> None:
         identifier = len(source_units) + 1
         complete_sections = batch["document_sections"]
-        parts = partition_source_unit(batch)
+        parts = partition_document_context(batch)
         if source_units and len(parts) > 1:
             previous = source_units[-1]
             previous_parts = [
@@ -1148,7 +1849,7 @@ def build_review_plan(
                     == complete_sections
                     == combined["document_sections"]
                 ):
-                    joint_parts = partition_source_unit(combined, required=False)
+                    joint_parts = partition_document_context(combined, required=False)
                     separate = previous_parts + numbered_parts(parts, identifier)
                     joint = numbered_parts(joint_parts, previous["id"])
                     # Normalize only the outer request numbering. With no more
@@ -1167,9 +1868,11 @@ def build_review_plan(
                         batch, parts = combined, joint_parts
         source_units.append(
             {
+                **_context_manifest(batch),
                 "id": identifier,
                 "scope": batch["scope"],
                 "assigned_paths": batch["assigned_paths"],
+                "delivered_source_inventory": batch["delivered_source_inventory"],
                 "document_sections": [
                     {key: value for key, value in section.items() if key != "text"}
                     for section in complete_sections
@@ -1205,6 +1908,7 @@ def build_review_plan(
         if group:
             append_source_unit(scope_batch(scope, group))
 
+    cross_scope_audit = None
     if len(batches) > 1 or "cross_scope" in scoped:
         audit_context = additional | scoped.get("cross_scope", set())
         if not presentation & PRESENTATION_ARTIFACT_PATHS:
@@ -1241,6 +1945,17 @@ def build_review_plan(
             "assigned_paths": [],
             "path_diffs": diffs,
             "candidate_files": {p: files[p] for p in sorted(audit_context)},
+            "base_source_files": {},
+            "base_file_blobs": {},
+            "base_file_modes": {},
+            "delivered_source_inventory": sorted(
+                {
+                    (item["version"], item["path"]): item
+                    for batch in batches
+                    for item in batch["delivered_source_inventory"]
+                }.values(),
+                key=lambda item: (item["version"], item["path"]),
+            ),
             "candidate_file_blobs": {
                 p: raw["candidate_file_blobs"][p] for p in audit_context
             },
@@ -1250,10 +1965,16 @@ def build_review_plan(
             "document_inventory": document_inventory,
             "additional_context_paths": sorted(additional),
             "document_sections": audit_sections,
+            "assigned_document_sections": list(range(len(audit_sections))),
         }
-        if not fits(audit):
-            raise capacity_error("Complete cross-scope diff and inventory")
-        batches.append(audit)
+        parts = partition_document_context(audit)
+        cross_scope_audit = _context_manifest(audit) | {
+            "document_inventory": document_inventory,
+        }
+        batches.extend(
+            part | {"context_partition": {"index": index, "count": len(parts)}}
+            for index, part in enumerate(parts, start=1)
+        )
 
     for scope, required_paths in scoped.items():
         targets = [batch for batch in batches if batch["scope"] == scope]
@@ -1275,6 +1996,13 @@ def build_review_plan(
                 raise ReviewError(f"Incomplete assigned candidate source: {path}")
             if path in diffs and batch["path_diffs"].get(path) != diffs[path]:
                 raise ReviewError(f"Incomplete assigned change: {path}")
+        for version, path in _source_requirements(
+            source_contexts, batch["assigned_paths"]
+        ):
+            key = "candidate_files" if version == "candidate" else "base_source_files"
+            originals = files if version == "candidate" else base_sources
+            if batch[key].get(path) != originals[path]:
+                raise ReviewError(f"Incomplete supporting source: {version}:{path}")
     selected_size = _selected_evidence_size(batches, raw)
     selected_bytes = selected_size.utf8_bytes
     if selected_bytes > max_evidence_bytes:
@@ -1311,12 +2039,14 @@ def build_review_plan(
         sum(size.characters for size in overhead_sizes),
     )
     manifest: dict[str, Any] = common | {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "planned_not_reviewed",
         "requested_scopes": review_scopes,
         "selected_scopes": sorted(selected),
         "additional_context_paths": sorted(additional),
         "source_units": source_units,
+        "cross_scope_audit": cross_scope_audit,
+        "delivered_source_inventory": source_inventory,
         "requirement_contracts": {
             identifier: {
                 "source": record.source,
@@ -1330,18 +2060,15 @@ def build_review_plan(
                 "index": i,
                 "phase": b["phase"],
                 "scope": b["scope"],
-                **(
-                    {
-                        "source_unit": b["source_unit"],
-                        "context_partition": b["context_partition"],
-                        "assigned_document_sections": b["assigned_document_sections"],
-                    }
-                    if b["phase"] == "scope"
-                    else {}
-                ),
+                **({"source_unit": b["source_unit"]} if b["phase"] == "scope" else {}),
+                "context_partition": b["context_partition"],
+                "assigned_document_sections": b["assigned_document_sections"],
                 "assigned_paths": b["assigned_paths"],
                 "candidate_file_blobs": b["candidate_file_blobs"],
                 "candidate_file_modes": b["candidate_file_modes"],
+                "base_file_blobs": b["base_file_blobs"],
+                "base_file_modes": b["base_file_modes"],
+                "delivered_source_inventory": b["delivered_source_inventory"],
                 "document_sections": [
                     {k: v for k, v in section.items() if k != "text"}
                     for section in b.get("document_sections", [])

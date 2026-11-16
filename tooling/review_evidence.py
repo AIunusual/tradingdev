@@ -9,6 +9,7 @@ from pathlib import Path
 
 from tooling.presentations import DECK, PRESENTATION_PATHS, is_presentation_path
 from tooling.review_options import validate_review_options
+from tooling.review_scope import source_context_for_path
 
 MAX_EVIDENCE_BYTES = 600_000
 PRESENTATION_GUIDE = f"{DECK}/README.md"
@@ -66,7 +67,11 @@ def _relevant(path: str) -> bool:
     if candidate.parts[0] in {"workspace", ".git", ".venv"}:
         return False
     return (
-        path.startswith(
+        # Registered presentation operations include nonstandard text formats,
+        # such as wrangler.jsonc. Keep this aligned with their context selector
+        # without treating unknown JSONC files or binary deck assets as text.
+        path in _PRESENTATION_OPERATION_PATHS
+        or path.startswith(
             ("scripts/", "tooling/", "research/", ".githooks/", ".Codex/hooks/")
         )
         or candidate.suffix
@@ -304,10 +309,50 @@ def build_evidence(
     # Explicit context can supply text outside automatic selection. If changed,
     # it also needs an owner and its exact diff; do not still label it excluded.
     relevant = sorted(set(relevant) | (all_context & set(changed)))
+    source_contexts: dict[str, dict[str, str | list[str]]] = {}
+    source_paths: dict[str, set[str]] = {"candidate": set(), "base": set()}
+    for anchor in relevant:
+        profile = source_context_for_path(anchor)
+        if profile is None:
+            continue
+        version = "candidate" if anchor in entries else "base"
+        source_entries = entries if version == "candidate" else base_entries
+        if anchor not in source_entries:
+            raise ReviewError(f"Registered changed source has no Git entry: {anchor}")
+        paths = sorted(set(profile.required_paths))
+        for path in paths:
+            relative = Path(path)
+            if (
+                not path
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or relative.as_posix() != path
+                or relative.parts[0] in {"workspace", ".git", ".venv"}
+                or path not in source_entries
+                or source_entries[path][:2]
+                not in {("100644", "blob"), ("100755", "blob")}
+            ):
+                raise ReviewError(
+                    f"Required source context for {anchor!r} must name a regular "
+                    f"non-runtime file in the {version} Git tree: {path!r}"
+                )
+        source_contexts[anchor] = {"version": version, "paths": paths}
+        source_paths[version].update(paths)
     candidate_files = {
         path: _text_blob(repo, candidate_tree, path, entries[path])
-        for path in sorted(docs | context | all_context | (set(relevant) & files))
+        for path in sorted(
+            docs
+            | context
+            | all_context
+            | source_paths["candidate"]
+            | (set(relevant) & files)
+        )
     }
+    base_source_files = {
+        path: _text_blob(repo, base_tree, path, base_entries[path])
+        for path in sorted(source_paths["base"])
+    }
+    base_evidence_paths = (set(relevant) & base_entries.keys()) | source_paths["base"]
     # Force textual diffs only after validating both sides. Git attributes must
     # not hide selected source changes behind a "Binary files differ" marker.
     for path in relevant:
@@ -338,7 +383,8 @@ def build_evidence(
         "exclusion_reasons": {path: _exclusion_reason(path) for path in excluded},
         "selection": (
             "All changed scripts (including extensionless Git hooks), source, "
-            "configuration, Markdown, HTML and CSS text files; docs/.nojekyll; "
+            "configuration, Markdown, HTML and CSS text files; registered "
+            "presentation operation files, including wrangler.jsonc; "
             "all candidate README, ARCHITECTURE, agent policies and docs/**/*.md. "
             "Registered presentation operation changes include the editing guide. "
             "Artwork, renderer and unclassified presentation changes additionally "
@@ -349,22 +395,26 @@ def build_evidence(
             "runtime workspace contents are excluded as individually listed. "
             "Explicit context can add regular UTF-8 text outside automatic "
             "selection, but never runtime content; changed additions get diffs. "
+            "Registered changed paths require their complete supporting source "
+            "blobs from the candidate tree, or the base tree for deleted paths. "
+            "Their source_contexts mapping assigns those originals to consumers "
+            "without adding supporting sources to changed-path ownership. "
             "The tree inventory lists every candidate path; the file inventory "
             "lists complete files available to the scope planner. Changed files "
             "and required presentation context are assigned in full; unchanged "
             "Markdown may be supplied as exact, identified responsibility sections."
         ),
-        "schema_version": 2,
+        "schema_version": 3,
         "path_diffs": path_diffs,
         "candidate_tree_inventory": sorted(files),
         "candidate_file_inventory": sorted(candidate_files),
         "candidate_file_modes": {path: entries[path][0] for path in candidate_files},
         "candidate_file_blobs": {path: entries[path][2] for path in candidate_files},
         "base_file_blobs": {
-            path: base_entries[path][2] for path in relevant if path in base_entries
+            path: base_entries[path][2] for path in sorted(base_evidence_paths)
         },
         "base_file_modes": {
-            path: base_entries[path][0] for path in relevant if path in base_entries
+            path: base_entries[path][0] for path in sorted(base_evidence_paths)
         },
         "base_document_files": {
             path: _text_blob(repo, base_tree, path, base_entries[path])
@@ -372,6 +422,8 @@ def build_evidence(
             if path.endswith(".md") and path in base_entries
         },
         "presentation_context_paths": sorted(context),
+        "source_contexts": source_contexts,
+        "base_source_files": base_source_files,
         "additional_context_paths": sorted(set(review_context)),
         "automatic_document_paths": sorted(docs),
         "scoped_context_paths": {

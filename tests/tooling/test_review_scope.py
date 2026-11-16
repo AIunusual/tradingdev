@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
 from tooling.review_scope import (
+    DEVELOPMENT_OPERATIONS,
     SCOPES,
     BehaviorContext,
     DevelopmentContext,
     behavior_context_for_path,
+    behavior_context_for_section,
     development_context_for_path,
     markdown_sections,
     scope_for_path,
@@ -19,6 +21,7 @@ from tooling.review_scope import (
     sections_for_scope,
     selection_reason,
     shared_document_context_ranges,
+    source_context_for_path,
     unknown_document_sections,
 )
 
@@ -82,6 +85,26 @@ def test_development_contexts_preserve_owners_and_shared_consumers() -> None:
     ):
         assert development_context_for_path(path) is None
     assert "issue_claim" not in SCOPES
+
+
+def test_research_source_registration_does_not_expand_to_other_statistics_paths() -> (
+    None
+):
+    registered = "src/tradingdev/domain/statistics/comparison.py"
+    assert source_context_for_path(registered) is not None
+    for path in (
+        "src/tradingdev/domain/statistics/periods.py",
+        "src/tradingdev/domain/statistics/future_analysis.py",
+        "tests/domain/statistics/test_future_analysis.py",
+        "./" + registered,
+        "/" + registered,
+        "src/tradingdev/domain/../domain/statistics/comparison.py",
+    ):
+        assert source_context_for_path(path) is None
+    assert (
+        behavior_context_for_path("src/tradingdev/domain/statistics/future_analysis.py")
+        is None
+    )
 
 
 def test_development_sections_keep_unknown_subtrees_ancestors_and_references() -> None:
@@ -891,6 +914,9 @@ def test_known_components_receive_their_actual_contracts(
                 "SRS 維護與檢核",
                 "測試證據與文件修正",
                 "檢查期間的主線更新",
+                "文件審查設定",
+                "規劃證據與補充來源",
+                "檢查失敗與程序清理",
             ),
             {"tooling", "presentation"},
         ),
@@ -941,6 +967,25 @@ def test_registered_operational_sections_reach_their_responsible_reviewers(
         assert "Retain complete new evidence." in "".join(
             s.text for s in sections_for_scope(scope, path, expanded)
         )
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guidance_stays_with_candidate_review(heading: str) -> None:
+    path = "docs/development.md"
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    required = next(
+        section
+        for section in markdown_sections(path, text)
+        if section.headings[-1:] == (heading,)
+    )
+    for operation in DEVELOPMENT_OPERATIONS:
+        selected = sections_for_development_context(
+            DevelopmentContext(frozenset({operation})), path, text
+        )
+        assert (required in selected) == (operation == "candidate_review")
 
 
 def test_editor_guide_is_scoped_but_product_overviews_remain_shared() -> None:
@@ -1420,3 +1465,72 @@ def test_first_line_container_reference_does_not_expand_the_document() -> None:
     text = prelude + "# Actual\nunrelated actual\n\n## Tail\nunrelated tail\n"
     parts = sections_for_reference("contract.md", text, "quote")
     assert "".join(part.text for part in parts) == prelude
+
+
+@pytest.mark.parametrize(
+    ("path", "heading", "required"),
+    [
+        (
+            "README.md",
+            "使用樣本外驗證與最佳化",
+            {"FR-EXEC-003", "FR-EXEC-005", "FR-EXEC-006"},
+        ),
+        ("README.md", "交易紀錄與 HTML 報告", {"FR-ML-004", "FR-RES-003"}),
+        ("README.md", "自動保存 Codex CLI 對話", {"FR-RES-006", "FR-EXEC-007"}),
+        (
+            "ARCHITECTURE.md",
+            "核心概念與身分",
+            {"FR-ML-001", "FR-ML-002", "FR-EXEC-004"},
+        ),
+        ("ARCHITECTURE.md", "建立與驗證策略", {"FR-STR-003", "FR-STR-005"}),
+        ("ARCHITECTURE.md", "獨立行情取樣", {"FR-DATA-002", "FR-DATA-003"}),
+    ],
+)
+def test_product_section_registration_requires_its_complete_ancestry(
+    path: str, heading: str, required: set[str]
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    sections = markdown_sections(path, (root / path).read_text(encoding="utf-8"))
+    (section,) = [s for s in sections if s.headings[-1:] == (heading,)]
+    context = behavior_context_for_section(path, section)
+    assert context is not None and required <= context.requirement_ids
+    # Reusing a known leaf below a different parent cannot narrow unknown prose.
+    shadow = replace(section, headings=(*section.headings[:-1], "New parent", heading))
+    assert behavior_context_for_section(path, shadow) is None
+    assert behavior_context_for_section("docs/other.md", section) is None
+
+
+def test_sqlite_registration_preserves_consumers_and_unregistered_neighbors() -> None:
+    path = "src/tradingdev/adapters/storage/sqlite.py"
+    context = behavior_context_for_path(path)
+    assert context is not None
+    assert {
+        "FR-STR-005",
+        "FR-EXEC-002",
+        "FR-RES-005",
+        "FR-RES-006",
+    } <= context.requirement_ids
+    assert not {"FR-ML-001", "FR-ML-002"} & context.requirement_ids
+    assert scope_for_path(path) == "general"
+    assert (
+        behavior_context_for_path("src/tradingdev/adapters/storage/sqlite_extension.py")
+        is None
+    )
+    assert behavior_context_for_path("./" + path) is None
+
+
+def test_reference_definitions_keep_their_enclosing_original_context() -> None:
+    text = (
+        "# Contract\nShared contract premise.\n\n"
+        "## Selected\nUse [evidence].\n\n"
+        "## Reference policy\nDefinitions inherit this qualification.\n\n"
+        "### Definitions\n[evidence]: contract.py\n\n"
+        "### Unrelated example\nDo not select this sibling.\n"
+    )
+    sections = sections_for_reference("docs/contract.md", text, "selected")
+    original = "".join(section.text for section in sections)
+    assert "Shared contract premise." in original
+    assert "Use [evidence]." in original
+    assert "Definitions inherit this qualification." in original
+    assert "[evidence]: contract.py" in original
+    assert "Do not select this sibling." not in original

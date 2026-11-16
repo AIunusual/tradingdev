@@ -790,46 +790,36 @@ daemon 身分／版本／資源及容器映像。Python 與 Node 套件核對已
 
 ### 檢查期間的主線更新
 
-同一次 PR 檢查中若只有主線前進，工具會重新取得合併候選。PR 身分與 head 必須不變，
-且 `change_scope.presentation_only_advance` 須確認更新僅含已登錄簡報檔案、與 PR 路徑
-不重疊，及相同 blob／mode 差異完整套入新候選，才可沿用本次已完成的檢查。
-新候選仍須通過簡報 snapshot；成功輸出 `pr_base_refreshed` JSON，包含 `reused_tree`、
-最新 base／head／tree 與補做的 `checks`，審閱者仍須確認新增差異的語意與必要視覺行為。
-主線更新含編譯工具、設定、一般文件、產品變更或改寫歷史不適用；PR 自身涉及簡報或其工具
-也不適用，因為不同檔案可能互為審查脈絡。補驗證期間再次變動也會失敗。
-這是同一次檢查的候選更新處理；跨次測試重用另依上述證據規則，結束後仍須核對即時版本。
+檢查期間若只有主線前進，且更新僅涉及與 PR 不重疊的已登錄簡報檔案，工具可重建
+候選並補做簡報檢查；PR 身分與 head 必須不變，PR 本身也不能涉及簡報或其工具。成功時輸出
+`pr_base_refreshed` JSON，列出最新 base／head／tree、沿用的 `reused_tree` 及補做的
+`checks`。審閱者仍須確認新增差異的語意與必要視覺行為。
 
-真實模型策略測試另依變更選取。涉及 SRS 的文件／簡報、開發工具與完整程式候選的文件審查需要 Codex 登入與額度；
-這一步預設使用 `gpt-6-luna` 與 `high`；以 `TRADINGDEV_DOC_REVIEW_MODEL`、
-`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 分別覆寫模型及推理強度，例如：
+其他主線變更、改寫歷史或補驗證期間再次變動均須重新檢查；合併前仍要
+[核對即時遠端版本](#3-在-github-審閱並合併)。若需追查自動補驗證為何不適用，
+查看 [change_scope.py](../tooling/git/change_scope.py) 的 `presentation_only_advance`，
+取得路徑重疊、檔案類型及候選差異的判定條件。跨次測試重用另依
+[測試證據規則](#測試證據與文件修正)。
+
+### 文件審查設定
+
+涉及 SRS 的文件／簡報、開發工具與完整程式候選需要 Codex 文件一致性審查，
+須有 CLI 登入與額度。預設模型為 `gpt-6-luna`、推理強度為 `high`；以
+`TRADINGDEV_DOC_REVIEW_MODEL`、`TRADINGDEV_DOC_REVIEW_REASONING_EFFORT` 覆寫：
 
 ```bash
 TRADINGDEV_DOC_REVIEW_MODEL=gpt-6-luna ./scripts/check-pr.sh 27
 ```
 
-文件審查會帶入完整的變更檔案及按責任選取的既有文件原文，輸入量不只取決於
-修改行數；先用下方 `--plan-only` 量測證據與 prompt 大小，再依容量與成本選擇模型。
-每批證據區分實際 Git 變更與必須附上的未修改簡報參照；參照仍保留完整原文，
-供檢查本次變更造成的不一致，不將列入審查等同於本次新增或修改。
-簡報的啟動、安裝、操作指南與部署入口變更附上編輯指南；涉及投影片、主題、渲染器
-或無法辨識的簡報行為時，才一併附上完整投影片與主題，並維持同批審查。
-混合責任模組 `tooling/presentations.py` 會比對固定 base／candidate 的定義；
-只有已登錄的操作定義及其型別／安裝鎖匯入變動時，才採操作範圍。
-未修改的投影片是產物來源，不自動當作所有責任範圍的一般文件。簡報變更僅涉及操作時，
-`presentation` 範圍可按變更檔案分批；完整編輯指南附於每個 `presentation` 批次及該次
-跨範圍審查，仍保留每個變更檔案全文與 diff。其他責任範圍仍依各自文件選取規則取證。
-涉及渲染或產物時，完整指南與簡報來源集中於同一簡報批次。正式選取規則見
-[review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、
-`_operation_definitions_only` 與 `automatic_document_paths`；批次規則見
-[review_plan.py](../tooling/review_plan.py) 的 `build_review_plan`。
-上述設定僅適用於文件審查，不影響 `check-llm`。審查器忽略使用者的全域 Codex
-設定，並輸出選定模型及推理強度；開發階段 `codex review` 的模型仍須另行指定。
-舊的共用環境變數 `TRADINGDEV_CODEX_MODEL` 不再使用，請按用途改用上述專用設定。
-PR 文件審查每次只使用選定模型與推理強度；執行失敗直接回報，不自動切換模型。
-審查程式與來源入口見
-[review_docs.py](../tooling/review_docs.py)、[review_scope.py](../tooling/review_scope.py)。
+檢查會輸出實際模型與推理強度，不讀取使用者的全域 Codex 設定，也不在失敗時
+自動切換模型。上述設定只影響文件審查；真實模型策略測試另依
+[選擇性 LLM 測試](#選擇性-llm-測試) 執行，開發階段的獨立 code review 也須另行設定。
 
-先列出責任範圍或規劃固定 Git 版本的證據；以下命令不呼叫模型、不代表檢查通過：
+### 規劃證據與補充來源
+
+審查輸入包含完整變更檔案、原始 diff 及相關文件原文，大小不只取決於修改行數。
+選擇模型或排查容量失敗前，先規劃固定 Git 版本的證據；以下命令不呼叫模型，
+產生計畫也不代表審查通過：
 
 ```bash
 uv run --no-sync python -m tooling.review_docs --list-scopes
@@ -837,66 +827,38 @@ uv run --no-sync python -m tooling.review_docs \
   --repo /absolute/path/to/repository --base origin/main --tree HEAD --plan-only
 ```
 
-檢查規劃中的 `path_owners` 與 `selected_scopes`，確認程式與測試取得其負責文件。
-檔案 owner 與背景選取分開：已登錄產品模組依其行為責任取得需求原文，再沿該需求的
-正式契約引用取得章節，不因 MCP 或端到端測試歸屬 `interfaces` 就載入全部產品背景。
-同一模組同時負責不同流程時，登錄須涵蓋全部責任。`behavior_contexts` 與
-`requirement_contracts` 可核對變更路徑、需求及契約的選取關係；每批依實際指派的檔案
-取聯集。文件變更比對固定 base 與 candidate 的需求／契約章節；刪除需求或移除引用時
-保留必要的 base 原文。變更檔案及原始 diff 仍完整交付，背景切片不裁減其內容。
-SRS 只有兩側變更都位於需求條目內才精選契約；同時修改共用前提、標題或條目外引用定義時，沿用 owner 的保守背景。
-新模組落入 `general` 時，先依實際使用端與契約判斷責任；已確認的歸屬由
-[review_scope.py](../tooling/review_scope.py) 登錄，並在
-[test_review_scope.py](../tests/tooling/test_review_scope.py) 與
-[test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證必要文件、完整來源與差異仍保留。
-未確認或跨責任的共用內容仍保守選取，不為降低容量任意改派範圍。
-沒有行為登錄的路徑沿用 owner 的保守背景；未知文件與章節仍保留。
-開發工具另依 `development_contexts` 列出的操作責任選取政策與操作原文，不套用產品需求。
-登錄與選取入口為 [review_scope.py](../tooling/review_scope.py) 的 `DevelopmentContext`、
-`development_context_for_path`、`development_context_for_sections` 與
-`sections_for_development_context`；可核對路徑或純操作章節負責的操作及其必要原文。
-`selection_basis` 區分路徑登錄與實際章節變更。操作文件僅在原標題階層仍存在時精選；
-共用或產品政策、未知標題、原章節刪除或改名仍採保守背景。混合操作取聯集，
-未登錄路徑維持 owner 背景，未知章節及其前提仍保留。
-各批 `document_sections` 也列出選取原因；`development-operation-context` 表示依開發操作
-選取的政策與操作背景，也包含為維持完整性而保留的未知章節。`unknown-sections-preserved` 或
-`unfamiliar-document-full-document` 表示尚未登錄的內容被保守保留。
-盤點時須核對章節讀者、契約及使用端，再更新同一責任登錄與原文保留測試；
-新增章節不能直接沿用父章節歸屬，跨範圍的總覽仍可保留完整內容。
-預設容量是工具的操作上限。若 `--plan-only` 因預設上限中止，可在同一命令提供下表的
-容量選項以完成純規劃；這不呼叫模型，也不代表已核實模型容量。取得唯一證據、單批
-與總 prompt 大小後，再核對所選模型容量並預留輸出空間，明確設定當次檢查選項。
-`evidence_utf8_bytes` 是實際交付原文去重後的大小，受 `--max-evidence-bytes` 限制；
-未選入審查的文件不占此額度。`source_pool_utf8_bytes` 是本機資料池大小，供診斷使用，
-不代表實際模型輸入或記憶體用量。
+依規劃 JSON 核對下列資訊：
 
-每批的原文與 prompt 大小見 `batches`；合計大小見 `total_prompt_utf8_bytes` 與
-`total_prompt_characters`。`delivered_original_*` 加總各批來源、diff 與章節原文的每次出現；
-`repeated_original_*` 是交付原文合計減去唯一原文，包含同批重疊章節及跨批重送。
-唯一原文按路徑、Git 版本與 blob 的文件行聯集去重，完整候選檔案涵蓋其候選章節；
-diff 另外計量，不因不同來源文字相同就合併。`prompt_overhead_*` 是實際 prompt
-減去交付原文，包含指引、清單／metadata、JSON 結構與 escaping，不能全算為原文重送。
-上述成本分別提供 UTF-8 bytes 與 Unicode 字元數，兩者都不是 tokens；總 prompt 上限仍適用。
+| 要確認的問題 | 輸出與讀法 |
+| --- | --- |
+| 變更由哪個範圍審查？ | `path_owners`、`selected_scopes` 列出負責範圍；owner 不代表所有背景都必須載入。 |
+| 為何選到這些文件？ | `behavior_contexts`、`requirement_contracts`、`development_contexts` 與各批 `document_sections` 列出責任及來源；`fallback_scope` 表示仍採該 owner 的保守背景。 |
+| 必要來源是否在同一批？ | `source_contexts` 列出登錄來源及 Git 版本，再核對各批完整檔案與章節；交付清單或雜湊不等於原文，也不是審查通過證明。 |
+| 容量花在哪裡？ | `evidence_utf8_bytes` 是唯一原文；`delivered_original_*` 與 `repeated_original_*` 顯示交付及重複量，`prompt_overhead_*` 是指引與封裝成本。 |
+| 模型實際收到多少輸入？ | 查看各 `batches` 的 prompt 大小及 `total_prompt_*` 合計；`source_pool_utf8_bytes` 只是本機資料池，不是模型輸入。 |
 
-容量規劃通過不保證跨檔對照所需的原文都在同一批。遇到缺少同批證據的 finding，
-補入指定範圍的完整來源，或核對模型容量後明示提高單批上限，讓必要原文同批並重新審查；
-不能以其他批次已有原文視為通過。必要的完整來源仍可能超出容量而失敗，工具不會截斷
-或省略原文來符合上限。
+大小分別以 UTF-8 bytes 與 Unicode 字元計量，兩者都不是 tokens。若預設容量讓
+`--plan-only` 中止，可明示容量選項取得完整計畫；這不代表已核實模型容量。
+先檢查內容歸屬與重複，再核對所選模型容量並預留輸出空間，才設定實際審查上限。
+容量不足時，依錯誤訊息確認超量來自完整 diff、固定來源或文件脈絡。工具可將
+文件脈絡分批；若完整 diff、必要來源或不可拆章節仍超過上限，須拆分變更，
+或核實模型容量後調整上限。
 
-需追查計量或批次完整性時，正式定義見 [review_plan.py](../tooling/review_plan.py) 的
-`_selected_evidence_size`、`build_review_plan` 與 `ReviewPlan.verify`；分別提供唯一證據
-計量、批次規劃及計畫完整性核對。
+無工具 reviewer 無法自行開啟參照。必要原文須出現在需要它的批次；來源清單或
+其他批次的結論不能代替原文。缺少來源時，以 `--review-context-for SCOPE:PATH`
+補入完整候選檔案；跨範圍比對使用 `cross_scope`。各批均須獨立通過。
 
-通常使用自動推導的範圍；需要調整時，`check-pr.sh` 支援：
+補充及必要背景來源須為一般 UTF-8 文字檔，不接受符號連結。一般變更中的
+符號連結只審查連結自身，不讀取其目標內容。
 
 | 選項 | 使用目的 |
 | --- | --- |
-| `--review-scope SCOPE` | 明確增加審查責任範圍；不可漏掉變更所屬範圍，可重複。 |
-| `--review-context PATH` | 為所有批次補入候選 Git 中的完整文字檔，可重複。 |
-| `--review-context-for SCOPE:PATH` | 僅為指定責任範圍或 `cross_scope` 補入完整檔案，可重複。 |
-| `--max-evidence-bytes`、`--max-prompt-bytes`、`--max-total-prompt-bytes` | 分別限制實際交付的唯一原文、單批 prompt 與總 prompt；先量測，再依模型容量明確設定。 |
-| `--documentation-timeout-seconds` | 文件審查所有批次共用的期限。 |
-| `--snapshot-timeout-seconds` | 品質／測試 snapshot 的期限；不改變測試範圍或工具自身期限。 |
+| `--review-scope SCOPE` | 增加審查責任範圍，不可漏掉變更所屬範圍；可重複。 |
+| `--review-context PATH` | 為所有批次補入候選 Git 中的完整文字檔；可重複。 |
+| `--review-context-for SCOPE:PATH` | 僅為指定範圍或 `cross_scope` 補入完整檔案；可重複。 |
+| `--max-evidence-bytes`、`--max-prompt-bytes`、`--max-total-prompt-bytes` | 分別限制唯一原文、單批 prompt 與總 prompt；先量測再設定。 |
+| `--documentation-timeout-seconds` | 所有文件審查批次共用的期限。 |
+| `--snapshot-timeout-seconds` | 品質／測試 snapshot 的期限，不改變測試範圍或工具自身期限。 |
 
 例如為單一範圍補上必要來源，並依實測耗時設定期限：
 
@@ -906,24 +868,33 @@ diff 另外計量，不因不同來源文字相同就合併。`prompt_overhead_*
   --documentation-timeout-seconds 900 --snapshot-timeout-seconds 7200
 ```
 
-請以實際規劃的 scope／檔案代換。預設值與其他選項以 `scripts/check-pr.sh --help`
-為準。文件審查範圍選取不縮減所選分流的測試；變更檔案保留完整內容與 diff，相關文件按責任取原文。
-缺少必要證據、容量不足、finding 或逾時均須修正後重查，不能截斷內容或忽略失敗。
+請以實際規劃的 scope／檔案代換，預設值與其他選項見 `scripts/check-pr.sh --help`。
+文件審查範圍不縮減測試範圍；變更全文與 diff 完整保留，背景章節使用原文。
+缺少證據、容量不足、finding 或逾時均須處理後重查，不截斷證據或忽略失敗。
 
-Codex 非零退出時，檢查會連同批次身分回報退出碼、stderr 尾端及 JSON
-`error`／`turn.failed` 事件的錯誤類型、`code`、`message` 或字串 `error`。
-stderr 與事件診斷各限制為 4,000 個 Unicode 字元，超量會標示 `[truncated]`；
-這只限制錯誤輸出，不截斷審查證據。事件不會整份輸出，缺少可辨識診斷時會明示。
-錯誤訊息仍可能包含服務回傳的敏感內容，分享日誌前須檢查；檢查器不會自動發布日誌。
-非零退出、零退出但有失敗事件、無效事件或工具呼叫均不算通過，須排除原因後重新檢查。
+維護或排查選取規則時，使用以下入口；修改登錄前須核對相關使用端與契約，
+並以證據涵蓋測試確認必要原文仍在：
 
-文件審查及 Git 檢查入口以退出碼 `86` 表示程序清理未確認，外層自動保留相關工作區。
-stderr JSON 診斷契約見 [ProcessCleanupError.payload](../tooling/process_guard.py)，
-文字 `message` 僅供顯示。文件審查在同一程序內彙整 batch 的保留路徑及中斷狀態；
-跨 CLI 時各程序分別輸出 JSON，外層依退出碼保留自己的工作區，不彙整子程序的欄位。
-一般失敗或已確認停止的逾時仍自動清理。
+| 維護任務 | 正式入口與可取得的資訊 |
+| --- | --- |
+| 核對路徑責任與所需來源 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_path`、`development_context_for_path`、`source_context_for_path`，提供行為、開發操作及必要來源的登錄。 |
+| 維護產品文件的章節責任 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_section` 提供章節與需求／契約的對應；登錄與證據涵蓋測試見 [test_review_scope.py](../tests/tooling/test_review_scope.py)、[test_review_plan.py](../tests/tooling/test_review_plan.py)。 |
+| 追查簡報參照選取 | [review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、`_operation_definitions_only`、`automatic_document_paths`，判定何時需要編輯指南或完整簡報來源。 |
+| 追查容量及批次完整性 | [review_plan.py](../tooling/review_plan.py) 的 `_selected_evidence_size`、`build_review_plan`、`ReviewPlan.verify`，提供原文計量、批次規劃與完整性核對。 |
 
-長時間檢查保留完整日誌，透過[完成通知 skill](../.agents/skills/wait-for-check/SKILL.md)
+### 檢查失敗與程序清理
+
+Codex 執行失敗時，先看批次身分、退出碼與錯誤摘要；診斷包含 stderr 尾端及可辨識的
+`error`／`turn.failed` 事件。過長診斷以 `[truncated]` 標示，這只縮短錯誤輸出，
+不裁減審查證據。日誌可能包含服務回傳的敏感內容，分享前須檢查；工具不會自動發布。
+執行失敗或無效的審查回覆都不算通過，須排除原因後重查。
+
+退出碼 `86` 表示程序清理未確認，相關工作區會保留；依輸出定位未停止的程序與
+保留路徑，確認停止後才能清理。需要解析 JSON 診斷時，查看
+[ProcessCleanupError.payload](../tooling/process_guard.py) 的欄位定義；文字 `message`
+只供顯示。一般失敗或已確認停止的逾時仍會自動清理。
+
+長時間檢查保存完整日誌，透過[完成通知 skill](../.agents/skills/wait-for-check/SKILL.md)
 等待原執行結束；完成後讀退出碼與摘要，有異常再讀診斷。未確認程序停止前保留臨時目錄。
 
 ### 3. 在 GitHub 審閱並合併

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ from typing import Any
 
 import pytest
 from tooling import review_docs, review_plan
+from tooling.git.change_scope import classify_changes
 from tooling.presentations import DECK, PRESENTATION_PATHS
 from tooling.requirements import check_requirements
 from tooling.review_evidence import ReviewError, build_evidence
@@ -53,6 +55,14 @@ def change(tmp_path: Path) -> tuple[Path, str, str]:
 
 def _payload(prompt: str) -> dict[str, Any]:
     return dict(json.loads(prompt.rsplit("\n\n", 1)[-1]))
+
+
+def _prompt_paths(batch: dict[str, Any]) -> list[str]:
+    return sorted(
+        prefix + filename
+        for prefix, filenames in batch["candidate_tree_inventory"].items()
+        for filename in filenames
+    )
 
 
 def test_model_options_review_preserves_source_and_development_guidance(
@@ -209,6 +219,288 @@ def test_each_changed_file_has_one_complete_owner_and_one_cross_scope_audit(
     assert plan.manifest["status"] == "planned_not_reviewed"
 
 
+@pytest.fixture
+def cross_scope_context_change(tmp_path: Path) -> str:
+    """Unchanged operational sections require an audit larger than one request."""
+    _git(tmp_path, "init", "-q")
+    paths = ("tooling/git/claim_issue.py", "src/unregistered.py")
+    for path in paths:
+        _write(tmp_path, path, "VALUE = 'old'\n")
+    _write(tmp_path, "src/common.py", "CONTRACT = '共同來源'\n")
+    _write(
+        tmp_path,
+        "docs/development.md",
+        "# 開發指南\n共同前提。\n\n## 接手 issue\n接手前提。\n"
+        + "".join(
+            f"\n### Operation {i}\n" + str(i) * 6_000 + "\n[definition][policy]\n"
+            for i in range(4)
+        )
+        + "\n### Definitions\n[policy]: ../AGENTS.md\n",
+    )
+    base = _tree(tmp_path)
+    for path in paths:
+        _write(tmp_path, path, "VALUE = 'new'\n")
+    return build_evidence(
+        tmp_path, base, _tree(tmp_path), review_context=("src/common.py",)
+    )
+
+
+def test_cross_scope_partitions_repeat_all_diffs_and_cover_context(
+    cross_scope_context_change: str,
+) -> None:
+    raw = json.loads(cross_scope_context_change)
+    whole = build_review_plan(cross_scope_context_change)
+    expected = next(
+        _payload(p) for p in whole.prompts if _payload(p)["phase"] == "cross_scope"
+    )
+    plan = build_review_plan(cross_scope_context_change, max_prompt_bytes=20_000)
+    parts = [_payload(p) for p in plan.prompts if _payload(p)["phase"] == "cross_scope"]
+    assert len(parts) > 1
+    assigned = [
+        p["document_sections"][index]
+        for p in parts
+        for index in p["assigned_document_sections"]
+    ]
+    assert assigned == expected["document_sections"]
+    for index, part in enumerate(parts, start=1):
+        assert part["context_partition"] == {"index": index, "count": len(parts)}
+        assert part["path_diffs"] == raw["path_diffs"]
+        assert part["candidate_files"] == {
+            "src/common.py": raw["candidate_files"]["src/common.py"]
+        }
+        if any(
+            "Operation" in section["headings"][-1]
+            for section in part["document_sections"]
+            if section["headings"]
+        ):
+            text = "".join(section["text"] for section in part["document_sections"])
+            assert "共同前提。" in text and "接手前提。" in text
+            assert "[policy]: ../AGENTS.md" in text
+    assert all(len(prompt.encode()) <= 20_000 for prompt in plan.prompts)
+    assert plan.manifest["candidate_tree_inventory"] == raw["candidate_tree_inventory"]
+    for part in parts:
+        assert _prompt_paths(part) == raw["candidate_tree_inventory"]
+        assert "behavior_contexts" not in part and "development_contexts" not in part
+    assert "behavior_contexts" in plan.manifest
+    for sections in plan.manifest["cross_scope_audit"]["document_inventory"].values():
+        assert all(
+            "blob_oid" in section and "headings" in section for section in sections
+        )
+    for unit in ("utf8_bytes", "characters"):
+        assert plan.manifest[f"evidence_{unit}"] == whole.manifest[f"evidence_{unit}"]
+        assert plan.manifest[f"delivered_original_{unit}"] == (
+            plan.manifest[f"evidence_{unit}"]
+            + plan.manifest[f"repeated_original_{unit}"]
+        )
+        assert plan.manifest[f"total_prompt_{unit}"] == (
+            plan.manifest[f"delivered_original_{unit}"]
+            + plan.manifest[f"prompt_overhead_{unit}"]
+        )
+    plan.verify()
+    with pytest.raises(ReviewError, match="Total review input"):
+        build_review_plan(
+            cross_scope_context_change,
+            max_prompt_bytes=20_000,
+            max_total_prompt_bytes=plan.manifest["total_prompt_utf8_bytes"] - 1,
+        )
+
+
+@pytest.mark.parametrize("phase", ["scope", "cross_scope"])
+@pytest.mark.parametrize(
+    "corruption",
+    ["source", "diff", "section_text", "section_assignment", "blob_identity"],
+)
+def test_review_verify_binds_actual_partition_evidence(
+    cross_scope_context_change: str,
+    phase: str,
+    corruption: str,
+) -> None:
+    plan = build_review_plan(cross_scope_context_change, max_prompt_bytes=20_000)
+    manifest = json.loads(json.dumps(plan.manifest))
+    prompts = list(plan.prompts)
+    index = next(
+        i
+        for i, b in enumerate(manifest["batches"])
+        if b["phase"] == phase and b["document_sections"]
+    )
+    content = _payload(prompts[index])
+    unit = (
+        manifest["cross_scope_audit"]
+        if phase == "cross_scope"
+        else manifest["source_units"][manifest["batches"][index]["source_unit"] - 1]
+    )
+    if corruption == "source":
+        del content["candidate_files"][next(iter(content["candidate_files"]))]
+    elif corruption == "diff":
+        del content["path_diffs"][next(iter(content["path_diffs"]))]
+    elif corruption == "section_text":
+        content["document_sections"][0]["text"] = "Substituted original prose.\n"
+    elif corruption == "section_assignment":
+        content["assigned_document_sections"] = []
+    else:
+        path = next(iter(content["candidate_files"]))
+        content["candidate_files"][path] = "REPLACED = True\n"
+        # Even an updated core/hash envelope must still validate the actual source
+        # against the fixed Git blob, not just mutually agreeing inventories.
+        unit["core_hash"] = review_plan._digest(review_plan._context_core(content))
+    prefix = prompts[index][
+        : len(prompts[index]) - len(prompts[index].rsplit("\n\n", 1)[-1])
+    ]
+    prompts[index] = prefix + review_plan._json(content)
+    manifest["prompt_hashes"] = [
+        hashlib.sha256(prompt.encode()).hexdigest() for prompt in prompts
+    ]
+    manifest["plan_hash"] = review_plan._digest(
+        {k: v for k, v in manifest.items() if k != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="context|document|partition|blob|source"):
+        review_plan.ReviewPlan(tuple(prompts), manifest).verify()
+
+
+@pytest.mark.parametrize("side", ["prompt", "manifest"])
+@pytest.mark.parametrize("inventory", ["candidate_tree", "document"])
+def test_review_inventory_projection_matches_mechanical_manifest(
+    cross_scope_context_change: str, side: str, inventory: str
+) -> None:
+    plan = build_review_plan(cross_scope_context_change, max_prompt_bytes=20_000)
+    manifest = json.loads(json.dumps(plan.manifest))
+    prompts = list(plan.prompts)
+    index = next(
+        i
+        for i, batch in enumerate(manifest["batches"])
+        if batch["phase"] == "cross_scope"
+    )
+    content = _payload(prompts[index])
+    if inventory == "candidate_tree":
+        if side == "prompt":
+            content["candidate_tree_inventory"].clear()
+        else:
+            manifest["candidate_tree_inventory"].remove("src/common.py")
+    elif side == "prompt":
+        content["document_inventory"].clear()
+    else:
+        path = next(iter(manifest["cross_scope_audit"]["document_inventory"]))
+        manifest["cross_scope_audit"]["document_inventory"][path][0]["start_line"] += 1
+    prefix = prompts[index][
+        : len(prompts[index]) - len(prompts[index].rsplit("\n\n", 1)[-1])
+    ]
+    prompts[index] = prefix + review_plan._json(content)
+    manifest["prompt_hashes"] = [
+        hashlib.sha256(prompt.encode()).hexdigest() for prompt in prompts
+    ]
+    manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in manifest.items() if key != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="inventory changed"):
+        review_plan.ReviewPlan(tuple(prompts), manifest).verify()
+
+
+@pytest.mark.parametrize("missing", ["section", "partition", "dependency"])
+def test_cross_scope_partition_manifest_rejects_missing_context(
+    cross_scope_context_change: str,
+    missing: str,
+) -> None:
+    plan = build_review_plan(cross_scope_context_change, max_prompt_bytes=20_000)
+    manifest = json.loads(json.dumps(plan.manifest))
+    prompts = list(plan.prompts)
+    indices = [
+        i
+        for i, batch in enumerate(manifest["batches"])
+        if batch["phase"] == "cross_scope"
+    ]
+    assert len(indices) > 1
+    index = indices[-1]
+    if missing == "partition":
+        del manifest["batches"][index]
+        del prompts[index]
+    else:
+        content = _payload(prompts[index])
+        part = manifest["batches"][index]
+        if missing == "section":
+            content["assigned_document_sections"] = []
+            part["assigned_document_sections"] = []
+        else:
+            dependencies = set(range(len(content["document_sections"]))) - set(
+                content["assigned_document_sections"]
+            )
+            assert dependencies
+            remove = min(dependencies)
+            del content["document_sections"][remove]
+            del part["document_sections"][remove]
+            assignments = [
+                i - (i > remove) for i in content["assigned_document_sections"]
+            ]
+            content["assigned_document_sections"] = part[
+                "assigned_document_sections"
+            ] = assignments
+        prefix = prompts[index][
+            : len(prompts[index]) - len(prompts[index].rsplit("\n\n", 1)[-1])
+        ]
+        prompts[index] = prefix + review_plan._json(content)
+    manifest["prompt_hashes"] = [
+        hashlib.sha256(prompt.encode()).hexdigest() for prompt in prompts
+    ]
+    manifest["plan_hash"] = review_plan._digest(
+        {k: v for k, v in manifest.items() if k != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="partition|original"):
+        review_plan.ReviewPlan(tuple(prompts), manifest).verify()
+
+
+def test_cross_scope_capacity_failure_reports_measured_components(
+    cross_scope_context_change: str,
+) -> None:
+    with pytest.raises(ReviewError, match="cannot fit.*review budget") as caught:
+        build_review_plan(cross_scope_context_change, max_prompt_bytes=100)
+    detail = str(caught.value)
+    assert "Measured prompt" in detail and "characters" in detail
+    for component in (
+        "diffs",
+        "candidate_sources",
+        "base_sources",
+        "document_sections",
+        "instructions_metadata_json",
+    ):
+        assert f"{component}=" in detail
+
+
+def test_cross_scope_refuses_an_oversized_complete_diff(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    for index in range(6):
+        _write(tmp_path, f"src/module{index}.py", "OLD = 0\n" * 300)
+    base = _tree(tmp_path)
+    for index in range(6):
+        _write(tmp_path, f"src/module{index}.py", "NEW = 1\n" * 300)
+    evidence = build_evidence(tmp_path, base, _tree(tmp_path))
+    with pytest.raises(ReviewError, match="Complete cross-scope diff") as caught:
+        build_review_plan(evidence, max_prompt_bytes=20_000)
+    assert "document_sections=0 bytes/0 characters" in str(caught.value)
+    assert "No evidence was truncated" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "field", ["prompt_utf8_bytes", "original_characters", "prompt_overhead_utf8_bytes"]
+)
+def test_review_verify_remeasures_actual_prompt(
+    change: tuple[Path, str, str],
+    field: str,
+) -> None:
+    repo, base, tree = change
+    plan = build_review_plan(build_evidence(repo, base, tree))
+    plan.manifest["batches"][0][field] += 1
+    plan.manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in plan.manifest.items() if key != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="measurements changed"):
+        plan.verify()
+
+
+def test_tree_prefix_groups_preserve_unusual_path_characters() -> None:
+    paths = ["README.md", "src/有 空白.py", "src/a\nb.py", "src/x/y.py"]
+    payload = {"candidate_tree_inventory": review_plan._group_tree_paths(paths)}
+    assert _prompt_paths(payload) == sorted(paths)
+
+
 @pytest.mark.parametrize("change_deck", [False, True])
 def test_required_deck_context_is_distinguished_from_actual_changes(
     tmp_path: Path, change_deck: bool
@@ -359,7 +651,7 @@ def test_context_partitions_repeat_complete_sources_and_cover_original_sections(
         assert part["path_diffs"] == original["path_diffs"]
         for path in (source, "src/shared_context.py", "src/scoped_context.py"):
             assert part["candidate_files"][path] == original["candidate_files"][path]
-        assert part["candidate_tree_inventory"] == original["candidate_tree_inventory"]
+        assert _prompt_paths(part) == original["candidate_tree_inventory"]
     audit = [batch for batch in batches if batch["phase"] == "cross_scope"]
     assert len(audit) == 1
     assert audit[0]["path_diffs"] == original["path_diffs"]
@@ -493,7 +785,7 @@ def test_context_partitions_keep_selected_ancestor_prose_with_each_child(
             f"## Repeated parent\nPARENT_{i}_PREMISE\n"
             + "P" * parent_size
             + f"\n\n### Child {i}\nCHILD_{i}_OBLIGATION\n"
-            + "C" * 6_000
+            + "C" * 5_500
             + "\n\n"
             for i in range(2)
         ),
@@ -655,8 +947,8 @@ def test_context_partitions_keep_prelude_and_later_reference_dependencies(
         index - (index > definition_index)
         for index in manifest_part["assigned_document_sections"]
     ]
-    monkeypatch.setattr(
-        review_plan, "_digest", lambda _value: plan.manifest["plan_hash"]
+    plan.manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in plan.manifest.items() if key != "plan_hash"}
     )
     with pytest.raises(ReviewError, match="required original"):
         plan.verify()
@@ -760,10 +1052,12 @@ def test_context_partition_manifest_rejects_incomplete_coverage(
     else:
         plan.manifest["batches"].remove(parts[0])
     # Isolate semantic coverage validation from the separately tested hash guard.
-    monkeypatch.setattr(
-        review_plan, "_digest", lambda _value: plan.manifest["plan_hash"]
+    plan.manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in plan.manifest.items() if key != "plan_hash"}
     )
-    with pytest.raises(ReviewError, match="ownership|original sections|partition"):
+    with pytest.raises(
+        ReviewError, match="ownership|original sections|partition|batches"
+    ):
         plan.verify()
 
 
@@ -851,10 +1145,10 @@ def test_every_scope_can_identify_deletions_from_the_candidate_tree(
     assert len({batch["scope"] for batch in payloads}) > 1
     expected = _git(tmp_path, "ls-tree", "-r", "--name-only", tree).splitlines()
     for batch in payloads:
-        assert batch["candidate_tree_inventory"] == expected
+        assert _prompt_paths(batch) == expected
         assert "web/index.html" in batch["changed_paths"]
-        assert "web/index.html" not in batch["candidate_tree_inventory"]
-        assert ".gitignore" in batch["candidate_tree_inventory"]
+        assert "web/index.html" not in _prompt_paths(batch)
+        assert ".gitignore" in _prompt_paths(batch)
 
 
 def test_path_diffs_treat_git_pathspec_characters_literally(tmp_path: Path) -> None:
@@ -1112,6 +1406,145 @@ def test_explicit_context_keeps_runtime_and_symlink_restrictions(
         _write(repo, path, "private context\n")
     with pytest.raises(ReviewError, match="regular non-runtime"):
         review_docs.prepare_review(base, _tree(repo), repo=repo, review_context=(path,))
+
+
+@pytest.mark.parametrize("operation", ["add", "retarget", "delete"])
+def test_assigned_symlink_changes_keep_git_target_and_cross_scope_diff(
+    tmp_path: Path, operation: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    source = "tooling/git/claim_issue.py"
+    path = "src/link.py"
+    link = tmp_path / path
+    link.parent.mkdir()
+    _write(tmp_path, source, "VALUE = 'old'\n")
+    if operation != "add":
+        link.symlink_to("../old-target.py")
+    base = _tree(tmp_path)
+    if operation != "add":
+        link.unlink()
+    target = "../../outside-untracked.py"
+    if operation != "delete":
+        link.symlink_to(target)
+    _write(tmp_path, source, "VALUE = 'new'\n")
+    tree = _tree(tmp_path)
+    # The reviewer must read the fixed Git target, never this current link or its
+    # destination. The snapshot's targets deliberately do not exist on disk.
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to("UNSTAGED_TARGET.py")
+    raw = json.loads(build_evidence(tmp_path, base, tree))
+    plan = build_review_plan(json.dumps(raw))
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(batch for batch in batches if path in batch["assigned_paths"])
+    assert owner["path_diffs"][path] == raw["path_diffs"][path]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert audit["path_diffs"] == raw["path_diffs"]
+    assert "UNSTAGED_TARGET" not in "".join(plan.prompts)
+    if operation == "delete":
+        assert path not in owner["candidate_files"]
+        assert path not in _prompt_paths(audit)
+        assert "deleted file mode 120000" in owner["path_diffs"][path]
+    else:
+        assert owner["candidate_files"][path] == target
+        assert owner["candidate_file_modes"][path] == "120000"
+    plan.verify()
+
+
+def test_assigned_symlink_target_tampering_fails_fixed_blob_validation(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    base = _tree(tmp_path)
+    path = "link.py"
+    (tmp_path / path).symlink_to("missing-target.py")
+    plan = build_review_plan(build_evidence(tmp_path, base, _tree(tmp_path)))
+    manifest = json.loads(json.dumps(plan.manifest))
+    content = _payload(plan.prompts[0])
+    content["candidate_files"][path] = "forged-target.py"
+    # Recompute the envelope to isolate fixed-blob checking from transport hashes.
+    manifest["source_units"][0]["core_hash"] = review_plan._digest(
+        review_plan._context_core(content)
+    )
+    prefix = plan.prompts[0][
+        : len(plan.prompts[0]) - len(plan.prompts[0].rsplit("\n\n", 1)[-1])
+    ]
+    prompts = (prefix + review_plan._json(content),)
+    manifest["prompt_hashes"] = [hashlib.sha256(prompts[0].encode()).hexdigest()]
+    manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in manifest.items() if key != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="differs from its Git blob"):
+        review_plan.ReviewPlan(prompts, manifest).verify()
+
+
+def test_presentation_operation_symlink_is_not_required_deck_context(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-q")
+    guide = f"{DECK}/README.md"
+    _write(tmp_path, guide, "# Editing guide\nUse the presentation operation.\n")
+    path = "scripts/presentations.sh"
+    script = tmp_path / path
+    script.parent.mkdir()
+    script.symlink_to("old-operation.sh")
+    base = _tree(tmp_path)
+    script.unlink()
+    script.symlink_to("new-operation.sh")
+    raw = json.loads(build_evidence(tmp_path, base, _tree(tmp_path)))
+    assert raw["presentation_context_paths"] == [guide]
+    plan = build_review_plan(json.dumps(raw))
+    assert plan.manifest["presentation_context_paths"] == [guide]
+    owner = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if path in _payload(prompt)["assigned_paths"]
+    )
+    assert owner["scope"] == "presentation"
+    assert owner["candidate_files"][path] == "new-operation.sh"
+    assert owner["candidate_file_modes"][path] == "120000"
+    assert owner["presentation_context_paths"] == [guide]
+    plan.verify()
+    plan.manifest["presentation_context_paths"] = [path]
+    plan.manifest["plan_hash"] = review_plan._digest(
+        {key: value for key, value in plan.manifest.items() if key != "plan_hash"}
+    )
+    with pytest.raises(ReviewError, match="disagree on presentation_context_paths"):
+        plan.verify()
+
+
+@pytest.mark.parametrize("name", ["README.md", "slides.md"])
+def test_required_presentation_original_cannot_be_a_symlink(
+    tmp_path: Path, name: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    for path in PRESENTATION_PATHS:
+        _write(tmp_path, path, "Required original presentation context.\n")
+    base = _tree(tmp_path)
+    required = tmp_path / DECK / name
+    required.unlink()
+    required.symlink_to("missing-original.md")
+    with pytest.raises(ReviewError, match="not an ordinary non-executable Git blob"):
+        build_evidence(tmp_path, base, _tree(tmp_path))
+
+
+@pytest.mark.parametrize("context", ["additional", "scoped"])
+def test_assigned_symlink_cannot_also_supply_required_context(
+    tmp_path: Path, context: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    base = _tree(tmp_path)
+    path = "link.py"
+    (tmp_path / path).symlink_to("missing-target.py")
+    raw = json.loads(build_evidence(tmp_path, base, _tree(tmp_path)))
+    # build_evidence already rejects explicit symlinks; plan validation must
+    # independently preserve that rule even when the same path is assigned.
+    if context == "additional":
+        raw["additional_context_paths"] = [path]
+    else:
+        raw["scoped_context_paths"] = {"general": [path]}
+    with pytest.raises(ReviewError, match="not regular text"):
+        build_review_plan(json.dumps(raw))
 
 
 def test_scoped_originals_are_isolated_and_preserve_other_document_sections(
@@ -1549,9 +1982,95 @@ def test_changed_requirement_selects_its_contract_without_expanding_its_book(
     )
     assert "FIRST_CONTRACT_ORIGINAL" in context
     assert ("SECOND_CONTRACT_ORIGINAL" in context) is change_second
-    assert owner["behavior_contexts"][path]["requirement_ids"] == (
+    assert plan.manifest["behavior_contexts"][path]["requirement_ids"] == (
         ["FR-ML-003", "FR-ML-004"] if change_second else ["FR-ML-003"]
     )
+
+
+@pytest.mark.parametrize("deleted_requirement", [False, True])
+@pytest.mark.parametrize("nested_definitions", [False, True])
+def test_precise_requirement_retains_original_premises_and_shared_references(
+    tmp_path: Path, deleted_requirement: bool, nested_definitions: bool
+) -> None:
+    _git(tmp_path, "init", "-q")
+    source = "src/tradingdev/app/research.py"
+    requirement_path = "docs/requirements/strategy.md"
+    _write(tmp_path, source, "VALUE = 'old'\n")
+    _write(
+        tmp_path,
+        "docs/strategy_contract.md",
+        "# Strategy Contract\n\n## Python Contract\nREQUIRED_CONTRACT\n\n"
+        "## ML Research Contract\nUNRELATED_CONTRACT\n",
+    )
+    prefix = "# Strategy requirements\n\nCHAPTER_ORIGINAL_PREMISE\n\n"
+    definition = "[contract]: ../strategy_contract.md#python-contract\n\n"
+    first = _behavior_requirement(
+        "FR-STR-001", "../strategy_contract.md#python-contract", "REQUIRED_OBLIGATION"
+    ).replace(
+        "[original contract](../strategy_contract.md#python-contract)",
+        "[original contract][contract]",
+    )
+    second = _behavior_requirement(
+        "FR-STR-002",
+        "../strategy_contract.md#ml-research-contract",
+        "DEFINITION_PARENT",
+    )
+    third = _behavior_requirement(
+        "FR-STR-003",
+        "../strategy_contract.md#ml-research-contract",
+        "UNRELATED_SIBLING",
+    )
+    suffix = (
+        second
+        + (
+            "### Shared definitions\nDEFINITION_ORIGINAL_PREMISE\n\n" + definition
+            if nested_definitions
+            else ""
+        )
+        + third
+    )
+    preface = prefix + ("" if nested_definitions else definition)
+    _write(tmp_path, requirement_path, preface + first + suffix)
+    base = _tree(tmp_path)
+    _write(tmp_path, source, "VALUE = 'new'\n")
+    if deleted_requirement:
+        _write(tmp_path, requirement_path, preface + suffix)
+    tree = _tree(tmp_path)
+    plan = build_review_plan(build_evidence(tmp_path, base, tree))
+    version = "base" if deleted_requirement else "candidate"
+    owner = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if source in _payload(prompt)["assigned_paths"]
+    )
+    sections = [
+        section
+        for section in owner["document_sections"]
+        if section["path"] == requirement_path and section["version"] == version
+    ]
+    selected = "".join(section["text"] for section in sections)
+    assert "REQUIRED_OBLIGATION" in selected
+    assert "CHAPTER_ORIGINAL_PREMISE" in selected
+    assert definition in selected
+    assert "UNRELATED_SIBLING" not in selected
+    assert ("DEFINITION_PARENT" in selected) is nested_definitions
+    assert ("DEFINITION_ORIGINAL_PREMISE" in selected) is nested_definitions
+    selected_tree = base if deleted_requirement else tree
+    original = subprocess.check_output(
+        ["git", "-C", str(tmp_path), "show", f"{selected_tree}:{requirement_path}"],
+        text=True,
+    )
+    lines = original.splitlines(keepends=True)
+    assert all(
+        section["text"]
+        == "".join(lines[section["start_line"] - 1 : section["end_line"]])
+        and section["blob_oid"]
+        == _git(tmp_path, "rev-parse", f"{selected_tree}:{requirement_path}")
+        for section in sections
+    )
+    assert "REQUIRED_CONTRACT" in json.dumps(owner)
+    assert "UNRELATED_CONTRACT" not in json.dumps(owner)
+    plan.verify()
 
 
 @pytest.mark.parametrize("ending", ["\n", "\r\n", "\r"])
@@ -1599,7 +2118,9 @@ def test_shared_srs_edits_keep_other_requirements_contracts(
     )
     assert "FIRST_CONTRACT_ORIGINAL" in context
     assert "SECOND_CONTRACT_ORIGINAL" in context
-    assert owner["behavior_contexts"][path] == {"fallback_scope": "ml"}
+    selected = plan.manifest["behavior_contexts"][path]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003"]
 
 
 def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
@@ -1631,7 +2152,9 @@ def test_reference_definition_change_keeps_old_and_new_contracts_with_body_edit(
         ),
     )
     plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
-    assert plan.manifest["behavior_contexts"][requirement] == {"fallback_scope": "ml"}
+    selected = plan.manifest["behavior_contexts"][requirement]
+    assert selected["fallback_scope"] == "ml"
+    assert selected["requirement_ids"] == ["FR-ML-003", "FR-ML-004"]
     text = "".join(
         s["text"] for p in plan.prompts for s in _payload(p)["document_sections"]
     )
@@ -1720,7 +2243,8 @@ def test_removed_or_renamed_contract_retains_base_obligation_and_complete_diff(
         for section in audit["document_sections"]
         if section["path"] == requirement and section["version"] == "base"
     ]
-    assert old_obligation and "".join(s["text"] for s in old_obligation) == first
+    assert old_obligation
+    assert "".join(s["text"] for s in old_obligation) == "# ML requirements\n\n" + first
     assert all(
         s["blob_oid"] == _git(repo, "rev-parse", f"{base}:{requirement}")
         for s in old_obligation
@@ -1736,7 +2260,7 @@ def test_removed_or_renamed_contract_retains_base_obligation_and_complete_diff(
         for s in contract_sections
     )
     if operation != "remove_requirement":
-        assert contract not in audit["candidate_tree_inventory"]
+        assert contract not in _prompt_paths(audit)
         assert audit["path_diffs"][contract] == original["path_diffs"][contract]
     for batch in batches:
         for path in batch["assigned_paths"]:
@@ -1868,8 +2392,10 @@ def test_development_operations_select_exact_real_guidance_and_complete_sources(
     owned = [batch for batch in batches if batch["phase"] == "scope"]
     for path in sources:
         owner = next(batch for batch in owned if path in batch["assigned_paths"])
-        assert set(owner["development_contexts"][path]["operations"]) == operations
-        assert path not in owner["behavior_contexts"]
+        assert (
+            set(plan.manifest["development_contexts"][path]["operations"]) == operations
+        )
+        assert path not in plan.manifest["behavior_contexts"]
         assert owner["candidate_files"][path] == original["candidate_files"][path]
         assert owner["path_diffs"][path] == original["path_diffs"][path]
         assert owner["requirement_context_paths"][owner["scope"]] == []
@@ -1880,6 +2406,15 @@ def test_development_operations_select_exact_real_guidance_and_complete_sources(
         ("docs/development.md", "注意事項"),
         ("ARCHITECTURE.md", "Repository 開發工具與研究原型"),
     )
+    review_operations = (
+        "文件審查設定",
+        "規劃證據與補充來源",
+        "檢查失敗與程序清理",
+    )
+    if "candidate_review" in operations:
+        required += tuple(("docs/development.md", title) for title in review_operations)
+    else:
+        excluded += review_operations
     for path, heading in required:
         expected = next(
             section
@@ -1937,12 +2472,12 @@ def test_development_and_product_changes_keep_their_union_in_cross_scope_audit(
     batches = [_payload(prompt) for prompt in plan.prompts]
     audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
     assert audit["path_diffs"] == original["path_diffs"]
-    assert set(audit["behavior_contexts"][paths[-1]]["requirement_ids"]) >= {
+    assert set(plan.manifest["behavior_contexts"][paths[-1]]["requirement_ids"]) >= {
         "FR-DATA-001",
         "FR-DATA-002",
         "NFR-API-001",
     }
-    assert set(audit["development_contexts"]) == set(paths[:2])
+    assert set(plan.manifest["development_contexts"]) == set(paths[:2])
     product = next(batch for batch in batches if paths[-1] in batch["assigned_paths"])
     tooling = next(batch for batch in batches if paths[0] in batch["assigned_paths"])
     assert set(tooling["assigned_paths"]) == set(paths[:2])
@@ -1999,8 +2534,8 @@ def test_unknown_tooling_path_keeps_fallback_and_old_operation_obligations(
     batches = [_payload(prompt) for prompt in plan.prompts]
     batch = next(batch for batch in batches if known in batch["assigned_paths"])
     assert set(batch["assigned_paths"]) == {known, unknown}
-    assert batch["behavior_contexts"][unknown] == {"fallback_scope": "tooling"}
-    assert batch["development_contexts"][known] == {
+    assert plan.manifest["behavior_contexts"][unknown] == {"fallback_scope": "tooling"}
+    assert plan.manifest["development_contexts"][known] == {
         "operations": ["issue_claim"],
         "selection_basis": "registered-path",
     }
@@ -2089,14 +2624,16 @@ def test_tool_and_operational_document_edits_narrow_only_reviewed_responsibiliti
     assert owner["candidate_files"][document] == original["candidate_files"][document]
     assert owner["path_diffs"][document] == original["path_diffs"][document]
     if precise:
-        assert owner["development_contexts"][document] == {
+        assert plan.manifest["development_contexts"][document] == {
             "operations": ["issue_claim"],
             "selection_basis": "changed-operational-sections",
         }
-        assert document not in owner["behavior_contexts"]
+        assert document not in plan.manifest["behavior_contexts"]
     else:
-        assert document not in owner["development_contexts"]
-        assert owner["behavior_contexts"][document] == {"fallback_scope": "tooling"}
+        assert document not in plan.manifest["development_contexts"]
+        assert plan.manifest["behavior_contexts"][document] == {
+            "fallback_scope": "tooling"
+        }
     # Shared product policy, removed sections and unfamiliar headings cannot
     # borrow the neighboring claim tool's narrower context.
     readme_headings = {
@@ -2105,6 +2642,89 @@ def test_tool_and_operational_document_edits_narrow_only_reviewed_responsibiliti
         if s["path"] == "README.md" and s["headings"]
     }
     assert ("手動啟動並使用 HTTP 連接" in readme_headings) is not precise
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guide_edits_keep_candidate_review_responsibility(
+    real_document_repository: Path,
+    heading: str,
+) -> None:
+    repo = real_document_repository
+    document = "docs/development.md"
+    base = _tree(repo)
+    text = (repo / document).read_text()
+    section = next(
+        part
+        for part in markdown_sections(document, text)
+        if part.headings[-1:] == (heading,)
+    )
+    revised = text.replace(
+        section.text, section.text.rstrip() + "\n\n操作修訂。\n\n", 1
+    )
+    _write(repo, document, revised)
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw))
+    profile = plan.manifest["development_contexts"][document]
+    assert profile["operations"] == ["candidate_review"]
+    assert profile["selection_basis"] == "changed-operational-sections"
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if document in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    for batch in owners:
+        assert batch["candidate_files"][document] == revised
+        assert batch["path_diffs"][document] == raw["path_diffs"][document]
+
+
+@pytest.mark.parametrize("change_kind", ["shared_reference", "duplicate", "new"])
+def test_operational_precision_keeps_shared_and_ambiguous_context(
+    tmp_path: Path, change_kind: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    policy = (
+        "# AGENTS.md\n\n"
+        "## 模型上下文與提示詞\nProduct behavior [contract][shared].\n\n"
+        "## Issue 接手與指派\nIssue policy.\n\n"
+        "[shared]: ./README.md#old\n"
+    )
+    if change_kind == "duplicate":
+        policy += "\n## Issue 接手與指派\nSecond issue policy.\n"
+    _write(tmp_path, "AGENTS.md", policy)
+    _write(
+        tmp_path,
+        "README.md",
+        "# TradingDev\n\n## 手動啟動並使用 HTTP 連接\nProduct behavior contract.\n",
+    )
+    base = _tree(tmp_path)
+    if change_kind == "shared_reference":
+        revised = policy.replace("#old", "#new")
+    elif change_kind == "duplicate":
+        revised = policy.replace("Second issue policy.", "Changed second policy.")
+    else:
+        revised = policy + "\n## PR 合併後的本機分支清理\nNew cleanup policy.\n"
+    _write(tmp_path, "AGENTS.md", revised)
+    raw = json.loads(build_evidence(tmp_path, base, _tree(tmp_path)))
+    plan = build_review_plan(json.dumps(raw))
+    assert "AGENTS.md" not in plan.manifest["development_contexts"]
+    assert plan.manifest["behavior_contexts"]["AGENTS.md"] == {
+        "fallback_scope": "tooling"
+    }
+    owner = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if "AGENTS.md" in _payload(prompt)["assigned_paths"]
+    )
+    assert owner["candidate_files"]["AGENTS.md"] == revised
+    assert owner["path_diffs"]["AGENTS.md"] == raw["path_diffs"]["AGENTS.md"]
+    assert any(
+        "Product behavior contract." in section["text"]
+        for section in owner["document_sections"]
+    )
+    plan.verify()
 
 
 def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
@@ -2368,7 +2988,7 @@ def test_research_review_keeps_original_obligations_and_contracts(
         assert batch["candidate_files"][source] == original["candidate_files"][source]
         assert batch["path_diffs"][source] == original["path_diffs"][source]
         assert requirements <= set(
-            batch["behavior_contexts"][source]["requirement_ids"]
+            plan.manifest["behavior_contexts"][source]["requirement_ids"]
         )
         sections = batch["document_sections"]
         selected = {
@@ -2424,9 +3044,9 @@ def test_unknown_research_module_preserves_known_and_conservative_context(
         _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
     )
     assert set(batch["assigned_paths"]) == {known, unknown}
-    assert batch["behavior_contexts"][unknown] == {"fallback_scope": "general"}
+    assert plan.manifest["behavior_contexts"][unknown] == {"fallback_scope": "general"}
     assert {"FR-EXEC-002", "FR-RES-001", "NFR-REPRO-001"} <= set(
-        batch["behavior_contexts"][known]["requirement_ids"]
+        plan.manifest["behavior_contexts"][known]["requirement_ids"]
     )
     assert batch["path_diffs"] == original["path_diffs"]
     for path in (known, unknown):
@@ -2615,7 +3235,7 @@ def test_non_ml_entrypoints_keep_original_contracts_and_complete_changes(
     for source in sources:
         batch = next(part for part in batches if source in part["assigned_paths"])
         assert requirements <= set(
-            batch["behavior_contexts"][source]["requirement_ids"]
+            plan.manifest["behavior_contexts"][source]["requirement_ids"]
         )
         assert batch["candidate_files"][source] == original["candidate_files"][source]
         assert batch["path_diffs"][source] == original["path_diffs"][source]
@@ -2692,8 +3312,8 @@ def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations
     )
     assert batch["scope"] == owner
     assert set(batch["assigned_paths"]) == {known, unknown}
-    assert batch["behavior_contexts"][unknown] == {"fallback_scope": owner}
-    assert batch["behavior_contexts"][known]["requirement_ids"]
+    assert plan.manifest["behavior_contexts"][unknown] == {"fallback_scope": owner}
+    assert plan.manifest["behavior_contexts"][known]["requirement_ids"]
     assert batch["path_diffs"] == original["path_diffs"]
     for path in (known, unknown):
         assert batch["candidate_files"][path] == original["candidate_files"][path]
@@ -2709,3 +3329,597 @@ def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations
             if section.headings[-1:] == (heading,)
         )
         assert any(section["text"] == original_section.text for section in sections)
+
+
+def _edit_performance_architecture(repo: Path) -> str:
+    path = repo / "ARCHITECTURE.md"
+    original = path.read_text(encoding="utf-8")
+    changed = original.replace(
+        "## 績效計算與對話摘要\n",
+        "## 績效計算與對話摘要\n\nPerformance evidence change.\n",
+    )
+    assert changed != original
+    path.write_text(changed, encoding="utf-8")
+    return changed
+
+
+def test_architecture_section_review_preserves_sources_and_selects_its_obligations(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    caller = "src/tradingdev/app/benchmark_service.py"
+    _write(repo, caller, "VALUE = 'before'\n")
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    _write(repo, caller, "VALUE = 'after'\n")
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    assert plan.manifest["path_owners"]["ARCHITECTURE.md"] == "general"
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert "FR-RES-002" in obligations["requirement_ids"]
+    assert "FR-ML-001" not in obligations["requirement_ids"]
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owner = next(b for b in batches if "ARCHITECTURE.md" in b["assigned_paths"])
+    assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+    assert (
+        owner["path_diffs"]["ARCHITECTURE.md"]
+        == original["path_diffs"]["ARCHITECTURE.md"]
+    )
+    audit = next(b for b in batches if b["phase"] == "cross_scope")
+    assert audit["path_diffs"] == original["path_diffs"]
+    for batch in (owner, audit):
+        sections = batch["document_sections"]
+        assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+        assert not any(s["path"] == "docs/requirements/ml.md" for s in sections)
+    plan.verify()
+
+
+@pytest.mark.parametrize(
+    "extra_change",
+    ["unknown", "preamble", "reference", "rename", "delete", "duplicate"],
+)
+def test_architecture_section_review_keeps_uncertain_edits_conservative(
+    real_document_repository: Path, extra_change: str
+) -> None:
+    repo = real_document_repository
+    base = _tree(repo)
+    source = _edit_performance_architecture(repo)
+    if extra_change == "unknown":
+        source += "\n## Unregistered responsibility\nNew contract.\n"
+    elif extra_change == "preamble":
+        source = "Shared premise changed.\n\n" + source
+    elif extra_change == "reference":
+        source = source.replace(
+            "Performance evidence change.",
+            "Performance evidence change.\n\n[shared]: docs/requirements/ml.md",
+        )
+    elif extra_change == "rename":
+        source = source.replace("## 績效計算與對話摘要", "## Renamed performance")
+    elif extra_change == "delete":
+        start = source.index("## 績效計算與對話摘要")
+        end = source.index("### 診斷擴充與替換", start)
+        source = source[:start] + source[end:]
+    else:
+        source += "\n## 績效計算與對話摘要\nAmbiguous duplicate.\n"
+    _write(repo, "ARCHITECTURE.md", source)
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    owners = [
+        _payload(p)
+        for p in plan.prompts
+        if "ARCHITECTURE.md" in _payload(p)["assigned_paths"]
+    ]
+    assert owners
+    for owner in owners:
+        assert owner["candidate_files"]["ARCHITECTURE.md"] == source
+        assert (
+            owner["path_diffs"]["ARCHITECTURE.md"]
+            == original["path_diffs"]["ARCHITECTURE.md"]
+        )
+    assert any(
+        s["path"] == "docs/requirements/ml.md"
+        for owner in owners
+        for s in owner["document_sections"]
+    )
+    plan.verify()
+
+
+def test_architecture_section_review_unions_explicit_cross_domain_requirements(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    requirement = repo / "docs/requirements/ml.md"
+    text = requirement.read_text(encoding="utf-8")
+    start = text.index("## FR-ML-003")
+    contract = text.index("- **契約**：", start)
+    end = text.index("\n", contract)
+    text = (
+        text[:end] + " [架構](../../ARCHITECTURE.md#績效計算與對話摘要)。" + text[end:]
+    )
+    requirement.write_text(text, encoding="utf-8")
+    base = _tree(repo)
+    _edit_performance_architecture(repo)
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=1_500_000
+    )
+    obligations = plan.manifest["behavior_contexts"]["ARCHITECTURE.md"]
+    assert {"FR-RES-002", "FR-ML-003"} <= set(obligations["requirement_ids"])
+    sections = [s for p in plan.prompts for s in _payload(p)["document_sections"]]
+    assert any(s["path"] == "docs/performance_artifacts.md" for s in sections)
+    assert any(s["path"] == "docs/requirements/ml.md" for s in sections)
+
+
+STATISTICS = "src/tradingdev/domain/statistics/"
+COMPARISON = STATISTICS + "comparison.py"
+SHARPE = STATISTICS + "sharpe.py"
+STATISTICS_TESTS = "tests/domain/statistics/"
+
+
+@pytest.fixture
+def statistics_review_repository(real_document_repository: Path) -> Path:
+    repo = real_document_repository
+    root = Path(__file__).resolve().parents[2]
+    for source in (root / STATISTICS).glob("*.py"):
+        _write(repo, source.relative_to(root).as_posix(), source.read_text())
+    product = "src/tradingdev/domain/benchmark.py"
+    _write(repo, product, (root / product).read_text())
+    for path in (
+        COMPARISON,
+        STATISTICS + "benchmark.py",
+        *(
+            STATISTICS_TESTS + name
+            for name in (
+                "conftest.py",
+                "test_statistics_architecture_contract.py",
+                "test_statistics_benchmark.py",
+                "test_statistics_benchmark_boundary.py",
+                "test_statistics_boundaries.py",
+                "test_statistics_comparison.py",
+                "test_statistics_contracts.py",
+            )
+        ),
+    ):
+        _write(repo, path, "VALUE = 'before'\n")
+    return repo
+
+
+def test_registered_research_review_delivers_immutable_shared_sources(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'candidate comparison'\n")
+    tree = _tree(repo)
+    expected = (repo / SHARPE).read_text()
+    _write(repo, SHARPE, "UNCOMMITTED = 'must not enter review'\n")
+    raw = json.loads(build_evidence(repo, base, tree))
+    plan = build_review_plan(json.dumps(raw))
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if COMPARISON in batch["assigned_paths"]]
+    assert owners
+    for batch in owners:
+        assert batch["candidate_files"][SHARPE] == expected
+        assert STATISTICS + "_validation.py" in batch["candidate_files"]
+        assert batch["path_diffs"][COMPARISON] == raw["path_diffs"][COMPARISON]
+        assert SHARPE not in batch["path_diffs"]
+        assert "UNCOMMITTED" not in json.dumps(batch)
+    assert plan.manifest["behavior_contexts"][COMPARISON]["requirement_ids"] == []
+    assert SHARPE not in plan.manifest["path_owners"]
+    assert any(
+        "績效計算與對話摘要" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert not any(
+        section["path"] == "docs/requirements/ml.md"
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    plan.verify()
+
+
+@pytest.mark.parametrize("boundary", [False, True])
+def test_statistics_product_boundary_preserves_its_own_obligation(
+    statistics_review_repository: Path,
+    boundary: bool,
+) -> None:
+    repo = statistics_review_repository
+    path = STATISTICS_TESTS + (
+        "test_statistics_benchmark_boundary.py"
+        if boundary
+        else "test_statistics_benchmark.py"
+    )
+    base = _tree(repo)
+    _write(repo, path, "VALUE = 'changed test'\n")
+    plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
+    identifiers = plan.manifest["behavior_contexts"][path]["requirement_ids"]
+    assert ("FR-RES-002" in identifiers) is boundary
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if path in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    assert all(
+        STATISTICS + "benchmark.py" in batch["candidate_files"] for batch in owners
+    )
+    if boundary:
+        assert all(
+            "src/tradingdev/domain/benchmark.py" in batch["candidate_files"]
+            for batch in owners
+        )
+        assert any(
+            section["path"] == "docs/performance_artifacts.md"
+            and "Benchmarks" in section["headings"]
+            for batch in owners
+            for section in batch["document_sections"]
+        )
+
+
+def test_statistics_fixture_keeps_test_guidance_and_full_delivery_profile(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    path = STATISTICS_TESTS + "conftest.py"
+    base = _tree(repo)
+    _write(repo, path, "VALUE = 'changed seed policy'\n")
+    tree = _tree(repo)
+    plan = build_review_plan(build_evidence(repo, base, tree))
+    assert classify_changes(repo, base, tree).delivery_profile == "full"
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if path in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    assert any(
+        "測試設計與精簡" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert any(
+        section["path"] == "AGENTS.md" and "測試與清理" in section["headings"]
+        for batch in owners
+        for section in batch["document_sections"]
+    )
+    assert all(SHARPE in batch["candidate_files"] for batch in owners)
+
+
+@pytest.mark.parametrize("fault", ["missing", "symlink", "binary", "non_utf8"])
+def test_registered_source_cannot_be_missing_or_non_regular_text(
+    statistics_review_repository: Path,
+    fault: str,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new'\n")
+    helper = repo / SHARPE
+    if fault in {"missing", "symlink"}:
+        helper.unlink()
+        if fault == "symlink":
+            helper.symlink_to("periods.py")
+    elif fault == "binary":
+        helper.write_bytes(b"not\0text")
+    else:
+        helper.write_bytes(b"not utf-8: \xff")
+    with pytest.raises(ReviewError):
+        build_evidence(repo, base, _tree(repo))
+
+
+@pytest.mark.parametrize("fault", ["mapping", "text", "blob", "mode", "altered_text"])
+def test_registered_source_provenance_is_required_before_model_use(
+    statistics_review_repository: Path,
+    fault: str,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    if fault == "mapping":
+        raw.pop("source_contexts", None)
+    elif fault == "altered_text":
+        raw["candidate_files"][SHARPE] = "FORGED = 'not the blob'\n"
+    else:
+        key = {
+            "text": "candidate_files",
+            "blob": "candidate_file_blobs",
+            "mode": "candidate_file_modes",
+        }[fault]
+        raw[key].pop(SHARPE, None)
+    with pytest.raises(ReviewError):
+        build_review_plan(json.dumps(raw))
+
+
+def test_deleted_registered_source_uses_base_dependencies(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    expected = (repo / SHARPE).read_text()
+    base = _tree(repo)
+    (repo / COMPARISON).unlink()
+    _write(repo, SHARPE, "VALUE = 'new helper after removal'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw), max_prompt_bytes=1_500_000)
+    owners = [
+        _payload(prompt)
+        for prompt in plan.prompts
+        if COMPARISON in _payload(prompt)["assigned_paths"]
+    ]
+    assert owners
+    for batch in owners:
+        assert batch["base_source_files"][SHARPE] == expected
+        assert COMPARISON not in batch["candidate_files"]
+        assert batch["path_diffs"][COMPARISON] == raw["path_diffs"][COMPARISON]
+    assert plan.manifest["evidence_utf8_bytes"] >= len(expected.encode())
+    plan.verify()
+
+
+def test_statistics_rename_does_not_register_the_new_unknown_path(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    base = _tree(repo)
+    renamed = STATISTICS + "future_comparison.py"
+    (repo / COMPARISON).rename(repo / renamed)
+    plan = build_review_plan(
+        build_evidence(repo, base, _tree(repo)), max_prompt_bytes=1_500_000
+    )
+    assert plan.manifest["behavior_contexts"][renamed] == {"fallback_scope": "results"}
+    assert {COMPARISON, renamed} <= plan.manifest["path_owners"].keys()
+
+
+def test_registered_sources_stay_complete_in_partitions_and_scoped_to_their_users(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    other_path = "src/tradingdev/mcp/tools/strategy_cleanup.py"
+    _write(repo, other_path, "VALUE = 'old cleanup'\n")
+    _write(
+        repo,
+        "docs/new_statistics_contract.md",
+        "# Unregistered contract\nDo not silently drop unknown evidence.\n"
+        + "".join(f"\n## Section {i}\n" + str(i) * 45_000 + "\n" for i in range(6)),
+    )
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new comparison'\n")
+    _write(repo, other_path, "VALUE = 'new cleanup'\n")
+    raw = json.loads(build_evidence(repo, base, _tree(repo)))
+    plan = build_review_plan(json.dumps(raw))
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [batch for batch in batches if COMPARISON in batch["assigned_paths"]]
+    assert len(owners) > 1
+    for batch in owners:
+        assert batch["candidate_files"][SHARPE] == raw["candidate_files"][SHARPE]
+    delivered = "".join(
+        section["text"] for batch in owners for section in batch["document_sections"]
+    )
+    for i in range(6):
+        assert str(i) * 45_000 in delivered
+    for batch in batches:
+        if other_path in batch["assigned_paths"]:
+            assert SHARPE not in batch["candidate_files"]
+    audit = next(batch for batch in batches if batch["phase"] == "cross_scope")
+    assert audit["path_diffs"] == raw["path_diffs"]
+    assert SHARPE not in audit["candidate_files"]
+    assert any(
+        item["path"] == SHARPE and item["version"] == "candidate"
+        for item in audit["delivered_source_inventory"]
+    )
+    plan.verify()
+
+
+def test_registered_source_over_budget_is_not_truncated(
+    statistics_review_repository: Path,
+) -> None:
+    repo = statistics_review_repository
+    _write(repo, SHARPE, "# Immutable required source\n" + "x" * 250_000)
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'new comparison'\n")
+    evidence = build_evidence(repo, base, _tree(repo))
+    assert len(json.loads(evidence)["candidate_files"][SHARPE]) > 250_000
+    with pytest.raises(ReviewError, match="cannot fit"):
+        build_review_plan(evidence)
+
+
+@pytest.mark.parametrize("shadow", ["same-title", "slug-collision", "quoted-heading"])
+def test_registered_document_reference_rejects_shadowed_fragments(
+    statistics_review_repository: Path,
+    shadow: str,
+) -> None:
+    repo = statistics_review_repository
+    title = "績效計算與對話摘要"
+    inserted = (
+        f"> ### {title}\n> Wrong quoted contract.\n"
+        if shadow == "quoted-heading"
+        else (
+            f"### {title}{'！' if shadow == 'slug-collision' else ''}\n"
+            "Wrong nested contract.\n"
+        )
+    )
+    path = repo / "ARCHITECTURE.md"
+    text = path.read_text()
+    parent = "## 系統邊界與模組責任\n"
+    assert parent in text
+    path.write_text(text.replace(parent, parent + inserted, 1))
+    base = _tree(repo)
+    _write(repo, COMPARISON, "VALUE = 'changed comparison'\n")
+    # Both immutable versions already have the shadow. Only the research source
+    # changes, so document-change fallback cannot conceal a wrong reference.
+    with pytest.raises(ReviewError, match="Ambiguous registered document context"):
+        build_review_plan(build_evidence(repo, base, _tree(repo)))
+
+
+@pytest.mark.parametrize(
+    ("path", "heading", "required", "unrelated", "contract", "contract_heading"),
+    [
+        (
+            "README.md",
+            "使用樣本外驗證與最佳化",
+            {"FR-EXEC-003", "FR-EXEC-005", "FR-EXEC-006"},
+            {"FR-ML-001", "FR-ML-002", "FR-RES-006"},
+            "docs/strategy_contract.md",
+            "Strategy Walk-Forward Settings",
+        ),
+        (
+            "README.md",
+            "閱讀保存的對話",
+            {"FR-RES-006", "NFR-OPS-002"},
+            {"FR-ML-001", "FR-EXEC-006"},
+            "docs/reports.md",
+            "Recorded conversations",
+        ),
+        (
+            "README.md",
+            "行情來源與下載",
+            {"FR-DATA-001", "FR-DATA-002", "FR-DATA-003"},
+            {"FR-ML-002", "FR-RES-006"},
+            "docs/run_artifacts.md",
+            "Market Data Cache",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "行情快取",
+            {"FR-DATA-001", "FR-DATA-002", "FR-DATA-003"},
+            {"FR-ML-002", "FR-RES-006"},
+            "docs/run_artifacts.md",
+            "Market Data Cache",
+        ),
+        (
+            "README.md",
+            "從已保存的結果產生報告",
+            {"FR-EXEC-004", "FR-RES-003", "FR-ML-004"},
+            {"FR-ML-001", "FR-RES-006"},
+            "docs/reports.md",
+            "Composable Offline Reports",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "核心概念與身分",
+            {"FR-STR-002", "FR-ML-001", "FR-ML-002", "FR-EXEC-004"},
+            {"FR-ML-003", "FR-RES-006"},
+            "docs/ml_research.md",
+            "Trained Models",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "最佳化執行",
+            {"FR-EXEC-001", "FR-EXEC-004", "FR-EXEC-005", "FR-EXEC-006"},
+            {"FR-ML-001", "FR-RES-006"},
+            "docs/run_artifacts.md",
+            "Execution Manifest",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "保存與查詢結果",
+            {"FR-RES-001", "FR-RES-004", "FR-RES-005", "FR-EXEC-007"},
+            {"FR-ML-001", "FR-ML-002", "FR-RES-006"},
+            "docs/run_artifacts.md",
+            "Reading Artifact Delivery",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "獨立行情取樣",
+            {"FR-DATA-002", "FR-DATA-003"},
+            {"FR-ML-002", "FR-RES-006"},
+            "docs/run_artifacts.md",
+            "Bounded Historical Sampling",
+        ),
+    ],
+)
+def test_product_section_context_preserves_originals_without_expanding_srs_books(
+    real_document_repository: Path,
+    path: str,
+    heading: str,
+    required: set[str],
+    unrelated: set[str],
+    contract: str,
+    contract_heading: str,
+) -> None:
+    repo = real_document_repository
+    base = _tree(repo)
+    before = (repo / path).read_text(encoding="utf-8")
+    (section,) = [
+        s for s in markdown_sections(path, before) if s.headings[-1:] == (heading,)
+    ]
+    # Change body prose, leaving the immutable heading identity and ancestry intact.
+    changed_section = section.text.replace("\n", "\nReviewed behavior change.\n", 1)
+    source = before.replace(section.text, changed_section, 1)
+    assert source != before
+    _write(repo, path, source)
+    raw = build_evidence(repo, base, _tree(repo))
+    original = json.loads(raw)
+    plan = build_review_plan(raw)
+    context = plan.manifest["behavior_contexts"][path]
+    assert "fallback_scope" not in context
+    assert required <= set(context["requirement_ids"])
+    assert not unrelated & set(context["requirement_ids"])
+    batches = [_payload(prompt) for prompt in plan.prompts]
+    owners = [b for b in batches if path in b["assigned_paths"]]
+    assert owners
+    for owner in owners:
+        assert owner["candidate_files"][path] == source
+        assert owner["path_diffs"][path] == original["path_diffs"][path]
+    (expected,) = [
+        s
+        for s in markdown_sections(
+            contract, (repo / contract).read_text(encoding="utf-8")
+        )
+        if s.headings[-1:] == (contract_heading,)
+    ]
+    assert any(
+        s["path"] == contract and s["text"] == expected.text
+        for owner in owners
+        for s in owner["document_sections"]
+    )
+    assert not any(
+        s["headings"][-1].split(" ", 1)[0] in unrelated
+        for owner in owners
+        for s in owner["document_sections"]
+        if s["path"].startswith("docs/requirements/") and s["headings"]
+    )
+    plan.verify()
+
+
+def test_sqlite_context_keeps_storage_consumers_and_exact_contracts(
+    real_document_repository: Path,
+) -> None:
+    repo = real_document_repository
+    path = "src/tradingdev/adapters/storage/sqlite.py"
+    root = Path(__file__).resolve().parents[2]
+    before = (root / path).read_text(encoding="utf-8")
+    _write(repo, path, before)
+    base = _tree(repo)
+    source = before.replace(
+        "class SQLiteStore:", "# Shared storage change.\nclass SQLiteStore:", 1
+    )
+    _write(repo, path, source)
+    plan = build_review_plan(build_evidence(repo, base, _tree(repo)))
+    context = plan.manifest["behavior_contexts"][path]
+    assert "fallback_scope" not in context
+    assert {
+        "FR-STR-005",
+        "FR-EXEC-002",
+        "FR-RES-005",
+        "FR-RES-006",
+        "NFR-DATA-001",
+    } <= set(context["requirement_ids"])
+    assert not {"FR-ML-001", "FR-ML-002"} & set(context["requirement_ids"])
+    owners = [
+        _payload(p) for p in plan.prompts if path in _payload(p)["assigned_paths"]
+    ]
+    assert owners and all(b["candidate_files"][path] == source for b in owners)
+    for heading in ("SQLite Tables", "JSON Values"):
+        (expected,) = [
+            s
+            for s in markdown_sections(
+                "docs/run_artifacts.md",
+                (repo / "docs/run_artifacts.md").read_text(encoding="utf-8"),
+            )
+            if s.headings[-1:] == (heading,)
+        ]
+        assert any(
+            s["text"] == expected.text for b in owners for s in b["document_sections"]
+        )
+    plan.verify()
