@@ -774,9 +774,10 @@ reports `detail_error`; a completed job still exposes its published run when tha
 run verifies.
 Call `get_optimization_trials(job_id, offset, limit)` for trial states and follow
 `trials.next_offset`. A completed trial can have a null objective. `completed`
-counts full observations, `rankable` counts finite objectives and `search_complete`
-requires observations for the full grid. The leader reflects only ranked evidence
-and ties retain the first approved position.
+counts full observations. `rankable` counts objectives representable as finite
+floating-point numbers. An objective outside that range leaves its trial
+unrankable. `search_complete` requires observations for the full grid. The
+leader uses rankable objectives, with ties resolved by the first approved position.
 
 Candidate exceptions and timeouts are recorded separately. Ordinary exceptions
 raised within bundled strategy callbacks are recorded as candidate failures.
@@ -913,10 +914,17 @@ the selected rows, independent of each run's original search size.
 
 Call `get_selection_evidence` with `run_id` and `performance_sha256` from
 `selection_evidence.reference`. Keep both values and follow `trials.next_offset`.
-The page includes the selected training trial's execution context and the saved
-definitions for the objective and training Sharpe. Each trial gives its grid
+The reference also identifies the saved manifest. Its `source` is `trial_ledger`
+for the summary published from committed trial records, or
+`verified_historical_bundle` for a historical bundle verified against its manifest
+and saved observations.
+
+The page includes the selected training trial's execution context and any saved
+definitions for the objective or training Sharpe. Each trial gives its grid
 position, overrides, saved values and missing-value reasons, with calculation
 settings, provider versions and applicable calculation fallbacks when recorded.
+A saved metric outside the supported numeric range is returned as unavailable
+with reason `metric_outside_numeric_range`.
 For other trial values, pass the trial's `scope` to `get_run_metrics`. Paging
 preserves the original search counts. The query rejects a mismatched reference
 or evidence that cannot be verified. See
