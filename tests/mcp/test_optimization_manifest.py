@@ -29,8 +29,10 @@ from tradingdev.adapters.execution.process_runner import (
 from tradingdev.adapters.execution.strategy_factory import StrategyFactory
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.optimization_trials import OptimizationLedger
+from tradingdev.adapters.storage.performance import PerformanceArtifactError
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
+from tradingdev.app.contracts.jobs import JobStatus
 from tradingdev.app.data_service import DataService, LoadedDataset
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
@@ -437,19 +439,12 @@ def test_optimization_preserves_frame_values_types_and_index_across_phases(
         pd.testing.assert_frame_equal(actual, expected, check_exact=True)
 
 
-@pytest.mark.parametrize(
-    ("values", "expected"),
-    [([0.5, 0.1], 1), ([None, 0.2], 1), ([0.3, None], -1), ([None, None], None)],
-)
-def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
+def _run_drawdown_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     values: list[float | None],
-    expected: int | None,
-) -> None:
+) -> tuple[JobStore, ExecutionManifest, list[dict[str, Any]]]:
     store, manifest = _queued_job(tmp_path, monkeypatch, metric="max_drawdown")
-    assert manifest.optimization is not None
-    assert manifest.optimization.direction == "minimize"
 
     def load(
         self: DataService, config: dict[str, Any], bt: BacktestConfig
@@ -490,6 +485,24 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
     monkeypatch.setattr(optimization, "_run_single_combo", evaluate)
     monkeypatch.setattr(optimization, "estimate_n_jobs", lambda *args, **kwargs: 1)
     _run_optimization("fixture")
+    return store, manifest, oos_calls
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [([0.5, 0.1], 1), ([None, 0.2], 1), ([0.3, None], -1), ([None, None], None)],
+)
+def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    values: list[float | None],
+    expected: int | None,
+) -> None:
+    store, manifest, oos_calls = _run_drawdown_optimization(
+        tmp_path, monkeypatch, values
+    )
+    assert manifest.optimization is not None
+    assert manifest.optimization.direction == "minimize"
     job = store.get_job("fixture")
     assert job is not None
     if expected is None:
@@ -573,6 +586,41 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
             oos_scope["metadata"]["unavailable"]["max_drawdown"] == "insufficient_data"
         )
         assert len(observations["scopes"]["test"]["equity_curve"]) == 4
+
+
+def test_done_status_retains_ledger_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _, _ = _run_drawdown_optimization(tmp_path, monkeypatch, [0.5, 0.1])
+    jobs = JobService(job_store=store)
+    runs = RunService(workspace=store.workspace, store=store.store)
+    before = JobStatus.model_validate(jobs.get_job_status("fixture"))
+    assert before.status == "done" and before.details_available
+    assert before.detail_error is None
+    assert before.optimization is not None and before.optimization.completed == 2
+
+    with closing(store.store.connect()) as connection, connection:
+        changed = connection.execute(
+            "update optimization_trials set evidence = ? "
+            "where job_id = ? and position = ?",
+            (b"corrupted observations", "fixture", 1),
+        )
+        assert changed.rowcount == 1
+
+    with pytest.raises(PerformanceArtifactError) as error:
+        runs.get_optimization_trials("fixture")
+    assert error.value.code == "optimization_evidence_invalid"
+    assert runs.get_run("fixture")["run"]["detail_error"] is None
+
+    status = JobStatus.model_validate(jobs.get_job_status("fixture"))
+    assert status.status == "done" and status.run_id == "fixture"
+    assert status.details_available
+    assert status.metrics == before.metrics
+    assert status.train_metrics == before.train_metrics
+    assert status.test_metrics == before.test_metrics
+    assert status.optimization is None
+    assert status.detail_error is not None
+    assert status.detail_error.code == "optimization_evidence_invalid"
 
 
 @pytest.mark.parametrize(

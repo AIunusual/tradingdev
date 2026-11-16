@@ -86,9 +86,12 @@ class JobQueries:
                     "available_scopes",
                     "default_scope",
                     "selected_train_scope",
-                    "detail_error",
                 ):
                     response[key] = run[key]
+                # A valid published run can coexist with a broken trial ledger.
+                response["detail_error"] = run["detail_error"] or response.get(
+                    "detail_error"
+                )
             else:
                 response.update(
                     metrics=None,

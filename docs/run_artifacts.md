@@ -764,6 +764,8 @@ Complete observations retain saved metric definitions and use the same split,
 parameter, execution context and observation checks as complete optimization runs.
 
 `get_job_status` shows lifecycle and optimization progress when a ledger exists.
+When a completed job's published run verifies but its ledger fails verification,
+the response still exposes the run and reports the ledger error in `detail_error`.
 Call `get_optimization_trials(job_id, offset, limit)` for trial states and follow
 `trials.next_offset`. A completed trial can have a null objective. `completed`
 counts full observations, `rankable` counts finite objectives and `search_complete`
