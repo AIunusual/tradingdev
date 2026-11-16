@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -10,7 +11,9 @@ import pandas as pd
 import pytest
 from arch.bootstrap import optimal_block_length
 
+from tradingdev.domain.statistics import comparison
 from tradingdev.domain.statistics.comparison import (
+    DifferenceInterval,
     StatisticInterval,
     align_returns,
     difference_interval,
@@ -288,6 +291,25 @@ class TestDifferenceInterval:
         assert result.overlap == 150
         assert result.correlation == pytest.approx(expected)
 
+    @pytest.mark.parametrize("scale", [1e200, 1e-200])
+    @pytest.mark.parametrize("sign", [1.0, -1.0])
+    def test_pearson_correlation_handles_extreme_scales(
+        self, scale: float, sign: float
+    ) -> None:
+        a = _daily(np.linspace(1.0, 2.0, 30) * scale)
+        b = sign * 2 * a
+        result = difference_interval_outcome(
+            a,
+            b,
+            partial(sharpe_ratio, periods_per_year=1),
+            reps=10,
+            seed=0,
+            block_size=1,
+        )
+
+        assert isinstance(result, DifferenceInterval)
+        assert result.correlation == pytest.approx(sign)
+
     def test_correlation_is_none_for_a_constant_series(
         self, frequency: _Frequency
     ) -> None:
@@ -414,19 +436,37 @@ class TestIntervalTableVolatility:
             state[t] = 1 - state[t - 1] if switches[t - 1] else state[t - 1]
         return _daily(0.01 + np.where(state, 0.02, 0.001) * rng.normal(size=n))
 
-    def test_volatility_regimes_lengthen_the_shared_block(self) -> None:
+    @pytest.mark.parametrize("skip_clustered", [False, True])
+    def test_volatility_regimes_lengthen_the_shared_block(
+        self, skip_clustered: bool
+    ) -> None:
         clustered = self._regime(0)
+        clustered_values = clustered.to_numpy()
         steady = _daily(np.random.default_rng(1).normal(0.001, 0.01, 1000))
-        table = interval_table_outcome(
-            {"clustered": clustered, "steady": steady}, np.mean, reps=50, seed=0
-        )
-        squared = optimal_block_length(clustered.to_numpy() ** 2)["stationary"]
 
-        rows = list(table.values())
-        assert all(isinstance(row, StatisticInterval) for row in rows)
-        assert {row.block_size for row in rows} == {  # type: ignore[union-attr]
-            math.ceil(float(squared.iloc[0]))
-        }
+        def statistic(values: npt.NDArray[np.float64]) -> float | None:
+            if skip_clustered and np.array_equal(values, clustered_values):
+                return None
+            return float(values.mean())
+
+        table = interval_table_outcome(
+            {"clustered": clustered, "steady": steady}, statistic, reps=50, seed=0
+        )
+        squared = optimal_block_length(clustered_values**2)["stationary"]
+        expected = math.ceil(float(squared.iloc[0]))
+
+        steady_row, clustered_row = table["steady"], table["clustered"]
+        assert isinstance(steady_row, StatisticInterval)
+        assert steady_row.block_size == expected
+        if skip_clustered:
+            assert isinstance(clustered_row, IntervalUnavailable)
+            assert (clustered_row.reason, clustered_row.reps) == (
+                "undefined_statistic",
+                0,
+            )
+        else:
+            assert isinstance(clustered_row, StatisticInterval)
+            assert clustered_row.block_size == expected
 
     def test_a_given_block_size_is_used_and_reported(self) -> None:
         series = {"a": self._regime(0), "b": self._regime(1)}
@@ -532,6 +572,99 @@ class TestUnavailableReasons:
         assert row.reason == "undefined_statistic"
         assert row.estimate is None
         assert (row.observations, row.reps) == (60, 0)
+
+    def test_unrepresentable_point_difference_skips_bootstrap(self) -> None:
+        a = _daily(np.ones(20))
+        calls: list[float] = []
+
+        def statistic(values: npt.NDArray[np.float64]) -> float:
+            sign = float(values[0])
+            calls.append(sign)
+            return sign * 1e308
+
+        result = difference_interval_outcome(
+            a, -a, statistic, reps=10, seed=0, block_size=1
+        )
+
+        assert isinstance(result, IntervalUnavailable)
+        assert (result.reason, result.estimate, result.reps) == (
+            "undefined_statistic",
+            None,
+            0,
+        )
+        assert calls == [1.0, -1.0]
+
+    def test_table_does_not_resample_when_every_estimate_is_undefined(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[int] = []
+
+        def statistic(values: npt.NDArray[np.float64]) -> None:
+            calls.append(len(values))
+
+        def unexpected_bootstrap(*args: object, **kwargs: object) -> None:
+            pytest.fail("bootstrap started without an eligible row")
+
+        monkeypatch.setattr(comparison, "StationaryBootstrap", unexpected_bootstrap)
+        table = interval_table_outcome(
+            {"undefined": _daily(np.arange(20.0))},
+            statistic,
+            reps=10,
+            seed=0,
+            block_size=1,
+        )
+
+        row = table["undefined"]
+        assert isinstance(row, IntervalUnavailable)
+        assert (row.reason, row.reps, row.observations) == (
+            "undefined_statistic",
+            0,
+            20,
+        )
+        assert calls == [20]
+
+    def test_table_skips_only_undefined_rows_and_keeps_common_draws(self) -> None:
+        a = _daily(np.arange(22.0))
+        common = a.iloc[1:-1].index
+        calls: dict[str, list[npt.NDArray[np.float64]]] = {
+            "a": [],
+            "undefined": [],
+            "b": [],
+        }
+
+        def statistic(values: npt.NDArray[np.float64]) -> float | None:
+            if values[0] < 0:
+                calls["undefined"].append(values.copy())
+                return None
+            name = "b" if values[0] >= 100 else "a"
+            calls[name].append(values.copy())
+            return float(values.mean())
+
+        table = interval_table_outcome(
+            {"a": a, "undefined": pd.Series(-1.0, index=common), "b": 100 + a},
+            statistic,
+            reps=10,
+            seed=0,
+            block_size=2,
+        )
+
+        assert list(table) == ["a", "undefined", "b"]
+        skipped = table["undefined"]
+        first, second = table["a"], table["b"]
+        assert isinstance(skipped, IntervalUnavailable)
+        assert (skipped.reason, skipped.reps, skipped.observations) == (
+            "undefined_statistic",
+            0,
+            20,
+        )
+        assert isinstance(first, StatisticInterval)
+        assert isinstance(second, StatisticInterval)
+        assert (first.overlap, first.valid_reps, first.block_size) == (20, 10, 2)
+        assert (second.overlap, second.valid_reps, second.block_size) == (20, 10, 2)
+        assert len(calls["undefined"]) == 1
+        assert len(calls["a"]) == len(calls["b"]) == 11
+        np.testing.assert_array_equal(calls["a"][0], np.arange(1.0, 21.0))
+        np.testing.assert_array_equal(np.stack(calls["a"]) + 100, np.stack(calls["b"]))
 
     def test_no_valid_resample_is_named(self, frequency: _Frequency) -> None:
         rng = np.random.default_rng(20)
@@ -740,6 +873,41 @@ class TestPValueMatchesInterval:
             assert result is not None
             excludes_zero = result.lower > 0.0 or result.upper < 0.0
             assert excludes_zero == (result.p_value < 1.0 - confidence), seed
+
+    @pytest.mark.parametrize("positive", [1.0, 1.7])
+    @pytest.mark.parametrize("confidence", [0.95, 0.2])
+    def test_finite_extreme_draws_give_ordered_intervals_and_consistent_p_value(
+        self, positive: float, confidence: float
+    ) -> None:
+        a = _daily(np.tile([-0.01, 0.01], 10))
+        b = a * 0
+
+        def statistic(values: npt.NDArray[np.float64]) -> float:
+            sign = float(np.sign(values.mean()))
+            return positive * 1e308 if sign > 0 else sign * 1e308
+
+        paired = difference_interval_outcome(
+            a, b, statistic, confidence=confidence, reps=2, seed=8, block_size=1
+        )
+        table = interval_table_outcome(
+            {"a": a}, statistic, confidence=confidence, reps=2, seed=8, block_size=1
+        )
+        row = table["a"]
+        assert isinstance(paired, DifferenceInterval)
+        assert isinstance(row, StatisticInterval)
+        tail = (1.0 - confidence) / 2.0
+        # Seed 8 draws one negative and one positive statistic. The
+        # quantiles lie on the line from -1 to positive, in units of 1e308.
+        expected_lower = (-1.0 + tail * (1.0 + positive)) * 1e308
+        expected_upper = (positive - tail * (1.0 + positive)) * 1e308
+        for result in (paired, row):
+            assert result.valid_reps == 2
+            assert -1e308 <= result.lower <= result.upper <= positive * 1e308
+            assert result.lower == pytest.approx(expected_lower)
+            assert result.upper == pytest.approx(expected_upper)
+        assert paired.p_value == pytest.approx(2.0 / (1.0 + positive))
+        excludes_zero = paired.lower > 0.0 or paired.upper < 0.0
+        assert excludes_zero == (paired.p_value < 1.0 - confidence)
 
     def test_one_sided_resamples_give_zero(self) -> None:
         a = _daily(np.random.default_rng(32).normal(0.05, 0.001, 30))

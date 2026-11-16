@@ -56,6 +56,12 @@ import numpy as np
 import pandas as pd
 from arch.bootstrap import StationaryBootstrap
 
+from tradingdev.domain.statistics._scaling import (
+    centered_dot,
+    rescaled,
+    rescaled_difference,
+    shift_for_moments,
+)
 from tradingdev.domain.statistics._validation import (
     positive_int,
     real_array,
@@ -136,7 +142,7 @@ class DifferenceInterval:
         upper: Upper percentile bound of the bootstrap differences.
         p_value: Two-sided bootstrap p-value of a zero difference, from
             inverting the percentile interval: ``[lower, upper]`` excludes
-            zero exactly when ``p_value < 1 - confidence``.
+            zero exactly when ``p_value < 1 - confidence`` in exact arithmetic.
         estimate_a: Statistic of ``a`` on the aligned returns.
         estimate_b: Statistic of ``b`` on the aligned returns.
         confidence: Two-sided confidence level of ``[lower, upper]``.
@@ -146,7 +152,7 @@ class DifferenceInterval:
             when either series is constant.
         overlap: Number of aligned observations.
         reps: Number of bootstrap resamples drawn.
-        valid_reps: Resamples where both statistics are defined.
+        valid_reps: Resamples with a finite statistic difference.
     """
 
     difference: float
@@ -278,6 +284,8 @@ def difference_interval_outcome(
     describes the aligned input returns. For example, if ``b = -a``,
     return correlation can be -1 while the standard deviations are equal
     in every paired resample, giving a zero-width difference interval.
+    Block resampling preserves local order and pairing, but does not make
+    inference valid for an arbitrary non-stationary return process.
 
     Block size: the blocks must preserve the dependence of the estimator
     of the difference, which is not the dependence of either series. When
@@ -318,20 +326,20 @@ def difference_interval_outcome(
     interval excludes zero, obtained by inverting the same linearly
     interpolated quantiles that give ``lower`` and ``upper``. The interval
     at ``confidence`` therefore excludes zero exactly when ``p_value < 1 -
-    confidence``, for any number of resamples, up to floating-point
-    rounding when the two are equal. It is zero when every resample is on
-    one side of zero. Below ``2 / (valid_reps - 1)`` it only interpolates
-    between the two most extreme resamples, so with few ``reps`` a small
-    p-value is no more precise than that interpolation; draw enough
-    ``reps`` that the levels of interest lie well above it.
+    confidence`` in exact arithmetic, for any number of resamples.
+    Floating-point rounding can affect comparisons near a zero bound.
+    The p-value is zero when all draws are strictly on one side of zero.
+    With at least two valid draws, a p-value below
+    ``2 / (valid_reps - 1)`` only interpolates between the two most
+    extreme resamples on one side. Draw enough ``reps`` that the levels
+    of interest lie well above this range.
 
     Returns an :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`
-    when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``, either
-    statistic is undefined on the aligned returns, or no resample defines
-    both statistics. Its ``estimate`` is the difference whenever both
-    statistics are defined on the aligned returns, even a short overlap,
-    so the statistic is evaluated on short arrays too (never on an empty
-    one).
+    when the overlap is below ``MIN_BOOTSTRAP_OBSERVATIONS``, the aligned
+    statistic difference is undefined or non-finite, or no resample has a
+    finite difference. Its ``estimate`` is the point difference when
+    defined and finite, even on a short overlap. The statistic is evaluated
+    on short arrays too (never on an empty one).
 
     Raises:
         ValueError: If ``reps`` or a given ``block_size`` is not a positive
@@ -355,9 +363,11 @@ def difference_interval_outcome(
         if estimate_a is not None and estimate_b is not None
         else None
     )
+    if difference is not None and not math.isfinite(difference):
+        difference = None
     if not aligned.sufficient:
         return _unavailable("insufficient_observations", difference, aligned, 0)
-    if estimate_a is None or estimate_b is None:
+    if difference is None or estimate_a is None or estimate_b is None:
         return _unavailable("undefined_statistic", None, aligned, 0)
 
     def resample(
@@ -371,15 +381,14 @@ def difference_interval_outcome(
         block_size, values_a, values_b, seed=np.random.default_rng(seed)
     )
     draws = bootstrap.apply(resample, reps)[:, 0]
-    draws = draws[np.isfinite(draws)]
-    if draws.size == 0:
+    ordered = np.sort(draws[np.isfinite(draws)])
+    if ordered.size == 0:
         return _unavailable("no_valid_resample", difference, aligned, reps)
-    lower, upper = np.quantile(draws, [tail, 1.0 - tail])
     return DifferenceInterval(
-        difference=estimate_a - estimate_b,
-        lower=float(lower),
-        upper=float(upper),
-        p_value=_percentile_p_value(draws),
+        difference=difference,
+        lower=_linear_quantile(ordered, tail),
+        upper=_linear_quantile(ordered, 1.0 - tail),
+        p_value=_percentile_p_value(ordered),
         estimate_a=estimate_a,
         estimate_b=estimate_b,
         confidence=float(confidence),
@@ -387,7 +396,7 @@ def difference_interval_outcome(
         correlation=_correlation(values_a, values_b),
         overlap=aligned.overlap,
         reps=reps,
-        valid_reps=int(draws.size),
+        valid_reps=int(ordered.size),
     )
 
 
@@ -444,14 +453,11 @@ def interval_table_outcome(
     covers the same periods, and resampled jointly with one block length:
     the largest Politis and White estimate over the series and their
     squares, to account for dependence in returns and volatility.
-    This is the rule of
-    :func:`~tradingdev.domain.statistics.sharpe.sharpe_interval_outcome`,
-    whose docstring gives its measured coverage: better than blocks fitted
-    to the returns alone when volatility clusters, still below the nominal
-    level. Pass ``block_size`` to use a fixed mean block length instead,
-    under the same conditions as there, and for statistics whose dependence
-    neither the returns nor their squares describe, such as a maximum
-    drawdown.
+    See :func:`~tradingdev.domain.statistics.sharpe.sharpe_interval_outcome`
+    for the block selection method, its assumptions and coverage limits.
+    Pass ``block_size`` to use a fixed mean block length, including for
+    statistics whose dependence neither the returns nor their squares
+    describe, such as a maximum drawdown.
 
     Each row describes one statistic's marginal uncertainty. Neither
     overlapping nor separated rows give inference on a paired difference,
@@ -463,8 +469,11 @@ def interval_table_outcome(
     :class:`~tradingdev.domain.statistics.sharpe.IntervalUnavailable`. The
     overlap is shared, so when it is below ``MIN_BOOTSTRAP_OBSERVATIONS``
     every row is ``"insufficient_observations"``, still carrying its point
-    estimate; otherwise a row is unavailable when its statistic is
-    undefined on the aligned returns or on every resample.
+    estimate. A row without a finite point estimate is skipped during
+    resampling and reports zero reps. All aligned series still contribute
+    to the automatic block length when any row is resampled. The other
+    rows use the same resampled indices and report the number of draws,
+    including when every resampled statistic is undefined.
 
     Raises:
         ValueError: If no series is given, ``reps`` or a given
@@ -479,50 +488,57 @@ def interval_table_outcome(
     if block_size is not None:
         positive_int(block_size, "block_size")
     aligned = align_returns(series_by_name)
-    columns = [aligned.frame[name].to_numpy() for name in aligned.frame.columns]
+    columns = {name: aligned.frame[name].to_numpy() for name in series_by_name}
+    estimates = {name: _estimate(statistic, column) for name, column in columns.items()}
     if not aligned.sufficient:
         return {
-            name: _unavailable(
-                "insufficient_observations",
-                _estimate(statistic, columns[position]),
-                aligned,
-                0,
-            )
-            for position, name in enumerate(aligned.frame.columns)
+            name: _unavailable("insufficient_observations", estimate, aligned, 0)
+            for name, estimate in estimates.items()
         }
 
-    def resample(*values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        return np.array([_evaluate(statistic, column) for column in values])
+    eligible = {
+        name: estimate for name, estimate in estimates.items() if estimate is not None
+    }
+    table: dict[str, StatisticInterval | IntervalUnavailable] = {
+        name: _unavailable("undefined_statistic", None, aligned, 0)
+        for name, estimate in estimates.items()
+        if estimate is None
+    }
+    if not eligible:
+        return table
 
     if block_size is None:
-        block_size = _returns_block_size(np.column_stack(columns))
+        block_size = _returns_block_size(np.column_stack(tuple(columns.values())))
     bootstrap = StationaryBootstrap(
-        block_size, *columns, seed=np.random.default_rng(seed)
+        block_size,
+        *(columns[name] for name in eligible),
+        seed=np.random.default_rng(seed),
     )
-    draws = bootstrap.apply(resample, reps)
-
-    table: dict[str, StatisticInterval | IntervalUnavailable] = {}
-    for position, name in enumerate(aligned.frame.columns):
-        estimate = _estimate(statistic, columns[position])
-        valid = draws[:, position][np.isfinite(draws[:, position])]
-        if estimate is None:
-            table[name] = _unavailable("undefined_statistic", None, aligned, 0)
-            continue
-        if valid.size == 0:
+    draws = np.array(
+        [
+            [
+                _evaluate(statistic, np.asarray(column, dtype=np.float64))
+                for column in sampled
+            ]
+            for sampled, _ in bootstrap.bootstrap(reps)
+        ]
+    )
+    for (name, estimate), samples in zip(eligible.items(), draws.T, strict=True):
+        ordered = np.sort(samples[np.isfinite(samples)])
+        if ordered.size == 0:
             table[name] = _unavailable("no_valid_resample", estimate, aligned, reps)
             continue
-        lower, upper = np.quantile(valid, [tail, 1.0 - tail])
         table[name] = StatisticInterval(
             estimate=estimate,
-            lower=float(lower),
-            upper=float(upper),
+            lower=_linear_quantile(ordered, tail),
+            upper=_linear_quantile(ordered, 1.0 - tail),
             confidence=float(confidence),
             block_size=block_size,
             overlap=aligned.overlap,
             reps=reps,
-            valid_reps=int(valid.size),
+            valid_reps=int(ordered.size),
         )
-    return table
+    return {name: table[name] for name in columns}
 
 
 def _evaluate(statistic: Statistic, values: npt.NDArray[np.float64]) -> float:
@@ -562,7 +578,7 @@ def _difference_block_size(
 ) -> int:
     influence = _jackknife_influence(statistic, a, b)
     if influence is None:
-        influence = a - b
+        influence, _ = rescaled_difference(a, b)
     return _block_length(influence[:, np.newaxis])
 
 
@@ -579,15 +595,29 @@ def _jackknife_influence(
         keep[period] = True
     if not np.all(np.isfinite(left_out)):
         return None
-    # The block length estimator ignores location and scale, so the usual
-    # centring on the full-sample difference is left out.
-    return (a.size - 1) * -left_out
+    # Block selection ignores location and scale. Omit the full-sample
+    # centring and scale before applying the jackknife factor.
+    scaled, _ = rescaled(left_out)
+    return np.multiply(scaled, -(a.size - 1))
 
 
-def _percentile_p_value(draws: npt.NDArray[np.float64]) -> float:
-    # Inverts np.quantile's default linear interpolation: the quantile at
-    # level p is the sorted draws interpolated at position (m - 1) * p.
-    ordered = np.sort(draws)
+def _linear_quantile(ordered: npt.NDArray[np.float64], level: float) -> float:
+    """A linear quantile of nonempty, sorted finite observations."""
+    position = (ordered.size - 1) * level
+    index = math.floor(position)
+    weight = position - index
+    low, high = float(ordered[index]), float(ordered[math.ceil(position)])
+    if low < 0.0 < high:
+        # The span can overflow across zero. The weighted terms have
+        # opposite signs, so the weighted sum stays between the endpoints.
+        return (1.0 - weight) * low + weight * high
+    if weight < 0.5:
+        return low + weight * (high - low)
+    return high - (1.0 - weight) * (high - low)
+
+
+def _percentile_p_value(ordered: npt.NDArray[np.float64]) -> float:
+    # Invert the same quantiles that were interpolated at (m - 1) * p.
     last = ordered.size - 1
     if last == 0:
         return 1.0 if ordered[0] == 0.0 else 0.0
@@ -616,16 +646,26 @@ def _crossing(ordered: npt.NDArray[np.float64], index: int) -> float:
     # Position between ordered[index] <= 0 and ordered[index + 1] >= 0 where
     # the linear interpolation reaches zero.
     low, high = float(ordered[index]), float(ordered[index + 1])
-    return index + (-low / (high - low) if high > low else 0.0)
+    span = high - low
+    if span == 0.0:
+        return float(index)
+    if not math.isfinite(span):
+        low, high = low * 0.5, high * 0.5
+        span = high - low
+    return index - low / span
 
 
 def _correlation(
     a: npt.NDArray[np.float64], b: npt.NDArray[np.float64]
 ) -> float | None:
     # Equal values can still yield a rounding-error std, so test spread exactly.
-    if np.ptp(a) == 0.0 or np.ptp(b) == 0.0:
+    if a.max() == a.min() or b.max() == b.min():
         return None
-    return float(np.corrcoef(a, b)[0, 1])
+    x = shift_for_moments(rescaled(a)[0])
+    y = shift_for_moments(rescaled(b)[0])
+    denominator = math.sqrt(centered_dot(x, x)) * math.sqrt(centered_dot(y, y))
+    correlation = centered_dot(x, y) / denominator
+    return min(1.0, max(-1.0, correlation))
 
 
 def _tail(confidence: float) -> float:
