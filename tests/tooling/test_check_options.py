@@ -155,7 +155,7 @@ def test_check_cli_forwards_review_options(
         )
     monkeypatch.setattr(sys, "argv", ["check", *arguments])
     module.main()
-    assert calls == [(budget, snapshot_timeout or 900, documentation_timeout or 180)]
+    assert calls == [(budget, snapshot_timeout or 1800, documentation_timeout or 180)]
 
 
 @pytest.mark.parametrize("runner", ["pr", "full"])
@@ -270,7 +270,7 @@ def test_cli_forwards_repeated_scope_and_literal_context_paths(
             "max_prompt_bytes": 123,
             "max_total_prompt_bytes": 456,
             "max_evidence_bytes": 789,
-            "snapshot_timeout_seconds": 900,
+            "snapshot_timeout_seconds": 1800,
             "documentation_timeout_seconds": 180,
         }
     ]
