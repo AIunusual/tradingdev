@@ -2159,6 +2159,53 @@ def test_review_operation_guide_edits_keep_candidate_review_responsibility(
         assert batch["path_diffs"][document] == raw["path_diffs"][document]
 
 
+@pytest.mark.parametrize("change_kind", ["shared_reference", "duplicate", "new"])
+def test_operational_precision_keeps_shared_and_ambiguous_context(
+    tmp_path: Path, change_kind: str
+) -> None:
+    _git(tmp_path, "init", "-q")
+    policy = (
+        "# AGENTS.md\n\n"
+        "## 模型上下文與提示詞\nProduct behavior [contract][shared].\n\n"
+        "## Issue 接手與指派\nIssue policy.\n\n"
+        "[shared]: ./README.md#old\n"
+    )
+    if change_kind == "duplicate":
+        policy += "\n## Issue 接手與指派\nSecond issue policy.\n"
+    _write(tmp_path, "AGENTS.md", policy)
+    _write(
+        tmp_path,
+        "README.md",
+        "# TradingDev\n\n## 手動啟動並使用 HTTP 連接\nProduct behavior contract.\n",
+    )
+    base = _tree(tmp_path)
+    if change_kind == "shared_reference":
+        revised = policy.replace("#old", "#new")
+    elif change_kind == "duplicate":
+        revised = policy.replace("Second issue policy.", "Changed second policy.")
+    else:
+        revised = policy + "\n## PR 合併後的本機分支清理\nNew cleanup policy.\n"
+    _write(tmp_path, "AGENTS.md", revised)
+    raw = json.loads(build_evidence(tmp_path, base, _tree(tmp_path)))
+    plan = build_review_plan(json.dumps(raw))
+    assert "AGENTS.md" not in plan.manifest["development_contexts"]
+    assert plan.manifest["behavior_contexts"]["AGENTS.md"] == {
+        "fallback_scope": "tooling"
+    }
+    owner = next(
+        _payload(prompt)
+        for prompt in plan.prompts
+        if "AGENTS.md" in _payload(prompt)["assigned_paths"]
+    )
+    assert owner["candidate_files"]["AGENTS.md"] == revised
+    assert owner["path_diffs"]["AGENTS.md"] == raw["path_diffs"]["AGENTS.md"]
+    assert any(
+        "Product behavior contract." in section["text"]
+        for section in owner["document_sections"]
+    )
+    plan.verify()
+
+
 def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
     real_document_repository: Path,
 ) -> None:

@@ -430,6 +430,32 @@ class _ResolvedBehaviorContext:
     selection_basis: tuple[str, ...]
 
 
+def _precise_document_edits(
+    path: str,
+    text: str,
+    edits: set[int],
+    parts: tuple[MarkdownSection, ...],
+    occurrences: list[Counter[tuple[str, ...]]],
+) -> bool:
+    """Narrow only stable, uniquely identified sections on both Git versions."""
+    guarded = (
+        *markdown_heading_ranges(text),
+        *shared_document_context_ranges(path, text),
+    )
+    if any(edits.intersection(range(start, end + 1)) for start, end in guarded):
+        return False
+    return all(
+        bool(part.headings)
+        and all(
+            counts[part.headings[:depth]] == 1
+            for counts in occurrences
+            for depth in range(1, len(part.headings) + 1)
+        )
+        for part in parts
+        if edits.intersection(range(part.start_line, part.end_line + 1))
+    )
+
+
 def _document_behavior_context(
     path: str,
     raw: dict[str, Any],
@@ -457,24 +483,11 @@ def _document_behavior_context(
         text = sources.get(path, "")
         edits = _markdown_edits(text, git_lines)
         covered: set[int] = set()
-        guarded = (
-            *markdown_heading_ranges(text),
-            *shared_document_context_ranges(path, text),
-        )
-        if any(edits.intersection(range(start, end + 1)) for start, end in guarded):
-            complete = False
+        complete &= _precise_document_edits(path, text, edits, parts, occurrences)
         for part in parts:
             changed = edits.intersection(range(part.start_line, part.end_line + 1))
             if not changed:
                 continue
-            # Every ancestor must identify the same single section on both sides.
-            # A deleted, renamed, new or repeated heading cannot prove that.
-            if not part.headings or any(
-                counts[part.headings[:depth]] != 1
-                for counts in occurrences
-                for depth in range(1, len(part.headings) + 1)
-            ):
-                complete = False
             profile = behavior_context_for_section(path, part)
             if profile is not None:
                 identifiers.update(profile.requirement_ids)
@@ -625,22 +638,22 @@ def _development_document_context(
     ):
         return None
     old_lines, new_lines = _changed_lines(raw["path_diffs"][path])
-    candidate_sections = markdown_sections(path, raw["candidate_files"].get(path, ""))
-    candidate_headings = {section.headings for section in candidate_sections}
+    versions = (
+        (before.get(path, ""), old_lines),
+        (raw["candidate_files"].get(path, ""), new_lines),
+    )
+    parsed = [markdown_sections(path, text) for text, _ in versions]
+    occurrences = [Counter(section.headings for section in parts) for parts in parsed]
     edited: list[MarkdownSection] = []
-    for source, lines in ((before, old_lines), (raw["candidate_files"], new_lines)):
-        if path not in source:
-            continue
-        edits = _markdown_edits(source[path], lines)
+    for (text, lines), parts in zip(versions, parsed, strict=True):
+        edits = _markdown_edits(text, lines)
+        if not _precise_document_edits(path, text, edits, parts, occurrences):
+            return None
         touched = [
             section
-            for section in markdown_sections(path, source[path])
+            for section in parts
             if edits.intersection(range(section.start_line, section.end_line + 1))
         ]
-        # A removed/renamed section may depend on old ancestor prose no longer
-        # present in the full candidate. Do not narrow that deletion's context.
-        if any(section.headings not in candidate_headings for section in touched):
-            return None
         edited.extend(touched)
     return development_context_for_sections(path, edited)
 
