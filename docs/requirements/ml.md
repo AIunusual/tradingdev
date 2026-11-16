@@ -30,3 +30,10 @@
 - **驗收**：不可用候選不被轉為零或默默省略。同模型／資料集／條件的不同來源各自保存，同來源重評更新原候選；呼叫端訊號不能靜默覆寫後端結果，舊未知來源不得被升級或推定。排名及固定報告保留來源，並讓同名多列可辨識；不新增來源或樣本外准入限制。Signal 排名預設拒絕不一致的量測條件；`allow_parameter_axes` 只放寬契約列明的參數軸，仍保持研究身分一致與每個 horizon 唯一資料版本；`allow_mixed` 才允許不相容條件並揭露限制，兩者均不繞過明示資料集的驗證。跨 horizon 的來源行情一致性未受保證。Run 與 signal 的共用查詢入口保持各自的資料與評估語意。
 - **契約**：[訊號排名](../ml_research.md#recorded-signal-evaluations)、[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)。
 - **驗證**：[ML 排名 service](../../tests/app/test_ml_leaderboard.py)、[MCP 共用排名](../../tests/mcp/test_ml_leaderboard_runs.py) 核對排序、不可用值及資料來源分派；[候選保存](../../tests/domain/ml/test_leaderboard_store.py) 核對同來源替換與跨來源保護，[固定報告](../../tests/app/test_ml_report_service.py) 核對保存來源及未知歷史的保留。
+
+## FR-ML-005 最佳化排名的搜尋證據
+
+- **需求**：排名候選可追溯到同一執行 manifest、選中訓練 scope 與測試 scope 所屬的原始訓練搜尋。
+- **驗收**：排名分頁維持原搜尋的計畫、實際嘗試、完成及指標可用數。透過固定引用續讀實際 trial 參數、訓練指標、設定及缺值原因。未發布完整結果的工作沒有排名候選，無法驗證的歷史搜尋回傳不可用原因。原始嘗試數不代表有效獨立樣本數，訓練搜尋與測試績效分開解讀。
+- **契約**：[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)、[搜尋證據](../performance_artifacts.md#optimization-selection-evidence)。
+- **驗證**：[排序與證據續讀](../../tests/app/test_selection_evidence.py) 核對搜尋規模、分頁及歷史證據，[最佳化 MCP 流程](../../tests/integration/test_mcp_optimization.py) 核對 worker 發布及部分結果的排名行為。

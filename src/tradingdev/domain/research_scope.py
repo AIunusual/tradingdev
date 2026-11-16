@@ -17,6 +17,7 @@ from tradingdev.domain.optimization.grid_search import (
     parameter_grid,
 )
 from tradingdev.domain.parameter_values import parameter_leaves
+from tradingdev.domain.performance.artifacts import OptimizationSelection
 from tradingdev.domain.research_evidence_values import canonical
 from tradingdev.domain.strategies.execution import merge_strategy_parameters
 from tradingdev.domain.validation.config import (
@@ -58,13 +59,27 @@ def verify_research_scopes(
     manifest: ExecutionManifest,
     performance: PerformanceBundle,
     observations: ObservationsBundle,
-) -> None:
+) -> OptimizationSelection | None:
     """Validate identities before attributing any saved result to approved research."""
     if performance.manifest_hash != manifest.manifest_hash:
         raise ManifestError("Research performance differs from its execution manifest")
     if manifest.optimization is not None:
-        _verify_optimization(manifest, performance, observations)
-        return
+        selection = verify_optimization_selection(manifest, performance)
+        if performance.scopes.keys() != observations.scopes.keys():
+            raise ManifestError(
+                "Research optimization does not contain its complete grid"
+            )
+        train_bounds = optimization_date_bounds(
+            optimization_backtest(manifest, "train")
+        )
+        test_bounds = optimization_date_bounds(optimization_backtest(manifest, "test"))
+        for scope_id, observed in observations.scopes.items():
+            _verify_optimization_observation_range(
+                observed, *(test_bounds if scope_id == "test" else train_bounds)
+            )
+        return selection
+    if performance.optimization_selection is not None:
+        raise ManifestError("Search selection requires an optimization manifest")
     config = manifest.config_copy()
     if manifest.kind == "walk_forward":
         _verify_walk_forward(manifest, performance, observations)
@@ -110,6 +125,7 @@ def verify_research_scopes(
             config["backtest"]["start_date"],
             config["backtest"]["end_date"],
         )
+    return None
 
 
 def _saved_fold_layout(
@@ -211,18 +227,20 @@ def _verify_walk_forward(
                 )
 
 
-def _verify_optimization(
+def verify_optimization_selection(
     manifest: ExecutionManifest,
     performance: PerformanceBundle,
-    observations: ObservationsBundle,
-) -> None:
+) -> OptimizationSelection | None:
+    """Verify the metrics and settings behind a published training search."""
     search = manifest.optimization
-    assert search is not None
+    if search is None or performance.manifest_hash != manifest.manifest_hash:
+        raise ManifestError("Optimization performance differs from its manifest")
+    if len(performance.scopes) != search.total_combinations + 1:
+        raise ManifestError("Research optimization does not contain its complete grid")
     combos = parameter_grid(search.param_ranges)
     expected_ids = [f"trial/{index}/train" for index in range(len(combos))] + ["test"]
     if (
         set(performance.scopes) != set(expected_ids)
-        or set(observations.scopes) != set(expected_ids)
         or performance.default_scope != "test"
     ):
         raise ManifestError("Research optimization does not contain its complete grid")
@@ -231,6 +249,10 @@ def _verify_optimization(
         raise ManifestError("Research optimization has no selected training scope")
     winner: str | None = None
     winner_value: float | None = None
+    objective_available = 0
+    missing_objective = False
+    train_config = optimization_backtest(manifest, "train")
+    train_context = _optimization_scope_context(manifest, train_config)
     for index, parameters in enumerate(combos):
         scope_id = f"trial/{index}/train"
         scope = performance.scopes[scope_id]
@@ -238,7 +260,11 @@ def _verify_optimization(
             parameters
         ):
             raise ManifestError("Research trial differs from its fixed grid position")
+        _verify_optimization_scope(scope, "train", train_config, train_context)
+        effective_scope_parameters(manifest, scope)
+        missing_objective |= search.optimization_metric not in scope.values
         value = finite_metric_value(scope.values.get(search.optimization_metric))
+        objective_available += value is not None
         if is_better_metric(value, winner_value, search.direction):
             winner, winner_value = scope_id, value
     if winner is None or selected != winner:
@@ -252,13 +278,31 @@ def _verify_optimization(
         raise ManifestError(
             "Research test parameters differ from the selected training scope"
         )
-    for scope_id in expected_ids:
-        verify_optimization_observations(
-            manifest,
-            performance.scopes[scope_id],
-            observations.scopes[scope_id],
-            split="test" if scope_id == "test" else "train",
-        )
+    test_config = optimization_backtest(manifest, "test")
+    _verify_optimization_scope(
+        test, "test", test_config, _optimization_scope_context(manifest, test_config)
+    )
+    effective_scope_parameters(manifest, test)
+    if missing_objective:
+        if performance.optimization_selection is not None:
+            raise ManifestError("Research trial lacks its recorded objective")
+        return None
+    selection = OptimizationSelection(
+        selected_train_scope=winner,
+        objective=search.optimization_metric,
+        direction=search.direction,
+        planned=len(combos),
+        raw_attempted=len(combos),
+        completed=len(combos),
+        objective_available=objective_available,
+        objective_unavailable=len(combos) - objective_available,
+    )
+    if (
+        performance.optimization_selection is not None
+        and performance.optimization_selection != selection
+    ):
+        raise ManifestError("Optimization selection differs from the verified grid")
+    return selection
 
 
 def verify_optimization_observations(
@@ -270,28 +314,65 @@ def verify_optimization_observations(
 ) -> None:
     """Verify one observation with the same rules for complete and partial searches."""
     expected = optimization_backtest(manifest, split)
+    _verify_optimization_scope(
+        scope, split, expected, _optimization_scope_context(manifest, expected)
+    )
+    effective_scope_parameters(manifest, scope)
+    _verify_optimization_observation_range(
+        observations, *optimization_date_bounds(expected)
+    )
+
+
+def _optimization_scope_context(
+    manifest: ExecutionManifest, config: BacktestConfig
+) -> bytes:
+    return canonical(
+        {
+            **config.model_dump(mode="json"),
+            "random_seed": manifest.config.get("random_seed"),
+        }
+    )
+
+
+def _verify_optimization_scope(
+    scope: PerformanceScope,
+    split: Literal["train", "test"],
+    expected: BacktestConfig,
+    expected_context: bytes,
+) -> None:
     if (
         scope.kind != "backtest"
         or scope.fold_index is not None
         or scope.split != split
         or scope.mode != expected.mode
-        or canonical(scope.metadata.get("execution_context"))
-        != canonical(
-            {
-                **expected.model_dump(mode="json"),
-                "random_seed": manifest.config_copy().get("random_seed"),
-            }
-        )
+        or canonical(scope.metadata.get("execution_context")) != expected_context
     ):
         raise ManifestError(
             "Research optimization scope differs from its execution range"
         )
-    effective_scope_parameters(manifest, scope)
-    start, end = optimization_date_bounds(expected)
+    settings = scope.metadata.get("settings")
+    expected_settings = {
+        "frequency": expected.timeframe,
+        "periods_per_year": expected.periods_per_year,
+        "risk_free_rate": expected.risk_free_rate,
+        "required_return": expected.required_return,
+    }
+    if isinstance(settings, dict) and any(
+        key in settings and (isinstance(settings[key], bool) or settings[key] != value)
+        for key, value in expected_settings.items()
+    ):
+        raise ManifestError(
+            "Research optimization metric settings differ from its manifest"
+        )
+
+
+def _verify_optimization_observation_range(
+    observations: ScopeObservations, start: pd.Timestamp, end: pd.Timestamp
+) -> None:
     if (
         not observations.timestamps
-        or pd.Timestamp(observations.timestamps[0]) < start
-        or pd.Timestamp(observations.timestamps[-1]) >= end
+        or pd.to_datetime(observations.timestamps[0], utc=True) < start
+        or pd.to_datetime(observations.timestamps[-1], utc=True) >= end
     ):
         raise ManifestError(
             "Research observations lie outside the approved scope range"

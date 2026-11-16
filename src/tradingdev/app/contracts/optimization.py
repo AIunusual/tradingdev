@@ -5,7 +5,12 @@ from typing import Literal
 from pydantic import JsonValue
 
 from tradingdev.app.contracts.common import ContractModel, Page
+from tradingdev.domain.optimization.selection import SelectionEvidenceReference
 from tradingdev.domain.optimization.trials import TrialStateView
+from tradingdev.domain.performance.artifacts import (
+    MetricDefinitionSnapshot,
+    OptimizationSelection,
+)
 
 
 class OptimizationTrial(ContractModel):
@@ -46,3 +51,33 @@ class OptimizationTrialsResponse(ContractModel):
     job_id: str
     progress: OptimizationProgress
     trials: Page[OptimizationTrial]
+
+
+class SelectionMetric(ContractModel):
+    value: float | None
+    reason: str | None
+
+
+class SelectionTrial(ContractModel):
+    """A saved training trial and the calculations used for its selection values."""
+
+    trial_index: int
+    scope: str
+    split: Literal["train"] = "train"
+    state: Literal["completed"] = "completed"
+    parameters: dict[str, JsonValue]
+    metrics: dict[str, SelectionMetric]
+    calculation_settings: dict[str, JsonValue] | None
+    provider_versions: dict[str, JsonValue] | None
+    calculation_fallbacks: dict[str, JsonValue] | None
+
+
+class SelectionEvidencePage(ContractModel):
+    """Trial objectives and Sharpe values in fixed grid order."""
+
+    success: Literal[True] = True
+    reference: SelectionEvidenceReference
+    summary: OptimizationSelection
+    training_execution_context: dict[str, JsonValue]
+    definitions: dict[str, MetricDefinitionSnapshot]
+    trials: Page[SelectionTrial]

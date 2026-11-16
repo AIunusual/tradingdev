@@ -308,6 +308,14 @@ The run-ranking semantics — saved scope parameters and metadata, manifest-leve
 conditions, definition checks and fold-summary skips — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
+For an optimization, use the row's `selection_evidence` to distinguish the size
+of its training search from the leaderboard's candidate count. Follow the saved
+reference with `get_selection_evidence` to inspect the training trial values.
+Raw attempts count grid positions, including observed trials whose objective is
+undefined. Dependence between trials and manual searches across runs remain
+unknown. Training-trial Sharpe values characterize the search and do not supply
+an independent trial count or a deflated Sharpe for the selected test returns.
+
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept
 `top_k`. For recorded evaluations the complete filtered candidate set is compared
 and ranked before paging; to rank saved backtest scopes instead, pass

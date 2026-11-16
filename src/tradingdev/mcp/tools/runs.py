@@ -14,7 +14,10 @@ from tradingdev.app.contracts.common import (
     PageLimit,
     PageOffset,
 )
-from tradingdev.app.contracts.optimization import OptimizationTrialsResponse  # noqa: TC001
+from tradingdev.app.contracts.optimization import (  # noqa: TC001
+    OptimizationTrialsResponse,
+    SelectionEvidencePage,
+)
 from tradingdev.app.contracts.research import (
     CompareRunsResponse,
     MetricCatalogResponse,
@@ -144,16 +147,42 @@ def register(mcp: MCPServer, service: RunService) -> None:
         offset: PageOffset = 0,
         limit: PageLimit = DEFAULT_PAGE_LIMIT,
     ) -> OptimizationTrialsResponse | ErrorResponse:
-        """Page approved optimization trial positions and their recorded outcomes.
+        """Page grid positions and recorded outcomes, with separate test status.
 
-        Use get_job_status for lifecycle. completed counts fully observed trials,
-        rankable counts finite objectives, and search_complete requires all
-        approved positions to be observed. The leader is among observed trials.
-        Test evidence is separate. Follow trials.next_offset. Pass job_id as
-        run_id and an explicit recorded scope to get_run_metrics for values.
+        Follow trials.next_offset. Read values with get_run_metrics(job ID, explicit
+        scope). Leaders use finite observed objectives; search_complete requires
+        every trial to be observed. Use get_job_status for lifecycle.
         """
         try:
             return service.get_optimization_trials(job_id, offset=offset, limit=limit)
+        except PerformanceArtifactError as exc:
+            return ErrorResponse(success=False, code=exc.code, error=str(exc))
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def get_selection_evidence(
+        run_id: str,
+        performance_sha256: str,
+        offset: PageOffset = 0,
+        limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    ) -> SelectionEvidencePage | ErrorResponse:
+        """Page the saved training trials behind a ranked optimization run.
+
+        Use run_id and performance_sha256 from selection_evidence.reference;
+        follow trials.next_offset. Includes parameters, training objective and
+        Sharpe, settings and null reasons. Trial independence is unknown, and
+        training values cannot establish deflated Sharpe for test returns.
+        """
+        try:
+            return service.get_selection_evidence(
+                run_id, performance_sha256, offset=offset, limit=limit
+            )
         except PerformanceArtifactError as exc:
             return ErrorResponse(success=False, code=exc.code, error=str(exc))
 
@@ -170,20 +199,13 @@ def register(mcp: MCPServer, service: RunService) -> None:
         metric_ids: list[str] | None = None,
         scope: str | None = None,
     ) -> RunMetricsResponse | MetricQueryError:
-        """Read all or selected stored metrics, including values omitted from summaries.
+        """Read saved metrics, definitions, settings and null reasons for one scope.
 
-        Partial optimization jobs require an explicit scope and use the job ID as
-        run_id. Discover scopes with get_optimization_trials. A partial response
-        has result_completeness=partial and no default_scope.
-        Otherwise omit scope to use default_scope. Scopes include full, fold/0/train,
-        fold/0/test, test_summary, trial/0/train, and test when recorded.
-        Response contains original definitions/settings and reasons for nulls.
-        Use display_metrics for presentation; percent signs are already included.
-        Unknown IDs/scopes return available choices. No strategy is rerun.
-        Fold summaries are distributions across folds, not whole-period returns.
-        Rolling traces are summaries. Published runs include artifact_id and
-        json_pointer for retrieving the full trace with get_artifact.
-        Partial optimization scopes report why full trace retrieval is unavailable.
+        Omit scope for a published run's default. Partial optimizations require
+        the job ID and explicit scope from get_optimization_trials. Unknown IDs
+        or scopes return choices. Fold summaries describe distributions over folds.
+        Use display_metrics as formatted. For published rolling traces, use
+        artifact_id and json_pointer with get_artifact for details.
         """
         payload = service.get_run_metrics(run_id, metric_ids=metric_ids, scope=scope)
         if payload.get("success") is False:

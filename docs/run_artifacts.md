@@ -901,6 +901,22 @@ provenance and settings; fitted values remain separately identified by
 `metadata.strategy_parameters` when recorded. Growing rolling traces retain the
 summary and artifact references supplied by `get_run_metrics`.
 
+Optimization rows carry `selection_evidence`, the search behind the run. The
+`scope_role` distinguishes the selected test, selected training trial, and other
+training trials. Each role refers to the same training search. Simple runs have
+`selection_evidence: null`. If a historical search cannot be verified, an otherwise
+readable ranking row reports `status: unavailable` with the reason. Unpublished
+optimization jobs appear among skipped selections with their job status.
+
+Call `get_selection_evidence` with `run_id` and `performance_sha256` from the
+reference. Keep both values and follow `trials.next_offset`. The page gives grid
+positions and overrides, the saved objective and train Sharpe, definitions,
+calculation settings and reasons for unavailable values. For other trial values,
+pass the row's `scope` to `get_run_metrics`. Read-only paging preserves the original
+search counts and rejects a mismatched reference. See
+[optimization selection evidence](performance_artifacts.md#optimization-selection-evidence)
+for publication and historical verification rules.
+
 The trading `conditions` describe the run's submitted manifest and remain the same
 for all scopes of that run. They are not a fold's observed dates: use the scope's
 saved `metadata.observations` for the actual measurement period. Missing metadata

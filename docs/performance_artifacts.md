@@ -260,6 +260,28 @@ run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
 `performance_artifact_unavailable`; reads never migrate, unpickle or recompute
 those results. Historical values are not asserted to follow the new definitions.
 
+## Optimization Selection Evidence
+
+Published optimizations embed a versioned `optimization_selection` summary in
+`performance.json`. The worker takes counts and the winning position from the
+committed trial ledger. Publication checks the summary against the approved grid,
+saved objectives, winner and matching test parameters and observation ranges.
+Trial values, definitions and calculation settings stay in their original scopes
+in the same hashed bundle. The selected training scope and `test` share the same
+grid overrides but have distinct measurement periods and observations.
+
+`planned`, `raw_attempted` and `completed` agree for a published complete grid.
+Trials with an undefined objective count in all three. The finite objective count
+and the unavailable objective count describe the values available to selection.
+Partial jobs expose recorded attempts separately through `get_optimization_trials`.
+An older bundle provides selection evidence only when its full scopes and original
+observations verify against the saved manifest. Read-time verification leaves the
+historical files intact. Newly published optimization bundles require a reader
+that recognizes `optimization_selection`.
+
+See [ranking saved run scopes](run_artifacts.md#ranking-saved-run-scopes) for
+the ranking reference and paged trial values.
+
 ## Benchmarks
 
 New backtest and walk-forward artifacts add a `benchmarks` mapping keyed by the

@@ -2,7 +2,7 @@
 
 Live approval cases retain one conversation and inspect each completed model
 turn before injecting a simulated reply into the same messages or Codex thread.
-The live lookup case asks the model to read an existing partial result.
+Live lookup cases ask the model to read existing optimization evidence.
 Offline cases use the same real MCP server, workers, fixture and evidence checks
 without calling a model. Cached prices are synthetic; these tests do not validate
 external market-data access or a real human interface.
@@ -21,6 +21,7 @@ import pandas as pd
 import pytest
 import yaml
 
+from tests.app.test_selection_evidence import _publish
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import ModelTurn
 from tests.e2e.conversation_user import ObservedPlanUser, review_text
@@ -42,6 +43,8 @@ from tests.integration.test_mcp_optimization import (
     prepare_partial_optimization,
 )
 from tests.research_fixtures import research_for_config
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import NewResearchSpec, research_payload
@@ -863,3 +866,87 @@ def test_llm_reads_partial_optimization_without_rerun(
             and call.result.get("result_completeness") == "partial"
         }
         assert values.keys() >= {"trial/0/train", "trial/2/train"}, calls
+
+
+@pytest.mark.live_llm
+def test_llm_reads_ranked_optimization_search_without_rerun(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Read the saved search through the public ranking reference."""
+    tool_names = [
+        "list_runs",
+        "get_run",
+        "get_run_metrics",
+        "get_job_status",
+        "list_jobs",
+        "get_metric_catalog",
+        "get_ml_contract",
+        "leaderboard",
+        "get_selection_evidence",
+        "get_optimization_trials",
+        "list_artifacts",
+        "get_artifact",
+        "prepare_optimization",
+        "submit_execution_decision",
+    ]
+    prompt = (
+        "請按測試期 Sharpe 比較我之前保存的兩個最佳化結果 narrow 和 wide。"
+        "說明各自實際搜尋幾組，再從排名附帶的原始證據找出搜尋較大的結果的"
+        "前兩組參數和訓練期 Sharpe。若有缺值請報原始原因。只查既有結果。"
+    )
+    options = {
+        "model": pytestconfig.getoption("llm_model"),
+        "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+        "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+        "tool_names": tool_names,
+    }
+
+    async def inspect(workspace: MCPWorkspace) -> list[ToolCall]:
+        if pytestconfig.getoption("llm_provider") == "codex":
+            return codex_calls(await run_codex(workspace.root, prompt, **options))
+        async with workspace.connect() as client:
+            return await run_local_model(
+                client,
+                prompt,
+                base_url=pytestconfig.getoption("llm_base_url"),
+                temperature=pytestconfig.getoption("llm_temperature"),
+                **options,
+            )
+
+    with temporary_mcp_workspace() as workspace:
+        paths = WorkspacePaths(workspace.workspace)
+        store = SQLiteStore(paths)
+        _publish(paths, store, "narrow", 5, historical=True)
+        _publish(paths, store, "wide", 500)
+        calls = asyncio.run(inspect(workspace))
+        assert all(
+            call.name not in {"prepare_optimization", "submit_execution_decision"}
+            for call in calls
+        )
+        board = next(
+            call.result["ranked"]
+            for call in calls
+            if call.name == "leaderboard"
+            and call.result.get("success")
+            and call.result["metric"] == "run.sharpe_ratio"
+            and {row["run_id"] for row in call.result["ranked"]} == {"narrow", "wide"}
+        )
+        wide, narrow = board
+        assert wide["scope"] == narrow["scope"] == "test"
+        assert [
+            row["selection_evidence"]["summary"]["raw_attempted"] for row in board
+        ] == [500, 5]
+        reference = wide["selection_evidence"]["reference"]
+        trials = {
+            trial["trial_index"]: trial
+            for call in calls
+            if call.name == "get_selection_evidence"
+            and call.result.get("success")
+            and call.result["reference"] == reference
+            for trial in call.result["trials"]["items"]
+        }
+        assert trials[0]["metrics"]["sharpe_ratio"]["value"] == 0.0
+        assert trials[1]["metrics"]["sharpe_ratio"] == {
+            "value": None,
+            "reason": "insufficient_data",
+        }

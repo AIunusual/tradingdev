@@ -432,6 +432,30 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             metric_ids=["total_return", "daily_pnl_median"],
         )
         assert reloaded_trial == losing
+        board = await client.call(
+            "leaderboard", metric="run.total_return", runs=[{"run_id": job_id}]
+        )
+        (ranked,) = board["ranked"]
+        assert ranked["scope"] == "test" and ranked["value"] == pytest.approx(
+            oos_return
+        )
+        selection = ranked["selection_evidence"]
+        assert selection["summary"]["raw_attempted"] == 4
+        assert selection["summary"]["selected_train_scope"] == "trial/2/train"
+        reference = selection["reference"]
+        assert reference["source"] == "trial_ledger"
+        page = await client.call(
+            "get_selection_evidence",
+            run_id=job_id,
+            performance_sha256=reference["performance_sha256"],
+            offset=1,
+            limit=1,
+        )
+        (flat_trial,) = page["trials"]["items"]
+        assert flat_trial["split"] == "train" and flat_trial["trial_index"] == 1
+        assert flat_trial["metrics"]["total_return"]["value"] == 0.0
+        assert flat_trial["metrics"]["sharpe_ratio"]["value"] is None
+        assert flat_trial["metrics"]["sharpe_ratio"]["reason"]
         assert any(
             item["run_id"] == job_id
             for item in await client.read_all_pages("list_runs")
@@ -515,4 +539,11 @@ async def test_parallel_candidate_exception_retains_partial_trials(
         assert detail["default_scope"] is None and detail["trial_index"] == 0
         missing = await client.call("get_run_metrics", run_id=job_id, scope="test")
         assert missing["code"] == "optimization_scope_unavailable"
+        board = await client.call(
+            "leaderboard",
+            metric="run.total_return",
+            runs=[{"run_id": job_id, "scope": "trial/0/train"}],
+        )
+        assert board["ranked"] == []
+        assert "status partial" in board["skipped"][0]["reason"]
         assert (await client.call("list_runs"))["items"] == []

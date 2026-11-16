@@ -101,11 +101,12 @@ def _evaluation(
             "schema_version": 1,
             "mode": "signal",
             "providers": {"fixture": "1.0"},
-            "settings": {"trade_scope": "closed", "periods_per_year": 365},
+            "settings": {"trade_scope": "closed"},
             "unavailable": {metric: "insufficient_data"} if value is None else {},
         },
     )
     if config is not None:
+        result.metric_metadata["settings"]["periods_per_year"] = config.periods_per_year
         result.metric_metadata["execution_context"] = {
             **config.model_dump(mode="json"),
             "random_seed": 42,
