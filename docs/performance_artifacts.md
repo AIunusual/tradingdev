@@ -50,8 +50,9 @@ recalculate previously published artifacts.
 ## Performance Scopes and Provenance
 
 `performance.json` schema version 1 records `run_id`, `manifest_hash`,
-`default_scope`, `scopes`, `definitions`, and optionally `benchmarks`. Each scope
-contains `values` and `metadata`, its engine `mode`, `kind`, `split`, optional
+`default_scope`, `scopes`, `definitions`, and optionally `benchmarks` and
+`optimization_selection`. Each scope contains `values` and `metadata`, its
+engine `mode`, `kind`, `split`, optional
 fold/trial index, and parameter values. Definition snapshots describe unit,
 provider, meaning, applicability, summary selection and optimization direction.
 They are saved with the result; queries do not substitute the current catalog.
@@ -266,9 +267,10 @@ Published optimizations embed a versioned `optimization_selection` summary in
 `performance.json`. The worker takes counts and the winning position from the
 committed trial ledger. Publication checks the summary against the approved grid,
 saved objectives, winner and matching test parameters and observation ranges.
-Trial values, definitions and calculation settings stay in their original scopes
-in the same hashed bundle. The selected training scope and `test` share the same
-grid overrides but have distinct measurement periods and observations.
+Trial values and calculation settings stay in their original scopes. The same
+hashed bundle preserves metric definition snapshots from the committed evidence.
+The selected training scope and `test` use the same grid overrides in distinct
+measurement periods.
 
 `planned`, `raw_attempted` and `completed` agree for a published complete grid.
 Trials with an undefined objective count in all three. The finite objective count
@@ -279,8 +281,9 @@ observations verify against the saved manifest. Read-time verification leaves th
 historical files intact. Newly published optimization bundles require a reader
 that recognizes `optimization_selection`.
 
-See [ranking saved run scopes](run_artifacts.md#ranking-saved-run-scopes) for
-the ranking reference and paged trial values.
+Use `get_selection_evidence` to page saved training trials behind a ranked
+optimization. The [saved-run ranking contract](run_artifacts.md#ranking-saved-run-scopes)
+describes the required reference, continuation and interpretation limits.
 
 ## Benchmarks
 

@@ -608,6 +608,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | Job progress or cancellation | `list_jobs`, `get_job_status`, `cancel_job` |
 | Saved result identity and scopes | `list_runs`, `get_run`, `find_runs` |
 | Optimization grid progress and partial trial scope discovery | `get_job_status`, `get_optimization_trials` |
+| Training trials behind a ranked optimization | `get_selection_evidence` with the [ranking reference](#ranking-saved-run-scopes) |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
@@ -906,16 +907,26 @@ Optimization rows carry `selection_evidence`, the search behind the run. The
 training trials. Each role refers to the same training search. Simple runs have
 `selection_evidence: null`. If a historical search cannot be verified, an otherwise
 readable ranking row reports `status: unavailable` with the reason. Unpublished
-optimization jobs appear among skipped selections with their job status.
+optimization jobs appear among skipped selections with their job status. An
+unavailable search has an unknown count. The ranking's candidate count covers
+the selected rows, independent of each run's original search size.
 
-Call `get_selection_evidence` with `run_id` and `performance_sha256` from the
-reference. Keep both values and follow `trials.next_offset`. The page gives grid
-positions and overrides, the saved objective and train Sharpe, definitions,
-calculation settings and reasons for unavailable values. For other trial values,
-pass the row's `scope` to `get_run_metrics`. Read-only paging preserves the original
-search counts and rejects a mismatched reference. See
+Call `get_selection_evidence` with `run_id` and `performance_sha256` from
+`selection_evidence.reference`. Keep both values and follow `trials.next_offset`.
+The page includes the selected training trial's execution context and the saved
+definitions for the objective and training Sharpe. Each trial gives its grid
+position, overrides, saved values and missing-value reasons, with calculation
+settings, provider versions and applicable calculation fallbacks when recorded.
+For other trial values, pass the trial's `scope` to `get_run_metrics`. Paging
+preserves the original search counts. The query rejects a mismatched reference
+or evidence that cannot be verified. See
 [optimization selection evidence](performance_artifacts.md#optimization-selection-evidence)
 for publication and historical verification rules.
+
+Trial dependence and manual searches across runs remain unknown. Raw attempts
+count tried grid positions, including completed trials whose objective is
+undefined. Training-trial Sharpe values characterize the training search.
+They cannot establish a deflated Sharpe for the selected test returns.
 
 The trading `conditions` describe the run's submitted manifest and remain the same
 for all scopes of that run. They are not a fold's observed dates: use the scope's
