@@ -890,6 +890,7 @@ diff 審查，不追隨連結讀取目標檔案；同時作為必要背景來源
 | 維護任務 | 正式入口與可取得的資訊 |
 | --- | --- |
 | 核對路徑責任與所需來源 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_path`、`development_context_for_path`、`source_context_for_path`，提供行為、開發操作及必要來源的登錄。 |
+| 維護產品文件的章節責任 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_section` 與 `_BEHAVIOR_CHANGE_SECTIONS`，依完整標題階層取得需求及契約對應；未登錄內容保留保守背景。[test_review_scope.py](../tests/tooling/test_review_scope.py) 核對登錄與祖先，[test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證實際變更的原文涵蓋。 |
 | 追查簡報參照選取 | [review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、`_operation_definitions_only`、`automatic_document_paths`，判定何時需要編輯指南或完整簡報來源。 |
 | 追查容量及批次完整性 | [review_plan.py](../tooling/review_plan.py) 的 `_selected_evidence_size`、`build_review_plan`、`ReviewPlan.verify`，提供原文計量、批次規劃與完整性核對。 |
 
