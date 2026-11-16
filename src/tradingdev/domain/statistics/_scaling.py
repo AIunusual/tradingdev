@@ -21,6 +21,7 @@ losing information even for a mathematically scale-invariant statistic.
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import numpy as np
 import numpy.typing as npt
@@ -76,3 +77,47 @@ def rescaled_columns(columns: npt.NDArray[np.float64]) -> npt.NDArray[np.float64
     # int32: NumPy's ldexp takes a C int or long exponent, and long is 32
     # bits on Windows; binary exponents of doubles fit either way.
     return np.ldexp(columns, -np.array(exponents, dtype=np.int32))
+
+
+def shift_for_moments(values: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """Remove a shared offset when subtraction is exact (Sterbenz's lemma)."""
+    low, high = float(values.min()), float(values.max())
+    if high > 0.0 and low >= high * 0.5:
+        return np.subtract(values, low)
+    if low < 0.0 and high <= low * 0.5:
+        return np.subtract(values, high)
+    return values
+
+
+def centered_dot(a: npt.NDArray[np.float64], b: npt.NDArray[np.float64]) -> float:
+    """Dot product of centered vectors without rounding each centered value.
+
+    Call with nonempty, rescaled inputs whose shared offsets have been
+    removed by :func:`shift_for_moments`. This preserves small observations
+    that direct centering of a wide-range vector could round away.
+    """
+    products = math.sumprod(a, b)
+    mean_a, total_b = math.fsum(a) / a.size, math.fsum(b)
+    result = math.fma(-mean_a, total_b, products)
+    if abs(result) < abs(products) * 2.0**-20:
+        # The subtraction lost at least 20 bits to cancellation. Recompute
+        # those moments exactly before rounding the small residual to float.
+        exact_a = [Fraction(float(value)) for value in a]
+        exact_b = [Fraction(float(value)) for value in b]
+        exact_products = sum(x * y for x, y in zip(exact_a, exact_b, strict=True))
+        return float(exact_products - sum(exact_a) * sum(exact_b) / a.size)
+    return result
+
+
+def rescaled_difference(
+    a: npt.NDArray[np.float64], b: npt.NDArray[np.float64]
+) -> tuple[npt.NDArray[np.float64], int]:
+    """Return an elementwise difference in units of a power of two."""
+    with np.errstate(over="ignore"):
+        difference = a - b
+    if np.all(np.isfinite(difference)):
+        return rescaled(difference)
+    # A finite difference can exceed float64 before the subsequent statistic
+    # is computed. Halving both sides keeps the subtraction in range.
+    scaled, exponent = rescaled(a * 0.5 - b * 0.5)
+    return scaled, exponent + 1

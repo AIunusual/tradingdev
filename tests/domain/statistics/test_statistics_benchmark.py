@@ -152,6 +152,124 @@ class TestRegression:
         assert exposure.mean() == 0.5
         assert result.beta == pytest.approx(0.1)
 
+    def test_constant_strategy_has_zero_beta_above_benchmark_spread_floor(self) -> None:
+        result = compare_to_benchmark(
+            _daily([0.001] * 3),
+            _daily([0.01, 0.010000000002, 0.010000000004]),
+            periods_per_year=365,
+        )
+
+        assert result.beta == 0.0
+        assert result.alpha_annualised == pytest.approx(0.365)
+
+    def test_beta_is_invariant_to_a_constant_shift_in_strategy_returns(self) -> None:
+        benchmark = _daily([0.01, 0.010000000002, 0.010000000004])
+        strategy = benchmark - benchmark.iloc[0]
+
+        original = compare_to_benchmark(strategy, benchmark, periods_per_year=1)
+        shifted = compare_to_benchmark(
+            strategy + 2.0**-10, benchmark, periods_per_year=1
+        )
+
+        assert original.beta == pytest.approx(1.0)
+        assert shifted.beta == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("order", [[0, 1, 2], [1, 2, 0]])
+    def test_beta_preserves_small_terms_with_a_large_outlier(
+        self, order: list[int]
+    ) -> None:
+        strategy = np.array([1e16, 1.0, -1.0])
+        benchmark = np.array([0.0, 1.0, -1.0])
+
+        result = compare_to_benchmark(
+            _daily(strategy[order]), _daily(benchmark[order]), periods_per_year=1
+        )
+
+        # The benchmark mean is zero. The large observation has zero weight.
+        assert result.beta == pytest.approx(1.0)
+
+    def test_beta_retains_the_residual_after_canceling_large_moments(self) -> None:
+        result = compare_to_benchmark(
+            _daily([0.25, 1e16, -0.25]),
+            _daily([0.0, 1.0, 2.0]),
+            periods_per_year=1,
+        )
+
+        # Centered benchmark weights [-1, 0, 1] exclude the middle outlier.
+        # The covariance numerator is -0.5 and the weight squares sum to 2.
+        assert result.beta == pytest.approx(-0.25)
+
+    def test_large_opposite_returns_keep_small_terms_in_the_average(self) -> None:
+        result = compare_to_benchmark(
+            _daily([1e16, -1e16, 1.0]),
+            _daily([0.5, 0.5, 0.0]),
+            periods_per_year=1,
+        )
+
+        # Both series sum to 1. The fitted strategy mean is 0 at b=0.5
+        # and 1 at b=0, giving an intercept of 1 and a slope of -2.
+        assert result.active_return_annualised == 0.0
+        assert result.beta == pytest.approx(-2.0)
+        assert result.alpha_annualised == pytest.approx(1.0)
+
+    def test_active_mean_can_retain_a_tiny_term_after_large_terms_cancel(self) -> None:
+        result = compare_to_benchmark(
+            _daily([1e308, -1e308, 1e-30]),
+            _daily([0.0, 0.0, 0.0]),
+            periods_per_year=1,
+        )
+
+        assert result.active_return_annualised == pytest.approx(1e-30 / 3, abs=0.0)
+
+    def test_large_identical_returns_have_unit_beta_and_zero_alpha(self) -> None:
+        returns = _daily([1e160, 2e160, 3e160])
+
+        result = compare_to_benchmark(returns, returns, periods_per_year=1)
+
+        assert result.beta == 1.0
+        assert result.alpha_annualised == 0.0
+
+    def test_large_active_returns_have_finite_tracking_error_and_ratio(self) -> None:
+        result = compare_to_benchmark(
+            _daily([1e160, 2e160, 3e160]),
+            _daily([0.01, 0.02, 0.03]),
+            periods_per_year=1,
+        )
+
+        # The small benchmark is below float precision at this scale.
+        # For active returns [1, 2, 3] times 1e160, the mean is 2e160
+        # and the sample standard deviation is 1e160.
+        assert result.tracking_error_annualised == pytest.approx(1e160)
+        assert result.information_ratio == pytest.approx(2.0)
+
+    def test_annualised_active_return_can_fit_when_one_difference_overflows(
+        self,
+    ) -> None:
+        result = compare_to_benchmark(
+            _daily([1e308]), _daily([-1e308]), periods_per_year=0.25
+        )
+
+        assert result.active_return_annualised == pytest.approx(5e307)
+
+    @pytest.mark.parametrize(
+        ("strategy", "benchmark", "periods", "field"),
+        [
+            ([1e308], [0.0], 2.0, "active_return_annualised"),
+            ([-1e308, 1e308], [-0.01, 0.01], 1.0, "beta"),
+        ],
+    )
+    def test_unrepresentable_outputs_raise_an_error(
+        self,
+        strategy: list[float],
+        benchmark: list[float],
+        periods: float,
+        field: str,
+    ) -> None:
+        with pytest.raises(ValueError, match=field):
+            compare_to_benchmark(
+                _daily(strategy), _daily(benchmark), periods_per_year=periods
+            )
+
     def test_formulas_on_known_data(self) -> None:
         benchmark = _benchmark()
         strategy = _strategy_on(benchmark)

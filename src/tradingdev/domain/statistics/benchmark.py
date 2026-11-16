@@ -71,19 +71,19 @@ Reading the results:
   :func:`compare_to_benchmark` scales sample means and the regression
   intercept by ``periods_per_year`` and a sample standard deviation by
   ``sqrt(periods_per_year)``. For a stationary series, serial dependence
-  does not by itself bias those sample means or the intercept: they still
-  estimate the per-period quantities, and the annualisation is a fixed
-  arithmetic rescaling. Dependence changes their uncertainty, not their
-  location. An i.i.d. standard error, and the ``sqrt`` scaling of a
-  standard deviation, no longer describe the sampling variance of a mean
+  does not by itself bias those sample means. They still estimate the
+  per-period means, and the annualisation is a fixed arithmetic rescaling.
+  Dependence changes their uncertainty, not their location. An i.i.d.
+  standard error and the ``sqrt`` scaling of a standard deviation no longer
+  describe the sampling variance of a mean
   when successive periods are correlated, so confidence intervals and
   significance computed under independence are miscalibrated, and the
   annualised dispersion figures inherit that scaling assumption.
+  For differences of a statistic evaluated separately on each series,
   :func:`tradingdev.domain.statistics.comparison.difference_interval`
-  addresses the uncertainty with a stationary bootstrap that resamples
-  blocks and so preserves the dependence. Read the point estimates as
-  "how large" and the interval as "how precisely known"; autocorrelated
-  returns change the second, not the first.
+  uses paired block resampling to account for dependence. Beta and alpha
+  are fitted jointly from both series; this module reports their point
+  estimates only.
 
 Conventions:
 
@@ -104,6 +104,8 @@ Conventions:
   timezone-naive index with a timezone-aware one raises a timezone
   mismatch rather than reporting no common period.
 * Non-finite returns or duplicate index labels raise ``ValueError``.
+  Calculations use binary scaling to limit overflow. With a sufficiently
+  wide range of input magnitudes, scaling can round away small observations.
 """
 
 from __future__ import annotations
@@ -111,10 +113,17 @@ from __future__ import annotations
 import math
 import numbers
 from dataclasses import dataclass
+from itertools import chain
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tradingdev.domain.statistics._scaling import (
+    centered_dot,
+    rescaled,
+    rescaled_difference,
+    shift_for_moments,
+)
 from tradingdev.domain.statistics.comparison import align_returns
 from tradingdev.domain.statistics.periods import period_returns
 
@@ -154,8 +163,8 @@ class BenchmarkComparison:
         up_capture: Mean strategy return over mean benchmark return in the
             periods where the benchmark rose; ``None`` without such periods.
         down_capture: The same over the periods where the benchmark fell.
-            Both means are negative there, so a value below 1 means the
-            strategy lost less than the benchmark; ``None`` without such
+            The denominator is negative. A negative ratio means the strategy
+            gained on average during those periods. ``None`` without such
             periods.
         n_up_periods: Periods where the benchmark return is positive.
         n_down_periods: Periods where the benchmark return is negative.
@@ -186,7 +195,10 @@ def buy_and_hold_returns(
     :func:`~tradingdev.domain.statistics.periods.period_returns` of the
     price series: the same UTC periods, labels, and validation as the
     strategy returns built from an equity curve over the same bars.
-    Compounding the returns reproduces ``prices[-1] / prices[0]``.
+    In exact arithmetic, compounding the gross returns reproduces
+    ``prices[-1] / prices[0]``. See
+    :func:`~tradingdev.domain.statistics.periods.period_returns` for the
+    floating-point limits on recovering price ratios from simple returns.
 
     Pass the price the strategy's equity is marked at (normally the bar
     close) and the same ``frequency`` as the strategy returns; returns of
@@ -216,7 +228,7 @@ def compare_to_benchmark(
     ``ppy`` the periods per year, and means and sums over the ``n`` common
     periods:
 
-    ``beta = sum((b - mean(b)) * s) / sum((b - mean(b))**2)``
+    ``beta = sum((b - mean(b)) * (s - mean(s))) / sum((b - mean(b))**2)``
 
     ``alpha_annualised = (mean(s) - beta * mean(b)) * ppy``
 
@@ -257,8 +269,9 @@ def compare_to_benchmark(
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite, the
             series share no period, timezone-naive and timezone-aware
-            indexes are mixed, an index has duplicate labels, or a return
-            is not a finite number.
+            indexes are mixed, an index has duplicate labels, a return
+            is not finite, or a computed metric exceeds the finite float
+            range. In the last case the error names the metric.
     """
     periods = _periods_per_year(periods_per_year)
     aligned = align_returns(
@@ -273,73 +286,129 @@ def compare_to_benchmark(
     strategy = aligned.frame["strategy"].to_numpy()
     benchmark = aligned.frame["benchmark"].to_numpy()
 
-    beta = _beta(strategy, benchmark)
-    alpha = (
-        (float(strategy.mean()) - beta * float(benchmark.mean())) * periods
-        if beta is not None
-        else None
+    beta, alpha = _regression(strategy, benchmark, periods)
+    active, exponent = rescaled_difference(strategy, benchmark)
+    active_mean, mean_exponent = _active_mean(strategy, benchmark)
+    annual_active = _annualise(
+        active_mean, mean_exponent, periods, "active_return_annualised"
     )
-    active = (float(strategy.mean()) - float(benchmark.mean())) * periods
-    tracking_error = _tracking_error(strategy, benchmark, periods)
+    tracking_error = None
+    if aligned.overlap >= 2:
+        tracking_error = 0.0
+        if not _negligible_spread(active, strategy, benchmark, exponent=exponent):
+            tracking_error = _annualise(
+                float(active.std(ddof=1)),
+                exponent,
+                math.sqrt(periods),
+                "tracking_error_annualised",
+            )
     up = benchmark > 0.0
     down = benchmark < 0.0
     return BenchmarkComparison(
         n_periods=aligned.overlap,
         beta=beta,
         alpha_annualised=alpha,
-        active_return_annualised=active,
+        active_return_annualised=annual_active,
         tracking_error_annualised=tracking_error,
         information_ratio=(
-            active / tracking_error
+            _finite_metric(annual_active / tracking_error, 0, "information_ratio")
             if tracking_error is not None and tracking_error > 0.0
             else None
         ),
-        up_capture=_capture(strategy[up], benchmark[up]),
-        down_capture=_capture(strategy[down], benchmark[down]),
+        up_capture=_capture(strategy[up], benchmark[up], metric="up_capture"),
+        down_capture=_capture(strategy[down], benchmark[down], metric="down_capture"),
         n_up_periods=int(up.sum()),
         n_down_periods=int(down.sum()),
     )
 
 
-def _beta(
-    strategy: npt.NDArray[np.float64], benchmark: npt.NDArray[np.float64]
-) -> float | None:
-    if benchmark.size < 2 or _negligible_spread(benchmark, benchmark):
-        return None
-    deviations = benchmark - benchmark.mean()
-    return float(deviations @ strategy) / float(deviations @ deviations)
-
-
-def _tracking_error(
+def _regression(
     strategy: npt.NDArray[np.float64],
     benchmark: npt.NDArray[np.float64],
     periods: float,
-) -> float | None:
-    if strategy.size < 2:
-        return None
-    active = strategy - benchmark
-    if _negligible_spread(active, strategy, benchmark):
-        return 0.0
-    return float(active.std(ddof=1)) * math.sqrt(periods)
+) -> tuple[float | None, float | None]:
+    if benchmark.size < 2 or _negligible_spread(benchmark, benchmark):
+        return None, None
+    s, s_exponent = rescaled(strategy)
+    b, b_exponent = rescaled(benchmark)
+    s_shifted, b_shifted = shift_for_moments(s), shift_for_moments(b)
+    slope = centered_dot(b_shifted, s_shifted) / centered_dot(b_shifted, b_shifted)
+    beta = _finite_metric(slope, s_exponent - b_exponent, "beta")
+    intercept = math.fma(-slope, math.fsum(b) / b.size, math.fsum(s) / s.size)
+    alpha = _annualise(intercept, s_exponent, periods, "alpha_annualised")
+    return beta, alpha
+
+
+def _active_mean(
+    strategy: npt.NDArray[np.float64], benchmark: npt.NDArray[np.float64]
+) -> tuple[float, int]:
+    # Sum the two sets of terms together, before subtracting would round
+    # away the smaller terms of individual active returns. Keep the exponent
+    # separate so averaging can precede annualisation even at extreme scales.
+    try:
+        fraction, exponent = math.frexp(math.fsum(chain(strategy, -benchmark)))
+    except OverflowError:
+        peak = max(float(np.abs(strategy).max()), float(np.abs(benchmark).max()))
+        scale = math.frexp(peak)[1]
+        terms = chain(np.ldexp(strategy, -scale), np.ldexp(-benchmark, -scale))
+        fraction, exponent = math.frexp(math.fsum(terms))
+        exponent += scale
+    return fraction / strategy.size, exponent
+
+
+def _annualise(value: float, exponent: int, factor: float, metric: str) -> float:
+    fraction, value_exponent = math.frexp(value)
+    factor_fraction, factor_exponent = math.frexp(factor)
+    return _finite_metric(
+        fraction * factor_fraction, exponent + value_exponent + factor_exponent, metric
+    )
+
+
+def _finite_metric(value: float, exponent: int, metric: str) -> float:
+    error = f"{metric} is outside the finite float range"
+    try:
+        result = math.ldexp(value, exponent)
+    except OverflowError:
+        raise ValueError(error) from None
+    if not math.isfinite(result):
+        raise ValueError(error)
+    return result
 
 
 def _negligible_spread(
-    values: npt.NDArray[np.float64], *scales: npt.NDArray[np.float64]
+    values: npt.NDArray[np.float64],
+    *scales: npt.NDArray[np.float64],
+    exponent: int = 0,
 ) -> bool:
-    """Whether the range of ``values`` is rounding noise relative to ``scales``."""
+    """Compare the spread of the scaled values with rounding noise."""
     magnitude = max(1.0, *(float(np.max(np.abs(scale))) for scale in scales))
-    return float(np.ptp(values)) <= NEGLIGIBLE_SPREAD * magnitude
+    threshold = NEGLIGIBLE_SPREAD * magnitude
+    spread = float(values.max()) - float(values.min())
+    if exponent < 0:
+        spread = math.ldexp(spread, exponent)
+    else:
+        threshold = math.ldexp(threshold, -exponent)
+    return spread <= threshold
 
 
 def _capture(
-    strategy: npt.NDArray[np.float64], benchmark: npt.NDArray[np.float64]
+    strategy: npt.NDArray[np.float64],
+    benchmark: npt.NDArray[np.float64],
+    *,
+    metric: str = "capture",
 ) -> float | None:
     if benchmark.size == 0:
         return None
-    denominator = float(benchmark.mean())
+    b, b_exponent = rescaled(benchmark)
+    denominator, mean_exponent = math.frexp(math.fsum(b) / b.size)
     if denominator == 0.0:
         return None
-    return float(strategy.mean()) / denominator
+    s, s_exponent = rescaled(strategy)
+    return _finite_metric(
+        (math.fsum(s) / s.size) / denominator,
+        s_exponent - b_exponent - mean_exponent,
+        metric,
+    )
 
 
 def _periods_per_year(value: float) -> float:

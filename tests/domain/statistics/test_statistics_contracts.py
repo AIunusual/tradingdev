@@ -14,10 +14,8 @@ import pandas as pd
 import pytest
 
 from tradingdev.domain.statistics.benchmark import (
-    _beta,
     _negligible_spread,
     _periods_per_year,
-    _tracking_error,
     compare_to_benchmark,
 )
 from tradingdev.domain.statistics.comparison import (
@@ -132,22 +130,21 @@ class TestUnavailableOutcomes:
 
 class TestBenchmarkBoundaries:
     def test_two_periods_still_define_a_beta(self) -> None:
-        strategy = np.array([0.01, 0.03])
-        benchmark = np.array([0.01, 0.02])
+        result = compare_to_benchmark(
+            _daily([0.01, 0.03]), _daily([0.01, 0.02]), periods_per_year=1.0
+        )
 
-        # deviations = [-0.005, 0.005]; dot(strategy)=1e-4, dot(dev)=5e-5.
-        assert _beta(strategy, benchmark) == pytest.approx(2.0)
+        # A 0.02 change in strategy returns per 0.01 change in benchmark.
+        assert result.beta == pytest.approx(2.0)
 
     def test_two_periods_still_define_a_tracking_error(self) -> None:
-        strategy = np.array([0.01, 0.03])
-        benchmark = np.array([0.01, 0.02])
+        result = compare_to_benchmark(
+            _daily([0.01, 0.03]), _daily([0.01, 0.02]), periods_per_year=365.0
+        )
 
-        # active = [0, 0.01]; std(ddof=1) = sqrt(5e-5); scaled by sqrt(365).
+        # Active = [0, 0.01]; std(ddof=1) = sqrt(5e-5); scaled by sqrt(365).
         expected = math.sqrt(5e-5) * math.sqrt(365.0)
-        result = _tracking_error(strategy, benchmark, 365.0)
-
-        assert result is not None
-        assert result == pytest.approx(expected)
+        assert result.tracking_error_annualised == pytest.approx(expected)
 
     def test_spread_between_one_and_two_epsilons_is_not_noise(self) -> None:
         # magnitude = max(1.0, 0) = 1.0, so the 1e-12 floor governs;
