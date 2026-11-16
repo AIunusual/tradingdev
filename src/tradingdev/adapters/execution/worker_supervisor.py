@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,12 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload), encoding="utf-8")
     temporary.replace(path)
+
+
+def _describe_failure(error: BaseException) -> str:
+    if isinstance(error, BaseExceptionGroup):
+        return "".join(traceback.format_exception(error)).rstrip()
+    return f"{type(error).__name__}: {error}"
 
 
 def _child_exited(proc: subprocess.Popen[bytes]) -> bool:
@@ -76,6 +83,8 @@ def _signal_owned_group(
     proc: subprocess.Popen[bytes],
     sig: signal.Signals,
     observed: dict[int, psutil.Process],
+    *,
+    deadline: float,
 ) -> None:
     # No Popen.poll(), wait(), or psutil.wait(): the unreaped child is the anchor.
     # The leader and every descendant may already have exited.
@@ -84,10 +93,16 @@ def _signal_owned_group(
     except ProcessLookupError:
         pass
     except PermissionError:
-        # Darwin may report EPERM, rather than ESRCH, for an empty group whose
-        # leader is still waitable. Accept only independently proven completion.
-        if not _child_exited(proc) or _group_is_alive(proc.pid, observed):
-            raise
+        # Darwin can stop exposing exiting members to killpg before the leader
+        # becomes waitable. Keep the unreaped anchor and allow that transition
+        # to finish; permission denial alone never proves cleanup succeeded.
+        while True:
+            if _child_exited(proc) and not _group_is_alive(proc.pid, observed):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(_POLL_SECONDS, remaining))
 
 
 def _wait_for_group(
@@ -120,13 +135,14 @@ def terminate_owned_group(proc: subprocess.Popen[bytes]) -> int:
 
     failure: BaseException | None = None
     observed: dict[int, psutil.Process] = {}
+    signal_deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
     try:
         _group_is_alive(proc.pid, observed)
-        _signal_owned_group(proc, signal.SIGTERM, observed)
+        _signal_owned_group(proc, signal.SIGTERM, observed, deadline=signal_deadline)
         _wait_for_group(proc.pid, _STOP_GRACE_SECONDS, observed)
         # An enumerated parent can exit just after creating a new child. Signal
         # the still-owned entire group even when the first inventory was empty.
-        _signal_owned_group(proc, signal.SIGKILL, observed)
+        _signal_owned_group(proc, signal.SIGKILL, observed, deadline=signal_deadline)
         if not _wait_for_group(proc.pid, _STOP_TIMEOUT_SECONDS, observed):
             raise TimeoutError("Worker process group did not stop")
     except BaseException as error:
@@ -134,7 +150,9 @@ def terminate_owned_group(proc: subprocess.Popen[bytes]) -> int:
         # Make the strongest safe attempt, but retain the anchor on failure.
         # Failure to inspect descendants must not leave them running silently.
         try:
-            _signal_owned_group(proc, signal.SIGKILL, observed)
+            _signal_owned_group(
+                proc, signal.SIGKILL, observed, deadline=signal_deadline
+            )
         except BaseException as kill_error:
             failure = BaseExceptionGroup(
                 "Worker process group cleanup failed", [error, kill_error]
@@ -206,7 +224,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
                 break
             time.sleep(_POLL_SECONDS)
     except BaseException as error:
-        failure = f"{type(error).__name__}: {error}"
+        failure = _describe_failure(error)
     finally:
         if child is not None:
             try:
@@ -214,7 +232,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
             except BaseException as error:
                 cleaned = False
                 prefix = f"{failure}; " if failure else ""
-                failure = f"{prefix}{type(error).__name__}: {error}"
+                failure = f"{prefix}{_describe_failure(error)}"
         runtime_root = control / "runtime"
         if any(runtime_root.glob("*.json")):
             try:
@@ -232,7 +250,7 @@ def supervise(control: Path, module: str, args: list[str]) -> None:
             except BaseException as error:
                 cleaned = False
                 prefix = f"{failure}; " if failure else ""
-                failure = f"{prefix}{type(error).__name__}: {error}"
+                failure = f"{prefix}{_describe_failure(error)}"
         if not ready:
             _write_json(control / "ready.json", {"error": failure})
         _write_json(

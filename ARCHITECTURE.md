@@ -340,6 +340,8 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | `domain/statistics/plateau.py` | `trials_from_metrics` 將呼叫端提供的全部參數試驗列轉為網格與有效試驗，`plateau_summary` 比較最佳試驗與鄰域平台；輸入、失敗列及缺失網格語意見模組與函式 docstring。獨立計算，不讀取 jobs／runs，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。獨立計算，尚未接入績效發布或 MCP 查詢 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
@@ -353,7 +355,10 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `sharpe.py` 的 `sharpe_ratio` 計算比率，`sharpe_interval_outcome` 提供 bootstrap
 區間或不可用原因；`probabilistic_sharpe_ratio` 與 `deflated_sharpe_ratio` 分別計算
 相對指定門檻及搜尋調整門檻的機率。各函式的 docstring 維護報酬輸入、年化設定、
-不可用條件與推論假設。
+不可用條件與推論假設。`comparison.py` 提供配對差值推論與各序列的個別區間，
+`benchmark.py` 提供研究用的買進持有報酬與策略迴歸比較，後者與前述產品基準的
+保存值不是同一種測量；兩者的公開入口、回傳契約與解讀限制見各模組與函式 docstring
+（`domain/statistics/comparison.py`、`domain/statistics/benchmark.py`）。
 摘要保留金額與比例回撤；帳戶權益的整段淨損益以原始本金為基準，累積 P&L
 （`init_cash=None`，例如 Volume 模式）以零為基準，首筆觀測後的權益變化另行命名。
 `summarize_performance` 依當次無風險利率計算摘要的 `sharpe_ratio` 欄位，

@@ -61,25 +61,24 @@ UnavailableReason = Literal[
 
 @dataclass(frozen=True)
 class IntervalUnavailable:
-    """Why a Sharpe interval is missing, with what could still be computed.
+    """Why a bootstrap interval is unavailable and what could be computed.
 
     The reasons are checked in this order, so the first that applies wins:
 
-    * ``"insufficient_observations"``: fewer than ``min_observations``
-      returns, so the sample is too short for the bootstrap. Monthly
-      returns over one year always land here.
-    * ``"undefined_statistic"``: the Sharpe ratio of the returns is
-      undefined, such as for constant returns.
-    * ``"no_valid_resample"``: no resample has a defined Sharpe ratio.
+    * ``"insufficient_observations"``: the sample has fewer than
+      ``min_observations`` returns or aligned periods.
+    * ``"undefined_statistic"``: the observed statistic or paired
+      difference has no usable point estimate.
+    * ``"no_valid_resample"``: none of the draws has a usable value
+      for the requested statistic or difference.
 
     Attributes:
         reason: Which of the cases above applies.
-        estimate: The annualised Sharpe ratio, or ``None`` when it is
-            undefined; it is reported even when the sample is too short to
-            bootstrap.
-        observations: Number of returns in the input series.
-        min_observations: Number of returns the bootstrap requires.
-        reps: Resamples drawn; ``0`` when the bootstrap did not run.
+        estimate: Point estimate when available, even on a sample too
+            short to bootstrap. Otherwise ``None``.
+        observations: Number of input returns or common periods.
+        min_observations: Number of observations the bootstrap requires.
+        reps: Resamples drawn for this result; ``0`` when none were drawn.
     """
 
     reason: UnavailableReason
