@@ -244,27 +244,21 @@ def compare_to_benchmark(
     not ratios of annualised returns.
 
     ``beta`` is the ordinary least-squares slope. ``alpha_annualised``
-    annualises the per-period intercept arithmetically, as
-    ``intercept * ppy``, consistent with the active return and the
-    information ratio; both agree with ``quantstats.stats.greeks``. A
-    compounded alpha, ``(1 + intercept)**ppy - 1``, differs noticeably for
-    large intercepts. See the module docstring for how to read beta and why the
-    benchmark pays no costs.
+    reports the fitted intercept times ``ppy``, following the arithmetic
+    regression convention of ``quantstats.stats.greeks``. See the module
+    docstring for interpreting the regression and the benchmark's costs.
 
-    Annualisation differs within this project on purpose. The catalog's
-    ``annual_return`` (provided by QuantStats) compounds daily
-    returns, while the active-return figures here (``alpha_annualised``,
-    ``active_return_annualised``, ``tracking_error_annualised``,
-    ``information_ratio``) scale arithmetically. Both are correct for what
-    they measure. A return figure answers how much capital grew, which is a
-    compounded quantity. The information ratio is defined on the arithmetic
-    mean active return over its standard deviation, so the active return
-    and alpha must be arithmetic for ``information_ratio`` to equal
-    ``active_return_annualised / tracking_error_annualised``. Side by side
-    in one report the two can differ substantially: in particular,
-    ``active_return_annualised`` is not the difference of the two series'
-    ``annual_return``, and on daily data with a modest edge an arithmetic
-    0.168 corresponds to a compounded 0.183.
+    The information ratio divides the annualised mean active return by
+    the annualised tracking error. The catalog's ``annual_return``
+    reports compounded annual growth from each series' observed daily
+    returns.
+    ``active_return_annualised`` measures the annualised mean per-period
+    difference between the two series.
+
+    For a single series with 365 equal daily returns of ``0.168 / 365``,
+    arithmetic annualisation gives ``0.168`` and compounding gives
+    approximately ``0.183``. For varying daily returns, compounded growth
+    depends on the individual returns.
 
     Raises:
         ValueError: If ``periods_per_year`` is not positive and finite, the
