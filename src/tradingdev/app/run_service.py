@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
@@ -12,6 +14,7 @@ from tradingdev.adapters.storage.performance import (
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.contracts.common import DEFAULT_PAGE_LIMIT, Page
 from tradingdev.app.contracts.research import RunSummary
+from tradingdev.app.optimization_results import OptimizationResults
 from tradingdev.app.pagination import paginate
 from tradingdev.app.rolling_trace_summary import query_metadata
 from tradingdev.domain.performance.catalog import metric_catalog
@@ -20,7 +23,10 @@ from tradingdev.domain.presentation.metrics import display_metrics
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tradingdev.app.contracts.optimization import OptimizationTrialsResponse
+    from tradingdev.app.optimization_results import OptimizationResultView
     from tradingdev.domain.performance.artifacts import (
+        MetricDefinitionSnapshot,
         PerformanceBundle,
         PerformanceScope,
     )
@@ -49,6 +55,7 @@ class RunService:
         self._workspace.ensure()
         self._store = store or get_sqlite_store(self._workspace)
         self._performance = PerformanceStore(self._workspace, self._store)
+        self._optimization = OptimizationResults(self._workspace, self._store)
 
     def list_runs(self) -> list[dict[str, Any]]:
         """List compact default-scope values with explicit detail discovery."""
@@ -97,6 +104,12 @@ class RunService:
             "definitions": metric_catalog(mode),
         }
 
+    def get_optimization_trials(
+        self, job_id: str, *, offset: int = 0, limit: int = DEFAULT_PAGE_LIMIT
+    ) -> OptimizationTrialsResponse:
+        """Read a bounded page of the manifest-bound optimization grid."""
+        return self._optimization.page(job_id, offset=offset, limit=limit)
+
     def get_run_metrics(
         self,
         run_id: str,
@@ -104,54 +117,108 @@ class RunService:
         scope: str | None = None,
     ) -> dict[str, Any]:
         """Read original values, definitions, and settings without recomputation."""
-        if self._store.get_run(run_id) is None:
-            return _error("run_not_found", f"Unknown run: {run_id}")
+        run = self._store.get_run(run_id)
+        if run is None:
+            return self._get_partial_metrics(run_id, metric_ids, scope)
         try:
             bundle = self._performance.load(run_id)
         except PerformanceArtifactError as exc:
             return _error(exc.code, str(exc))
         scope_id = bundle.default_scope if scope is None else scope
         if scope_id not in bundle.scopes:
-            return _selection_error(
-                bundle,
-                "unknown_metric_scope",
-                f"Unknown metric scope: {scope_id}",
-                bundle.scopes[bundle.default_scope],
-            )
+            return _error(
+                "unknown_metric_scope", f"Unknown metric scope: {scope_id}"
+            ) | {
+                "run_id": run_id,
+                "available_metric_ids": sorted(
+                    bundle.scopes[bundle.default_scope].values
+                ),
+                "available_scopes": list(bundle.scopes),
+                "default_scope": bundle.default_scope,
+            }
         selected = bundle.scopes[scope_id]
-        names = (
-            list(selected.values)
-            if metric_ids is None
-            else list(dict.fromkeys(metric_ids))
+        return _scope_metrics(
+            run_id,
+            bundle.manifest_hash,
+            scope_id,
+            selected,
+            bundle.definitions,
+            metric_ids,
+            _discovery(bundle, selected) | {"dataset_id": run.get("dataset_id")},
         )
-        unknown = sorted(set(names) - selected.values.keys())
-        if unknown:
-            return _selection_error(
-                bundle,
-                "unknown_metric_id",
-                f"Unknown metrics in scope {scope_id}: {', '.join(unknown)}",
-                selected,
-            )
-        scope_payload = selected.model_dump(mode="json")
-        payload = {
-            key: value for key, value in scope_payload.items() if key != "values"
+
+    def _get_partial_metrics(
+        self, run_id: str, metric_ids: list[str] | None, scope: str | None
+    ) -> dict[str, Any]:
+        try:
+            view = self._optimization.load(run_id)
+            if view is None:
+                job = self._store.get_job(run_id)
+                if job is not None and job["job_type"] == "optimization":
+                    return _error(
+                        "optimization_evidence_unavailable",
+                        f"No trial ledger recorded for {run_id}",
+                    )
+                return _error("run_not_found", f"Unknown run: {run_id}")
+            return self._read_partial_scope(view, run_id, metric_ids, scope)
+        except PerformanceArtifactError as exc:
+            return _error(exc.code, str(exc))
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            return _error("optimization_evidence_invalid", str(exc))
+
+    @staticmethod
+    def _read_partial_scope(
+        view: OptimizationResultView,
+        run_id: str,
+        metric_ids: list[str] | None,
+        scope: str | None,
+    ) -> dict[str, Any]:
+        discovery: dict[str, Any] = {
+            "run_id": run_id,
+            "result_completeness": "partial",
+            "dataset_id": view.ledger.dataset_id,
+            "default_scope": None,
         }
-        payload.update(
-            success=True,
-            metadata=query_metadata(
-                selected.metadata, run_id=run_id, scope_id=scope_id
+        if scope is None:
+            return discovery | _error(
+                "explicit_scope_required",
+                "Use get_optimization_trials to find and request a recorded scope.",
+            )
+        record = next(
+            (
+                row
+                for row in itertools.chain(view.snapshot.trials, (view.snapshot.test,))
+                if view.scope_id(row) == scope
             ),
-            run_id=run_id,
-            manifest_hash=bundle.manifest_hash,
-            scope=scope_id,
-            metrics={name: scope_payload["values"][name] for name in names},
-            display_metrics=display_metrics(
-                {name: selected.values[name] for name in names}, bundle.definitions
-            ),
-            definitions={name: bundle.definitions[name].model_dump() for name in names},
-            **_discovery(bundle, selected),
+            None,
         )
-        return payload
+        if record is None:
+            return discovery | _error(
+                "unknown_metric_scope",
+                f"Unknown metric scope: {scope}. Use get_optimization_trials.",
+            )
+        if record.state != "completed":
+            trial = view.describe(record)
+            return discovery | _error(
+                "optimization_scope_unavailable",
+                f"Scope {scope} is {trial.state}. {trial.reason or ''}".rstrip(),
+            )
+        evidence = view.ledger.read_evidence(record)
+        return _scope_metrics(
+            run_id,
+            view.ledger.manifest.manifest_hash,
+            scope,
+            evidence.scope,
+            evidence.definitions,
+            metric_ids,
+            discovery
+            | {
+                "details_available": True,
+                "provenance": "optimization_ledger",
+                "available_metric_ids": sorted(evidence.scope.values),
+                "available_scopes": [scope],
+            },
+        )
 
     def compare_runs(
         self,
@@ -343,18 +410,53 @@ def _discovery(bundle: PerformanceBundle, scope: PerformanceScope) -> dict[str, 
     }
 
 
-def _selection_error(
-    bundle: PerformanceBundle,
-    code: str,
-    message: str,
-    scope: PerformanceScope,
+def _scope_metrics(
+    run_id: str,
+    manifest_hash: str | None,
+    scope_id: str,
+    selected: PerformanceScope,
+    definitions: dict[str, MetricDefinitionSnapshot],
+    metric_ids: list[str] | None,
+    discovery: dict[str, Any],
 ) -> dict[str, Any]:
-    return _error(code, message) | {
-        "run_id": bundle.run_id,
-        "available_metric_ids": sorted(scope.values),
-        "available_scopes": list(bundle.scopes),
-        "default_scope": bundle.default_scope,
-    }
+    names = (
+        list(selected.values) if metric_ids is None else list(dict.fromkeys(metric_ids))
+    )
+    unknown = sorted(set(names) - selected.values.keys())
+    if unknown:
+        return (
+            _error(
+                "unknown_metric_id",
+                f"Unknown metrics in scope {scope_id}: {', '.join(unknown)}",
+            )
+            | {
+                key: discovery[key]
+                for key in ("available_metric_ids", "available_scopes", "default_scope")
+            }
+            | {
+                "run_id": run_id,
+                "result_completeness": discovery.get("result_completeness", "complete"),
+            }
+        )
+    scope_payload = selected.model_dump(mode="json")
+    payload = {key: value for key, value in scope_payload.items() if key != "values"}
+    payload.update(
+        success=True,
+        metadata=query_metadata(
+            selected.metadata,
+            run_id=run_id,
+            scope_id=scope_id,
+            in_performance_artifact=discovery.get("result_completeness") != "partial",
+        ),
+        manifest_hash=manifest_hash,
+        scope=scope_id,
+        metrics={name: scope_payload["values"][name] for name in names},
+        display_metrics=display_metrics(
+            {name: selected.values[name] for name in names}, definitions
+        ),
+        definitions={name: definitions[name].model_dump() for name in names},
+    )
+    return {"run_id": run_id, "result_completeness": "complete"} | payload | discovery
 
 
 def _is_metric_value(value: Any) -> bool:

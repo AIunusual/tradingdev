@@ -6,12 +6,17 @@ from typing import Any
 
 
 def query_metadata(
-    metadata: dict[str, Any], *, run_id: str, scope_id: str
+    metadata: dict[str, Any],
+    *,
+    run_id: str,
+    scope_id: str,
+    in_performance_artifact: bool = True,
 ) -> dict[str, Any]:
     """Project traces, including nested fold metadata, without changing storage."""
     root = f"/scopes/{_escape(scope_id)}/metadata"
+    artifact_id = f"{run_id}:performance_json" if in_performance_artifact else None
     return {
-        key: _project(value, key, f"{root}/{_escape(key)}", run_id)
+        key: _project(value, key, f"{root}/{_escape(key)}", artifact_id)
         for key, value in metadata.items()
     }
 
@@ -20,23 +25,25 @@ def _escape(component: str) -> str:
     return component.replace("~", "~0").replace("/", "~1")
 
 
-def _project(value: Any, key: str, pointer: str, run_id: str) -> Any:
+def _project(value: Any, key: str, pointer: str, artifact_id: str | None) -> Any:
     if isinstance(value, dict):
         if key == "rolling_trace":
-            return _summary(value, pointer, run_id)
+            return _summary(value, pointer, artifact_id)
         return {
-            name: _project(item, name, f"{pointer}/{_escape(name)}", run_id)
+            name: _project(item, name, f"{pointer}/{_escape(name)}", artifact_id)
             for name, item in value.items()
         }
     if isinstance(value, list):
         return [
-            _project(item, "", f"{pointer}/{index}", run_id)
+            _project(item, "", f"{pointer}/{index}", artifact_id)
             for index, item in enumerate(value)
         ]
     return value
 
 
-def _summary(trace: dict[str, Any], pointer: str, run_id: str) -> dict[str, Any]:
+def _summary(
+    trace: dict[str, Any], pointer: str, artifact_id: str | None
+) -> dict[str, Any]:
     rolls = trace.get("rolls")
     unscored = trace.get("unscored_bars")
     complete_training_flags = isinstance(rolls, list) and all(
@@ -46,8 +53,6 @@ def _summary(trace: dict[str, Any], pointer: str, run_id: str) -> dict[str, Any]
     result: dict[str, Any] = {
         "representation": "summary",
         "content_included": False,
-        "artifact_id": f"{run_id}:performance_json",
-        "json_pointer": pointer,
         "roll_count": len(rolls) if isinstance(rolls, list) else None,
         "trained_roll_count": sum(
             isinstance(roll, dict) and roll.get("trained") is True for roll in rolls
@@ -56,6 +61,10 @@ def _summary(trace: dict[str, Any], pointer: str, run_id: str) -> dict[str, Any]
         else None,
         "unscored_bar_count": len(unscored) if isinstance(unscored, list) else None,
     }
+    if artifact_id is not None:
+        result.update(artifact_id=artifact_id, json_pointer=pointer)
+    else:
+        result["content_unavailable_reason"] = "partial_optimization_ledger"
     for key in (
         "scheme",
         "rtype",

@@ -582,14 +582,14 @@ def test_partial_and_empty_candidates_show_the_actual_merged_constructor_values(
     assert manifest.model_dump(mode="json") == before
 
 
-def test_optimization_timeout_explains_its_actual_estimation_only_scope() -> None:
+def test_optimization_timeout_explains_each_trial_and_held_out_scope() -> None:
     document = _document(_manifest("optimization"))
     text = render_confirmation_text(document)
     html = unescape(render_confirmation_html(document))
     for rendered in (text, html):
-        assert "第一組估時計算時限" in rendered
-        assert "其他候選與保留區間測試不受此時限限制" in rendered
-        assert "單一組合最長執行時間" not in rendered
+        assert "單次試驗與保留測試時限" in rendered
+        assert "每組參數及保留測試各自使用此時限" in rendered
+        assert "首組未完成時不提供估時" in rendered
 
 
 def test_model_unit_never_changes_the_authoritative_parameter_value() -> None:

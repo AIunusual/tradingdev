@@ -116,6 +116,15 @@ class SQLiteStore:
                     foreign key(run_id) references runs(run_id)
                 );
 
+                create table if not exists optimization_trials (
+                    job_id text not null references jobs(job_id),
+                    position integer not null,
+                    record text not null,
+                    record_hash text not null,
+                    evidence blob,
+                    primary key(job_id, position)
+                );
+
                 create table if not exists events (
                     event_id integer primary key autoincrement,
                     job_id text not null,

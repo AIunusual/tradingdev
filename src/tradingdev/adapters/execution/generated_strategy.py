@@ -63,7 +63,11 @@ class StrategyChannel:
                 response.diagnostics, analysis=response.signal_analysis
             )
         if response.error is not None:
-            raise IsolatedRuntimeError("strategy_execution_failed", response.error)
+            raise IsolatedRuntimeError(
+                "strategy_execution_failed",
+                response.error,
+                strategy_callback_failed=response.error_kind == "strategy_callback",
+            )
         return response
 
 

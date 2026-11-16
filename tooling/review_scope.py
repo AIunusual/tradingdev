@@ -309,6 +309,7 @@ _DOC_HEADINGS: dict[str, dict[str, frozenset[str]]] = {
         **_headings(
             {"execution", "results", "interfaces"},
             "Run Publication",
+            "Optimization trial results",
             "Job State and Worker Identity",
             "Execution Plans and Confirmation Documents",
             "Reading Artifact Delivery",

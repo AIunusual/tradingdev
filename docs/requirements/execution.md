@@ -39,10 +39,10 @@
 
 ## FR-EXEC-006 參數最佳化
 
-- **需求**：最佳化固定搜尋候選、目標方向、互不重疊的訓練／測試期間及首個訓練 trial 的估算時限；同意後才搜尋，並以選定參數執行樣本外測試。
-- **驗收**：不把固定比較視為搜尋授權；不與 walk-forward 切分混用。估算時限只限制首個訓練 trial，後續候選與樣本外評估不共用此時限，不承諾整次搜尋有界。不適用或不可用目標不能排名，全部候選無效時失敗；訓練排名與樣本外結果須分開解讀。
-- **契約**：[最佳化執行規格](../run_artifacts.md#execution-manifest)。
-- **驗證**：[最佳化 service](../../tests/app/test_optimization_service.py)、[真實 MCP 最佳化](../../tests/integration/test_mcp_optimization.py) 核對候選、期間、目標與結果。
+- **需求**：最佳化先固定候選、目標方向、互不重疊的訓練／測試期間及單次執行時限。經同意後才搜尋，按固定索引保存可核驗的個別試驗及測試期狀態。
+- **驗收**：核准的單次執行時限分別適用於每一組訓練候選及保留測試。分別說明已觀察試驗、有限目標、候選例外／逾時、基礎設施故障及未嘗試組合。首組候選失敗時明示估時不可用；基礎設施故障停止搜尋並保留已提交證據。完整訓練網格須包含可排名的候選，才執行保留測試；僅在測試完成後發布成功 run。部分結果可明確選取已記錄 scope 查閱，並保留獨立的搜尋完整度及測試狀態。舊版僅限制估時的規格保留歷史讀取；再次執行須重新準備並核准計畫。
+- **契約**：[最佳化執行規格](../run_artifacts.md#execution-manifest)、[最佳化試驗產物](../run_artifacts.md#optimization-trial-results)。
+- **驗證**：[最佳化 service](../../tests/app/test_optimization_service.py)、[試驗及故障保存](../../tests/mcp/test_optimization_manifest.py)、[真實 MCP 最佳化](../../tests/integration/test_mcp_optimization.py)、[歷史規格相容性](../../tests/domain/test_execution_manifest.py)。
 
 ## FR-EXEC-007 工作狀態與取消
 

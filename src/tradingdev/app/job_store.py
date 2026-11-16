@@ -44,7 +44,7 @@ ACTIVE_JOB_STATUSES = {
     "optimizing",
     "testing_oos",
 }
-TERMINAL_JOB_STATUSES = {"done", "failed", "cancelled", "estimation_timeout"}
+TERMINAL_JOB_STATUSES = {"done", "partial", "failed", "cancelled", "estimation_timeout"}
 
 
 class JobRecord(BaseModel):

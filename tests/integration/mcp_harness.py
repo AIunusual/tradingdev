@@ -104,7 +104,7 @@ class MCPClient:
         with anyio.fail_after(timeout):
             while True:
                 status = await self.call("get_job_status", job_id=job_id)
-                if status["status"] in {"done", "failed", "cancelled"}:
+                if status["status"] in {"done", "partial", "failed", "cancelled"}:
                     return dict(status)
                 await anyio.sleep(0.1)
 

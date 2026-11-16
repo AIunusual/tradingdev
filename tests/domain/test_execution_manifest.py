@@ -608,6 +608,26 @@ def test_search_order_defaults_roundtrip_and_derived_combination_count() -> None
     assert search.trial_timeout_seconds == 300
 
 
+def test_legacy_optimization_is_readable_but_requires_new_approval_to_execute() -> None:
+    manifest = ExecutionManifest.create(
+        kind="optimization",
+        config=_config(),
+        strategy_execution=_strategy_execution(),
+        optimization=_search(),
+    )
+    saved = manifest.model_dump(mode="python", exclude={"manifest_hash"})
+    assert saved["optimization"].pop("timeout_scope") == "each_trial"
+    historical_hash = ExecutionManifest._digest(saved)
+    historical = ExecutionManifest.model_validate(
+        {**saved, "manifest_hash": historical_hash}
+    )
+    assert historical.manifest_hash != manifest.manifest_hash
+    assert historical.config_copy() == manifest.config_copy()
+    assert "timeout_scope" not in historical.model_dump()["optimization"]
+    with pytest.raises(ManifestError, match="Prepare and approve a new optimization"):
+        historical.config_for_execution()
+
+
 @pytest.mark.parametrize(
     "field",
     [

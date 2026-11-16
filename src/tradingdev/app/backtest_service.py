@@ -36,7 +36,10 @@ from tradingdev.domain.strategies.contract import (
     VALIDATE_FIXTURE_ROWS,
     SignalContractChecker,
 )
-from tradingdev.domain.strategies.signals import generate_checked_signals
+from tradingdev.domain.strategies.signals import (
+    SignalContractError,
+    generate_checked_signals,
+)
 from tradingdev.domain.validation.config import (
     ExplicitWalkForwardConfig,
     WalkForwardConfig,
@@ -222,6 +225,7 @@ class BacktestService:
         execution: StrategyExecution,
         *,
         parameter_overrides: dict[str, Any] | None = None,
+        raise_execution_errors: bool = False,
     ) -> tuple[int, ...]:
         """Check generated experiment settings at both fixture depths, read-only."""
         if execution.kind != "generated":
@@ -234,9 +238,14 @@ class BacktestService:
                 fixture_rows=fixture_rows,
                 execution=execution,
                 parameter_overrides=parameter_overrides,
+                raise_execution_errors=raise_execution_errors,
             )
             errors = [item for item in checked["diagnostics"] if item.level == "error"]
             if errors:
+                if raise_execution_errors and all(
+                    item.phase == "contract" for item in errors
+                ):
+                    raise SignalContractError(errors)
                 detail = "; ".join(f"{item.code}: {item.message}" for item in errors)
                 raise ManifestError(
                     f"Strategy execution contract failed ({fixture_rows} rows): "

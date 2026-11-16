@@ -79,7 +79,7 @@ def _opposite_trends() -> pd.DataFrame:
 
 
 async def _save_runnable(
-    client: MCPClient, *, walk_forward: bool = False
+    client: MCPClient, *, walk_forward: bool = False, code: str = STRATEGY_CODE
 ) -> dict[str, Any]:
     contract = (await client.call("get_strategy_contract", section="example"))[
         "content"
@@ -96,7 +96,7 @@ async def _save_runnable(
     saved = await client.call(
         "save_strategy",
         strategy_id=STRATEGY_ID,
-        code=STRATEGY_CODE,
+        code=code,
         yaml_config=yaml.safe_dump(config),
         research=research_from_config(config),
     )
@@ -238,6 +238,9 @@ async def test_optimization_confirmation_search_and_persisted_oos(
         assert completed["best_params"] == {"direction": 1}
         assert completed["optimization_metric"] == "total_return"
         assert completed["total_combinations"] == 4
+        progress = completed["optimization"]
+        assert progress["outcome"] == "complete" and progress["search_complete"]
+        assert progress["rankable"] == 4 and progress["test"]["state"] == "completed"
         assert (await client.read_all_pages("list_jobs"))[0]["completed"] == 4
         # warmup=2 is a captured constructor default, not a grid parameter.
         # The engine enters one
@@ -433,3 +436,83 @@ async def test_optimization_confirmation_search_and_persisted_oos(
             item["run_id"] == job_id
             for item in await client.read_all_pages("list_runs")
         )
+
+
+async def prepare_partial_optimization(client: MCPClient) -> tuple[str, str]:
+    """Approve a fixture with one attributable historical-data failure."""
+    source = STRATEGY_CODE.replace(
+        "        result = df.copy()",
+        "        if self._direction == 0 and len(df) == 72:\n"
+        '            raise RuntimeError("fixture candidate failed on training bars")\n'
+        "        result = df.copy()",
+        1,
+    )
+    saved = await _save_runnable(client, code=source)
+    prepared = await client.call(
+        "prepare_optimization",
+        strategy_id=STRATEGY_ID,
+        revision_id=saved["revision_id"],
+        research=research_input(
+            end_date="2024-01-07T23:59:59.999999", fees=0, slippage=0
+        ),
+        param_ranges={"direction": [1, 0, -1]},
+        optimization_metric="total_return",
+        train_start="2024-01-01",
+        train_end="2024-01-03",
+        test_start="2024-01-04",
+        test_end="2024-01-07",
+        evidence_id=await save_execution_evidence(
+            client,
+            {"direction": -1, "warmup": 2},
+            target_paths={
+                "base": ["/direction", "/warmup"],
+                **{f"search_1_{index}": ["/direction"] for index in range(1, 4)},
+            },
+        ),
+    )
+    assert prepared["success"], prepared
+    receipt = await confirm_prepared(client, prepared)
+    return receipt["job_id"], prepared["manifest_hash"]
+
+
+async def test_parallel_candidate_exception_retains_partial_trials(
+    mcp_workspace: MCPWorkspace,
+) -> None:
+    """Use a real MCP worker, spawned candidates and isolated strategy callbacks."""
+    mcp_workspace.seed_market(_opposite_trends())
+    async with mcp_workspace.connect() as client:
+        job_id, manifest_hash = await prepare_partial_optimization(client)
+        job = await client.wait_for_job(job_id, timeout=180)
+        assert job["status"] == "partial", job
+        assert 1 <= job["n_parallel_workers"] <= 2
+        assert job["best_params"] is None and job["run_id"] is None
+        progress = job["optimization"]
+        assert (progress["completed"], progress["attempted"], progress["rankable"]) == (
+            2,
+            3,
+            2,
+        )
+        assert not progress["search_complete"] and progress["leading_trial_index"] == 0
+        assert progress["test"]["state"] == "not_attempted"
+
+        first = await client.call("get_optimization_trials", job_id=job_id, limit=1)
+        assert first["trials"]["next_offset"] == 1
+        assert first["trials"]["items"][0]["state"] == "completed"
+        rest = await client.call("get_optimization_trials", job_id=job_id, offset=1)
+        failed, last = rest["trials"]["items"]
+        assert failed["trial_index"] == 1 and failed["state"] == "failed"
+        assert "fixture candidate failed" in failed["reason"]
+        assert last["trial_index"] == 2 and last["state"] == "completed"
+        detail = await client.call(
+            "get_run_metrics",
+            run_id=job_id,
+            scope="trial/0/train",
+        )
+        assert detail["result_completeness"] == "partial"
+        assert detail["manifest_hash"] == manifest_hash
+        assert detail["dataset_id"] == progress["dataset_id"]
+        assert detail["metrics"]["total_return"] == pytest.approx(171.0 / 103.0 - 1)
+        assert detail["default_scope"] is None and detail["trial_index"] == 0
+        missing = await client.call("get_run_metrics", run_id=job_id, scope="test")
+        assert missing["code"] == "optimization_scope_unavailable"
+        assert (await client.call("list_runs"))["items"] == []

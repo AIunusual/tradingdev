@@ -39,5 +39,8 @@ class StrategyResponse(BaseModel):
     value: JsonValue = None
     frame: FramePayload | None = None
     error: str | None = None
+    error_kind: Literal["strategy_callback"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     diagnostics: list[StrategyDiagnostic] = Field(default_factory=list)
     signal_analysis: dict[str, JsonValue] = Field(default_factory=dict)

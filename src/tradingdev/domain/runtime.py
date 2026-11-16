@@ -64,9 +64,11 @@ class IsolatedRuntimeError(RuntimeError):
         message: str,
         *,
         cleanup_verified: bool = False,
+        strategy_callback_failed: bool = False,
         control_path: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.cleanup_verified = cleanup_verified
+        self.strategy_callback_failed = strategy_callback_failed
         self.control_path = control_path

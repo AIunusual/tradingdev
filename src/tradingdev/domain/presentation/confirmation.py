@@ -524,8 +524,10 @@ def _optimization_section(
             "test_end",
             "direction",
             "trial_timeout_seconds",
+            "timeout_scope",
         },
         "optimization",
+        complete=search.timeout_scope is not None,
     )
     fields = [
         _field("搜尋目標", _metric(search.optimization_metric)),
@@ -538,9 +540,11 @@ def _optimization_section(
         _field("保留測試結束日", search.test_end, "包含當日；不拿測試結果選參數。"),
         _field("參數組合總數", search.total_combinations, unit="組"),
         _field(
-            "第一組估時計算時限",
+            "單次試驗與保留測試時限" if search.timeout_scope else "第一組估時計算時限",
             search.trial_timeout_seconds,
-            "只限制正式搜尋中第一組參數的估時計算；其他候選與保留區間測試不受此時限限制。",
+            "每組參數及保留測試各自使用此時限；首組未完成時不提供估時。"
+            if search.timeout_scope
+            else "只限制正式搜尋中第一組參數的估時計算。",
             unit="秒",
             detail=True,
         ),

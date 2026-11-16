@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import BrokenExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 from numbers import Real
 from typing import TYPE_CHECKING, Any, cast
@@ -9,9 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 
+from tradingdev.domain.runtime import IsolatedRuntimeError
 from tradingdev.domain.strategies.schemas import StrategyDiagnostic
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tradingdev.domain.strategies.base import BaseStrategy
 
 _MARKET_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
@@ -31,6 +36,32 @@ class SignalContractError(ValueError):
         super().__init__(
             "; ".join(f"{item.code}: {item.message}" for item in diagnostics)
         )
+
+
+class StrategyCallbackError(RuntimeError):
+    """An attributable exception raised by a bundled strategy callback."""
+
+
+@contextmanager
+def strategy_callback() -> Iterator[None]:
+    """Translate ordinary callback errors at their source, excluding system faults."""
+    try:
+        yield
+    except Exception as exc:
+        # A trusted strategy callback may call into another engine or runtime.
+        # An explicitly typed runtime failure keeps its original classification.
+        if isinstance(
+            exc,
+            (
+                IsolatedRuntimeError,
+                BrokenExecutor,
+                OSError,
+                MemoryError,
+                SignalContractError,
+            ),
+        ):
+            raise
+        raise StrategyCallbackError(f"{type(exc).__name__}: {exc}") from exc
 
 
 def _same_nested_value(left: object, right: object) -> bool:
@@ -186,12 +217,19 @@ def copy_signal_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_checked_signals(
-    strategy: BaseStrategy, frame: pd.DataFrame
+    strategy: BaseStrategy,
+    frame: pd.DataFrame,
+    *,
+    classify_callback_error: bool = False,
 ) -> pd.DataFrame:
     """Execute once, then reject mutation, misalignment or invalid signal values."""
     # A failed candidate must not poison the captured data used by later candidates.
     supplied = copy_signal_frame(frame)
-    result = strategy.generate_signals(supplied)
+    if classify_callback_error:
+        with strategy_callback():
+            result = strategy.generate_signals(supplied)
+    else:
+        result = strategy.generate_signals(supplied)
     diagnostics = check_signal_frame(frame, supplied, result)
     if diagnostics:
         raise SignalContractError(diagnostics, analysis=signal_analysis(result))

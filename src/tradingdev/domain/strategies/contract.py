@@ -98,6 +98,7 @@ class SignalContractChecker:
         fixture_rows: int,
         execution: StrategyExecution | None = None,
         parameter_overrides: dict[str, Any] | None = None,
+        raise_execution_errors: bool = False,
     ) -> dict[str, Any]:
         """Check effective execution settings without altering revision evidence.
 
@@ -180,6 +181,8 @@ class SignalContractChecker:
                 "effective_config": effective_config,
             }
         except SignalContractError as exc:
+            if raise_execution_errors:
+                raise
             diagnostics.extend(exc.diagnostics)
             return {
                 "diagnostics": diagnostics,
@@ -187,6 +190,8 @@ class SignalContractChecker:
                 "effective_config": effective_config,
             }
         except IsolatedRuntimeError as exc:
+            if raise_execution_errors:
+                raise
             diagnostics.append(
                 _contract_diagnostic(
                     code=exc.code,
@@ -199,6 +204,8 @@ class SignalContractChecker:
             )
             return {"diagnostics": diagnostics, "effective_config": effective_config}
         except Exception as exc:  # noqa: BLE001
+            if raise_execution_errors:
+                raise
             diagnostics.append(
                 _contract_diagnostic(
                     code="contract_execution_error",

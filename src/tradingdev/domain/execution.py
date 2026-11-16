@@ -65,7 +65,7 @@ def _resolve_config(value: object) -> dict[str, JsonValue]:
 
 
 class OptimizationSpec(BaseModel):
-    """The complete search and estimation policy for one optimization."""
+    """The approved optimization grid, objective and per-trial timeout."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -77,6 +77,9 @@ class OptimizationSpec(BaseModel):
     test_end: dt.date
     direction: Literal["maximize", "minimize"]
     trial_timeout_seconds: int = Field(default=300, gt=0, strict=True)
+    timeout_scope: Literal["each_trial"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -196,7 +199,9 @@ class ExecutionManifest(BaseModel):
     def complete_saved_search(cls, value: object) -> object:
         """Persist every policy field, even when a new request uses defaults."""
         if isinstance(value, dict):
-            missing = OptimizationSpec.model_fields.keys() - value.keys()
+            missing = (
+                OptimizationSpec.model_fields.keys() - value.keys() - {"timeout_scope"}
+            )
             if missing:
                 raise ManifestError(
                     "Saved optimization policy is missing fields: "
@@ -226,7 +231,12 @@ class ExecutionManifest(BaseModel):
                 strategy_execution.model_dump(mode="python")
             )
             search = (
-                OptimizationSpec.model_validate(optimization.model_dump(mode="python"))
+                OptimizationSpec.model_validate(
+                    {
+                        **optimization.model_dump(mode="python"),
+                        "timeout_scope": "each_trial",
+                    }
+                )
                 if optimization is not None
                 else None
             )
@@ -299,6 +309,11 @@ class ExecutionManifest(BaseModel):
         Canonical JSON comparison also distinguishes booleans, integers and floats.
         """
         self.verify()
+        if self.optimization is not None and self.optimization.timeout_scope is None:
+            raise ManifestError(
+                "Saved optimization uses the former estimation-only timeout. "
+                "Prepare and approve a new optimization plan."
+            )
         resolved = _resolve_config(self.config)
         if self._digest(resolved) != self._digest(self.config):
             raise ManifestError(

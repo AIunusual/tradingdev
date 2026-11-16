@@ -5,61 +5,68 @@ The submission service uses
 ProcessRunner to launch a supervisor, which starts this worker and supplies
 TRADINGDEV_WORKER_IDENTITY. Running this module directly is not supported.
 
-The worker verifies the job's immutable execution manifest (populated by
-the approved execution plan) and uses it for every phase:
-
-1. Downloads / loads OHLCV data
-2. Runs a single trial combo with a 5-minute timeout
-3. Reports estimated total time for the already approved search
-4. Runs all remaining combos in parallel batches
-5. Selects the best params and runs an out-of-sample test
-6. Persists results to job_store
+Each candidate commits its attempt and outcome against the approved grid.
+A complete grid with a finite winner can proceed to the separate test period.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import itertools
 import logging
+import multiprocessing
 import signal
 import time
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from joblib import Parallel, delayed
-
 from tradingdev.adapters.execution.process_runner import WorkerHandle
 from tradingdev.adapters.execution.strategy_factory import StrategyFactory
+from tradingdev.adapters.storage.optimization_trials import (
+    TEST_POSITION,
+    OptimizationLedger,
+    TrialSnapshot,
+)
 from tradingdev.app import job_store
 from tradingdev.app.backtest_service import BacktestService
 from tradingdev.app.data_service import DataService
 from tradingdev.app.execution_submission import verify_submission_research
 from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
-from tradingdev.domain.optimization.grid_search import (
-    GridSearchResult,
-    best_result,
-    finite_metric_value,
-    parameter_grid,
-)
+from tradingdev.domain.optimization.grid_search import finite_metric_value
+from tradingdev.domain.optimization.trials import TrialEvidence
 from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
 from tradingdev.domain.randomness import execution_randomness
-from tradingdev.domain.strategies.signals import generate_checked_signals
+from tradingdev.domain.research_scope import (
+    optimization_backtest,
+    optimization_date_bounds,
+)
+from tradingdev.domain.runtime import IsolatedRuntimeError
+from tradingdev.domain.strategies.signals import (
+    SignalContractError,
+    StrategyCallbackError,
+    generate_checked_signals,
+    strategy_callback,
+)
 from tradingdev.shared.utils.logger import setup_logger
 from tradingdev.shared.utils.parallel import estimate_n_jobs
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
     from types import FrameType
 
     import pandas as pd
 
     from tradingdev.domain.backtest.result import BacktestResult
-    from tradingdev.domain.performance.artifacts import PerformanceArtifacts
     from tradingdev.domain.strategies.execution import StrategyExecution
 
 logger = setup_logger(__name__)
+
+# Absorb process startup and runtime cleanup after the worker alarm.
+TRIAL_PROCESS_GRACE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -98,55 +105,12 @@ class _TrialTimeoutError(BaseException):
     """Interrupt the trial without being translated into strategy diagnostics.
 
     This is worker control flow, like cancellation, rather than a strategy error.
-    The trial boundary catches it explicitly and records estimation_timeout.
+    The trial boundary catches it explicitly and records a candidate timeout.
     """
 
 
 def _trial_timeout_handler(signum: int, frame: FrameType | None) -> None:
     raise _TrialTimeoutError("Trial run exceeded the manifest timeout")
-
-
-# ---------------------------------------------------------------------------
-# Module-level evaluation function (must be picklable for joblib)
-# ---------------------------------------------------------------------------
-def _evaluate_combo(
-    strategy_cfg: dict[str, Any],
-    strategy_execution: StrategyExecution,
-    bt_cfg_dict: dict[str, Any],
-    df: pd.DataFrame,
-    param_dict: dict[str, Any],
-    metric_name: str,
-    parallel_cfg_dict: dict[str, Any],
-    random_seed: int | None,
-) -> ComboEvaluation:
-    """Evaluate a single parameter combination.
-
-    This function is called by joblib workers.  It re-loads the strategy
-    class from source to avoid pickle issues with dynamically loaded modules.
-
-    Args:
-        strategy_cfg: Strategy config section.
-        strategy_execution: Captured constructor arguments, including defaults.
-        bt_cfg_dict: BacktestConfig fields as a plain dict.
-        df: Training DataFrame transferred losslessly by joblib.
-        param_dict: Parameter combination to evaluate.
-        metric_name: Target metric to extract.
-        parallel_cfg_dict: Fixed parallel resource policy from the manifest.
-        random_seed: Fixed run seed, re-created independently in each worker.
-
-    Returns:
-        Complete backtest result, parameters, and objective identifier.
-    """
-    return _run_single_combo(
-        strategy_cfg,
-        strategy_execution,
-        BacktestConfig(**bt_cfg_dict),
-        df,
-        param_dict,
-        metric_name,
-        ParallelConfig(**parallel_cfg_dict),
-        random_seed,
-    )
 
 
 def _run_single_combo(
@@ -173,17 +137,29 @@ def _run_single_combo(
             },
             strategy_execution,
             parameter_overrides=param_dict,
+            raise_execution_errors=True,
         )
+        bundled = strategy_execution.kind == "bundled"
         with StrategyFactory().open_from_execution(
             strategy_cfg,
             strategy_execution,
             engine,
             parallel_cfg,
             parameter_overrides=param_dict,
+            classify_callback_error=bundled,
         ) as strategy:
-            signals_df = generate_checked_signals(strategy, df)
-            parameters = deepcopy(strategy.get_parameters())
-            rolling_trace = deepcopy(strategy.rolling_trace())
+            signals_df = generate_checked_signals(
+                strategy, df, classify_callback_error=bundled
+            )
+            if bundled:
+                with strategy_callback():
+                    raw_parameters = strategy.get_parameters()
+                    raw_trace = strategy.rolling_trace()
+            else:
+                raw_parameters = strategy.get_parameters()
+                raw_trace = strategy.rolling_trace()
+            parameters = deepcopy(raw_parameters)
+            rolling_trace = deepcopy(raw_trace)
         result = engine.run(signals_df)
         result.metric_metadata["execution_context"] = {
             **bt_cfg.model_dump(mode="json"),
@@ -196,355 +172,357 @@ def _run_single_combo(
     return ComboEvaluation(deepcopy(param_dict), metric_name, result)
 
 
-def _performance_artifacts(
-    job_id: str,
-    manifest_hash: str,
-    evaluations: list[ComboEvaluation],
-    selected_index: int,
-    oos: ComboEvaluation,
-) -> PerformanceArtifacts:
-    """Keep every trial once; reference the selected training scope."""
-    scopes = {}
-    observations = {}
-    for index, evaluation in enumerate(evaluations):
-        scope, raw = scope_from_backtest(
+@dataclass(frozen=True)
+class TrialRunner:
+    """Run one manifest-bound candidate and commit its outcome in its own process."""
+
+    ledger: OptimizationLedger
+    strategy_config: dict[str, Any]
+    execution: StrategyExecution
+    config: BacktestConfig
+    data: pd.DataFrame
+    parallel: ParallelConfig
+    seed: int | None
+
+    def run(self, index: int, *, test: bool = False) -> float | None:
+        position = TEST_POSITION if test else index
+        selected_index = index if test else None
+        self.ledger.start(position, selected_index=selected_index)
+        params = self.ledger.grid[index]
+        start = time.monotonic()
+        try:
+            evaluation = self._evaluate(params)
+        except _TrialTimeoutError as error:
+            self.ledger.finish(
+                position,
+                selected_index=selected_index,
+                reason=str(error),
+                timed_out=True,
+            )
+            return None
+        except (StrategyCallbackError, SignalContractError) as error:
+            self._fail_candidate(position, selected_index, error)
+            return None
+        except IsolatedRuntimeError as error:
+            if not error.cleanup_verified or not (
+                error.strategy_callback_failed or error.code == "runtime_timeout"
+            ):
+                raise
+            self.ledger.finish(
+                position,
+                selected_index=selected_index,
+                reason=str(error)[:1024] or error.code,
+                timed_out=error.code == "runtime_timeout",
+            )
+            return None
+
+        scope, observations = scope_from_backtest(
             evaluation.result,
-            split="train",
-            trial_index=index,
+            split="test" if test else "train",
+            trial_index=None if test else index,
             parameters=evaluation.parameters,
         )
-        scope_id = f"trial/{index}/train"
-        scopes[scope_id] = scope
-        observations[scope_id] = raw
-    scope, raw = scope_from_backtest(
-        oos.result, split="test", parameters=oos.parameters
+        self.ledger.finish(
+            position,
+            selected_index=selected_index,
+            evidence=TrialEvidence.capture(scope, observations),
+        )
+        return time.monotonic() - start
+
+    def _fail_candidate(
+        self, position: int, selected_index: int | None, error: Exception
+    ) -> None:
+        self.ledger.finish(
+            position,
+            selected_index=selected_index,
+            reason=f"{type(error).__name__}: {error}"[:1024],
+        )
+
+    def _evaluate(self, params: dict[str, Any]) -> ComboEvaluation:
+        timeout = self.ledger.search.trial_timeout_seconds
+        old_handler = signal.signal(signal.SIGALRM, _trial_timeout_handler)
+        try:
+            signal.alarm(timeout)
+            return _run_single_combo(
+                self.strategy_config,
+                self.execution,
+                self.config,
+                self.data,
+                params,
+                self.ledger.search.optimization_metric,
+                self.parallel,
+                self.seed,
+            )
+        except _TrialTimeoutError as error:
+            raise _TrialTimeoutError(f"Trial exceeded {timeout}s timeout") from error
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+
+_pool_runner: TrialRunner | None = None
+
+
+def _init_pool(runner: TrialRunner) -> None:
+    global _pool_runner  # noqa: PLW0603
+    _pool_runner = runner
+
+
+def _run_in_pool(index: int, test: bool) -> float | None:
+    assert _pool_runner is not None
+    try:
+        return _pool_runner.run(index, test=test)
+    except Exception as error:
+        # Infrastructure exceptions may not be picklable. Preserve their
+        # diagnostics across the pool and let the owning worker stop the job.
+        if isinstance(error, IsolatedRuntimeError):
+            detail = f"{error.code}: {error}"
+            if error.control_path:
+                detail += f" (control path: {error.control_path})"
+        else:
+            detail = f"{type(error).__name__}: {error}"
+        raise RuntimeError(detail) from error
+
+
+def _run_trials(
+    runner: TrialRunner, indices: range, n_jobs: int, *, test: bool = False
+) -> dict[int, float | None]:
+    """Run bounded work units. A hung process is an infrastructure failure."""
+    if not indices:
+        return {}
+    remaining = iter(indices)
+    limit = runner.ledger.search.trial_timeout_seconds + TRIAL_PROCESS_GRACE_SECONDS
+    durations: dict[int, float | None] = {}
+    # Even first-trial and sequential execution need a supervising process:
+    # Python cannot deliver its alarm while certain native calls are blocked.
+    with ProcessPoolExecutor(
+        max_workers=n_jobs,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_init_pool,
+        initargs=(runner,),
+    ) as pool:
+
+        def submit(count: int) -> dict[Future[float | None], tuple[int, float]]:
+            dispatched = {}
+            for index in itertools.islice(remaining, count):
+                deadline = time.monotonic() + limit
+                dispatched[pool.submit(_run_in_pool, index, test)] = (index, deadline)
+            return dispatched
+
+        try:
+            active = submit(n_jobs)
+            while active:
+                oldest_index, deadline = min(
+                    active.values(), key=lambda trial: trial[1]
+                )
+                ready, _ = wait(
+                    active,
+                    timeout=max(0.0, deadline - time.monotonic()),
+                    return_when=FIRST_COMPLETED,
+                )
+                for future in ready:
+                    index, _ = active.pop(future)
+                    durations[index] = future.result()
+                now = time.monotonic()
+                expired = (
+                    oldest_index
+                    if not ready
+                    else next(
+                        (
+                            index
+                            for index, deadline in active.values()
+                            if now >= deadline
+                        ),
+                        None,
+                    )
+                )
+                if expired is not None:
+                    stage = "Held-out test" if test else f"Trial {expired}"
+                    raise TimeoutError(
+                        f"{stage} process exceeded its timeout and cleanup allowance"
+                    )
+                active.update(submit(len(ready)))
+        except BaseException:
+            # The job supervisor also checks the entire host process group and
+            # recovers container leases left by workers that could not unwind.
+            pool.kill_workers()
+            raise
+    return durations
+
+
+def _save_complete(
+    ledger: OptimizationLedger,
+    snapshot: TrialSnapshot,
+    raw_config: dict[str, Any],
+    *,
+    time_per_combo: float | None,
+    n_jobs: int,
+) -> None:
+    index = snapshot.leading_index
+    if (
+        index is None
+        or not snapshot.search_complete
+        or snapshot.test.state != "completed"
+    ):
+        raise ManifestError("Complete optimization requires the full grid and test")
+    evidence = {
+        f"trial/{trial.position}/train": ledger.read_evidence(trial)
+        for trial in snapshot.trials
+    }
+    evidence["test"] = ledger.read_evidence(snapshot.test)
+    selected_scope = f"trial/{index}/train"
+    train = evidence[selected_scope].scope
+    test = evidence["test"].scope
+    metric = ledger.search.optimization_metric
+    result = {
+        "best_params": train.parameters,
+        "optimization_metric": metric,
+        "direction": ledger.search.direction,
+        "best_train_metric_value": train.values[metric],
+        "best_oos_metric_value": test.values[metric],
+        "train_metrics": train.values,
+        "test_metrics": test.values,
+        "total_combinations": len(snapshot.trials),
+        "time_per_combo": time_per_combo,
+        "n_parallel_workers": n_jobs,
+    }
+    result_path = job_store.save_result(
+        ledger.job_id,
+        result,
+        config_snapshot=raw_config,
+        execution_manifest=ledger.manifest,
+        performance=build_artifacts(
+            ledger.job_id,
+            ledger.manifest.manifest_hash,
+            "test",
+            {key: item.scope for key, item in evidence.items()},
+            {key: item.observations for key, item in evidence.items()},
+            selected_train_scope=selected_scope,
+        ),
     )
-    scopes["test"] = scope
-    observations["test"] = raw
-    return build_artifacts(
-        run_id=job_id,
-        manifest_hash=manifest_hash,
-        default_scope="test",
-        scopes=scopes,
-        observations=observations,
-        selected_train_scope=f"trial/{selected_index}/train",
+    job_store.update_job(
+        ledger.job_id,
+        status="done",
+        result_path=str(result_path),
+        best_params=train.parameters,
     )
 
 
-# ---------------------------------------------------------------------------
-# Main worker logic
-# ---------------------------------------------------------------------------
-def _run_optimization(job_id: str) -> None:  # noqa: C901, PLR0912, PLR0915
-    logger.info("Optimization worker started: job=%s", job_id)
+def _split(frame: pd.DataFrame, config: BacktestConfig) -> pd.DataFrame:
+    start, end = optimization_date_bounds(config)
+    selected = frame[frame["timestamp"].between(start, end, inclusive="left")].copy()
+    if selected.empty:
+        raise ValueError(f"No data found for {start} to {end}")
+    return selected
 
-    job = job_store.get_job(job_id)
-    if job is None:
+
+def _snapshot(ledger: OptimizationLedger) -> TrialSnapshot:
+    snapshot = ledger.snapshot()
+    if snapshot is None:
+        raise ManifestError("Optimization ledger is missing")
+    return snapshot
+
+
+def _run_optimization(job_id: str) -> None:
+    store = job_store.get_default_job_store()
+    if store.get_job(job_id) is None:
         logger.error("Job %s not found in store", job_id)
         return
-
-    # --- Phase 1: mark running & preserve the supervisor control identity ---
-    handle = WorkerHandle.from_environment()
-    job_store.update_job(
-        job_id,
-        status="downloading_data",
-        **handle.job_fields(),
-    )
-
-    # --- Phase 2: verify and load the sole execution specification ---
+    stage = "Execution manifest"
     try:
-        manifest = job_store.load_manifest(job_id)
-        if not isinstance(manifest, ExecutionManifest):
-            raise ManifestError("Comparison requires the comparison worker")
-        optimization = manifest.optimization
-        if manifest.kind != "optimization" or optimization is None:
-            msg = "Job requires an optimization execution manifest"
-            raise ValueError(msg)
-        verify_submission_research(job_store.get_default_job_store(), job_id, manifest)
+        job_store.update_job(
+            job_id,
+            status="downloading_data",
+            **WorkerHandle.from_environment().job_fields(),
+        )
+        manifest = store.load_manifest(job_id)
+        if (
+            not isinstance(manifest, ExecutionManifest)
+            or manifest.kind != "optimization"
+        ):
+            raise ManifestError("Job requires an optimization execution manifest")
+        verify_submission_research(store, job_id, manifest)
         raw_config = manifest.config_for_execution()
         BacktestService().prepare_strategy(raw_config)
-        bt_cfg = BacktestConfig(**raw_config["backtest"])
-        parallel_cfg = ParallelConfig(**raw_config["parallel"])
-        random_seed = raw_config["random_seed"]
-    except Exception as exc:
-        _fail(job_id, f"Execution manifest error: {exc}")
-        return
+        parallel = ParallelConfig(**raw_config["parallel"])
+        train_config = optimization_backtest(manifest, "train")
+        test_config = optimization_backtest(manifest, "test")
 
-    param_ranges = optimization.param_ranges
-    optimization_metric = optimization.optimization_metric
-    train_start = optimization.train_start.isoformat()
-    train_end = optimization.train_end.isoformat()
-    test_start = optimization.test_start.isoformat()
-    test_end = optimization.test_end.isoformat()
-
-    # --- Phase 3: load / download data ---
-    try:
-        dataset = DataService().load(raw_config, bt_cfg)
-        full_df = dataset.frame
+        stage = "Ledger initialization"
+        OptimizationLedger(store.store, job_id, manifest, None).initialize()
+        stage = "Data"
+        dataset = DataService().load(
+            raw_config, BacktestConfig(**raw_config["backtest"])
+        )
         job_store.update_job(
             job_id, data_downloaded=True, dataset_id=dataset.dataset_id
         )
-        logger.info("Data loaded: %d rows", len(full_df))
-    except Exception as exc:
-        _fail(job_id, f"Data error: {exc}")
-        return
-
-    # Split into train / test
-    import pandas as pd
-
-    train_df = full_df[
-        (full_df["timestamp"] >= pd.Timestamp(train_start, tz="UTC"))
-        & (
-            full_df["timestamp"]
-            < pd.Timestamp(train_end, tz="UTC") + pd.Timedelta(days=1)
+        ledger = OptimizationLedger(store.store, job_id, manifest, dataset.dataset_id)
+        train = _split(dataset.frame, train_config)
+        test = _split(dataset.frame, test_config)
+        runner = TrialRunner(
+            ledger,
+            raw_config["strategy"],
+            manifest.strategy_execution,
+            train_config,
+            train,
+            parallel,
+            raw_config["random_seed"],
         )
-    ].copy()
-    test_df = full_df[
-        (full_df["timestamp"] >= pd.Timestamp(test_start, tz="UTC"))
-        & (
-            full_df["timestamp"]
-            < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)
+        stage = "Estimation trial"
+        job_store.update_job(
+            job_id, status="estimating", total_combinations=len(ledger.grid)
         )
-    ].copy()
-
-    if train_df.empty:
-        _fail(job_id, f"No training data found for {train_start} ~ {train_end}")
-        return
-    if test_df.empty:
-        _fail(job_id, f"No test data found for {test_start} ~ {test_end}")
-        return
-
-    logger.info("Train: %d rows, Test: %d rows", len(train_df), len(test_df))
-
-    # --- Phase 4: use the captured constructor inputs for every combination ---
-    strategy_cfg: dict[str, Any] = raw_config["strategy"]
-    strategy_execution = manifest.strategy_execution
-    # Build all combinations through the domain grid-search helper.
-    all_combos = parameter_grid(param_ranges)
-    total_combinations = len(all_combos)
-    logger.info("Total combinations: %d", total_combinations)
-
-    # --- Phase 5: trial run with timeout ---
-    job_store.update_job(
-        job_id,
-        status="estimating",
-        total_combinations=total_combinations,
-    )
-
-    # Use BacktestConfig with training period for evaluation
-    train_bt_raw = dict(raw_config["backtest"])
-    train_bt_raw["start_date"] = train_start
-    train_bt_raw["end_date"] = f"{train_end}T23:59:59.999999"
-    train_bt_cfg = BacktestConfig(**train_bt_raw)
-
-    first_combo = all_combos[0]
-    trial_result: ComboEvaluation | None = None
-
-    # Set up SIGALRM timeout
-    old_handler = signal.signal(signal.SIGALRM, _trial_timeout_handler)
-    signal.alarm(optimization.trial_timeout_seconds)
-    try:
-        t0 = time.monotonic()
-        trial_result = _run_single_combo(
-            strategy_cfg,
-            strategy_execution,
-            train_bt_cfg,
-            train_df,
-            first_combo,
-            optimization_metric,
-            parallel_cfg,
-            random_seed,
+        first_seconds = _run_trials(runner, range(1), 1)[0]
+        n_jobs = min(
+            estimate_n_jobs(train, **parallel.model_dump()),
+            max(len(ledger.grid) - 1, 1),
         )
-        time_per_combo = time.monotonic() - t0
-    except _TrialTimeoutError:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+        time_per_combo = round(first_seconds, 2) if first_seconds is not None else None
+        estimate = (
+            round(first_seconds * (1 + (len(ledger.grid) - 1) / n_jobs), 1)
+            if first_seconds is not None
+            else None
+        )
         job_store.update_job(
             job_id,
-            status="estimation_timeout",
-            error=(
-                f"Trial run exceeded {optimization.trial_timeout_seconds}s timeout. "
-                "This strategy is too slow for parameter optimization."
-            ),
-            ended_at=_now_iso(),
+            status="optimizing",
+            time_per_combo=time_per_combo,
+            estimated_total_seconds=estimate,
+            n_parallel_workers=n_jobs,
         )
-        logger.warning("Job %s: trial run timed out", job_id)
-        return
-    except Exception as exc:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-        _fail(job_id, f"Trial run error: {exc}")
-        return
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
 
-    # Estimate total time
-    n_jobs = min(
-        estimate_n_jobs(train_df, **parallel_cfg.model_dump()),
-        max(total_combinations - 1, 1),
-    )
-    # Remaining combos after trial (first already done)
-    remaining_count = total_combinations - 1
-    estimated_total_seconds = round(
-        time_per_combo + (time_per_combo * remaining_count / max(n_jobs, 1)),
-        1,
-    )
-
-    logger.info(
-        "Trial: %.2fs/combo, %d combos, %d workers → est %.1fs total",
-        time_per_combo,
-        total_combinations,
-        n_jobs,
-        estimated_total_seconds,
-    )
-
-    job_store.update_job(
-        job_id,
-        status="optimizing",
-        time_per_combo=round(time_per_combo, 2),
-        estimated_total_seconds=estimated_total_seconds,
-        n_parallel_workers=n_jobs,
-    )
-
-    # --- Phase 7: run all combos in parallel batches ---
-    job_store.update_job(
-        job_id,
-        status="optimizing",
-        completed=1,
-        total_combinations=total_combinations,
-    )
-
-    # Collect all results (including trial)
-    all_results: list[ComboEvaluation] = []
-    if trial_result is not None:
-        all_results.append(trial_result)
-
-    remaining_combos = all_combos[1:]
-    optimization_start = time.monotonic()
-
-    batch_size = max(n_jobs * 2, 10)
-    for batch_start in range(0, len(remaining_combos), batch_size):
-        batch = remaining_combos[batch_start : batch_start + batch_size]
-
-        try:
-            batch_results: list[ComboEvaluation] = Parallel(n_jobs=n_jobs)(
-                delayed(_evaluate_combo)(
-                    strategy_cfg,
-                    strategy_execution,
-                    train_bt_cfg.model_dump(),
-                    train_df,
-                    combo,
-                    optimization_metric,
-                    parallel_cfg.model_dump(),
-                    random_seed,
-                )
-                for combo in batch
+        stage = "Training trials"
+        _run_trials(runner, range(1, len(ledger.grid)), n_jobs)
+        snapshot = _snapshot(ledger)
+        if not snapshot.search_complete or snapshot.leading_index is None:
+            message = (
+                "Some approved combinations did not produce complete observations."
+                if not snapshot.search_complete
+                else "No parameter combination has a finite objective value."
             )
-        except Exception as exc:
-            _fail(job_id, f"Optimization error at batch {batch_start}: {exc}")
+            job_store.update_job(job_id, status="partial", error=message)
             return
 
-        all_results.extend(batch_results)
-
-        # Update progress
-        completed = 1 + batch_start + len(batch)
-        elapsed = time.monotonic() - optimization_start
-        rate = completed / elapsed if elapsed > 0 else 1.0
-        remaining_seconds = (total_combinations - completed) / rate
-
-        job_store.update_job(
-            job_id,
-            completed=completed,
-            estimated_remaining_seconds=round(remaining_seconds, 1),
+        stage = "Test period"
+        job_store.update_job(job_id, status="testing_oos")
+        _run_trials(
+            replace(runner, config=test_config, data=test),
+            range(snapshot.leading_index, snapshot.leading_index + 1),
+            1,
+            test=True,
         )
+        snapshot = _snapshot(ledger)
+        if snapshot.test.state != "completed":
+            job_store.update_job(job_id, status="partial", error=snapshot.test.reason)
+            return
 
-    logger.info("All %d combos evaluated", total_combinations)
-
-    # --- Phase 8: select best params ---
-    candidates = [
-        GridSearchResult(
-            params=evaluation.parameters,
-            metric_value=evaluation.target_value,
-            metrics=evaluation.result.metrics,
-        )
-        for evaluation in all_results
-    ]
-    try:
-        best = best_result(candidates, direction=optimization.direction)
-    except ValueError as exc:
-        _fail(job_id, f"Optimization selection error: {exc}")
-        return
-    best_params = best.params
-    selected_index = next(
-        index for index, candidate in enumerate(candidates) if candidate is best
-    )
-    best_metric_value = best.metric_value
-    best_train_metrics = best.metrics
-    logger.info(
-        "Best params: %s (%s=%.4f)",
-        json.dumps(best_params),
-        optimization_metric,
-        best_metric_value,
-    )
-
-    # --- Phase 9: out-of-sample test ---
-    job_store.update_job(job_id, status="testing_oos")
-
-    test_bt_raw = dict(raw_config["backtest"])
-    test_bt_raw["start_date"] = test_start
-    test_bt_raw["end_date"] = f"{test_end}T23:59:59.999999"
-    test_bt_cfg = BacktestConfig(**test_bt_raw)
-
-    try:
-        oos = _run_single_combo(
-            strategy_cfg,
-            strategy_execution,
-            test_bt_cfg,
-            test_df,
-            best_params,
-            optimization_metric,
-            parallel_cfg,
-            random_seed,
+        stage = "Result save"
+        _save_complete(
+            ledger, snapshot, raw_config, time_per_combo=time_per_combo, n_jobs=n_jobs
         )
     except Exception as exc:
-        _fail(job_id, f"Out-of-sample test error: {exc}")
-        return
-
-    logger.info("OOS result: %s=%s", optimization_metric, oos.target_value)
-
-    # --- Phase 10: persist results ---
-    try:
-        optimization_result: dict[str, Any] = {
-            "best_params": best_params,
-            "optimization_metric": optimization_metric,
-            "direction": optimization.direction,
-            "best_train_metric_value": best_metric_value,
-            "best_oos_metric_value": oos.target_value,
-            "train_metrics": best_train_metrics,
-            "test_metrics": oos.result.metrics,
-            "total_combinations": total_combinations,
-            "time_per_combo": round(time_per_combo, 2),
-            "n_parallel_workers": n_jobs,
-        }
-        result_path = job_store.save_result(
-            job_id,
-            optimization_result,
-            config_snapshot=raw_config,
-            execution_manifest=manifest,
-            performance=_performance_artifacts(
-                job_id, manifest.manifest_hash, all_results, selected_index, oos
-            ),
-        )
-        job_store.update_job(
-            job_id,
-            status="done",
-            ended_at=_now_iso(),
-            result_path=str(result_path),
-            best_params=best_params,
-        )
-        logger.info("Job %s done → %s", job_id, result_path)
-    except Exception as exc:
-        _fail(job_id, f"Result save error: {exc}")
+        _fail(job_id, f"{stage} error: {exc}")
 
 
 def main() -> None:

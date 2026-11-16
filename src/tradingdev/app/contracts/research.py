@@ -37,7 +37,12 @@ class MetricDiscovery(ContractModel):
     """Discover stored detail without making summary selection a data filter."""
 
     details_available: bool
-    provenance: Literal["performance_artifact", "legacy_metrics", "invalid_artifact"]
+    provenance: Literal[
+        "performance_artifact",
+        "legacy_metrics",
+        "invalid_artifact",
+        "optimization_ledger",
+    ]
     available_metric_ids: list[str]
     available_scopes: list[str]
     default_scope: str | None
@@ -96,6 +101,8 @@ class MetricQueryError(ErrorResponse):
     available_metric_ids: list[str] = Field(default_factory=list)
     available_scopes: list[str] = Field(default_factory=list)
     default_scope: str | None = None
+    result_completeness: Literal["complete", "partial"] | None = None
+    dataset_id: str | None = None
 
 
 class RunMetricsResponse(MetricDiscovery):
@@ -104,6 +111,8 @@ class RunMetricsResponse(MetricDiscovery):
     success: Literal[True]
     run_id: str
     manifest_hash: str | None
+    result_completeness: Literal["complete", "partial"] = "complete"
+    dataset_id: str | None = None
     scope: str
     kind: Literal["backtest", "fold_summary"]
     mode: Literal["signal", "volume"]
