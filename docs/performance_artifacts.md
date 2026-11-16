@@ -266,8 +266,10 @@ those results. Historical values are not asserted to follow the new definitions.
 Published optimizations embed a versioned `optimization_selection` summary in
 `performance.json`. The worker takes counts and the winning position from the
 committed trial ledger. Before storing the bundle, the run publisher verifies the
-summary against the approved grid and saved objectives, checks the test parameters
-against the winning training trial, and checks the saved observations against
+summary against the approved grid and saved objectives. It determines the winning
+trial from the saved training objectives using the manifest's search direction
+and verifies that `selected_train_scope` identifies that winner. It checks that
+`test` uses the winner's parameters and that the saved observations fall within
 their approved training or test ranges.
 Trial values and calculation settings stay in their original scopes. The same
 hashed bundle preserves metric definition snapshots from the committed evidence.
