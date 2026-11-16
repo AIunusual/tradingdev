@@ -83,6 +83,8 @@ def _signal_owned_group(
     proc: subprocess.Popen[bytes],
     sig: signal.Signals,
     observed: dict[int, psutil.Process],
+    *,
+    deadline: float,
 ) -> None:
     # No Popen.poll(), wait(), or psutil.wait(): the unreaped child is the anchor.
     # The leader and every descendant may already have exited.
@@ -91,10 +93,16 @@ def _signal_owned_group(
     except ProcessLookupError:
         pass
     except PermissionError:
-        # Darwin may report EPERM, rather than ESRCH, for an empty group whose
-        # leader is still waitable. Accept only independently proven completion.
-        if not _child_exited(proc) or _group_is_alive(proc.pid, observed):
-            raise
+        # Darwin can stop exposing exiting members to killpg before the leader
+        # becomes waitable. Keep the unreaped anchor and allow that transition
+        # to finish; permission denial alone never proves cleanup succeeded.
+        while True:
+            if _child_exited(proc) and not _group_is_alive(proc.pid, observed):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(_POLL_SECONDS, remaining))
 
 
 def _wait_for_group(
@@ -127,13 +135,14 @@ def terminate_owned_group(proc: subprocess.Popen[bytes]) -> int:
 
     failure: BaseException | None = None
     observed: dict[int, psutil.Process] = {}
+    signal_deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
     try:
         _group_is_alive(proc.pid, observed)
-        _signal_owned_group(proc, signal.SIGTERM, observed)
+        _signal_owned_group(proc, signal.SIGTERM, observed, deadline=signal_deadline)
         _wait_for_group(proc.pid, _STOP_GRACE_SECONDS, observed)
         # An enumerated parent can exit just after creating a new child. Signal
         # the still-owned entire group even when the first inventory was empty.
-        _signal_owned_group(proc, signal.SIGKILL, observed)
+        _signal_owned_group(proc, signal.SIGKILL, observed, deadline=signal_deadline)
         if not _wait_for_group(proc.pid, _STOP_TIMEOUT_SECONDS, observed):
             raise TimeoutError("Worker process group did not stop")
     except BaseException as error:
@@ -141,7 +150,9 @@ def terminate_owned_group(proc: subprocess.Popen[bytes]) -> int:
         # Make the strongest safe attempt, but retain the anchor on failure.
         # Failure to inspect descendants must not leave them running silently.
         try:
-            _signal_owned_group(proc, signal.SIGKILL, observed)
+            _signal_owned_group(
+                proc, signal.SIGKILL, observed, deadline=signal_deadline
+            )
         except BaseException as kill_error:
             failure = BaseExceptionGroup(
                 "Worker process group cleanup failed", [error, kill_error]

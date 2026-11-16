@@ -101,6 +101,38 @@ def test_cleanup_accepts_an_already_exited_group(
     owned_child.wait.assert_called_once()
 
 
+@pytest.mark.parametrize("pending", ["leader", "descendant"])
+def test_permission_error_waits_for_verified_exit_before_reaping(
+    monkeypatch: pytest.MonkeyPatch, owned_child: Mock, pending: str
+) -> None:
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(
+        time, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay)
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_child_exited",
+        lambda _proc: pending != "leader" or elapsed[0] >= 0.1,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_group_is_alive",
+        lambda *_args: pending == "descendant" and elapsed[0] < 0.1,
+    )
+    monkeypatch.setattr(os, "killpg", Mock(side_effect=PermissionError("exiting")))
+
+    def reap(**_kwargs: object) -> int:
+        assert elapsed[0] >= 0.1
+        return 0
+
+    owned_child.wait.side_effect = reap
+
+    assert supervisor.terminate_owned_group(owned_child) == 0
+    owned_child.wait.assert_called_once()
+    owned_child.poll.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("leader_exited", "group_alive", "accepted"),
     [(True, False, True), (True, True, False), (False, False, False)],
@@ -112,6 +144,11 @@ def test_permission_error_only_means_exited_when_entire_owned_group_has_stopped(
     group_alive: bool,
     accepted: bool,
 ) -> None:
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(
+        time, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay)
+    )
     monkeypatch.setattr(supervisor, "_child_exited", lambda _proc: leader_exited)
     monkeypatch.setattr(supervisor, "_group_is_alive", lambda *_args: group_alive)
     monkeypatch.setattr(supervisor, "_wait_for_group", lambda *_args: True)
@@ -124,6 +161,7 @@ def test_permission_error_only_means_exited_when_entire_owned_group_has_stopped(
         with pytest.raises(BaseExceptionGroup):
             supervisor.terminate_owned_group(owned_child)
         owned_child.wait.assert_not_called()
+        assert elapsed[0] <= supervisor._STOP_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize("reaped_by_popen", [True, False])
