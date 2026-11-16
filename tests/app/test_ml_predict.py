@@ -322,6 +322,7 @@ def test_identity_evaluation_uses_all_rows_and_the_saved_horizon(
         **identity,
     )
     assert len(preview["signal"]) == 5 < evaluated["n_observations"]
-    assert evaluated == {**expected, **identity}
+    assert expected["producer_source"] == "caller_array"
+    assert evaluated == {**expected, **identity, "producer_source": "backend_model"}
     assert evaluated["n_observations"] == dataset["rows"]
     assert evaluated["horizon"] == 3

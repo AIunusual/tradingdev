@@ -21,6 +21,7 @@ from tradingdev.app.contracts.ml import (
     PredictionEvaluationResponse,
 )
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.leaderboard import ProducerSource
 from tradingdev.mcp.tools import ml
 
 if TYPE_CHECKING:
@@ -110,6 +111,8 @@ def test_record_rejects_modified_artifacts_without_overwriting_the_leaderboard(
     )
     assert recorded.recorded is not None
     assert recorded.recorded.n_candidates == 1
+    assert recorded.producer_source is ProducerSource.BACKEND_MODEL
+    assert recorded.recorded.producer_source is ProducerSource.BACKEND_MODEL
     leaderboard_path = workspace.ml_leaderboard / "leaderboard.jsonl"
     before = leaderboard_path.read_bytes()
     if tamper == "model":
@@ -140,3 +143,4 @@ def test_record_rejects_modified_artifacts_without_overwriting_the_leaderboard(
     (placed,) = [row for row in leaderboard.ranked if isinstance(row, LeaderboardRow)]
     assert placed.entry_id == recorded.recorded.entry_id
     assert placed.value == recorded.metrics["rank_ic_mean"]
+    assert placed.producer_source is ProducerSource.BACKEND_MODEL

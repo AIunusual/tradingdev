@@ -22,6 +22,8 @@ from tests.e2e.conversation import visible_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.ml_report_evidence import (
     ML_REPORT_REQUEST,
+    _reject_unsupported_sample_claims,
+    _require_unknown_sample_provenance,
     seed_ml_report_candidates,
     verify_ml_report_outcome,
 )
@@ -30,8 +32,9 @@ from tests.integration.mcp_harness import temporary_mcp_workspace
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.ml_service import MLService
 from tradingdev.app.run_service import RunService
-from tradingdev.domain.ml.leaderboard import signal_fingerprint
+from tradingdev.domain.ml.leaderboard import ProducerSource, signal_fingerprint
 from tradingdev.domain.ml.registry.artifact_store import ModelArtifactStore
 from tradingdev.domain.ml.registry.leaderboard_store import LeaderboardStore
 
@@ -196,6 +199,8 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert evaluation["horizon"] == 1 and evaluation["window"] == 12
     assert evaluation["n_observations"] == dataset["rows"]
     assert evaluation["recorded"]["n_candidates"] == 1
+    assert evaluation.get("producer_source") == "backend_model"
+    assert evaluation["recorded"].get("producer_source") == "backend_model"
     assert evaluation["recorded"]["training_dataset_id"] == dataset_id
     assert ranked.arguments.get("metric") == "hit_rate"
     assert ranked.arguments.get("dataset_id") == dataset_id
@@ -210,6 +215,7 @@ def assert_ml_workflow(calls: list[ToolCall]) -> MLEvidence:
     assert row["entry_id"] == evaluation["recorded"]["entry_id"]
     assert row["dataset_id"] == dataset_id and row["model_id"] == model["model_id"]
     assert row["training_dataset_id"] == dataset_id
+    assert row.get("producer_source") == "backend_model"
     assert row["n_observations"] == dataset["rows"]
     assert row["value"] == evaluation["metrics"]["hit_rate"]
     assert row["parameters"] == model["parameters"]
@@ -262,6 +268,7 @@ def assert_ml_artifacts(workspace: MCPWorkspace, evidence: MLEvidence) -> None:
     assert entry.context.data_fingerprint == dataset["content_hash"]
     assert entry.parameters == artifact.parameters
     assert entry.training_dataset_id == artifact.training_dataset_id
+    assert entry.producer_source is ProducerSource.BACKEND_MODEL
     assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
     assert entry.signal_fingerprint == evidence.prediction["signal_fingerprint"]
     assert not list(paths.runs.glob("*/manifest.json")), "ML research must not backtest"
@@ -294,7 +301,7 @@ class TrainingProvenanceCase:
             f"{ids}，一起判斷這 {len(self.historical) + 2} 筆結果能否支持"
             "未見資料上的表現，說明理由。"
             "請以表格每個候選一列，列出完整候選識別碼、訓練及評估資料來源，"
-            "以及你對證據的判讀。這次只評估既有模型及解讀研究，"
+            "訊號如何產生，以及你對證據的判讀。這次只評估既有模型及解讀研究，"
             "不要重新取得行情、訓練模型、執行回測或改寫既有候選。"
         )
 
@@ -302,7 +309,7 @@ class TrainingProvenanceCase:
 async def prepare_training_provenance(
     workspace: MCPWorkspace,
 ) -> TrainingProvenanceCase:
-    """Create real fitted-model inputs plus legacy/model-free saved evidence."""
+    """Create real model inputs and an external series using the same model label."""
     seed_ml_markets(workspace)
     async with workspace.connect() as client:
         built = await client.call("build_dataset", **DATASET_ARGUMENTS)
@@ -332,11 +339,25 @@ async def prepare_training_provenance(
         parameters={},
     )
     assert not LeaderboardStore(paths.ml_leaderboard).record(undeclared)
+    external = MLService(workspace=paths).evaluate_signal(
+        np.linspace(-1.0, 1.0, len(train_frame)).tolist(),
+        train_frame["forward_return"].astype(float).tolist(),
+        model_id=trained["model"]["model_id"],
+        dataset_id=dataset_id,
+        record=True,
+    )
+    caller = next(
+        entry
+        for entry in LeaderboardStore(paths.ml_leaderboard).entries()
+        if entry.entry_id == external["recorded"]["entry_id"]
+    )
+    assert caller.producer_source is ProducerSource.CALLER_ARRAY
+    assert caller.training_dataset_id == dataset_id
     return TrainingProvenanceCase(
         trained["model"]["model_id"],
         dataset_id,
         other_id,
-        (*historical, undeclared),
+        (*historical, undeclared, caller),
     )
 
 
@@ -401,11 +422,23 @@ def assert_training_provenance(
     for dataset_id, result in evaluations.items():
         recorded = result["recorded"]
         entry = stored[recorded["entry_id"]]
+        assert result.get("producer_source") == "backend_model"
+        assert recorded.get("producer_source") == "backend_model"
+        assert entry.producer_source is ProducerSource.BACKEND_MODEL
         assert recorded["training_dataset_id"] == case.training_dataset_id
         assert entry.training_dataset_id == case.training_dataset_id
         assert entry.model_id == case.model_id and entry.dataset_id == dataset_id
         expected_ids.append(entry.entry_id)
     expected_ids.extend(entry.entry_id for entry in case.historical)
+    assert len(stored) == len(expected_ids), "Cross-source candidates must coexist"
+    for call in successful:
+        if call.name == "leaderboard":
+            for row in [*call.result["ranked"], *call.result["skipped"]]:
+                if row["entry_id"] in expected_ids:
+                    assert (
+                        row.get("producer_source")
+                        == stored[row["entry_id"]].producer_source
+                    ), "Leaderboard changed the saved producer source"
     rows: dict[str, str] = {}
     for entry_id in expected_ids:
         matches = [
@@ -428,14 +461,21 @@ def assert_training_provenance(
     other_id = evaluations[case.overlapping_dataset_id]["recorded"]["entry_id"]
     assert re.search(r"重疊|無法|不能|不足|不代表|不等於|樣本內", rows[other_id])
     for entry in case.historical:
-        pattern = (
-            r"未知|不明|未記錄|未保存|無法"
-            if entry.family != "rule"
-            else r"不適用|未擬合|未訓練|沒有.*(?:訓練|擬合)|無.*(?:訓練|擬合)"
-        )
-        assert re.search(pattern, rows[entry.entry_id]), (
-            "Missing training provenance explanation"
-        )
+        if entry.producer_source is ProducerSource.CALLER_ARRAY:
+            row = rows[entry.entry_id]
+            assert re.search(r"呼叫端|外部|自備|caller", row, re.IGNORECASE), (
+                "Caller series must be described as externally supplied"
+            )
+            assert re.search(r"宣告|標籤|不能|無法|不代表|不證明|未驗證", row), (
+                "Caller model label must not be treated as verified signal origin"
+            )
+            _reject_unsupported_sample_claims(row)
+            continue
+        row = rows[entry.entry_id]
+        _require_unknown_sample_provenance([row])
+        assert re.search(r"訊號|產生|來源", row) and re.search(
+            r"未知|不明|未記錄|未保存|無法", row
+        ), "Historical signal origin must remain unknown"
     print(
         "[training-provenance] Final reply for semantic review:\n" + final_text,
         flush=True,
@@ -450,6 +490,7 @@ def test_natural_request_interprets_training_provenance(
         case = asyncio.run(prepare_training_provenance(workspace))
         turns: list[ModelTurn] = []
         readonly_tools: set[str] = set()
+        observed_calls: list[ToolCall] = []
 
         async def observe_final(turn: ModelTurn) -> None:
             turns.append(turn)
@@ -461,6 +502,7 @@ def test_natural_request_interprets_training_provenance(
                 "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
                 "user_reply": observe_final,
                 "max_tool_calls": 24,
+                "on_tool_call": observed_calls.append,
             }
             async with workspace.connect() as client:
                 product_tools = (await client.session.list_tools()).tools
@@ -482,7 +524,16 @@ def test_natural_request_interprets_training_provenance(
                     )
             return codex_calls(await run_codex(workspace.root, case.request, **options))
 
-        calls = asyncio.run(run())
+        try:
+            calls = asyncio.run(run())
+        except Exception as error:
+            error.add_note(
+                "ML training provenance calls before model failure:\n"
+                + json.dumps(
+                    [asdict(call) for call in observed_calls], ensure_ascii=False
+                )
+            )
+            raise
         print(
             json.dumps([asdict(call) for call in calls], ensure_ascii=False), flush=True
         )
@@ -653,12 +704,18 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
             and call.arguments.get("dataset_id") == dataset["dataset_id"]
             for call in evaluated
         )
+        assert all(
+            call.result.get("producer_source") == "backend_rule"
+            and call.result["recorded"].get("producer_source") == "backend_rule"
+            for call in evaluated
+        )
         entries = LeaderboardStore(paths.ml_leaderboard).entries()
         assert len(entries) == 1
         entry = entries[0]
         frame, _ = MLDatasetStore(paths.ml_datasets).load(dataset["dataset_id"])
         signal = np.where(frame["rsi_14"] < 50, 1.0, -1.0)
         assert entry.family == "rule" and entry.parameters == {"threshold": 50.0}
+        assert entry.producer_source is ProducerSource.BACKEND_RULE
         assert entry.signal_fingerprint == signal_fingerprint(signal.tolist())
         ranked = [
             call
@@ -668,6 +725,7 @@ def test_natural_request_discovers_rule_and_repairs_threshold(
             and call.result.get("success")
         ]
         assert ranked and ranked[-1].result["families"] == {"rule": 1}
+        assert ranked[-1].result["ranked"][0].get("producer_source") == "backend_rule"
         assert entry.entry_id in turns[-1].text
     assert not workspace.root.exists()
 

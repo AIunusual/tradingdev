@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -12,6 +13,7 @@ from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.leaderboard import ProducerSource, build_entry_id
 from tradingdev.domain.ml.registry import LeaderboardStore
 
 if TYPE_CHECKING:
@@ -84,6 +86,98 @@ def _recorded_entry(workspace: WorkspacePaths, entry_id: str) -> LeaderboardEntr
 
 
 class TestTrainingDatasetBinding:
+    def test_caller_array_cannot_replace_backend_evaluation(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service, _TRAIN)
+        model_id = _train(service, dataset_id)
+        backend = service.evaluate_prediction(
+            model_id=model_id, dataset_id=dataset_id, window=20, record=True
+        )
+        backend_id = backend["recorded"]["entry_id"]
+        snapshot = _recorded_entry(workspace, backend_id).to_record()
+        frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+        supplied = np.random.default_rng(190).normal(size=len(frame)).tolist()
+
+        caller = service.evaluate_signal(
+            supplied,
+            frame["forward_return"].astype(float).tolist(),
+            model_id=model_id,
+            dataset_id=dataset_id,
+            window=20,
+            record=True,
+        )
+
+        assert caller["recorded"]["replaced"] is False
+        assert caller["recorded"]["entry_id"] != backend_id
+        assert caller["signal_fingerprint"] != backend["signal_fingerprint"]
+        assert len(LeaderboardStore(workspace.ml_leaderboard).entries()) == 2
+        assert _recorded_entry(workspace, backend_id).to_record() == snapshot
+        assert (
+            backend["producer_source"]
+            == backend["recorded"]["producer_source"]
+            == "backend_model"
+        )
+        assert (
+            caller["producer_source"]
+            == caller["recorded"]["producer_source"]
+            == "caller_array"
+        )
+        assert caller["recorded"]["training_dataset_id"] == dataset_id
+
+        # Different values under the same caller label update only that source.
+        repeated = service.evaluate_signal(
+            [-value for value in supplied],
+            frame["forward_return"].astype(float).tolist(),
+            model_id=model_id,
+            dataset_id=dataset_id,
+            window=20,
+            record=True,
+        )
+        assert repeated["recorded"]["replaced"] is True
+        assert repeated["recorded"]["entry_id"] == caller["recorded"]["entry_id"]
+        assert repeated["signal_fingerprint"] != caller["signal_fingerprint"]
+        backend_again = service.evaluate_prediction(
+            model_id=model_id, dataset_id=dataset_id, window=20, record=True
+        )
+        assert backend_again["recorded"]["replaced"] is True
+        assert backend_again["recorded"]["n_candidates"] == 2
+        assert _recorded_entry(workspace, backend_id).to_record() == snapshot
+
+    def test_backend_reevaluation_does_not_upgrade_a_legacy_row(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service, _TRAIN)
+        model_id = _train(service, dataset_id)
+        result = service.evaluate_prediction(
+            model_id=model_id, dataset_id=dataset_id, window=20, record=True
+        )
+        backend = _recorded_entry(workspace, result["recorded"]["entry_id"])
+        legacy = replace(
+            backend,
+            entry_id=build_entry_id(
+                model_id=model_id, dataset_id=dataset_id, context=backend.context
+            ),
+            producer_source=ProducerSource.UNKNOWN,
+        )
+        store = LeaderboardStore(workspace.ml_leaderboard)
+        payload = legacy.to_record()
+        del payload["producer_source"]
+        store.path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        refreshed = service.evaluate_prediction(
+            model_id=model_id, dataset_id=dataset_id, window=20, record=True
+        )
+        assert refreshed["recorded"]["replaced"] is False
+        assert refreshed["recorded"]["n_candidates"] == 2
+        assert _recorded_entry(workspace, legacy.entry_id) == legacy
+
+    def test_public_array_api_does_not_accept_a_backend_marker(
+        self, service: MLService
+    ) -> None:
+        with pytest.raises(TypeError, match="producer_source"):
+            service.evaluate_signal([], [], producer_source="backend_model")  # type: ignore[call-arg]
+
     def test_an_in_sample_evaluation_says_so_by_naming_one_dataset(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:
@@ -137,6 +231,8 @@ class TestTrainingDatasetBinding:
         )
 
         assert result["recorded"]["training_dataset_id"] == ""
+        assert result["producer_source"] == "backend_rule"
+        assert result["recorded"]["producer_source"] == "backend_rule"
         entry = _recorded_entry(workspace, result["recorded"]["entry_id"])
         assert entry.training_dataset_id == ""
         assert entry.dataset_id == dataset_id
@@ -167,5 +263,12 @@ class TestTrainingDatasetBinding:
 
         assert result["recorded"]["training_dataset_id"] == ""
         assert result["recorded"]["method_family"] == "ml_model"
+        assert result["producer_source"] == "caller_array"
         entry = _recorded_entry(workspace, result["recorded"]["entry_id"])
         assert entry.model_id == model_id and entry.training_dataset_id == ""
+        assert entry.producer_source is ProducerSource.CALLER_ARRAY
+        # Only the caller path can retain a label without a usable artifact.
+        with pytest.raises((FileNotFoundError, ValueError)):
+            service.evaluate_prediction(
+                model_id=model_id, dataset_id=dataset_id, record=True
+            )

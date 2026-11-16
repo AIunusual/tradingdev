@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from tradingdev.adapters.cli.reports import main
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.report_service import ReportService
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from tradingdev.domain.ml.leaderboard import (
+    EvaluationContext,
+    LeaderboardEntry,
+    ProducerSource,
+)
+from tradingdev.domain.ml.registry import LeaderboardStore
 
 
 @pytest.mark.parametrize("success", [True, False])
@@ -182,6 +187,38 @@ def test_report_cli_uses_service_ml_defaults(
     monkeypatch.setattr(ReportService, "generate_report", generate)
     main(["--workspace", str(tmp_path), "--ml-entry-id", "candidate"])
     assert json.loads(capsys.readouterr().out)["success"]
+
+
+def test_report_cli_retains_saved_signal_source_in_artifact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    LeaderboardStore(workspace.ml_leaderboard).record(
+        LeaderboardEntry(
+            entry_id="caller-evaluation",
+            label="宣告的模型",
+            context=EvaluationContext("BTC/USDT", "1h", "2024-01-01", "2024-02-01", 1),
+            metrics={"ic_mean": 0.2},
+            n_observations=200,
+            model_id="declared-model",
+            producer_source=ProducerSource.CALLER_ARRAY,
+        )
+    )
+    main(
+        [
+            "--workspace",
+            str(workspace.root),
+            "--ml-entry-id",
+            "caller-evaluation",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["success"]
+    path = Path(result["path"])
+    manifest = json.loads((path.parent / "manifest.json").read_text(encoding="utf-8"))
+    scope = manifest["ml"]["scopes"][0]
+    assert scope["metadata"]["producer_source"] == "caller_array"
+    assert "呼叫端自備陣列 (caller_array)" in path.read_text(encoding="utf-8")
 
 
 def test_report_cli_missing_selection_returns_service_error(

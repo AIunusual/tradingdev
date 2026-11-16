@@ -32,6 +32,7 @@ ML_REPORT_REQUEST = """請找出已儲存、名稱帶「橙海訊號研究」的
 最後提供可點開的報告連結，說明視窗比較與缺值應如何解讀，
 以及這份訊號研究與包含交易成本的策略回測之間能作哪些結論。
 請依保存證據說明評估資料與訓練資料的關係；沒有記錄的部分請明說未知。
+也請說明能否從保存內容確認訊號如何產生。
 這次只整理既有研究，不需要重新取得行情、訓練或執行策略。
 """
 
@@ -97,6 +98,15 @@ def seed_ml_report_candidates(
     )
     for entry in entries:
         assert not store.record(entry)
+    # Exercise actual older records, not newly written rows with an explicit
+    # unknown value. Reading these must never infer origin from a model label.
+    legacy = [entry.to_record() for entry in entries]
+    for record in legacy:
+        record.pop("producer_source", None)
+    store.path.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in legacy),
+        encoding="utf-8",
+    )
     return entries
 
 
@@ -119,6 +129,7 @@ def verify_ml_report_outcome(
         for call in calls
     ), "Saved ML report must not attempt market, training or strategy operations"
     expected_ids = {entry.entry_id for entry in entries}
+    expected_sources = {entry.entry_id: entry.producer_source for entry in entries}
     discovered: set[str] = set()
     for call in effective:
         if (
@@ -126,6 +137,11 @@ def verify_ml_report_outcome(
             and isinstance(call.result, dict)
             and call.result.get("success") is True
         ):
+            for row in [*call.result["ranked"], *call.result["skipped"]]:
+                if row["entry_id"] in expected_ids:
+                    assert (
+                        row.get("producer_source") == expected_sources[row["entry_id"]]
+                    ), "Discovery changed or lost the saved producer source"
             discovered.update(
                 row["entry_id"]
                 for group in ("ranked", "skipped")
@@ -254,8 +270,9 @@ def verify_ml_report_outcome(
             # family, not the stored field, which is empty on older rows.
             "method_family": entry.family,
             "method_name": entry.method_name,
-            # The dataset the model was trained on, so a reader can tell an
-            # in-sample score from a held-out one. Empty means unknown.
+            "producer_source": entry.producer_source.value,
+            # The named artifact's training dataset is not evidence that a
+            # caller or legacy signal was produced by that artifact.
             "training_dataset_id": entry.training_dataset_id,
         }, "Saved context snapshot changed"
         assert scope["observations"] is None
@@ -265,6 +282,7 @@ def verify_ml_report_outcome(
             f"id='ml-candidate-{block['entry_ids'].index(entry.entry_id)}'", 1
         )[1].split("</details>", 1)[0]
         assert f"<th>方法家族</th><td>{entry.family}</td>" in candidate
+        assert "<th>訊號來源</th><td>歷史來源未知 (unknown)</td>" in candidate
         assert "候選參數" in candidate and "呼叫端宣告" in candidate
     assert block["parameter_axes"]["window"] == [12, 24]
     assert block["ranking"]["metric"] == "ic_mean"

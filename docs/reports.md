@@ -43,10 +43,10 @@ records one. Equality with the evaluation dataset means the score is in-sample o
 when the backend produced the signal from that artifact; under a caller-supplied
 signal it says only where the named artifact was fitted. A different value does not
 establish a holdout. A model entry with an empty value leaves the relationship
-unknown. A declared hand-set rule has no model fitting step, so the ML view labels
-its training dataset not applicable. Other or undeclared signals have no recorded
-model binding; their training history remains unknown, including whether an external
-model produced them. Report commentary and final interpretation must
+unknown. Only a rule produced by backend rule evaluation has its training dataset
+labelled not applicable. Caller-supplied and unknown-source signals retain unknown
+training history even when declared as rules, including whether an external model
+produced them. Report commentary and final interpretation must
 state that condition rather than infer a training relationship from model or dataset
 identities alone.
 The selected candidates must satisfy the
@@ -152,9 +152,12 @@ Candidate details show the saved method family and name. Parameters come from
 the model artifact or, for rules and other signals, the caller's declaration;
 rule thresholds are not described as fitted model parameters. Family labels do
 not establish training/selection history or out-of-sample validity.
-The candidate's training dataset is shown when the artifact records one. A rule
-says model training does not apply; an older model record or a signal with undeclared
-construction keeps its training history unknown. No missing source is inferred.
+The candidate's training dataset is shown when the artifact records one. Only a
+saved backend rule origin establishes that model training does not apply;
+caller-supplied and unknown-source signals retain unknown training history even
+when their declared family is rule. Source interpretation follows the
+[recorded evaluation contract](ml_research.md#recorded-signal-evaluations);
+no missing source is inferred.
 
 Selecting `metrics` also derives a native QuantStats HTML tear sheet for every
 eligible scalar scope. It uses saved bar returns grouped by observed UTC date,
@@ -330,8 +333,14 @@ The payload and manifest both preserve the full `ml` block, including `entry_ids
 the ML renderer's `template_version`, and `source_sha256` over the ordered selected
 `LeaderboardEntry.to_record()` list (canonical sorted-key UTF-8 JSON plus newline).
 That hash identifies the content read for this report, not proof of external data
-provenance. The block contains all candidate metrics, parameters and context;
-subsequent re-recording or deletion does not change an existing report. A new
+provenance. The block contains all candidate metrics, parameters and context,
+including the saved `producer_source`. Candidate tables and details display that
+source so same-name evaluations from different origins remain distinguishable.
+Legacy origin stays unknown; report generation does not consult the current model
+registry to fill it in. Interpret the model's training dataset with the saved
+source under the [ML evaluation contract](ml_research.md#recorded-signal-evaluations).
+Source recording does not establish a held-out evaluation.
+Subsequent re-recording or deletion does not change an existing report. A new
 request selects the current stored version and obtains a new report ID when its
 evidence differs. The block does not persist prediction or IC time series.
 

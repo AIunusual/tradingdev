@@ -56,6 +56,7 @@ from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
     MethodIdentity,
+    ProducerSource,
     build_entry_id,
     comparability_error,
     family_counts,
@@ -185,6 +186,9 @@ _ML_GUIDANCE = {
         "Annualised simulated metrics require verified continuous crypto "
         "holding intervals; other calendars remain unavailable. "
         "Training-data evaluation remains in-sample. "
+        "producer_source records the actual signal entry point: backend model or "
+        "rule execution, caller-supplied arrays, or unknown historical origin. "
+        "A caller model label is not evidence that the model produced its signal. "
         "Panel-trained models may be evaluated on a separate compatible "
         "single-symbol dataset; panel datasets themselves are refused."
     ),
@@ -232,14 +236,16 @@ _ML_GUIDANCE = {
         "lists signal metrics only). An aggregate fold summary cannot be ranked, "
         "so a walk-forward run's default test_summary is skipped; name a numbered "
         "fold. "
-        "record=True replaces the same candidate/settings/dataset/context. "
+        "record=True replaces the same candidate/settings/dataset/context only "
+        "within its producer_source. Different sources coexist, count as separate "
+        "candidates and never upgrade old unknown records. "
         "leaderboard metrics have declared directions; never assume higher is "
         "better. On a signal ranking, filter by dataset_id to compare one "
         "verified dataset version; the other filters, allow_mixed and "
         "allow_parameter_axes apply only there. A run ranking refuses those "
         "arguments and a signal "
         "ranking refuses runs, because one call ranks one source. "
-        "On a signal ranking, each row reports the method_family that produced it: "
+        "On a signal ranking, each row reports its declared method_family: "
         "ml_model (fitted, "
         "parameters copied from the artifact), rule (hand-set, parameters "
         "declared by the caller) or other (other/unknown construction). A table "
@@ -384,6 +390,38 @@ class MLService:
 
         Returns an evaluation payload; invalid inputs raise ``ValueError``.
         """
+        return self._evaluate_signal(
+            signal,
+            forward_returns,
+            producer_source=ProducerSource.CALLER_ARRAY,
+            horizon=horizon,
+            window=window,
+            n_quantiles=n_quantiles,
+            record=record,
+            model_id=model_id,
+            dataset_id=dataset_id,
+            method_family=method_family,
+            method_name=method_name,
+            method_parameters=method_parameters,
+        )
+
+    def _evaluate_signal(
+        self,
+        signal: list[float],
+        forward_returns: list[float],
+        *,
+        producer_source: ProducerSource,
+        horizon: int | None = None,
+        window: int = 60,
+        n_quantiles: int = 5,
+        record: bool = False,
+        model_id: str | None = None,
+        dataset_id: str | None = None,
+        method_family: str | None = None,
+        method_name: str | None = None,
+        method_parameters: Mapping[str, float] | None = None,
+    ) -> dict[str, Any]:
+        """Score a signal with provenance established by its execution entry point."""
         identity = resolve_method(
             model_id=model_id,
             method_family=method_family,
@@ -470,6 +508,7 @@ class MLService:
             "success": True,
             "evaluation_id": evaluation_id,
             "signal_fingerprint": fingerprint,
+            "producer_source": producer_source.value,
             "n_observations": int(len(aligned)),
             "horizon": horizon,
             "window": window,
@@ -499,6 +538,7 @@ class MLService:
                 model_id=model_id,
                 dataset_id=dataset_id,
                 identity=identity,
+                producer_source=producer_source,
             )
         return payload
 
@@ -604,6 +644,7 @@ class MLService:
         model_id: str | None,
         dataset_id: str | None,
         identity: MethodIdentity,
+        producer_source: ProducerSource,
     ) -> dict[str, Any]:
         """Store one evaluation so it can be ranked against its peers."""
         if not dataset_id:
@@ -657,6 +698,7 @@ class MLService:
                 method_name=identity.name,
                 method_family=identity.family,
                 method_parameters=identity.parameters,
+                producer_source=producer_source,
             ),
             label=label,
             context=context,
@@ -669,6 +711,7 @@ class MLService:
             method_family=identity.family,
             method_name=identity.name,
             training_dataset_id=training_dataset_id,
+            producer_source=producer_source,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -681,6 +724,7 @@ class MLService:
             "method_family": identity.family,
             "method_name": identity.name,
             "training_dataset_id": training_dataset_id,
+            "producer_source": producer_source.value,
         }
 
     @staticmethod
@@ -815,6 +859,7 @@ class MLService:
                 "method_family": item.entry.family,
                 "method_name": item.entry.method_name,
                 "training_dataset_id": item.entry.training_dataset_id,
+                "producer_source": item.entry.producer_source.value,
                 "horizon": item.entry.context.horizon,
                 "window": item.entry.context.window,
                 "n_quantiles": item.entry.context.n_quantiles,
@@ -855,6 +900,7 @@ class MLService:
                     "method_family": item.entry.family,
                     "method_name": item.entry.method_name,
                     "training_dataset_id": item.entry.training_dataset_id,
+                    "producer_source": item.entry.producer_source.value,
                     "reason": item.reason,
                     # A candidate with no score is still a point on the grid:
                     # without these coordinates a failed run leaves a hole that
@@ -1301,9 +1347,10 @@ class MLService:
         prediction = self.predict(model_id=model_id, dataset_id=dataset_id)[
             "prediction"
         ]
-        result = self.evaluate_signal(
+        result = self._evaluate_signal(
             prediction["signal"],
             prediction["forward_returns"],
+            producer_source=ProducerSource.BACKEND_MODEL,
             horizon=prediction["horizon"],
             window=window,
             n_quantiles=n_quantiles,
@@ -1353,9 +1400,10 @@ class MLService:
             column=column, threshold=threshold, direction=direction
         )
         signal = rule.signal(frame[column].to_numpy(dtype=float))
-        result = self.evaluate_signal(
+        result = self._evaluate_signal(
             [float(value) for value in signal],
             frame["forward_return"].to_numpy(dtype=float).tolist(),
+            producer_source=ProducerSource.BACKEND_RULE,
             horizon=int(manifest["horizon"]),
             window=window,
             n_quantiles=n_quantiles,

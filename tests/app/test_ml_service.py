@@ -65,7 +65,9 @@ def test_ranking_guidance_describes_the_training_dataset(service: MLService) -> 
 def test_report_guidance_states_the_conditional_sample_rule(service: MLService) -> None:
     guidance = service.get_contract()["guidance"]["reports"]
     assert ML_SAMPLE_PROVENANCE_NOTE in guidance
-    assert "若與評估資料集相同，且訊號由該模型產生" in guidance
+    assert "若已記錄為後端模型產生，且模型訓練資料集與評估資料集相同" in guidance
+    assert "只描述被命名的模型，不證明它產生了訊號" in guidance
+    assert "來源確認本身不是樣本外證明" in guidance
     assert "訓練與評估的關係仍未知" in guidance
 
 

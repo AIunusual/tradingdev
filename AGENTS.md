@@ -183,8 +183,9 @@
 
 - 每個開發階段完成時，執行受影響行為及其使用端的相關測試；資料或回覆
   契約變更須涵蓋 CLI、MCP 等呼叫端，不只依修改檔案挑選同名測試。
-- 交付前依下方 Git 分流規則選擇檢查：純開發政策／已登錄開發工具變更執行
-  `scripts/check-tooling.sh`；產品程式、依賴、共用測試設定／fixtures／程序設施、
+- 交付前依下方 Git 分流規則選擇檢查：純開發政策、已登錄開發工具，以及
+  已登錄且專供開發工具使用的測試支援檔案變更執行 `scripts/check-tooling.sh`；
+  產品程式、依賴、產品共用測試設定／fixtures／程序設施、
   未知或混合產品變更執行 `scripts/check-full.sh`。開發工具分流仍須完整跑完
   `tests/tooling`，不得只選同名測試。代理主動執行，不留給使用者 push 才發現錯誤。
 - 符合下方 Git 分流規則的一般文件變更只需文件品質檢查；簡報變更執行簡報
@@ -241,6 +242,11 @@
   代理須主動執行的流程，不是 hook 強制門禁；不將模型呼叫加入
   `check-full.sh` 或 commit／push hooks。Code review、離線測試、PR 文件
   一致性審查與真實模型策略測試各有用途，不能互相替代。
+
+## Issue 撰寫
+
+- 建立或改寫 issue 時，先讀 [撰寫 issue](docs/development.md#撰寫-issue)
+  章節的本機基準；無關任務不必預讀，不需另讀外部撰寫指南。
 
 ## Issue 接手與指派
 
@@ -371,7 +377,7 @@
   `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
   此命令採用相同的文件／簡報／程式候選分流，仍核對本機 refs 與工作樹未變；
   只驗證本機指定 ref，不代表遠端 PR 已驗證。
-- 一次 snapshot 檢查預設逾時為 900 秒；完整 PR／本機候選檢查可用
+- 一次 snapshot 檢查預設逾時為 1800 秒；完整 PR／本機候選檢查可用
   `--snapshot-timeout-seconds <正整數>` 明確指定當次期限，須說明測得的
   執行時間或環境需求，不得藉此改變測試範圍或略過失敗。Codex 文件審查預設
   180 秒，可用 `--documentation-timeout-seconds <秒數>` 明確指定當次

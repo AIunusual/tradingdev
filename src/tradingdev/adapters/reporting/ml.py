@@ -6,6 +6,7 @@ import base64
 from typing import Any
 
 from tradingdev.adapters.presentation.html import details_html, escape, json_text
+from tradingdev.domain.ml.leaderboard import ProducerSource
 from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
 
 ML_REPORT_STYLE = """
@@ -53,6 +54,7 @@ _METRIC_LABELS = {
 }
 
 _CONTEXT_LABELS = {
+    "producer_source": "訊號來源",
     "method_family": "方法家族",
     "method_name": "方法名稱",
     "model_id": "模型識別碼",
@@ -71,6 +73,17 @@ _CONTEXT_LABELS = {
     "window": "評估視窗（window）",
     "n_quantiles": "分位組數（n_quantiles）",
 }
+
+
+def _producer_source_label(metadata: dict[str, Any]) -> str:
+    source = metadata.get("producer_source", ProducerSource.UNKNOWN)
+    label = {
+        ProducerSource.BACKEND_MODEL: "後端模型產生",
+        ProducerSource.BACKEND_RULE: "後端規則產生",
+        ProducerSource.CALLER_ARRAY: "呼叫端自備陣列",
+        ProducerSource.UNKNOWN: "歷史來源未知",
+    }.get(source, "無法辨識的來源")
+    return f"{label} ({source})"
 
 
 def _value_html(value: Any) -> str:
@@ -143,7 +156,9 @@ def _candidate_name(scope: dict[str, Any], index: int) -> str:
         + escape(scope["metadata"]["label"] or scope["scope_id"])
         + "</a><code class='ml-id'>"
         + escape(scope["scope_id"])
-        + "</code>"
+        + "</code><span class='ml-id'>訊號來源："
+        + escape(_producer_source_label(scope["metadata"]))
+        + "</span>"
     )
 
 
@@ -271,21 +286,32 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
         context_rows: dict[str, Any] = {
             label: metadata.get(key) for key, label in _CONTEXT_LABELS.items()
         }
+        context_rows["訊號來源"] = _producer_source_label(metadata)
+        producer_source = metadata.get("producer_source", ProducerSource.UNKNOWN)
         if not context_rows.get("訓練資料集"):
-            # Only a declared rule establishes a method without model fitting.
-            # An undeclared signal could have come from an external fitted model.
-            family = metadata.get("method_family")
-            if family == "rule":
+            if producer_source == ProducerSource.BACKEND_RULE:
                 context_rows["訓練資料集"] = "不適用（無訓練模型）"
-            elif family == "ml_model":
+            elif metadata.get("model_id"):
                 context_rows["訓練資料集"] = "未知（此紀錄未保存）"
+            elif producer_source == ProducerSource.CALLER_ARRAY:
+                context_rows["訓練資料集"] = "未知（呼叫端自備訊號）"
             else:
-                context_rows["訓練資料集"] = "未知（未宣告訊號來源）"
+                context_rows["訓練資料集"] = "未知（未保存訊號來源）"
         candidates.append(
             f"<details class='ml-candidate' id='ml-candidate-{index}'><summary>"
             + escape(metadata["label"] or scope["scope_id"])
+            + " · "
+            + escape(_producer_source_label(metadata))
             + f" · Entry ID {escape(scope['scope_id'])}</summary>"
             + _pairs(context_rows)
+            + (
+                "<p class='muted'>此訓練資料集只描述被命名的模型；"
+                "本紀錄未驗證該模型產生了這條訊號。</p>"
+                if metadata.get("model_id")
+                and producer_source
+                in (ProducerSource.CALLER_ARRAY, ProducerSource.UNKNOWN)
+                else ""
+            )
             + "<h4>候選參數</h4>"
             + (
                 _pairs(scope["parameters"])

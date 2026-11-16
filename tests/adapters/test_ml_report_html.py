@@ -16,7 +16,11 @@ from tradingdev.adapters.presentation.html import escape, json_text
 from tradingdev.adapters.reporting.html import render_report
 from tradingdev.adapters.reporting.ml import ML_REPORT_SCRIPT, render_ml_report
 from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
-from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
+from tradingdev.domain.ml.leaderboard import (
+    EvaluationContext,
+    LeaderboardEntry,
+    ProducerSource,
+)
 from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE, ml_report_block
 from tradingdev.domain.presentation.reports import REPORT_TEMPLATE_VERSION
 
@@ -171,7 +175,9 @@ def test_sample_provenance_is_unknown_even_with_saved_model_identity(
     body = render_ml_report(block, has_runs=has_runs)
     introduction = body.split("<h3>研究範圍與參數座標</h3>", 1)[0]
     assert f"<p class='notice'>{escape(ML_SAMPLE_PROVENANCE_NOTE)}</p>" in introduction
-    assert "若與評估資料集相同，且訊號由該模型產生" in introduction
+    assert "若已記錄為後端模型產生，且模型訓練資料集與評估資料集相同" in introduction
+    assert "只描述被命名的模型，不證明它產生了訊號" in introduction
+    assert "來源確認本身不是樣本外證明" in introduction
     assert "訓練與評估的關係仍未知" in introduction
     assert "<details" not in introduction
 
@@ -337,6 +343,7 @@ def test_a_rule_candidate_says_training_data_does_not_apply() -> None:
         _entry(ic_mean=0.2),
         model_id="",
         method_family="rule",
+        producer_source=ProducerSource.BACKEND_RULE,
         method_name="rsi_14 < 30",
         parameters={"threshold": 30.0},
     )
@@ -356,5 +363,85 @@ def test_an_older_model_candidate_says_the_training_dataset_is_unknown() -> None
 def test_undeclared_signal_keeps_training_history_unknown(family: str) -> None:
     entry = replace(_entry(ic_mean=0.2), model_id="", method_family=family)
     candidate = _candidate_html(entry)
-    assert "未知（未宣告訊號來源）" in candidate
+    assert "未知（未保存訊號來源）" in candidate
     assert "不適用（無訓練模型）" not in candidate
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        (ProducerSource.BACKEND_MODEL, "後端模型產生"),
+        (ProducerSource.BACKEND_RULE, "後端規則產生"),
+        (ProducerSource.CALLER_ARRAY, "呼叫端自備陣列"),
+        (ProducerSource.UNKNOWN, "歷史來源未知"),
+    ],
+)
+def test_same_named_candidates_show_source_in_ranking_and_export(
+    source: ProducerSource, label: str
+) -> None:
+    entry = replace(_entry(ic_mean=0.2), producer_source=source, label="同名模型")
+    other = replace(
+        entry,
+        entry_id="other-origin",
+        producer_source=(
+            ProducerSource.CALLER_ARRAY
+            if source == ProducerSource.BACKEND_MODEL
+            else ProducerSource.BACKEND_MODEL
+        ),
+    )
+    document = render_report(_payload(entry, other), "sources")
+    ranking = (
+        _body(document).split("候選排名與未排名原因", 1)[1].split("<h3>選優限制", 1)[0]
+    )
+    expected = f"{label} ({source.value})"
+    assert expected in ranking
+    assert ranking.count("同名模型</a>") == 2
+    assert f"訊號來源：{expected}" in ranking
+    assert f"<th>訊號來源</th><td>{expected}</td>" in _candidate_html(entry)
+    encoded = re.search(r"data-json='([^']+)'", document)
+    assert encoded is not None
+    exported = json.loads(base64.b64decode(encoded[1]))
+    assert exported["scopes"][0]["metadata"]["producer_source"] == source.value
+
+
+@pytest.mark.parametrize(
+    "source", [ProducerSource.CALLER_ARRAY, ProducerSource.UNKNOWN]
+)
+def test_unverified_model_label_does_not_claim_signal_training(
+    source: ProducerSource,
+) -> None:
+    entry = replace(
+        _entry(ic_mean=0.2),
+        producer_source=source,
+        training_dataset_id="dataset-24",
+    )
+    candidate = _candidate_html(entry)
+    assert "<th>訓練資料集</th><td>dataset-24</td>" in candidate
+    assert "只描述被命名的模型" in candidate
+    assert "未驗證該模型產生了這條訊號" in candidate
+
+
+@pytest.mark.parametrize(
+    "source", [ProducerSource.CALLER_ARRAY, ProducerSource.UNKNOWN]
+)
+def test_declared_rule_does_not_verify_absent_model_training(
+    source: ProducerSource,
+) -> None:
+    entry = replace(
+        _entry(ic_mean=0.2),
+        model_id="",
+        method_family="rule",
+        producer_source=source,
+    )
+    candidate = _candidate_html(entry)
+    assert "不適用（無訓練模型）" not in candidate
+    assert "未知（" in candidate
+
+
+def test_legacy_report_block_does_not_infer_a_backend_source() -> None:
+    block = _payload(_entry(ic_mean=0.2))["ml"]
+    block["scopes"][0]["metadata"].pop("producer_source")
+    document = render_ml_report(block, has_runs=False)
+    assert "訊號來源：歷史來源未知 (unknown)" in document
+    assert "<th>訊號來源</th><td>歷史來源未知 (unknown)</td>" in document
+    assert "未驗證該模型產生了這條訊號" in document

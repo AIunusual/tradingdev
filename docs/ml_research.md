@@ -264,8 +264,9 @@ Panel evaluation is rejected; build a single-symbol dataset for evaluation.
 Do not concatenate different assets into one time series. `record=True`
 additionally requires the dataset ID for Python array callers.
 The MCP path verifies which saved model produced the signal; it does not prove
-a held-out evaluation. Python array callers and existing records may use a
-caller-declared `model_id` label. Recording and candidate-replacement semantics are defined in the
+a held-out evaluation. Results expose `producer_source` separately from a
+caller-declared `model_id` label, including when no record is saved. Recording,
+legacy-source handling and candidate replacement are defined in the
 [artifact contract](ml_research.md#recorded-signal-evaluations).
 `leaderboard` ranks only a metric with a declared direction. A signal ranking also
 requires, by default, only matching measurement contexts; its optional `dataset_id`
@@ -334,17 +335,11 @@ does not prove a model-to-run relationship or persist missing time series. Full
 selection, visibility and retention semantics are in the
 [report contract](reports.md#composable-offline-reports).
 
-Leaderboard records carry the training dataset of the artifact they name, when that
-artifact records one. Equality with the evaluation `dataset_id` means the score is
-in-sample only when the backend generated the signal from that artifact, which
-`MLService.evaluate_prediction` does. `MLService.evaluate_signal` evaluates the array
-the caller passes, so a record it writes under a declared `model_id` says only that
-the named artifact was fitted on the evaluation dataset; nothing verifies that it
-produced those values, and the row's fields do not say which entry point wrote it.
-A different value does not establish a holdout either way, and an empty one leaves
-the relationship unknown, including on every record written before the binding
-existed. Describe the saved evaluation sample, and do not infer a training
-relationship from model IDs, dataset IDs or a `full` scope alone.
+Leaderboard rows, including skipped candidates, retain `producer_source` and the
+saved training dataset binding. Use them together under the
+[recorded-evaluation interpretation rules](ml_research.md#recorded-signal-evaluations).
+A model label or a `full` scope alone does not establish who produced the signal,
+and a confirmed producer does not establish a held-out evaluation.
 
 Model prediction unpickles trusted Python objects. Generated-strategy import
 checks do not apply to those objects, and a matching hash is not a sandbox or
@@ -664,7 +659,7 @@ result without a leaderboard write.
 `ml_leaderboard/leaderboard.jsonl` contains one JSON record per `entry_id`, sorted
 by ID. Each record preserves finite metrics, observation count, model and dataset
 IDs, a display label, the candidate's saved settings, the hash of the
-signal that was measured, the method family that produced it (`ml_model`, `rule`
+signal that was measured, the declared method family (`ml_model`, `rule`
 or `other`) with a readable `method_name` for candidates that have no model, the
 dataset its model was trained on when the artifact records one, and
 an evaluation context: symbol or panel symbols,
@@ -680,6 +675,28 @@ reproduction evidence. Re-evaluate and record to obtain that evidence.
 Comparison uses the saved context; changed data or feature code does not silently
 inherit an old context.
 
+`producer_source` records the actual evaluation entry point, independently of the
+declared method family or model label. Its valid values come from
+`ProducerSource` in `domain/ml/leaderboard.py` and the typed evaluation/leaderboard
+response schemas in `app/contracts/ml.py`:
+
+- `backend_model`: `evaluate_prediction` generated the scored sequence from the
+  validated saved model artifact.
+- `backend_rule`: `evaluate_rule` built the scored threshold rule from the saved
+  dataset feature.
+- `caller_array`: the public Python `evaluate_signal` received caller-supplied
+  arrays, even if they match model predictions or declare a model/rule identity.
+- `unknown`: the stored record predates source recording. Missing source fields
+  read this way and remain unknown when serialized again.
+
+Public callers cannot select a backend source flag. Invalid source values are
+rejected. Reads do not infer origin from today's model registry, `model_id`,
+`method_family` or `signal_fingerprint`; reproducing the same values is not proof
+of who originally produced them. This field describes the service execution path,
+not human authorization, authentication of externally modified workspace files,
+or a held-out evaluation. It does not add a ranking eligibility rule. The existing
+leaderboard `source` tag still distinguishes signal measurements from backtest runs.
+
 `training_dataset_id` is empty when no model is named, and when the
 artifact cannot be read as a valid record: it is absent (`FileNotFoundError`), or
 `load` raises `ValueError`, which covers unreadable JSON, an unsupported schema
@@ -689,7 +706,8 @@ other error propagates, so the recording fails and no entry is written. Equality
 that artifact — the MCP path above — and not when `MLService.evaluate_signal`
 evaluated an array the caller supplied. Such a record under a declared `model_id`
 says where that artifact was fitted without establishing that it produced the
-signal, and the fields alone do not separate the two cases.
+signal. `producer_source` distinguishes these cases; `unknown` preserves the
+historical uncertainty instead of upgrading an old record to a verified origin.
 Re-running the model and matching `signal_fingerprint` shows that the recorded
 values are reproducible from that model; it does not show that the original signal
 came from it, because the fingerprint covers signal values only and a caller can
@@ -703,9 +721,9 @@ substitute the evaluation dataset for a missing training one.
 
 #### Method families
 
-Not every candidate is a model. `method_family` says what produced the signal, so
-a hand-set rule can be ranked beside a fitted model without being mistaken for
-one:
+Not every candidate is a model. `method_family` describes the declared method,
+so a hand-set rule can be ranked beside a fitted model. Use `producer_source`
+separately to distinguish backend construction from a caller's claim:
 
 - `ml_model`: a saved model. Its `parameters` are copied from the artifact, and a
   caller may not supply them.
@@ -738,10 +756,10 @@ Inspect provenance and measurement conditions; pass `family` to rank one kind.
 Names and declared parameters alone do not prove reproducible construction.
 
 Named candidates are identified by family, name and full-precision declared
-parameters within the saved dataset and evaluation context. Repeating those
-settings replaces that candidate; changing a parameter creates another entry,
-even when rounded display names or resulting signals match. Model IDs and
-unnamed-signal fingerprints keep their existing identity encoding.
+parameters within the saved dataset, evaluation context and producer source.
+Repeating those settings from the same source replaces that candidate; changing
+a parameter creates another entry, even when rounded display names or resulting
+signals match. Cross-source identity and legacy preservation follow the rules below.
 
 The `evaluate_signal` tool without `model_id` builds a rule signal from one saved
 feature column: `+1` where the column is above (or below) the threshold and `-1`
@@ -804,7 +822,9 @@ records no orders and no equity curve. The three tunable settings are reported
 in `metadata`, not merged into `parameters`: a fitted parameter dictionary may
 legitimately contain a key of the same name, and merging would silently
 overwrite one of them. `parameters` retains the model artifact settings or
-caller-declared method settings, distinguished by `method_family`. Non-finite scores become `null`, as in leaderboard storage, while absent
+caller-declared method settings, distinguished by `method_family`.
+`metadata.producer_source` preserves the stored origin, including `unknown`,
+without consulting the current model registry. Non-finite scores become `null`, as in leaderboard storage, while absent
 metric keys remain absent. `ml_report_block` collects the whole candidate set,
 including candidates that failed to rank, with block-level definitions, the
 observed parameter axes, the skipped rows and their coordinates, and the ranking
@@ -849,20 +869,24 @@ observed values of each axis and appends a caveat saying so. Every row states it
 own horizon, window and quantile count, so a point on the surface is readable
 without a second lookup.
 
-Entry identity binds the dataset and evaluation context to the model ID, or
-to a named method's family/name/settings. Only unnamed candidates include a
+Entry identity binds the producer source, dataset and evaluation context to the
+model ID, or to a named method's family/name/settings. Only unnamed candidates include a
 signal fingerprint in their entry ID. The fingerprint uses a canonical JSON
 array of finite floating-point values, preserving array and value boundaries;
-every record also stores it separately as `signal_fingerprint`. A re-run reproduces a recorded candidate when its
-`signal_fingerprint` equals the stored one, and no migration is needed. MCP
-model evaluation validates the model that generated its signal; rule evaluation
-builds the signal from the verified dataset feature and requested threshold. Existing records and Python array callers may instead use a
-caller-declared model label: their ID alone does not prove signal origin. The
-stored format has no provenance discriminator, so a leaderboard must not label
-all historical rows as verified-origin. Neither path proves out-of-sample
-evaluation. Repeating a model/dataset/context entry
-replaces its earlier metrics, including when the caller supplies different
+every record also stores it separately as `signal_fingerprint`. A matching re-run
+reproduces the recorded values; source interpretation remains governed by
+`producer_source` above. Repeating a model/dataset/context entry from the same
+source replaces its earlier metrics, including when the caller supplies different
 signal values. Distinct unlabelled signals remain separate candidates.
+Different producer sources coexist as separate entries even with the same model,
+dataset and measurement context. Thus a caller array cannot overwrite a backend
+evaluation, and a newly verified evaluation cannot replace or upgrade an old
+`unknown` row. Legacy IDs and evidence are preserved without migration or inferred
+provenance. The store also rejects an attempted replacement of an existing ID
+with a different source. Ranked rows and reports display source alongside identity
+so same-name entries remain distinguishable. Each distinct selected entry counts
+as a candidate under the existing ranking and selection-bias rules; repeating the
+same source identity does not add a candidate.
 
 `LeaderboardStore.record` holds `.leaderboard.lock` across its read, update and
 write. It flushes a unique temporary file beside the destination and atomically

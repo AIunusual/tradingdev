@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
+from tradingdev.domain.ml.leaderboard import ProducerSource
 
 
 class FeatureSetSummary(ContractModel):
@@ -104,6 +105,8 @@ class RecordedEvaluation(ContractModel):
     """An evaluation stored for later ranking."""
 
     entry_id: str
+    producer_source: ProducerSource
+    """Actual signal execution path; unknown for records without this evidence."""
     replaced: bool
     """True when this replaced an earlier record for the same candidate."""
     context: str
@@ -112,7 +115,7 @@ class RecordedEvaluation(ContractModel):
     signal_fingerprint: str
     """Hash of the evaluated signal; compare it with a re-run to check reproduction."""
     method_family: str
-    """Which kind of method produced the signal."""
+    """Declared method family; producer_source separately records actual origin."""
     method_name: str
     """Readable rule name; empty for a model and for an unnamed signal."""
     training_dataset_id: str
@@ -130,6 +133,8 @@ class SignalEvaluationResponse(ContractModel):
     """The full signal-quality result for one prediction series."""
 
     success: Literal[True]
+    producer_source: ProducerSource
+    """Signal execution path, distinct from a declared model label or holdout proof."""
     evaluation_id: str
     signal_fingerprint: str
     """Hash of the evaluated signal values in dataset row order.
@@ -189,11 +194,13 @@ class LeaderboardRow(ContractModel):
     the boundary. Every producer states the source it actually measured.
     """
     entry_id: str
+    producer_source: ProducerSource
+    """Saved signal execution path; caller/unknown model IDs are only labels."""
     label: str
     model_id: str
     dataset_id: str
     method_family: str
-    """Which kind of method produced this signal: ml_model, rule or other."""
+    """Declared method family: ml_model, rule or other; not proof of origin."""
     method_name: str
     """The rule's readable name; empty for a model and for an unnamed signal."""
     training_dataset_id: str
@@ -224,9 +231,11 @@ class LeaderboardSkipped(ContractModel):
     source: Literal["signal"]
     """Which kind of measurement this is; a run candidate carries ``run``."""
     entry_id: str
+    producer_source: ProducerSource
+    """Saved signal execution path, retained even when its score is unavailable."""
     label: str
     method_family: str
-    """Which kind of method produced this signal, so a failed rule stays a rule."""
+    """Declared method family, retained even when the score is unavailable."""
     method_name: str
     training_dataset_id: str
     """Dataset the model was fitted on; empty when unknown or for no model."""

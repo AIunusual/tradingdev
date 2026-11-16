@@ -20,6 +20,7 @@ import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from statistics import NormalDist
 from typing import Any, Literal, cast
 
@@ -36,6 +37,20 @@ MethodFamily = Literal["ml_model", "rule", "other"]
 
 # Stable presentation order; family declarations do not prove provenance.
 METHOD_FAMILIES: tuple[MethodFamily, ...] = ("ml_model", "rule", "other")
+
+
+class ProducerSource(StrEnum):
+    """Execution path that supplied the scored signal, not a holdout guarantee.
+
+    Application entry points set this value; caller-declared model IDs and
+    method families never establish it. Missing historical evidence is unknown.
+    """
+
+    BACKEND_MODEL = "backend_model"
+    BACKEND_RULE = "backend_rule"
+    CALLER_ARRAY = "caller_array"
+    UNKNOWN = "unknown"
+
 
 _MAX_METHOD_NAME_CHARACTERS = 160
 
@@ -232,6 +247,15 @@ class LeaderboardEntry:
     metrics or the current registry.
     """
 
+    producer_source: ProducerSource = ProducerSource.UNKNOWN
+    """Saved signal origin; never inferred from labels or current artifacts."""
+
+    def __post_init__(self) -> None:
+        # Validate direct construction as well as records loaded from JSON.
+        object.__setattr__(
+            self, "producer_source", ProducerSource(self.producer_source)
+        )
+
     @property
     def family(self) -> MethodFamily:
         """The declared family, or the one this row's identity implies.
@@ -267,6 +291,7 @@ class LeaderboardEntry:
             "method_family": self.method_family,
             "method_name": self.method_name,
             "training_dataset_id": self.training_dataset_id,
+            "producer_source": self.producer_source.value,
             "n_observations": self.n_observations,
             "metrics": {
                 key: _stored_metric(value) for key, value in self.metrics.items()
@@ -329,6 +354,7 @@ class LeaderboardEntry:
             method_family=family,
             method_name=str(record.get("method_name", "")),
             training_dataset_id=str(record.get("training_dataset_id") or ""),
+            producer_source=ProducerSource(record.get("producer_source", "unknown")),
             n_observations=int(record.get("n_observations", 0)),
             # A stored null is a measured-and-failed score, not a missing key,
             # so it must come back as None instead of being converted or dropped.
@@ -349,6 +375,7 @@ def build_entry_id(
     method_name: str = "",
     method_family: MethodFamily = "other",
     method_parameters: Mapping[str, float] | None = None,
+    producer_source: ProducerSource = ProducerSource.UNKNOWN,
 ) -> str:
     """Identify one candidate within a dataset and measurement context.
 
@@ -359,8 +386,12 @@ def build_entry_id(
     Named methods use their family, name and full-precision declared parameters,
     independent of the signal they produced. Display-name rounding cannot merge
     different settings, and different families cannot overwrite one another.
-    Existing model and unnamed-signal identities retain their encoding.
+    Known producers have separate identities. Unknown identities retain the
+    historical encoding so existing records need no migration; a fresh verified
+    evaluation cannot replace an unknown row. Within each source the existing
+    model/named-method/anonymous-signal replacement rules still apply.
     """
+    producer_source = ProducerSource(producer_source)
     if method_name and not model_id:
         payload = json.dumps(
             [
@@ -376,6 +407,8 @@ def build_entry_id(
         )
     else:
         payload = "|".join((model_id, dataset_id, context.key, signal_fingerprint))
+    if producer_source is not ProducerSource.UNKNOWN:
+        payload = json.dumps([producer_source.value, payload], separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 

@@ -6,7 +6,7 @@
 
 - **需求**：建立研究前，助手須取得策略構想、標的、期間與 K 棒頻率；缺項先追問。只有明確選定不可變 generated revision 時才繼承固定選擇。本金、成本與年化使用適用政策，保留有效值及來源。
 - **驗收**：缺少必要選擇時不提早建立策略或準備執行；不從 bundled 範例猜日期；bundled 與隱含 current 不提供繼承，舊 revision 未保存構想時須明確補入。明示零成本保持為零，不適用的政策要求釐清；後續政策更新不改變已固定的執行。後端完整性檢查不宣稱輸入來自真人。
-- **契約**：[研究輸入與模擬政策](../strategy_contract.md#research-inputs-and-simulation-policy)。
+- **契約**：[研究輸入與模擬政策](../strategy_contract.md#research-inputs-and-simulation-policy)、[有效設定與來源保存](../run_artifacts.md#research-settings-and-provenance)。
 - **驗證**：[需求解析 service](../../tests/app/test_research_resolution.py) 核對繼承、零值與來源；[真實模型需求釐清](../../tests/e2e/test_llm_novice_intake.py) 檢查追問與所有提早操作嘗試，須另啟模型測試。
 
 ## FR-STR-002 建立與修訂的身分

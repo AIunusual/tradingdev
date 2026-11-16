@@ -25,6 +25,7 @@ from tradingdev.domain.ml.evaluation.catalog import (
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
+    ProducerSource,
 )
 from tradingdev.domain.ml.report import (
     ML_REPORT_SCHEMA_VERSION,
@@ -235,6 +236,20 @@ class TestScope:
         assert scope["metadata"]["signal_fingerprint"] == "0123456789abcdef"
         assert scope["metadata"]["n_observations"] == 200
         assert scope["metadata"]["dataset_id"] == "ds_h1"
+
+    def test_a_legacy_scope_preserves_unknown_signal_origin(self) -> None:
+        record = _entry("legacy", ic_mean=0.05).to_record()
+        record.pop("producer_source", None)
+        scope = ml_signal_scope(LeaderboardEntry.from_record(record))
+        assert scope["metadata"]["producer_source"] == "unknown"
+
+    @pytest.mark.parametrize("source", list(ProducerSource))
+    def test_source_survives_report_json_projection(
+        self, source: ProducerSource
+    ) -> None:
+        entry = replace(_entry("source", ic_mean=0.05), producer_source=source)
+        payload = json.loads(json.dumps(ml_report_block([entry], "ic_mean")))
+        assert payload["scopes"][0]["metadata"]["producer_source"] == source.value
 
 
 class TestReportBlock:

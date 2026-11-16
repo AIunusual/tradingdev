@@ -17,7 +17,11 @@ from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.contracts.reports import ReportResponse
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.trade_history_service import TradeHistoryService
-from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
+from tradingdev.domain.ml.leaderboard import (
+    EvaluationContext,
+    LeaderboardEntry,
+    ProducerSource,
+)
 from tradingdev.domain.ml.registry import LeaderboardStore
 from tradingdev.mcp.strict_server import StrictMCPServer
 from tradingdev.mcp.tools import history
@@ -75,6 +79,11 @@ def _record(workspace: WorkspacePaths) -> list[str]:
                 model_id=f"model-{entry_id}",
                 dataset_id="recorded-dataset",
                 signal_fingerprint=f"signal-{entry_id}",
+                producer_source=(
+                    ProducerSource.CALLER_ARRAY
+                    if entry_id == "candidate"
+                    else ProducerSource.UNKNOWN
+                ),
             )
         )
     return ["candidate", "unavailable"]
@@ -200,6 +209,10 @@ def test_ml_only_report_is_a_registered_artifact_through_mcp(
     assert payload["sections"] == ["ml"]
     scopes = payload["ml"]["scopes"]
     assert [scope["scope_id"] for scope in scopes] == entry_ids
+    assert [scope["metadata"]["producer_source"] for scope in scopes] == [
+        "caller_array",
+        "unknown",
+    ]
     assert scopes[1]["values"]["ic_mean"] is None
     assert scopes[1]["observations"] is None
     assert "candidate" in content and "unavailable" in content

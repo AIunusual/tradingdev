@@ -102,7 +102,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
     ) -> PredictionEvaluationResponse | RuleEvaluationResponse | ErrorResponse:
         """Evaluate every saved row using model_id or a column+threshold rule.
 
-        Only record=True saves or replaces that candidate on the leaderboard.
+        Only record=True saves or replaces that candidate within its producer source.
         Read get_ml_contract for input and interpretation guidance.
         """
         try:

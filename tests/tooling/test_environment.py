@@ -9,8 +9,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import psutil
@@ -285,47 +287,62 @@ def test_node_probe_cleans_descendants_on_every_outcome(
         f"#!{sys.executable}\nimport subprocess, sys, time\nfrom pathlib import Path\n"
         f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}],\n"
         "    start_new_session=True)\n"
-        f"Path({str(marker)!r}).write_text(str(child.pid))\n"
+        f"marker = Path({str(marker)!r})\n"
+        "marker.with_suffix('.tmp').write_text(str(child.pid))\n"
+        "marker.with_suffix('.tmp').replace(marker)\n"
         f"while not Path({str(observed)!r}).exists(): time.sleep(0.01)\n"
         "print('v22.17.0', flush=True)\n"
         + (
             "time.sleep(60)\n"
             if outcome == "timeout"
-            else f"raise SystemExit({int(outcome == 'failure')})\n"
+            else f"time.sleep(1)\nraise SystemExit({int(outcome == 'failure')})\n"
         )
     )
     binary.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
     real_children = psutil.Process.children
+    clock_offset = 0.0
 
     def children(
         process: psutil.Process, recursive: bool = False
     ) -> list[psutil.Process]:
+        nonlocal clock_offset
         found: list[psutil.Process] = real_children(process, recursive=recursive)
         if marker.exists() and int(marker.read_text()) in {
             child.pid for child in found
         }:
             observed.touch()
+            if outcome == "timeout":
+                clock_offset = 10.0
         return found
 
     monkeypatch.setattr(psutil.Process, "children", children)
-    real_run = process_guard.run_captured
-
-    def bounded(
-        command: list[str], *, cwd: Path, env: dict[str, str], timeout: float
-    ) -> subprocess.CompletedProcess[str]:
-        assert timeout == 10
-        return real_run(command, cwd=cwd, env=env, timeout=0.5)
-
-    monkeypatch.setattr(process_guard, "run_captured", bounded)
+    if outcome == "timeout":
+        # Expire only after the real descendant is known. A constant offset keeps
+        # cleanup deadlines and sleeps on real time without patching global time.
+        monkeypatch.setattr(
+            process_guard,
+            "time",
+            SimpleNamespace(
+                monotonic=lambda: time.monotonic() + clock_offset,
+                sleep=time.sleep,
+            ),
+        )
     try:
         if outcome == "success":
             assert environment.require_node() == str(binary)
         else:
             with pytest.raises(
                 environment.EnvironmentCheckError, match="Cannot verify Node.js"
-            ):
+            ) as error:
                 environment.require_node()
+            cause = error.value.__cause__
+            if outcome == "failure":
+                assert isinstance(cause, subprocess.CalledProcessError)
+                assert cause.returncode == 1
+            else:
+                assert isinstance(cause, subprocess.TimeoutExpired)
+                assert cause.timeout == 10
         assert observed.exists()
         with suppress(psutil.NoSuchProcess):
             assert (

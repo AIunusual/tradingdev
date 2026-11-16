@@ -348,7 +348,8 @@ from tooling.process_guard import ProcessCleanupError
 candidate = Path.cwd()
 plan = SimpleNamespace(prompts=('evidence',), verify=lambda: None, manifest={
     'plan_hash': 'test', 'path_owners': {}, 'selected_scopes': ['tooling'],
-    'evidence_utf8_bytes': 8, 'total_prompt_utf8_bytes': 8})
+    'evidence_utf8_bytes': 8, 'source_pool_utf8_bytes': 8,
+    'total_prompt_utf8_bytes': 8})
 review_docs.prepare_review = lambda *args, **kwargs: plan
 review_docs.require_codex = lambda: 'unused-codex'
 def unverified(root, *args, **kwargs):

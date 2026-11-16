@@ -39,10 +39,14 @@ ML_REPORT_SCHEMA_VERSION = 1
 ML_SIGNAL_KIND = "ml_signal"
 ML_SIGNAL_MODE = "signal"
 ML_SAMPLE_PROVENANCE_NOTE = (
-    "排行榜紀錄會保存模型訓練資料集：若與評估資料集相同，且訊號由該模型產生，"
+    "訊號來源區分後端模型、後端規則、呼叫端自備陣列與歷史未知；"
+    "來源由實際評估入口記錄，不由模型名稱或訊號指紋推定。"
+    "若已記錄為後端模型產生，且模型訓練資料集與評估資料集相同，"
     "則該分數為樣本內；不同不代表樣本外，兩個資料集版本仍可能涵蓋重疊期間。"
-    "手設規則的模型訓練欄位不適用；未宣告來源的訊號、呼叫端自備訊號"
-    "或未保存訓練欄位時，訓練與評估的關係仍未知。"
+    "後端規則不涉及模型訓練；呼叫端自備或歷史未知來源的模型訓練欄位，"
+    "只描述被命名的模型，不證明它產生了訊號。"
+    "呼叫端自備、歷史未知來源或未保存訓練欄位時，"
+    "訓練與評估的關係仍未知。來源確認本身不是樣本外證明。"
 )
 
 
@@ -73,6 +77,7 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "signal_fingerprint": entry.signal_fingerprint,
             "method_family": entry.family,
             "method_name": entry.method_name,
+            "producer_source": entry.producer_source.value,
             "training_dataset_id": entry.training_dataset_id,
             "horizon": context.horizon,
             "window": context.window,

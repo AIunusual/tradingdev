@@ -4,6 +4,8 @@ their count determines the significance threshold.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,6 +13,7 @@ import pytest
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
     LeaderboardEntry,
+    ProducerSource,
     build_entry_id,
 )
 from tradingdev.domain.ml.registry import LeaderboardStore
@@ -115,3 +118,60 @@ def test_a_record_without_metrics_is_refused(store: LeaderboardStore) -> None:
     store.path.write_text('{"entry_id": "a", "context": {}}\n', "utf-8")
     with pytest.raises(ValueError, match="unreadable leaderboard record"):
         store.entries()
+
+
+@pytest.mark.parametrize(
+    ("previous", "incoming"),
+    [
+        (ProducerSource.BACKEND_MODEL, ProducerSource.CALLER_ARRAY),
+        (ProducerSource.CALLER_ARRAY, ProducerSource.BACKEND_MODEL),
+        (ProducerSource.UNKNOWN, ProducerSource.BACKEND_MODEL),
+    ],
+)
+def test_conflicting_source_cannot_replace_an_existing_id(
+    store: LeaderboardStore, previous: ProducerSource, incoming: ProducerSource
+) -> None:
+    original = replace(_entry("m", 0.5), producer_source=previous)
+    store.record(original)
+    before = store.path.read_bytes()
+    with pytest.raises(ValueError, match="different producer source"):
+        store.record(replace(original, producer_source=incoming, metrics={"icir": 0.9}))
+    assert store.path.read_bytes() == before
+    assert list(store.root.glob("*.tmp")) == []
+    assert LeaderboardStore(store.root, lock_timeout=0).record(original) is True
+
+
+def test_concurrent_sources_coexist_and_each_replaces_only_itself(
+    store: LeaderboardStore,
+) -> None:
+    legacy = _entry("m", 0.5)
+    store.record(legacy)
+
+    def record(source: ProducerSource) -> bool:
+        entry = replace(
+            legacy,
+            entry_id=build_entry_id(
+                model_id="m",
+                dataset_id="ds",
+                context=_CONTEXT,
+                producer_source=source,
+            ),
+            producer_source=source,
+        )
+        return LeaderboardStore(store.root, lock_timeout=5).record(entry)
+
+    sources = [ProducerSource.BACKEND_MODEL, ProducerSource.CALLER_ARRAY] * 3
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        replaced = list(workers.map(record, sources))
+    assert replaced.count(False) == 2
+    assert replaced.count(True) == 4
+    entries = store.entries()
+    assert len(entries) == 3
+    assert {entry.producer_source for entry in entries} == {
+        ProducerSource.UNKNOWN,
+        ProducerSource.BACKEND_MODEL,
+        ProducerSource.CALLER_ARRAY,
+    }
+    assert (
+        next(entry for entry in entries if entry.entry_id == legacy.entry_id) == legacy
+    )

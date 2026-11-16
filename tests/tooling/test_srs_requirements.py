@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tooling import documentation
-from tooling.requirements import RequirementsError, check_requirements
+from tooling.requirements import (
+    RequirementsError,
+    check_requirements,
+    contract_references,
+    parse_requirement_records,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -149,3 +154,163 @@ def test_new_chapter_requires_a_review_responsibility(tmp_path: Path) -> None:
         RequirementsError, match="unregistered SRS review responsibility"
     ):
         check_requirements(tmp_path)
+
+
+def test_parsed_records_preserve_source_bounds_and_each_requirements_evidence() -> None:
+    first = RECORD.replace("[執行](../contract.md#設定)", "[執行][contract]")
+    first += (
+        "\n### 補充\n\n原文說明。\n\n"
+        "- **契約**：[補充](../extra.md)\n\n"
+        "```markdown\n## FR-FAKE-001 範例\n```\n\n"
+    )
+    second = (
+        RECORD.replace("FR-EXEC-001", "FR-EXEC-002")
+        .replace("../contract.md#設定", "/docs/other.md#第二章")
+        .replace("tests/test_execution.py", "tests/test_other.py")
+    )
+    second += "\n"
+    text = (
+        "# 執行需求\n\n" + first + second + "## 附錄\n\n"
+        "[contract]: ../contract.md#%E8%A8%AD%E5%AE%9A\n"
+    ).replace("\n", "\r\n")
+    records = parse_requirement_records("docs/requirements/execution.md", text)
+    assert [record.identifier for record in records] == ["FR-EXEC-001", "FR-EXEC-002"]
+    start = 3
+    for record, expected in zip(records, (first, second), strict=True):
+        assert record.source == "docs/requirements/execution.md"
+        assert record.start_line == start
+        assert record.end_line == start + len(expected.splitlines()) - 1
+        assert record.text == expected.replace("\n", "\r\n")
+        assert record.text == "".join(
+            text.splitlines(keepends=True)[record.start_line - 1 : record.end_line]
+        )
+        start = record.end_line + 1
+    assert records[0].contract_references == (
+        ("docs/contract.md", "設定"),
+        ("docs/extra.md", ""),
+    )
+    assert records[0].verification_paths == ("tests/test_execution.py",)
+    assert records[1].contract_references == (("docs/other.md", "第二章"),)
+    assert records[1].verification_paths == ("tests/test_other.py",)
+    assert contract_references("docs/requirements/execution.md", text) == {
+        ("docs/contract.md", "設定"),
+        ("docs/extra.md", ""),
+        ("docs/other.md", "第二章"),
+    }
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\v"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_record_source_slices_treat_unicode_separators_as_inline_text(
+    separator: str, newline: str
+) -> None:
+    first = RECORD.replace("保存有效設定。", f"第一段{separator}仍屬同一行。") + "\n"
+    second = (
+        RECORD.replace("FR-EXEC-001", "FR-EXEC-002")
+        .replace("預設值更新後，查詢仍回傳原設定。", f"第二段{separator}不得混入前項。")
+        .replace("../contract.md#設定", "../second.md#第二章")
+        .replace("tests/test_execution.py", "tests/test_second.py")
+        .rstrip("\n")
+    )
+    text = (f"# 執行需求{separator}導覽\n\n" + first + second).replace("\n", newline)
+
+    records = parse_requirement_records("docs/requirements/execution.md", text)
+
+    assert [record.identifier for record in records] == ["FR-EXEC-001", "FR-EXEC-002"]
+    assert [(record.start_line, record.end_line) for record in records] == [
+        (3, 9),
+        (10, 15),
+    ]
+    assert [record.text for record in records] == [
+        first.replace("\n", newline),
+        second.replace("\n", newline),
+    ]
+    assert records[0].contract_references == (("docs/contract.md", "設定"),)
+    assert records[0].verification_paths == ("tests/test_execution.py",)
+    assert records[1].contract_references == (("docs/second.md", "第二章"),)
+    assert records[1].verification_paths == ("tests/test_second.py",)
+
+
+def test_parsing_manual_verification_needs_no_filesystem(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "read_text", lambda *a, **kw: pytest.fail("No I/O"))
+    text = RECORD.replace(
+        "[服務測試](../../tests/test_execution.py)，驗證歷史設定。",
+        "人工驗收：在離線瀏覽器檢查互動。",
+    ).rstrip("\n")
+    (record,) = parse_requirement_records("docs/requirements/execution.md", text)
+    assert record.text == text
+    assert record.start_line == 1 and record.end_line == len(text.splitlines())
+    assert record.verification_paths == ()
+    assert record.contract_references == (("docs/contract.md", "設定"),)
+
+
+def test_parsed_references_keep_inline_and_reference_links_but_not_examples() -> None:
+    text = RECORD.replace(
+        "[執行](../contract.md#設定)",
+        "[第一](../contract.md#設定)、[重複][contract]、[另一個](../other.md)"
+        "及[外部](https://example.invalid/guide.md)",
+    ).replace(
+        "[服務測試](../../tests/test_execution.py)",
+        "[服務測試](../../tests/test_%65xecution.py?mode=read#case)、"
+        "[重複](/tests/test_execution.py) 與[說明](../test_notes.md)",
+    )
+    text += (
+        "\n[contract]: ../contract.md#設定\n\n"
+        "```markdown\n- **契約**：[範例](../example.md)\n```\n\n"
+        "> - **契約**：[引文](../quote.md)\n"
+    )
+    (record,) = parse_requirement_records("docs/requirements/execution.md", text)
+    assert record.contract_references == (
+        ("docs/contract.md", "設定"),
+        ("docs/other.md", ""),
+    )
+    assert record.verification_paths == (
+        "docs/test_notes.md",
+        "tests/test_execution.py",
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("# 無需求\n", "no requirement records"),
+        ("```markdown\n" + RECORD + "```\n", "no requirement records"),
+        (RECORD.replace("FR-EXEC-001", "FR-EXEC-1"), "malformed requirement"),
+        (RECORD + "\n" + RECORD, "duplicate FR-EXEC-001"),
+        (
+            RECORD.replace("- **驗收**：預設值更新後，查詢仍回傳原設定。\n", ""),
+            "missing fields 驗收",
+        ),
+        (RECORD + "\n- **需求**：重複。\n", "duplicate 需求"),
+        (RECORD.replace("保存有效設定。", ""), "empty or duplicate 需求"),
+        (
+            RECORD.replace("../contract.md#設定", "../../../outside.md"),
+            "invalid contract reference",
+        ),
+        (
+            RECORD.replace("../contract.md#設定", "../../src/code.py"),
+            "invalid contract reference",
+        ),
+        (RECORD.replace("../contract.md#設定", "ml.md"), "SRS cannot replace"),
+        (
+            RECORD.replace("../../tests/test_execution.py", "../../../test_outside.py"),
+            "invalid local evidence reference",
+        ),
+    ],
+)
+def test_record_parser_rejects_incomplete_or_invalid_evidence(
+    text: str, error: str
+) -> None:
+    with pytest.raises(RequirementsError, match=error):
+        parse_requirement_records("docs/requirements/execution.md", text)
+
+
+def test_contract_reference_extraction_still_accepts_fields_without_records() -> None:
+    text = "- **契約**：[契約](../contract.md#設定)\n"
+    assert contract_references("docs/requirements/execution.md", text) == {
+        ("docs/contract.md", "設定")
+    }

@@ -22,7 +22,11 @@ from tradingdev.app.contracts.ml import (
     MlContractResponse,
 )
 from tradingdev.app.ml_service import MLService
-from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
+from tradingdev.domain.ml.leaderboard import (
+    EvaluationContext,
+    LeaderboardEntry,
+    ProducerSource,
+)
 from tradingdev.domain.ml.registry import LeaderboardStore
 from tradingdev.mcp.tools import ml
 
@@ -159,6 +163,29 @@ def test_evaluate_signal_record_returns_the_stored_entry(
     assert repeated["recorded"]["replaced"] is True
     assert repeated["recorded"]["n_candidates"] == 3
 
+    frame = pd.read_parquet(workspace.ml_datasets / recorded / "dataset.parquet")
+    caller = MLService(workspace=workspace).evaluate_signal(
+        np.random.default_rng(190).normal(size=len(frame)).tolist(),
+        frame["forward_return"].astype(float).tolist(),
+        model_id=pair["model_id"],
+        dataset_id=pair["dataset_id"],
+        window=20,
+        record=True,
+    )
+    assert caller["recorded"]["replaced"] is False
+    assert caller["recorded"]["n_candidates"] == 4
+    board = LeaderboardPageResponse.model_validate(
+        _dispatch(mcp, "leaderboard", {"metric": "hit_rate", "dataset_id": recorded})
+    )
+    same_model = [
+        row for row in _signal_rows(board) if row.model_id == pair["model_id"]
+    ]
+    assert {row.producer_source for row in same_model} == {
+        ProducerSource.BACKEND_MODEL,
+        ProducerSource.CALLER_ARRAY,
+    }
+    assert len(same_model) == 2
+
 
 def test_leaderboard_pages_ranked_and_skipped_without_losing_total_counts(
     mcp: MCPServer, workspace: WorkspacePaths, recorded: str
@@ -198,6 +225,7 @@ def test_leaderboard_pages_ranked_and_skipped_without_losing_total_counts(
         assert board.n_ranked == 2 and board.n_skipped == 3
         assert board.offset == offset and board.limit == 1
         assert len(board.skipped) == 1 and board.skipped[0].reason
+        assert _signal_skipped(board)[0].producer_source is ProducerSource.CALLER_ARRAY
         assert board.next_offset == (offset + 1 if offset < 2 else None)
         assert board.caveats
         received_skipped.add(_signal_skipped(board)[0].entry_id)

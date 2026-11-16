@@ -355,12 +355,12 @@ def prepare_review(
         repo or Path.cwd(),
         base,
         tree,
-        max_bytes=max_evidence_bytes,
         review_context=review_context,
         review_context_for=review_context_for,
     )
     return build_review_plan(
         evidence,
+        max_evidence_bytes=max_evidence_bytes,
         review_scopes=review_scopes,
         max_prompt_bytes=MAX_PROMPT_BYTES
         if max_prompt_bytes is None
@@ -433,7 +433,8 @@ def review(
         f"Documentation review plan {plan.manifest['plan_hash']}: "
         f"{len(plan.manifest['path_owners'])} assigned paths; "
         f"scopes={','.join(plan.manifest['selected_scopes'])}; "
-        f"{plan.manifest['evidence_utf8_bytes']} evidence bytes; "
+        f"{plan.manifest['evidence_utf8_bytes']} selected evidence bytes "
+        f"({plan.manifest['source_pool_utf8_bytes']} local source-pool bytes); "
         f"{len(prompts)} batch(es); "
         f"{plan.manifest['total_prompt_utf8_bytes']} total prompt bytes; "
         f"largest {max(len(p.encode('utf-8')) for p in prompts)} bytes / "
@@ -555,7 +556,12 @@ def main() -> int:
         help="Print coverage and context sizes; no model, tests or passing receipt",
     )
     parser.add_argument("--timeout-seconds", type=float, default=180)
-    parser.add_argument("--max-evidence-bytes", type=int, default=MAX_EVIDENCE_BYTES)
+    parser.add_argument(
+        "--max-evidence-bytes",
+        type=int,
+        default=MAX_EVIDENCE_BYTES,
+        help="Limit unique delivered documentation evidence in UTF-8 bytes",
+    )
     add_review_arguments(parser)
     args = parser.parse_args()
     if args.list_scopes:

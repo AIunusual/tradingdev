@@ -85,6 +85,33 @@ def _record_rule(
 
 
 class TestRecordingARule:
+    def test_an_identical_caller_array_cannot_replace_the_backend_rule(
+        self, service: MLService, workspace: WorkspacePaths
+    ) -> None:
+        dataset_id = _build(service)
+        backend = _record_rule(service, workspace, dataset_id)
+        original = LeaderboardStore(workspace.ml_leaderboard).entries()[0]
+        frame = _frame(workspace, dataset_id)
+        level = _splitting_level(workspace, dataset_id)
+        caller = service.evaluate_signal(
+            np.where(frame["rsi_14"] < level, 1.0, -1.0).tolist(),
+            frame["forward_return"].astype(float).tolist(),
+            dataset_id=dataset_id,
+            method_family="rule",
+            method_name=original.method_name,
+            method_parameters={"threshold": level},
+            window=20,
+            record=True,
+        )
+        assert caller["signal_fingerprint"] == backend["signal_fingerprint"]
+        assert caller["metrics"] == backend["metrics"]
+        assert caller["producer_source"] == "caller_array"
+        assert backend["producer_source"] == "backend_rule"
+        assert caller["recorded"]["entry_id"] != original.entry_id
+        assert caller["recorded"]["replaced"] is False
+        entries = LeaderboardStore(workspace.ml_leaderboard).entries()
+        assert len(entries) == 2 and original in entries
+
     def test_a_rule_is_recorded_under_its_own_family(
         self, service: MLService, workspace: WorkspacePaths
     ) -> None:

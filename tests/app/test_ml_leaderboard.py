@@ -13,7 +13,11 @@ from tests.data_cache import cached_market_path, seed_market_cache
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
 from tradingdev.domain.ml.evaluation import simulate_strategy_returns
-from tradingdev.domain.ml.leaderboard import build_entry_id, signal_fingerprint
+from tradingdev.domain.ml.leaderboard import (
+    ProducerSource,
+    build_entry_id,
+    signal_fingerprint,
+)
 from tradingdev.domain.ml.registry import LeaderboardStore
 
 if TYPE_CHECKING:
@@ -293,6 +297,7 @@ class TestRecording:
                 model_id=_GOOD_MODEL,
                 dataset_id=dataset_id,
                 context=LeaderboardStore(workspace.ml_leaderboard).entries()[0].context,
+                producer_source=ProducerSource.CALLER_ARRAY,
             )
         )
         assert second["recorded"]["replaced"] is True

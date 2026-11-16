@@ -104,8 +104,9 @@ def report(saved_report: MLReportWorkflow) -> MLReportWorkflow:
 
 
 @pytest.mark.parametrize("failure_type", [AssertionError, TimeoutError])
-def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
-    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception]
+@pytest.mark.parametrize("scenario", ["saved_report", "training_provenance"])
+def test_ml_research_keeps_call_evidence_when_model_fails_before_delivery(
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[Exception], scenario: str
 ) -> None:
     from tests.e2e import test_llm_ml
 
@@ -116,6 +117,27 @@ def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
         {"artifact_id": "report:saved:html", "offset": 8192},
         {"content_page": {"next_offset": 16384}},
     )
+    if scenario == "training_provenance":
+        case = test_llm_ml.TrainingProvenanceCase(
+            "saved-model", "training-dataset", "overlapping-dataset", ()
+        )
+
+        async def prepare_case(
+            workspace: MCPWorkspace,
+        ) -> test_llm_ml.TrainingProvenanceCase:
+            assert workspace.root == roots[0]
+            return case
+
+        monkeypatch.setattr(test_llm_ml, "prepare_training_provenance", prepare_case)
+        expected_prompt = case.request
+        expected_limit = 24
+        note_prefix = "ML training provenance calls before model failure:\n"
+        run_scenario = test_llm_ml.test_natural_request_interprets_training_provenance
+    else:
+        expected_prompt = ML_REPORT_REQUEST
+        expected_limit = 18
+        note_prefix = "ML report calls before model failure:\n"
+        run_scenario = test_llm_ml.test_natural_request_discovers_saved_ml_report
 
     @contextmanager
     def tracked_workspace() -> Iterator[MCPWorkspace]:
@@ -124,8 +146,8 @@ def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
             yield workspace
 
     async def failing_model(root: Path, prompt: str, **options: Any) -> None:
-        assert root == roots[0] and prompt == ML_REPORT_REQUEST
-        assert options["max_tool_calls"] == 18
+        assert root == roots[0] and prompt == expected_prompt
+        assert options["max_tool_calls"] == expected_limit
         options["on_tool_call"](call)
         raise failure
 
@@ -139,13 +161,9 @@ def test_ml_report_keeps_call_evidence_when_model_fails_before_delivery(
     }
     config = cast("pytest.Config", SimpleNamespace(getoption=options.__getitem__))
     with pytest.raises(failure_type) as caught:
-        test_llm_ml.test_natural_request_discovers_saved_ml_report(config)
+        run_scenario(config)
     assert caught.value is failure
-    note = next(
-        note
-        for note in caught.value.__notes__
-        if note.startswith("ML report calls before model failure:\n")
-    )
+    note = next(note for note in caught.value.__notes__ if note.startswith(note_prefix))
     evidence = json.loads(note.split("\n", 1)[1])
     assert evidence == [
         {"name": call.name, "arguments": call.arguments, "result": call.result}
@@ -180,6 +198,24 @@ def test_real_mcp_saved_ml_report_retains_unavailable_coordinate_and_delivery(
     assert manifest["ml"]["scopes"][1]["values"]["ic_mean"] is None
     assert manifest["ml"]["scopes"][1]["metadata"]["window"] == 24
     assert manifest["ml"]["scopes"][1]["parameters"]["window"] == 7
+    assert all(
+        scope["metadata"]["producer_source"] == "unknown"
+        for scope in manifest["ml"]["scopes"]
+    )
+
+
+@pytest.mark.parametrize("group", ["ranked", "skipped"])
+@pytest.mark.parametrize("source", [None, "backend_model"])
+def test_saved_ml_report_rejects_lost_or_inferred_producer_source(
+    report: MLReportWorkflow, group: str, source: str | None
+) -> None:
+    row = report.calls[1].result[group][0]
+    if source is None:
+        del row["producer_source"]
+    else:
+        row["producer_source"] = source
+    with pytest.raises(AssertionError, match="saved producer source"):
+        report.verify()
 
 
 def test_ml_report_cannot_leave_analysis_only_in_chat(report: MLReportWorkflow) -> None:

@@ -102,6 +102,24 @@ def test_ml_rejects_lost_training_binding(calls: list[ToolCall], event: int) -> 
         assert_ml_workflow(calls)
 
 
+@pytest.mark.parametrize("projection", ["evaluation", "recorded", "leaderboard"])
+@pytest.mark.parametrize("source", [None, "caller_array"])
+def test_ml_rejects_lost_or_changed_producer_source(
+    calls: list[ToolCall], projection: str, source: str | None
+) -> None:
+    payload = {
+        "evaluation": calls[4].result,
+        "recorded": calls[4].result["recorded"],
+        "leaderboard": calls[5].result["ranked"][0],
+    }[projection]
+    if source is None:
+        del payload["producer_source"]
+    else:
+        payload["producer_source"] = source
+    with pytest.raises(AssertionError):
+        assert_ml_workflow(calls)
+
+
 @pytest.fixture(scope="module")
 def provenance_workflow() -> Iterator[
     tuple[MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]]
@@ -159,7 +177,7 @@ def provenance_workflow() -> Iterator[
             for call in calls
             if call.name == "evaluate_signal"
         )
-        rule, unknown, undeclared = case.historical
+        rule, unknown, undeclared, caller = case.historical
         reply = (
             "| 候選 | 訓練來源 | 評估來源 | 判讀 |\n| --- | --- | --- | --- |\n"
             f"| {first} | {case.training_dataset_id} | {case.training_dataset_id} | "
@@ -167,12 +185,15 @@ def provenance_workflow() -> Iterator[
             f"| {second} | {case.training_dataset_id} | "
             f"{case.overlapping_dataset_id} | "
             "ID 不同不代表樣本外，資料仍可能重疊。 |\n"
-            f"| {rule.entry_id} | 不適用 | {rule.dataset_id} | 模型訓練不適用；"
-            "規則的選擇過程未記錄，無法證明樣本外。 |\n"
+            f"| {rule.entry_id} | 未知 | {rule.dataset_id} | 宣告為手設規則；"
+            "訊號來源未知，無法確認是否涉及模型訓練。 |\n"
             f"| {unknown.entry_id} | 未知 | {unknown.dataset_id} | "
             "訓練來源未知，無法確認與評估資料的關係。 |\n"
             f"| {undeclared.entry_id} | 未知 | {undeclared.dataset_id} | "
-            "未宣告訊號來源，無法判定是否曾訓練。 |"
+            "未宣告訊號來源，無法判定是否曾訓練。 |\n"
+            f"| {caller.entry_id} | {caller.training_dataset_id} | "
+            f"{caller.dataset_id} | 呼叫端自備訊號；模型 ID 僅為宣告標籤，"
+            "無法確認這組訊號的訓練與評估關係。 |"
         )
         reply += "\n" + calls[-1].result["navigation_instructions"]
         yield workspace, case, calls, reply, readonly
@@ -187,6 +208,18 @@ def test_real_mcp_training_provenance_evidence(
     assert_training_provenance(*provenance_workflow)
 
 
+def test_training_provenance_accepts_unknown_origin_in_either_word_order(
+    provenance_workflow: tuple[
+        MCPWorkspace, TrainingProvenanceCase, list[ToolCall], str, set[str]
+    ],
+) -> None:
+    workspace, case, calls, reply, readonly = provenance_workflow
+    assert "訊號來源未知" in reply
+    assert_training_provenance(
+        workspace, case, calls, reply.replace("訊號來源未知", "未知訊號來源"), readonly
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -197,6 +230,10 @@ def test_real_mcp_training_provenance_evidence(
         "wrong_training_source",
         "wrong_evaluation_source",
         "single_report_claim",
+        "caller_as_model_output",
+        "caller_as_in_sample",
+        "changed_saved_source",
+        "legacy_rule_as_no_training",
     ],
 )
 def test_provenance_evidence_rejects_broken_workflows(
@@ -227,6 +264,33 @@ def test_provenance_evidence_rejects_broken_workflows(
     elif fault == "single_report_claim":
         reply += "\n所有內容保存在同一份離線 HTML。"
         expected_error = "Multiple report files"
+    elif fault == "caller_as_model_output":
+        reply = reply.replace(
+            "呼叫端自備訊號；模型 ID 僅為宣告標籤，",
+            "系統已確認這是模型實際產生的訊號，",
+        )
+        expected_error = "externally supplied"
+    elif fault == "caller_as_in_sample":
+        reply = reply.replace(
+            "無法確認這組訊號的訓練與評估關係。",
+            "兩個資料集 ID 相同，所以這筆候選屬樣本內。",
+        )
+        expected_error = "affirmative"
+    elif fault == "changed_saved_source":
+        caller = case.historical[-1]
+        row = next(
+            row
+            for row in calls[3].result["ranked"]
+            if row["entry_id"] == caller.entry_id
+        )
+        row["producer_source"] = "backend_model"
+        expected_error = "saved producer source"
+    elif fault == "legacy_rule_as_no_training":
+        reply = reply.replace(
+            "訊號來源未知，無法確認是否涉及模型訓練。",
+            "訊號來源未知；模型訓練不適用。",
+        )
+        expected_error = "training/evaluation provenance is unknown"
     else:
         reply = "\n".join(
             line

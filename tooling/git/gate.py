@@ -157,7 +157,7 @@ def main() -> None:
     parser.add_argument(
         "--max-evidence-bytes",
         type=int,
-        help="Override the documentation reviewer byte limit for this full check",
+        help="Limit unique delivered documentation evidence in UTF-8 bytes",
     )
     parser.add_argument(
         "--documentation-timeout-seconds",
@@ -167,7 +167,7 @@ def main() -> None:
     parser.add_argument(
         "--snapshot-timeout-seconds",
         type=int,
-        help="Set a positive timeout for this full snapshot check (default: 900)",
+        help="Set a positive timeout for this full snapshot check (default: 1800)",
     )
     add_review_arguments(parser)
     args = parser.parse_args()

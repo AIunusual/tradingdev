@@ -17,8 +17,12 @@ from tests.app.test_report_service import _payload, _save
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.report_service import ReportService
-from tradingdev.domain.ml.leaderboard import EvaluationContext, LeaderboardEntry
-from tradingdev.domain.ml.registry import LeaderboardStore
+from tradingdev.domain.ml.leaderboard import (
+    EvaluationContext,
+    LeaderboardEntry,
+    ProducerSource,
+)
+from tradingdev.domain.ml.registry import LeaderboardStore, ModelArtifactStore
 
 
 @pytest.fixture
@@ -155,6 +159,53 @@ def test_ml_snapshot_survives_rerecording_deletion_and_service_restart(
     assert download["success"] and download["content"] == original_html
     missing = restarted.generate_report(ml_entry_ids=["first"])
     assert missing["code"] == "ml_entry_not_found"
+
+
+def test_report_freezes_recorded_sources_without_registry_inference(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _, service = context
+    leaderboard, seed = _seed(workspace)
+    entries = [
+        replace(
+            seed,
+            entry_id=source.value,
+            producer_source=source,
+            training_dataset_id="saved-training-dataset",
+        )
+        for source in (
+            ProducerSource.BACKEND_MODEL,
+            ProducerSource.CALLER_ARRAY,
+            ProducerSource.UNKNOWN,
+        )
+    ]
+    records = [entry.to_record() for entry in entries]
+    records[-1].pop("producer_source")
+    leaderboard.path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+    def no_current_model(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("A report must not infer saved provenance from today's model")
+
+    monkeypatch.setattr(ModelArtifactStore, "load", no_current_model)
+    before = leaderboard.path.read_bytes()
+    result = service.generate_report(ml_entry_ids=[entry.entry_id for entry in entries])
+    payload, manifest = _read(result)
+    sources = [
+        scope["metadata"]["producer_source"] for scope in payload["ml"]["scopes"]
+    ]
+    assert sources == ["backend_model", "caller_array", "unknown"]
+    assert payload["ml"] == manifest["ml"]
+    assert all(
+        scope["metadata"]["training_dataset_id"] == "saved-training-dataset"
+        for scope in payload["ml"]["scopes"]
+    )
+    assert leaderboard.path.read_bytes() == before
+    leaderboard.record(replace(entries[1], metrics={"ic_mean": 0.9}))
+    fixed, _ = _read(result)
+    assert fixed["ml"] == payload["ml"]
 
 
 def test_ml_and_backtest_are_separate_evidence(

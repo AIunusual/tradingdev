@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
 from tooling.review_scope import (
+    DEVELOPMENT_OPERATIONS,
     SCOPES,
+    BehaviorContext,
+    DevelopmentContext,
+    behavior_context_for_path,
+    behavior_context_for_section,
+    development_context_for_path,
     markdown_sections,
     scope_for_path,
+    sections_for_development_context,
     sections_for_reference,
     sections_for_scope,
     selection_reason,
+    shared_document_context_ranges,
+    source_context_for_path,
+    unknown_document_sections,
 )
 
 
@@ -20,9 +30,14 @@ from tooling.review_scope import (
     ("path", "headings"),
     [
         ("AGENTS.md", "# AGENTS.md\n\n## Issue 接手與指派\n"),
+        ("AGENTS.md", "# AGENTS.md\n\n## Issue 撰寫\n"),
         (
             "docs/development.md",
             "# 開發指南\n\n## 接手 issue\n",
+        ),
+        (
+            "docs/development.md",
+            "# 開發指南\n\n## 撰寫 issue\n",
         ),
         (
             "docs/development.md",
@@ -44,6 +59,99 @@ def test_development_guidance_is_retained_in_its_review_scope(
     assert "Claim policy evidence." not in "".join(
         section.text for section in sections_for_scope("results", path, text)
     )
+
+
+def test_development_contexts_preserve_owners_and_shared_consumers() -> None:
+    for path in ("tooling/git/claim_issue.py", "scripts/claim-issue.sh"):
+        assert development_context_for_path(path) == DevelopmentContext(
+            frozenset({"issue_claim"})
+        )
+        assert scope_for_path(path) == "tooling"
+        assert behavior_context_for_path(path) is None
+    assert development_context_for_path("tooling/git/pr_context.py") == (
+        DevelopmentContext(frozenset({"pr_cleanup", "candidate_review"}))
+    )
+    assert development_context_for_path("tooling/environment.py") == (
+        DevelopmentContext(
+            frozenset({"environment_quality", "candidate_review", "presentation"})
+        )
+    )
+    assert development_context_for_path("tooling/git/claim_extension.py") is None
+    assert development_context_for_path("scripts/new-check.sh") is None
+    for path in (
+        "./tooling/git/claim_issue.py",
+        "/tooling/git/claim_issue.py",
+        "tooling/git/../git/claim_issue.py",
+    ):
+        assert development_context_for_path(path) is None
+    assert "issue_claim" not in SCOPES
+
+
+def test_research_source_registration_does_not_expand_to_other_statistics_paths() -> (
+    None
+):
+    registered = "src/tradingdev/domain/statistics/comparison.py"
+    assert source_context_for_path(registered) is not None
+    for path in (
+        "src/tradingdev/domain/statistics/periods.py",
+        "src/tradingdev/domain/statistics/future_analysis.py",
+        "tests/domain/statistics/test_future_analysis.py",
+        "./" + registered,
+        "/" + registered,
+        "src/tradingdev/domain/../domain/statistics/comparison.py",
+    ):
+        assert source_context_for_path(path) is None
+    assert (
+        behavior_context_for_path("src/tradingdev/domain/statistics/future_analysis.py")
+        is None
+    )
+
+
+def test_development_sections_keep_unknown_subtrees_ancestors_and_references() -> None:
+    path = "docs/development.md"
+    text = (
+        "原始前言。\n\n# 開發指南\n指南原文。\n\n"
+        "## 從開發到合併\n必要祖先。\n\n"
+        "### 4. 合併後更新 main、清理本機分支\n保留此操作。\n\n"
+        "### 1. 分階段提交並推送\n不相干操作。\n\n"
+        "## MAE 研究原型\n未知章節的祖先。\n\n"
+        "### 新操作\n新契約不可省略。\n\n"
+        "#### 接手 issue\n未知祖先下的已知標題亦保留。\n\n"
+        "## 研究成果工程回饋\n不相干已知章節。\n\n"
+        "## 撰寫 issue\n[操作定義]: ../AGENTS.md\n"
+    )
+    sections = sections_for_development_context(
+        DevelopmentContext(frozenset({"pr_cleanup"})), path, text
+    )
+    chosen = {section.headings[-1:] for section in sections}
+    assert chosen == {
+        (),
+        ("開發指南",),
+        ("從開發到合併",),
+        ("4. 合併後更新 main、清理本機分支",),
+        ("MAE 研究原型",),
+        ("新操作",),
+        ("接手 issue",),
+        ("撰寫 issue",),
+    }
+    for section in sections:
+        assert section.text == "".join(
+            text.splitlines(keepends=True)[section.start_line - 1 : section.end_line]
+        )
+    unknown = "# New document\nA complete, unregistered contract.\n"
+    assert (
+        "".join(
+            s.text
+            for s in sections_for_development_context(
+                DevelopmentContext(frozenset({"issue_claim"})), "docs/new.md", unknown
+            )
+        )
+        == unknown
+    )
+    with pytest.raises(ValueError, match="Unknown development operations"):
+        sections_for_development_context(
+            DevelopmentContext(frozenset({"typo"})), path, text
+        )
 
 
 def test_sections_partition_unicode_text_without_rewriting() -> None:
@@ -254,6 +362,221 @@ def test_path_ownership_is_explicit_and_deterministic(path: str, expected: str) 
     assert scope_for_path(path) == expected
     assert expected in SCOPES
     assert SCOPES[expected]
+
+
+@pytest.mark.parametrize(
+    ("path", "owner", "requirements", "document_scopes"),
+    [
+        (
+            "src/tradingdev/mcp/tools/ml.py",
+            "interfaces",
+            {
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+        (
+            "src/tradingdev/app/contracts/ml.py",
+            "ml",
+            {
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+        (
+            "tests/app/test_ml_training_binding.py",
+            "ml",
+            {"FR-ML-002", "FR-ML-003", "FR-ML-004", "NFR-DATA-001"},
+            {"ml"},
+        ),
+        (
+            "src/tradingdev/domain/ml/registry/leaderboard_store.py",
+            "ml",
+            {"FR-ML-003", "FR-ML-004", "NFR-DATA-001"},
+            {"ml"},
+        ),
+        (
+            "src/tradingdev/adapters/reporting/ml.py",
+            "results",
+            {"FR-ML-004", "FR-RES-003", "FR-RES-004", "NFR-DATA-001", "NFR-UX-001"},
+            {"ml", "results"},
+        ),
+        (
+            "tests/e2e/test_llm_ml.py",
+            "interfaces",
+            {
+                "FR-EXEC-005",
+                "FR-ML-001",
+                "FR-ML-002",
+                "FR-ML-003",
+                "FR-ML-004",
+                "FR-RES-001",
+                "FR-RES-002",
+                "FR-RES-003",
+                "FR-RES-004",
+                "NFR-DATA-001",
+                "NFR-UX-001",
+            },
+            {"ml", "results"},
+        ),
+    ],
+)
+def test_behavior_context_selects_obligations_without_changing_owner(
+    path: str, owner: str, requirements: set[str], document_scopes: set[str]
+) -> None:
+    context = behavior_context_for_path(path)
+    assert context is not None
+    assert context == BehaviorContext(
+        frozenset(requirements), frozenset(document_scopes)
+    )
+    assert scope_for_path(path) == owner
+    assert "interfaces" not in context.document_scopes
+    # These are SRS identities, not a second copy of their contract URLs.
+    root = Path(__file__).resolve().parents[2]
+    recorded_ids = {
+        section.headings[-1].split()[0]
+        for source in (root / "docs/requirements").glob("*.md")
+        for section in markdown_sections(
+            source.name, source.read_text(encoding="utf-8")
+        )
+        if section.headings
+    }
+    assert context.requirement_ids <= recorded_ids
+
+
+@pytest.mark.parametrize(
+    ("paths", "additional_requirements"),
+    [
+        (
+            (
+                "src/tradingdev/app/ml_service.py",
+                "src/tradingdev/app/contracts/ml.py",
+                "src/tradingdev/mcp/tools/ml.py",
+                "tests/app/test_ml_service.py",
+                "tests/mcp/test_ml_tools.py",
+            ),
+            {"FR-RES-003", "FR-RES-004"},
+        ),
+        (("tests/mcp/test_ml_leaderboard_runs.py",), set()),
+        (("tests/adapters/test_ml_report_html.py",), {"FR-RES-003", "NFR-UX-001"}),
+        (
+            (
+                "tests/adapters/test_report_cli.py",
+                "tests/app/test_ml_report_service.py",
+                "tests/mcp/test_ml_report_tools.py",
+            ),
+            {"FR-EXEC-004", "FR-RES-003"},
+        ),
+        (("tests/e2e/test_llm_ml.py",), {"FR-EXEC-005", "FR-RES-004"}),
+    ],
+    ids=["discovery", "run-ranking", "mixed-html", "comparison-report", "rolling"],
+)
+def test_mixed_ml_entrypoints_retain_saved_run_obligations(
+    paths: tuple[str, ...], additional_requirements: set[str]
+) -> None:
+    # These modules also own run schemas, guidance, reads or report selections.
+    # An edit to that side must retain its obligations despite the ML filename.
+    required = {"FR-ML-004", "FR-RES-001", "FR-RES-002", "NFR-DATA-001"}
+    for path in paths:
+        context = behavior_context_for_path(path)
+        assert context is not None, path
+        assert required | additional_requirements <= context.requirement_ids, path
+        assert context.document_scopes == {"ml", "results"}, path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/tradingdev/mcp/tools/new_ml.py",
+        "src/tradingdev/domain/ml/new_behavior.py",
+        "tests/e2e/test_ml_new_behavior.py",
+        "src/tradingdev/domain/research_extension.py",
+        "src/tradingdev/app/research_preparation.py",
+        "tests/app/test_research_preparation.py",
+        "src/tradingdev/app/strategy_service.py",
+        "src/tradingdev/app/contracts/research.py",
+        "src/tradingdev/app/artifact_service.py",
+        "src/tradingdev/app/conversation_extension.py",
+        "src/tradingdev/mcp/tools/new_history.py",
+        "tests/mcp/test_new_data_contracts.py",
+        "docs/ml_research.md",
+        "docs/reports.md",
+        "docs/requirements/ml.md",
+        "src/tradingdev/mcp/tools/../tools/ml.py",
+        "src//tradingdev/mcp/tools/ml.py",
+        "/src/tradingdev/mcp/tools/ml.py",
+    ],
+)
+def test_unregistered_or_noncanonical_behavior_keeps_conservative_fallback(
+    path: str,
+) -> None:
+    assert behavior_context_for_path(path) is None
+
+
+def test_submitted_research_test_retains_its_additional_workflow_obligations() -> None:
+    storage = behavior_context_for_path(
+        "src/tradingdev/adapters/storage/submitted_research.py"
+    )
+    workflow = behavior_context_for_path("tests/app/test_submitted_research.py")
+    assert storage is not None and workflow is not None
+    assert storage.requirement_ids < workflow.requirement_ids
+    assert {"FR-EXEC-007", "FR-RES-003"} <= workflow.requirement_ids
+    assert "FR-EXEC-007" not in storage.requirement_ids
+    assert scope_for_path("tests/app/test_submitted_research.py") == "general"
+
+
+def test_unknown_context_preserves_original_subtree_and_actual_ancestors() -> None:
+    path = "README.md"
+    text = (
+        "Prelude.\r\n# TradingDev\r\nReader context.\r\n"
+        "## 研究機器學習訊號\r\nFirst occurrence.\r\n"
+        "## 使用 Docker 部署\r\nUnrelated deployment.\r\n"
+        "## 研究機器學習訊號\r\nActual parent.\r\n"
+        "### New provenance contract\r\nNew [evidence][source].\r\n"
+        "#### New child\r\nChild evidence.\r\n"
+        "## 常見問題\r\n[source]: ./ml_research.md\r\n"
+    )
+    selected = unknown_document_sections(path, text)
+    original = "".join(section.text for section in selected)
+    assert "Prelude.\r\n# TradingDev\r\nReader context." in original
+    assert "Actual parent.\r\n### New provenance contract" in original
+    assert "#### New child\r\nChild evidence." in original
+    assert "[source]: ./ml_research.md" in original
+    assert "First occurrence." not in original
+    assert "Unrelated deployment." not in original
+    assert set(selected) <= set(markdown_sections(path, text))
+
+
+@pytest.mark.parametrize("path", ["docs/new_contract.md", "README.md"])
+def test_unknown_or_unstructured_document_retains_complete_original(path: str) -> None:
+    text = "Unstructured original\r\nwith unchanged bytes.\r\n"
+    assert "".join(s.text for s in unknown_document_sections(path, text)) == text
+
+
+def test_known_document_does_not_expand_unrelated_registered_sections() -> None:
+    text = "# TradingDev\nIntro.\n## 使用 Docker 部署\nKnown unrelated content.\n"
+    assert unknown_document_sections("README.md", text) == ()
+    # Whole-document responsibilities are handled by their own selectors. SRS
+    # requirements must be parsed as records instead of all headings being unknown.
+    assert unknown_document_sections("docs/requirements/ml.md", "# New SRS\n") == ()
 
 
 @pytest.mark.parametrize(
@@ -591,6 +914,9 @@ def test_known_components_receive_their_actual_contracts(
                 "SRS 維護與檢核",
                 "測試證據與文件修正",
                 "檢查期間的主線更新",
+                "文件審查設定",
+                "規劃證據與補充來源",
+                "檢查失敗與程序清理",
             ),
             {"tooling", "presentation"},
         ),
@@ -641,6 +967,25 @@ def test_registered_operational_sections_reach_their_responsible_reviewers(
         assert "Retain complete new evidence." in "".join(
             s.text for s in sections_for_scope(scope, path, expanded)
         )
+
+
+@pytest.mark.parametrize(
+    "heading", ["文件審查設定", "規劃證據與補充來源", "檢查失敗與程序清理"]
+)
+def test_review_operation_guidance_stays_with_candidate_review(heading: str) -> None:
+    path = "docs/development.md"
+    root = Path(__file__).resolve().parents[2]
+    text = (root / path).read_text(encoding="utf-8")
+    required = next(
+        section
+        for section in markdown_sections(path, text)
+        if section.headings[-1:] == (heading,)
+    )
+    for operation in DEVELOPMENT_OPERATIONS:
+        selected = sections_for_development_context(
+            DevelopmentContext(frozenset({operation})), path, text
+        )
+        assert (required in selected) == (operation == "candidate_review")
 
 
 def test_editor_guide_is_scoped_but_product_overviews_remain_shared() -> None:
@@ -707,6 +1052,24 @@ def test_reference_definitions_keep_their_complete_original_sections() -> None:
     sections = sections_for_scope("tooling", "README.md", text)
     assert "".join(section.text for section in sections) == text
     assert [section.start_line for section in sections] == [1, 2, 4, 9]
+
+
+def test_shared_document_context_uses_complete_commonmark_sections() -> None:
+    prelude = "Shared prelude.\n\n"
+    fenced = "# Guide\n```md\n[fake]: https://example.com/fake\n```\n"
+    definitions = (
+        "## References\nDefinitions apply to every section.\n\n"
+        "[mode]:\n  https://example.com/simulation\n  'Simulation'\n"
+    )
+    duplicate = "## Duplicate\n[MODE]: https://example.com/duplicate\n"
+    text = prelude + fenced + definitions + duplicate + "## Final\nOrdinary prose.\n"
+    sections = markdown_sections("context.md", text)
+    ranges = shared_document_context_ranges("context.md", text)
+    assert [
+        section.text
+        for section in sections
+        if (section.start_line, section.end_line) in ranges
+    ] == [prelude, definitions, duplicate]
 
 
 @pytest.mark.parametrize(
@@ -1102,3 +1465,72 @@ def test_first_line_container_reference_does_not_expand_the_document() -> None:
     text = prelude + "# Actual\nunrelated actual\n\n## Tail\nunrelated tail\n"
     parts = sections_for_reference("contract.md", text, "quote")
     assert "".join(part.text for part in parts) == prelude
+
+
+@pytest.mark.parametrize(
+    ("path", "heading", "required"),
+    [
+        (
+            "README.md",
+            "使用樣本外驗證與最佳化",
+            {"FR-EXEC-003", "FR-EXEC-005", "FR-EXEC-006"},
+        ),
+        ("README.md", "交易紀錄與 HTML 報告", {"FR-ML-004", "FR-RES-003"}),
+        ("README.md", "自動保存 Codex CLI 對話", {"FR-RES-006", "FR-EXEC-007"}),
+        (
+            "ARCHITECTURE.md",
+            "核心概念與身分",
+            {"FR-ML-001", "FR-ML-002", "FR-EXEC-004"},
+        ),
+        ("ARCHITECTURE.md", "建立與驗證策略", {"FR-STR-003", "FR-STR-005"}),
+        ("ARCHITECTURE.md", "獨立行情取樣", {"FR-DATA-002", "FR-DATA-003"}),
+    ],
+)
+def test_product_section_registration_requires_its_complete_ancestry(
+    path: str, heading: str, required: set[str]
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    sections = markdown_sections(path, (root / path).read_text(encoding="utf-8"))
+    (section,) = [s for s in sections if s.headings[-1:] == (heading,)]
+    context = behavior_context_for_section(path, section)
+    assert context is not None and required <= context.requirement_ids
+    # Reusing a known leaf below a different parent cannot narrow unknown prose.
+    shadow = replace(section, headings=(*section.headings[:-1], "New parent", heading))
+    assert behavior_context_for_section(path, shadow) is None
+    assert behavior_context_for_section("docs/other.md", section) is None
+
+
+def test_sqlite_registration_preserves_consumers_and_unregistered_neighbors() -> None:
+    path = "src/tradingdev/adapters/storage/sqlite.py"
+    context = behavior_context_for_path(path)
+    assert context is not None
+    assert {
+        "FR-STR-005",
+        "FR-EXEC-002",
+        "FR-RES-005",
+        "FR-RES-006",
+    } <= context.requirement_ids
+    assert not {"FR-ML-001", "FR-ML-002"} & context.requirement_ids
+    assert scope_for_path(path) == "general"
+    assert (
+        behavior_context_for_path("src/tradingdev/adapters/storage/sqlite_extension.py")
+        is None
+    )
+    assert behavior_context_for_path("./" + path) is None
+
+
+def test_reference_definitions_keep_their_enclosing_original_context() -> None:
+    text = (
+        "# Contract\nShared contract premise.\n\n"
+        "## Selected\nUse [evidence].\n\n"
+        "## Reference policy\nDefinitions inherit this qualification.\n\n"
+        "### Definitions\n[evidence]: contract.py\n\n"
+        "### Unrelated example\nDo not select this sibling.\n"
+    )
+    sections = sections_for_reference("docs/contract.md", text, "selected")
+    original = "".join(section.text for section in sections)
+    assert "Shared contract premise." in original
+    assert "Use [evidence]." in original
+    assert "Definitions inherit this qualification." in original
+    assert "[evidence]: contract.py" in original
+    assert "Do not select this sibling." not in original

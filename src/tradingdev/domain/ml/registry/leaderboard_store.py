@@ -70,6 +70,14 @@ class LeaderboardStore:
         with self._lock:
             existing = {item.entry_id: item for item in self._read()}
             replaced = entry.entry_id in existing
+            if (
+                replaced
+                and existing[entry.entry_id].producer_source != entry.producer_source
+            ):
+                raise ValueError(
+                    "cannot replace a leaderboard entry from a different "
+                    "producer source"
+                )
             existing[entry.entry_id] = entry
             ordered = sorted(existing.values(), key=lambda item: item.entry_id)
             payload = "".join(
