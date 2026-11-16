@@ -377,7 +377,7 @@
   `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
   此命令採用相同的文件／簡報／程式候選分流，仍核對本機 refs 與工作樹未變；
   只驗證本機指定 ref，不代表遠端 PR 已驗證。
-- 一次 snapshot 檢查預設逾時為 900 秒；完整 PR／本機候選檢查可用
+- 一次 snapshot 檢查預設逾時為 1800 秒；完整 PR／本機候選檢查可用
   `--snapshot-timeout-seconds <正整數>` 明確指定當次期限，須說明測得的
   執行時間或環境需求，不得藉此改變測試範圍或略過失敗。Codex 文件審查預設
   180 秒，可用 `--documentation-timeout-seconds <秒數>` 明確指定當次
