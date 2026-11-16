@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 MAX_PROMPT_BYTES = 240_000
 MAX_TOTAL_PROMPT_BYTES = 3_000_000
-SCOPE_POLICY_VERSION = 14
+SCOPE_POLICY_VERSION = 15
 
 REVIEW_INSTRUCTIONS = (
     "Review documentation consistency for the supplied immutable Git change. "
@@ -117,10 +117,14 @@ SCOPE_INSTRUCTIONS = (
     "anchors, not files restored to the candidate tree. Its inventory "
     "identifies other scopes, not evidence silently truncated from this batch. "
     "Review all assigned paths and their documented effects. changed_paths is "
-    "the complete actual Git change inventory; unchanged_presentation_context_paths "
-    "identifies required deck references that remain assigned with their full "
-    "original content. Assignment alone does not mean a file changed. Use the "
-    "complete candidate_tree_inventory to check tracked-file existence: a changed "
+    "the complete actual Git change inventory; presentation_context_paths "
+    "identifies required deck references assigned with their full original content. "
+    "unchanged_presentation_context_paths is the subset absent from changed_paths. "
+    "Assignment alone does not mean a file changed. Use the "
+    "complete candidate_tree_inventory to check tracked-file existence: concatenate "
+    "each directory-prefix key with each filename in its list (the empty prefix "
+    "means the repository root). This lossless inventory includes every tracked "
+    "candidate path. A changed "
     "path absent from that inventory was deleted, not retained because its name "
     "appears in changed_paths. The owning scope still receives its exact deletion "
     "diff; the inventory does not replace source evidence for semantic claims. Use the "
@@ -150,7 +154,21 @@ CROSS_SCOPE_INSTRUCTIONS = (
     "document originals; their conclusions or summaries are not a substitute for "
     "this audit. delivered_source_inventory identifies supporting sources actually "
     "delivered to scope batches; their identities do not replace their originals. "
-    "Report any necessary additional original context explicitly.\n\n"
+    "candidate_tree_inventory losslessly groups filenames by directory prefix: "
+    "concatenate each prefix key with each listed filename to recover every "
+    "tracked path. document_inventory maps each document path and Git version "
+    "to the original line ranges delivered to scope reviewers; this coverage "
+    "index is not source evidence. The complete mechanical provenance and "
+    "selection diagnostics remain in the plan manifest. "
+    "A cross-scope audit can have several context_partition requests. Every "
+    "request repeats the complete original diff, inventories and explicit source "
+    "context; only document_sections are partitioned. assigned_document_sections "
+    "identifies the zero-based sections assigned here. Their selected ancestors, "
+    "preludes and reference definitions accompany them as original context. "
+    "Review the complete change against the assigned sections and their premises. "
+    "Every partition must pass independently; another partition's verdict or "
+    "source inventory cannot supply missing original evidence. Report any necessary "
+    "additional original context explicitly.\n\n"
 )
 
 
@@ -181,27 +199,32 @@ def _expected_source_contexts(
     }
 
 
-def _check_source_blob(path: str, text: object, oid: object, mode: object) -> None:
-    """Check newly required supporting text against its declared Git blob."""
+def _check_git_blob(path: str, text: object, oid: object, mode: object) -> None:
+    """Verify a fixed text blob; symlinks supply target text and are never followed."""
     if (
         not isinstance(text, str)
         or "\0" in text
         or not isinstance(mode, str)
-        or mode not in {"100644", "100755"}
+        or mode not in {"100644", "100755", "120000"}
     ):
-        raise ReviewError(f"Required supporting source is not regular text: {path}")
+        raise ReviewError(f"Review source is not a text Git blob: {path}")
     if not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid):
-        raise ReviewError(f"Required supporting source lacks a blob identity: {path}")
+        raise ReviewError(f"Review source lacks a blob identity: {path}")
     try:
         content = text.encode("utf-8")
     except UnicodeEncodeError as error:
-        raise ReviewError(f"Required supporting source is not UTF-8: {path}") from error
+        raise ReviewError(f"Review source is not UTF-8: {path}") from error
     payload = f"blob {len(content)}\0".encode("ascii") + content
     digest = hashlib.new("sha1" if len(oid) == 40 else "sha256", payload).hexdigest()
     if digest != oid:
-        raise ReviewError(
-            f"Required supporting source differs from its Git blob: {path}"
-        )
+        raise ReviewError(f"Review source differs from its Git blob: {path}")
+
+
+def _check_source_blob(path: str, text: object, oid: object, mode: object) -> None:
+    """Supporting context must supply regular source text, not a link target."""
+    if not isinstance(mode, str) or mode not in {"100644", "100755"}:
+        raise ReviewError(f"Required supporting source is not regular text: {path}")
+    _check_git_blob(path, text, oid, mode)
 
 
 def _source_requirements(
@@ -658,6 +681,175 @@ def _development_document_context(
     return development_context_for_sections(path, edited)
 
 
+def _section_metadata(section: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in section.items() if key != "text"}
+
+
+def _group_tree_paths(paths: list[str]) -> dict[str, list[str]]:
+    """A readable lossless inventory without repeating each directory prefix."""
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        directory, separator, filename = path.rpartition("/")
+        groups.setdefault(directory + separator, []).append(filename)
+    return groups
+
+
+def _model_document_inventory(
+    inventory: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, list[list[int]]]]:
+    projected: dict[str, dict[str, list[list[int]]]] = {}
+    for path, sections in inventory.items():
+        versions = projected.setdefault(path, {})
+        for section in sections:
+            versions.setdefault(section["version"], []).append(
+                [section["start_line"], section["end_line"]]
+            )
+    return projected
+
+
+def _model_payload(batch: dict[str, Any]) -> dict[str, Any]:
+    """Keep originals and readable coverage; retain planner details in the manifest."""
+    payload = {
+        key: value
+        for key, value in batch.items()
+        if key
+        not in {
+            "evidence_hash",
+            "scope_policy_version",
+            "automatic_document_paths",
+            "available_document_paths",
+            "behavior_contexts",
+            "development_contexts",
+        }
+    }
+    payload["candidate_tree_inventory"] = _group_tree_paths(
+        batch["candidate_tree_inventory"]
+    )
+    if "document_inventory" in batch:
+        payload["document_inventory"] = _model_document_inventory(
+            batch["document_inventory"]
+        )
+    return payload
+
+
+def _context_core(batch: dict[str, Any]) -> dict[str, Any]:
+    """The originals and inventory that must remain identical in every partition."""
+    return {
+        key: value
+        for key, value in batch.items()
+        if key
+        not in {
+            "document_sections",
+            "assigned_document_sections",
+            "context_partition",
+            "source_unit",
+            "batch",
+        }
+    }
+
+
+def _context_manifest(batch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "core_hash": _digest(_context_core(_model_payload(batch))),
+        "document_sections": [
+            _section_metadata(section) for section in batch["document_sections"]
+        ],
+        "document_text_hashes": {
+            _json(_section_metadata(section)): hashlib.sha256(
+                section["text"].encode()
+            ).hexdigest()
+            for section in batch["document_sections"]
+        },
+        **{
+            f"{version}_file_{kind}": {
+                path: batch[f"{version}_file_{kind}"][path]
+                for path in batch[source_key]
+            }
+            for version, source_key in (
+                ("candidate", "candidate_files"),
+                ("base", "base_source_files"),
+            )
+            for kind in ("blobs", "modes")
+        },
+    }
+
+
+def _verify_fixed_context(
+    content: dict[str, Any], unit: dict[str, Any], regular_context: set[str]
+) -> None:
+    if _digest(_context_core(content)) != unit["core_hash"]:
+        raise ReviewError("Review complete diff or fixed source context changed.")
+    for section in content["document_sections"]:
+        key = _json(_section_metadata(section))
+        if hashlib.sha256(section["text"].encode()).hexdigest() != unit[
+            "document_text_hashes"
+        ].get(key):
+            raise ReviewError("Review original document text changed.")
+    for version, source_key in (
+        ("candidate", "candidate_files"),
+        ("base", "base_source_files"),
+    ):
+        expected_files = unit[f"{version}_file_blobs"]
+        if content[source_key].keys() != expected_files.keys():
+            raise ReviewError("Review mandatory sources changed.")
+        for path, oid in expected_files.items():
+            checker = (
+                _check_git_blob
+                if version == "candidate"
+                and path in content["assigned_paths"]
+                and path not in regular_context
+                else _check_source_blob
+            )
+            checker(
+                path,
+                content[source_key][path],
+                oid,
+                unit[f"{version}_file_modes"][path],
+            )
+
+
+def _verify_context_parts(
+    originals: list[dict[str, Any]], parts: list[dict[str, Any]]
+) -> None:
+    """Check exact assignments and their selected original dependencies."""
+    positions = {_json(section): index for index, section in enumerate(originals)}
+    dependencies = _section_dependency_indexes(originals)
+    assigned_sections = []
+    for number, part in enumerate(parts, start=1):
+        if part["context_partition"] != {"index": number, "count": len(parts)}:
+            raise ReviewError("Review context partition numbering is inconsistent.")
+        delivered = part["document_sections"]
+        assignments = part["assigned_document_sections"]
+        if (
+            any(
+                type(index) is not int or not 0 <= index < len(delivered)
+                for index in assignments
+            )
+            or assignments != sorted(set(assignments))
+            or any(_json(section) not in positions for section in delivered)
+        ):
+            raise ReviewError(
+                "Review context partition section assignments are invalid."
+            )
+        owned = [delivered[index] for index in assignments]
+        assigned_sections.extend(owned)
+        required = {positions[_json(section)] for section in owned}
+        required.update(
+            dependency
+            for index in tuple(required)
+            for dependency in dependencies[index]
+        )
+        if delivered != [originals[index] for index in sorted(required)]:
+            raise ReviewError(
+                "Review context partition omitted required original "
+                "context dependencies."
+            )
+    if assigned_sections != originals:
+        raise ReviewError(
+            "Review context partitions omit or duplicate original sections."
+        )
+
+
 @dataclass(frozen=True)
 class ReviewPlan:
     """Prepared prompts and an inspectable manifest; neither is a passing receipt."""
@@ -684,12 +876,28 @@ class ReviewPlan:
             raise ReviewError("Review supporting source obligations changed.")
         inventory = self.manifest.get("delivered_source_inventory", [])
         required_sources = _source_requirements(contexts, contexts)
+        regular_context = (
+            set(self.manifest["automatic_document_paths"])
+            | set(self.manifest["additional_context_paths"])
+            | {
+                path
+                for paths in self.manifest["scoped_context_paths"].values()
+                for path in paths
+            }
+            | set(self.manifest["presentation_context_paths"])
+            | {path for version, path in required_sources if version == "candidate"}
+        )
         if [(item["version"], item["path"]) for item in inventory] != sorted(
             required_sources
         ):
             raise ReviewError("Review supporting source inventory is incomplete.")
         if len(self.prompts) != len(self.manifest["batches"]):
             raise ReviewError("Review batches and prepared prompts differ.")
+        audit = self.manifest.get("cross_scope_audit")
+        audit_parts = []
+        units = self.manifest["source_units"]
+        unit_by_id = {unit["id"]: unit for unit in units}
+        contents = []
         for prompt, batch in zip(self.prompts, self.manifest["batches"], strict=True):
             instruction = (
                 SCOPE_INSTRUCTIONS
@@ -700,6 +908,53 @@ class ReviewPlan:
             if not prompt.startswith(prefix):
                 raise ReviewError("Review batch instructions changed.")
             content = json.loads(prompt[len(prefix) :])
+            contents.append(content)
+            for key in (
+                "phase",
+                "scope",
+                "source_unit",
+                "assigned_paths",
+                "candidate_file_blobs",
+                "candidate_file_modes",
+                "base_file_blobs",
+                "base_file_modes",
+            ):
+                if _json(content.get(key)) != _json(batch.get(key)):
+                    raise ReviewError(f"Review prompt and manifest disagree on {key}.")
+            for key in (
+                "base_tree",
+                "candidate_tree",
+                "changed_paths",
+                "path_owners",
+                "excluded_from_content",
+                "exclusion_reasons",
+                "scoped_context_paths",
+                "presentation_context_paths",
+                "unchanged_presentation_context_paths",
+                "requirement_context_paths",
+            ):
+                if _json(content.get(key)) != _json(self.manifest.get(key)):
+                    raise ReviewError(f"Review prompt and manifest disagree on {key}.")
+            if content.get("candidate_tree_inventory") != _group_tree_paths(
+                self.manifest["candidate_tree_inventory"]
+            ):
+                raise ReviewError("Review candidate tree inventory changed.")
+            if (
+                content.get("context_partition") != batch.get("context_partition")
+                or content.get("assigned_document_sections")
+                != batch.get("assigned_document_sections")
+                or _json(
+                    [
+                        _section_metadata(section)
+                        for section in content["document_sections"]
+                    ]
+                )
+                != _json(batch["document_sections"])
+            ):
+                raise ReviewError(
+                    "Review prompt required original sections differ from "
+                    "their partition."
+                )
             expected = (
                 required_sources
                 if batch["phase"] == "cross_scope"
@@ -716,8 +971,22 @@ class ReviewPlan:
                 or content.get("source_contexts", {}) != contexts
             ):
                 raise ReviewError("Review batch supporting source coverage changed.")
-            if batch["phase"] != "scope":
+            if batch["phase"] == "cross_scope":
+                if audit is None:
+                    raise ReviewError(
+                        "Review cross-scope audit has no context manifest."
+                    )
+                if content.get("document_inventory") != _model_document_inventory(
+                    audit["document_inventory"]
+                ):
+                    raise ReviewError("Review document inventory changed.")
+                _verify_fixed_context(content, audit, regular_context)
+                audit_parts.append(batch)
                 continue
+            unit = unit_by_id.get(batch.get("source_unit"))
+            if unit is None:
+                raise ReviewError("Review scope batch has no source unit.")
+            _verify_fixed_context(content, unit, regular_context)
             for item in delivered:
                 version, path = item["version"], item["path"]
                 source_key = (
@@ -738,7 +1007,10 @@ class ReviewPlan:
                     item["blob_oid"],
                     item["mode"],
                 )
-        units = self.manifest["source_units"]
+        if audit is not None:
+            if not audit_parts:
+                raise ReviewError("Review cross-scope audit has missing partitions.")
+            _verify_context_parts(audit["document_sections"], audit_parts)
         if [unit["id"] for unit in units] != list(range(1, len(units) + 1)):
             raise ReviewError("Review source-unit identities are inconsistent.")
         assigned = [path for unit in units for path in unit["assigned_paths"]]
@@ -771,43 +1043,50 @@ class ReviewPlan:
                 for part in parts
             ):
                 raise ReviewError("Review context partitions omit supporting sources.")
-            originals = unit["document_sections"]
-            positions = {
-                _json(section): index for index, section in enumerate(originals)
+            _verify_context_parts(unit["document_sections"], parts)
+        originals = [_text_size(_original_texts(content)) for content in contents]
+        for number, (prompt, content, batch, original) in enumerate(
+            zip(
+                self.prompts, contents, self.manifest["batches"], originals, strict=True
+            ),
+            start=1,
+        ):
+            if content.get("batch") != {"index": number, "count": len(contents)}:
+                raise ReviewError("Review request numbering changed.")
+            measurements = {
+                "prompt_utf8_bytes": _bytes(prompt),
+                "prompt_characters": len(prompt),
+                **original.fields("original"),
+                **_TextSize(
+                    _bytes(prompt) - original.utf8_bytes,
+                    len(prompt) - original.characters,
+                ).fields("prompt_overhead"),
             }
-            dependencies = _section_dependency_indexes(originals)
-            assigned_sections = []
-            for part in parts:
-                delivered = part["document_sections"]
-                assignments = part["assigned_document_sections"]
-                if (
-                    assignments != sorted(set(assignments))
-                    or any(
-                        type(index) is not int or not 0 <= index < len(delivered)
-                        for index in assignments
-                    )
-                    or any(_json(section) not in positions for section in delivered)
-                ):
-                    raise ReviewError(
-                        "Review context partition section assignments are invalid."
-                    )
-                owned = [delivered[index] for index in assignments]
-                assigned_sections.extend(owned)
-                required = {positions[_json(section)] for section in owned}
-                required.update(
-                    dependency
-                    for index in tuple(required)
-                    for dependency in dependencies[index]
-                )
-                if delivered != [originals[index] for index in sorted(required)]:
-                    raise ReviewError(
-                        "Review context partition omitted required original "
-                        "context dependencies."
-                    )
-            if assigned_sections != originals:
-                raise ReviewError(
-                    "Review context partitions omit or duplicate original sections."
-                )
+            if any(batch.get(key) != value for key, value in measurements.items()):
+                raise ReviewError("Review prompt measurements changed.")
+            if (
+                _bytes(prompt) > self.manifest["max_prompt_bytes"]
+                or len(prompt) > self.manifest["max_prompt_chars"]
+            ):
+                raise ReviewError("Review prompt exceeds its prepared capacity.")
+        for suffix, measure in (("utf8_bytes", _bytes), ("characters", len)):
+            total = sum(measure(prompt) for prompt in self.prompts)
+            delivered = sum(getattr(original, suffix) for original in originals)
+            if (
+                self.manifest[f"total_prompt_{suffix}"] != total
+                or self.manifest[f"delivered_original_{suffix}"] != delivered
+                or self.manifest[f"prompt_overhead_{suffix}"] != total - delivered
+                or self.manifest[f"repeated_original_{suffix}"]
+                != delivered - self.manifest[f"evidence_{suffix}"]
+            ):
+                raise ReviewError("Review total measurements changed.")
+        if (
+            self.manifest["total_prompt_utf8_bytes"]
+            > self.manifest["max_total_prompt_bytes"]
+        ):
+            raise ReviewError("Review total input exceeds its prepared capacity.")
+        if self.manifest["evidence_utf8_bytes"] > self.manifest["max_evidence_bytes"]:
+            raise ReviewError("Review evidence exceeds its prepared capacity.")
 
 
 def build_review_plan(
@@ -948,6 +1227,7 @@ def build_review_plan(
         "evidence_hash": hashlib.sha256(evidence.encode()).hexdigest(),
         "scope_policy_version": SCOPE_POLICY_VERSION,
         "changed_paths": sorted(changed),
+        "presentation_context_paths": sorted(presentation),
         "unchanged_presentation_context_paths": sorted(presentation - changed),
         "path_owners": owners,
         "scoped_context_paths": context_mapping,
@@ -1282,10 +1562,31 @@ def build_review_plan(
                     )
                 ):
                     continue
+                requirement_source = (
+                    before[record.source] if version == "base" else files[record.source]
+                )
+                requirement_fragment = next(
+                    (
+                        fragment
+                        for fragment, line in markdown_heading_locations(
+                            requirement_source
+                        ).items()
+                        if line == record.start_line
+                    ),
+                    None,
+                )
+                if requirement_fragment is None:
+                    raise ReviewError(
+                        "Missing original requirement heading location: "
+                        f"{record.source}:{record.start_line}"
+                    )
+                requirement_context = reference_sections(
+                    version, record.source, requirement_fragment
+                )
                 requirement_headings = next(
                     (
                         part.headings
-                        for part in reference_sections(version, record.source, "")
+                        for part in requirement_context
                         if part.start_line <= record.start_line <= part.end_line
                     ),
                     None,
@@ -1304,6 +1605,24 @@ def build_review_plan(
                     record.text,
                     "affected-requirement",
                 )
+                # A precise requirement still depends on its chapter's original
+                # premises and shared link definitions. Select their actual
+                # sections without widening to unrelated sibling requirements.
+                for part in requirement_context:
+                    if (
+                        record.start_line <= part.start_line
+                        and part.end_line <= record.end_line
+                    ):
+                        continue
+                    add_section(
+                        version,
+                        record.source,
+                        part.start_line,
+                        part.end_line,
+                        part.headings,
+                        part.text,
+                        "affected-requirement-context",
+                    )
                 for target, fragment in record.contract_references:
                     source_version = (
                         "base"
@@ -1383,26 +1702,45 @@ def build_review_plan(
         return (
             REVIEW_INSTRUCTIONS
             + instruction
-            + _json(batch | {"batch": {"index": index, "count": count}})
+            + _json(_model_payload(batch) | {"batch": {"index": index, "count": count}})
         )
 
-    def fits(batch: dict[str, Any]) -> bool:
+    def reserved_prompt(batch: dict[str, Any]) -> str:
         # Every request consumes at least one byte. The total budget therefore
         # bounds request/partition counts even when one source needs many parts.
         upper = max_total_prompt_bytes
-        reserved = batch
+        reserved = batch | {"context_partition": {"index": upper, "count": upper}}
         if batch["phase"] == "scope":
-            reserved = batch | {
-                "source_unit": upper,
-                "context_partition": {"index": upper, "count": upper},
-            }
-        prompt = render(reserved, upper, upper)
+            reserved["source_unit"] = upper
+        return render(reserved, upper, upper)
+
+    def fits(batch: dict[str, Any]) -> bool:
+        prompt = reserved_prompt(batch)
         return _bytes(prompt) <= max_prompt_bytes and len(prompt) <= max_prompt_chars
 
-    def capacity_error(subject: str) -> ReviewError:
+    def capacity_error(subject: str, batch: dict[str, Any]) -> ReviewError:
+        prompt = reserved_prompt(batch)
+        components = {
+            "diffs": _text_size(batch["path_diffs"].values()),
+            "candidate_sources": _text_size(batch["candidate_files"].values()),
+            "base_sources": _text_size(batch.get("base_source_files", {}).values()),
+            "document_sections": _text_size(
+                s["text"] for s in batch["document_sections"]
+            ),
+        }
+        originals = _text_size(_original_texts(batch))
+        components["instructions_metadata_json"] = _TextSize(
+            _bytes(prompt) - originals.utf8_bytes, len(prompt) - originals.characters
+        )
+        detail = "; ".join(
+            f"{name}={size.utf8_bytes} bytes/{size.characters} characters"
+            for name, size in components.items()
+        )
         return ReviewError(
             f"{subject} cannot fit the per-request review budget "
             f"({max_prompt_bytes} UTF-8 bytes / {max_prompt_chars} characters). "
+            f"Measured prompt, including reserved numbering: {_bytes(prompt)} UTF-8 "
+            f"bytes / {len(prompt)} characters; {detail}. "
             "Adjust the explicit budget after checking model capacity or split the "
             "change. No evidence was truncated and no model request was made."
         )
@@ -1410,7 +1748,7 @@ def build_review_plan(
     batches: list[dict[str, Any]] = []
     source_units: list[dict[str, Any]] = []
 
-    def partition_source_unit(
+    def partition_document_context(
         batch: dict[str, Any], *, required: bool = True
     ) -> list[dict[str, Any]]:
         """Partition only context; every request retains all mandatory originals."""
@@ -1436,13 +1774,15 @@ def build_review_plan(
         else:
             template = context_part([])
             subject = (
-                f"Scope {batch['scope']!r}, required file group "
+                "Complete cross-scope diff and mandatory context"
+                if batch["phase"] == "cross_scope"
+                else f"Scope {batch['scope']!r}, required file group "
                 f"{batch['assigned_paths']!r}"
             )
             if not fits(template):
                 if not required:
                     return []
-                raise capacity_error(subject)
+                raise capacity_error(subject, template)
             group: list[int] = []
             for section_index, section in enumerate(complete_sections):
                 combined = context_part([*group, section_index])
@@ -1458,7 +1798,8 @@ def build_review_plan(
                     raise capacity_error(
                         f"{subject}, original document section {section['path']!r}"
                         f":{section['start_line']}-{section['end_line']} "
-                        "and selected context dependencies"
+                        "and selected context dependencies",
+                        single,
                     )
                 group = [section_index]
             if group:
@@ -1488,7 +1829,7 @@ def build_review_plan(
     def append_source_unit(batch: dict[str, Any]) -> None:
         identifier = len(source_units) + 1
         complete_sections = batch["document_sections"]
-        parts = partition_source_unit(batch)
+        parts = partition_document_context(batch)
         if source_units and len(parts) > 1:
             previous = source_units[-1]
             previous_parts = [
@@ -1508,7 +1849,7 @@ def build_review_plan(
                     == complete_sections
                     == combined["document_sections"]
                 ):
-                    joint_parts = partition_source_unit(combined, required=False)
+                    joint_parts = partition_document_context(combined, required=False)
                     separate = previous_parts + numbered_parts(parts, identifier)
                     joint = numbered_parts(joint_parts, previous["id"])
                     # Normalize only the outer request numbering. With no more
@@ -1527,6 +1868,7 @@ def build_review_plan(
                         batch, parts = combined, joint_parts
         source_units.append(
             {
+                **_context_manifest(batch),
                 "id": identifier,
                 "scope": batch["scope"],
                 "assigned_paths": batch["assigned_paths"],
@@ -1566,6 +1908,7 @@ def build_review_plan(
         if group:
             append_source_unit(scope_batch(scope, group))
 
+    cross_scope_audit = None
     if len(batches) > 1 or "cross_scope" in scoped:
         audit_context = additional | scoped.get("cross_scope", set())
         if not presentation & PRESENTATION_ARTIFACT_PATHS:
@@ -1622,10 +1965,16 @@ def build_review_plan(
             "document_inventory": document_inventory,
             "additional_context_paths": sorted(additional),
             "document_sections": audit_sections,
+            "assigned_document_sections": list(range(len(audit_sections))),
         }
-        if not fits(audit):
-            raise capacity_error("Complete cross-scope diff and inventory")
-        batches.append(audit)
+        parts = partition_document_context(audit)
+        cross_scope_audit = _context_manifest(audit) | {
+            "document_inventory": document_inventory,
+        }
+        batches.extend(
+            part | {"context_partition": {"index": index, "count": len(parts)}}
+            for index, part in enumerate(parts, start=1)
+        )
 
     for scope, required_paths in scoped.items():
         targets = [batch for batch in batches if batch["scope"] == scope]
@@ -1696,6 +2045,7 @@ def build_review_plan(
         "selected_scopes": sorted(selected),
         "additional_context_paths": sorted(additional),
         "source_units": source_units,
+        "cross_scope_audit": cross_scope_audit,
         "delivered_source_inventory": source_inventory,
         "requirement_contracts": {
             identifier: {
@@ -1710,15 +2060,9 @@ def build_review_plan(
                 "index": i,
                 "phase": b["phase"],
                 "scope": b["scope"],
-                **(
-                    {
-                        "source_unit": b["source_unit"],
-                        "context_partition": b["context_partition"],
-                        "assigned_document_sections": b["assigned_document_sections"],
-                    }
-                    if b["phase"] == "scope"
-                    else {}
-                ),
+                **({"source_unit": b["source_unit"]} if b["phase"] == "scope" else {}),
+                "context_partition": b["context_partition"],
+                "assigned_document_sections": b["assigned_document_sections"],
                 "assigned_paths": b["assigned_paths"],
                 "candidate_file_blobs": b["candidate_file_blobs"],
                 "candidate_file_modes": b["candidate_file_modes"],

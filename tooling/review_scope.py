@@ -997,6 +997,10 @@ _DATA_LOOKUP_CONTEXT = BehaviorContext(
     frozenset({"FR-DATA-001", "FR-DATA-002", "NFR-OPS-002", "NFR-API-001"}),
     frozenset({"data"}),
 )
+_MARKET_DATA_DOCUMENT_CONTEXT = BehaviorContext(
+    _DATA_LOOKUP_CONTEXT.requirement_ids | {"FR-DATA-003"},
+    _DATA_LOOKUP_CONTEXT.document_scopes,
+)
 _DRAFT_CLEANUP_CONTEXT = BehaviorContext(
     frozenset({"FR-STR-005"}),
     frozenset({"strategy"}),
@@ -1031,14 +1035,61 @@ _RUN_DIAGNOSTIC_CONTEXT = BehaviorContext(
     _RUN_LOOKUP_CONTEXT.requirement_ids | {"FR-RES-004"},
     frozenset({"results"}),
 )
-# These are responsibilities of complete editable sections, not selectors for
-# background prose. Keep the full ancestry explicit: shared introductions and
-# similarly named sections elsewhere are not authorized by a leaf title.
-_BEHAVIOR_CHANGE_SECTIONS: dict[str, dict[tuple[str, ...], BehaviorContext]] = {
-    "ARCHITECTURE.md": {
-        ("系統架構", "績效計算與對話摘要"): _RUN_DIAGNOSTIC_CONTEXT,
+_PARAMETER_SEARCH_CONTEXT = BehaviorContext(
+    frozenset({"FR-STR-004", "FR-EXEC-001", "FR-EXEC-006"}),
+    frozenset({"execution"}),
+)
+_VALIDATION_SEARCH_CONTEXT = BehaviorContext(
+    _PARAMETER_SEARCH_CONTEXT.requirement_ids
+    | {"FR-EXEC-003", "FR-EXEC-005", "FR-RES-002"},
+    frozenset({"execution", "results"}),
+)
+_RESEARCH_IDENTITIES_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-002",
+            "FR-STR-004",
+            "FR-EXEC-001",
+            "FR-EXEC-004",
+            "FR-EXEC-006",
+            "FR-EXEC-007",
+            "FR-RES-001",
+            "FR-ML-001",
+            "FR-ML-002",
+            "NFR-DATA-001",
+        }
+    ),
+    frozenset({"strategy", "execution", "results", "ml"}),
+)
+_RESULT_PUBLICATION_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids
+    | {"FR-EXEC-004", "FR-EXEC-007", "FR-RES-004", "FR-RES-005"},
+    frozenset({"execution", "results"}),
+    (("docs/run_artifacts.md", "sqlite-tables"),),
+)
+# SQLiteStore owns shared connections and the jobs/runs/artifacts/events index.
+# Plans, notes, archives and conversations use those connections; draft cleanup
+# also reads raw jobs and run references. Keep these consumers even when a change
+# touches only one table. Independent ML datasets/models do not use this store.
+_SQLITE_STORAGE_CONTEXT = BehaviorContext(
+    _RUN_LOOKUP_CONTEXT.requirement_ids
+    | {
+        "FR-STR-005",
+        "FR-EXEC-001",
+        "FR-EXEC-002",
+        "FR-EXEC-004",
+        "FR-EXEC-007",
+        "FR-RES-004",
+        "FR-RES-005",
+        "FR-RES-006",
     },
-}
+    frozenset({"execution", "results"}),
+    (
+        ("docs/run_artifacts.md", "sqlite-tables"),
+        ("docs/run_artifacts.md", "json-values"),
+        ("ARCHITECTURE.md", "設定與儲存一致性"),
+    ),
+)
 _RUN_REPORT_CONTEXT = BehaviorContext(
     _RUN_DIAGNOSTIC_CONTEXT.requirement_ids | {"FR-RES-003", "NFR-UX-001"},
     frozenset({"results"}),
@@ -1071,6 +1122,212 @@ _ARTIFACT_INTERFACE_CONTEXT = BehaviorContext(
     ),
     frozenset({"results"}),
 )
+
+_STRATEGY_AUTHORING_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-001",
+            "FR-STR-002",
+            "FR-STR-003",
+            "FR-STR-004",
+            "FR-EXEC-001",
+            "NFR-OPS-001",
+            "NFR-SAFE-001",
+        }
+    ),
+    frozenset({"strategy", "execution"}),
+)
+_EXECUTION_WORKFLOW_CONTEXT = BehaviorContext(
+    _SUBMITTED_RESEARCH_WORKFLOW_CONTEXT.requirement_ids
+    | {"FR-STR-003", "FR-EXEC-003", "FR-EXEC-005", "NFR-OPS-001", "NFR-UX-001"},
+    frozenset({"strategy", "execution", "results"}),
+)
+_RUNTIME_CONTEXT = BehaviorContext(
+    frozenset(
+        {
+            "FR-STR-003",
+            "FR-EXEC-003",
+            "FR-EXEC-007",
+            "NFR-OPS-001",
+            "NFR-OPS-002",
+            "NFR-SAFE-001",
+            "NFR-REPRO-001",
+        }
+    ),
+    frozenset({"strategy", "execution"}),
+)
+_CODEX_RECORDING_CONTEXT = BehaviorContext(
+    _CONVERSATION_CONTEXT.requirement_ids
+    | {"FR-EXEC-002", "FR-EXEC-007", "NFR-API-001", "NFR-OPS-001"},
+    frozenset({"interfaces", "results"}),
+)
+_NOTE_DELIVERY_CONTEXT = BehaviorContext(
+    _NOTE_CONTEXT.requirement_ids | {"FR-RES-004", "NFR-DATA-001"},
+    frozenset({"results"}),
+    (("docs/development.md", "研究成果工程回饋"),),
+)
+
+# Responsibilities cover whole editable sections, not only a particular diff's
+# sentences. Shared introductions, deployment/workspace settings and unregistered
+# sections retain conservative context; exact ancestry prevents leaf-title reuse.
+# The planner still checks both versions and unions explicit SRS dependants.
+_BEHAVIOR_CHANGE_SECTIONS: dict[str, dict[tuple[str, ...], BehaviorContext]] = {
+    "README.md": {
+        ("TradingDev", "完成第一次回測"): BehaviorContext(
+            _EXECUTION_WORKFLOW_CONTEXT.requirement_ids
+            | {"FR-STR-001", "FR-RES-002", "FR-RES-004"},
+            _EXECUTION_WORKFLOW_CONTEXT.document_scopes,
+        ),
+        ("TradingDev", "建立與研究自己的策略", "把交易規則交給助手"): (
+            _STRATEGY_AUTHORING_CONTEXT
+        ),
+        ("TradingDev", "建立與研究自己的策略", "比較參數"): BehaviorContext(
+            frozenset(
+                {
+                    "FR-STR-004",
+                    "FR-EXEC-001",
+                    "FR-EXEC-002",
+                    "FR-EXEC-004",
+                    "FR-RES-003",
+                }
+            ),
+            frozenset({"execution", "results"}),
+        ),
+        ("TradingDev", "建立與研究自己的策略", "使用樣本外驗證與最佳化"): (
+            _VALIDATION_SEARCH_CONTEXT
+        ),
+        ("TradingDev", "研究機器學習訊號"): BehaviorContext(
+            _ML_WORKFLOW_CONTEXT.requirement_ids | {"FR-DATA-001"},
+            _ML_WORKFLOW_CONTEXT.document_scopes,
+        ),
+        **{
+            ("TradingDev", "查看結果與圖表", heading): context
+            for heading, context in {
+                "在對話中查詢": BehaviorContext(
+                    _RUN_REPORT_CONTEXT.requirement_ids
+                    | {
+                        "FR-EXEC-003",
+                        "FR-EXEC-005",
+                        "FR-EXEC-006",
+                        "FR-EXEC-007",
+                        "NFR-REPRO-001",
+                    },
+                    frozenset({"execution", "results"}),
+                ),
+                "交易紀錄與 HTML 報告": _SHARED_REPORT_CONTEXT,
+                "保存研究筆記與打包分享": _NOTE_DELIVERY_CONTEXT,
+                "自動保存 Codex CLI 對話": _CODEX_RECORDING_CONTEXT,
+                "閱讀保存的對話": _CONVERSATION_CONTEXT,
+                "開啟 Dashboard": _RUN_REPORT_CONTEXT,
+            }.items()
+        },
+        ("TradingDev", "資料與工作區", "行情來源與下載"): _MARKET_DATA_DOCUMENT_CONTEXT,
+        ("TradingDev", "資料與工作區", "升級舊工作區"): BehaviorContext(
+            frozenset({"FR-EXEC-001", "FR-EXEC-006", "FR-EXEC-007", "NFR-DATA-001"}),
+            frozenset({"execution", "results"}),
+        ),
+        ("TradingDev", "終端機用法", "直接執行設定檔"): BehaviorContext(
+            frozenset(
+                {
+                    "FR-STR-003",
+                    "FR-STR-004",
+                    "FR-EXEC-001",
+                    "FR-EXEC-003",
+                    "FR-EXEC-005",
+                    "FR-RES-001",
+                }
+            ),
+            frozenset({"strategy", "execution", "results"}),
+        ),
+        ("TradingDev", "終端機用法", "從已保存的結果產生報告"): _SHARED_REPORT_CONTEXT,
+        ("TradingDev", "終端機用法", "從終端機操作研究筆記"): _NOTE_CONTEXT,
+    },
+    "ARCHITECTURE.md": {
+        ("系統架構", "核心概念與身分"): _RESEARCH_IDENTITIES_CONTEXT,
+        **{
+            ("系統架構", "從策略建立到結果查詢", heading): context
+            for heading, context in {
+                "研究需求與有效設定": BehaviorContext(
+                    _RESEARCH_POLICY_CONTEXT.requirement_ids
+                    | {"FR-EXEC-001", "FR-EXEC-005", "FR-RES-001", "NFR-DATA-001"},
+                    _RESEARCH_POLICY_CONTEXT.document_scopes,
+                ),
+                "建立與驗證策略": BehaviorContext(
+                    _STRATEGY_AUTHORING_CONTEXT.requirement_ids | {"FR-STR-005"},
+                    _STRATEGY_AUTHORING_CONTEXT.document_scopes,
+                ),
+                "準備、確認與執行回測": _EXECUTION_WORKFLOW_CONTEXT,
+                "最佳化執行": BehaviorContext(
+                    _PARAMETER_SEARCH_CONTEXT.requirement_ids
+                    | {"FR-EXEC-004", "FR-EXEC-005"},
+                    _PARAMETER_SEARCH_CONTEXT.document_scopes,
+                ),
+                "保存與查詢結果": _RESULT_PUBLICATION_CONTEXT,
+                "行情快取": _MARKET_DATA_DOCUMENT_CONTEXT,
+                "獨立行情取樣": BehaviorContext(
+                    frozenset({"FR-DATA-002", "FR-DATA-003", "NFR-OPS-002"}),
+                    frozenset({"data"}),
+                ),
+            }.items()
+        },
+        ("系統架構", "ML 訊號研究"): BehaviorContext(
+            _ML_ROLLING_WORKFLOW_CONTEXT.requirement_ids,
+            _ML_ROLLING_WORKFLOW_CONTEXT.document_scopes,
+            (("docs/ml_research.md", "rolling-retraining-schemes"),),
+        ),
+        ("系統架構", "績效計算與對話摘要"): _RUN_DIAGNOSTIC_CONTEXT,
+        **{
+            ("系統架構", "績效計算與對話摘要", heading): context
+            for heading, context in {
+                "診斷擴充與替換": _RUN_DIAGNOSTIC_CONTEXT,
+                "研究筆記與可攜封存": _NOTE_DELIVERY_CONTEXT,
+                "可見對話紀錄": _CODEX_RECORDING_CONTEXT,
+            }.items()
+        },
+        **{
+            ("系統架構", "一致性、程序管理與保證範圍", heading): context
+            for heading, context in {
+                "歷史查詢與報告組裝": _SHARED_REPORT_CONTEXT,
+                "設定與儲存一致性": BehaviorContext(
+                    frozenset(
+                        {"FR-STR-004", "FR-RES-001", "NFR-DATA-001", "NFR-REPRO-001"}
+                    ),
+                    frozenset({"execution", "results"}),
+                ),
+                "MCP 回覆契約": BehaviorContext(
+                    frozenset(
+                        {
+                            "FR-RES-001",
+                            "FR-ML-002",
+                            "NFR-API-001",
+                            "NFR-OPS-001",
+                            "NFR-OPS-002",
+                        }
+                    ),
+                    frozenset({"interfaces", "results", "ml"}),
+                ),
+                "程序控制與清理": _RUNTIME_CONTEXT,
+                "容器執行 adapter": BehaviorContext(
+                    _RUNTIME_CONTEXT.requirement_ids,
+                    _RUNTIME_CONTEXT.document_scopes,
+                    (("docs/development.md", "容器建置與驗證"),),
+                ),
+                "可重現性與策略執行安全": BehaviorContext(
+                    frozenset(
+                        {
+                            "FR-RES-001",
+                            "FR-ML-002",
+                            "NFR-DATA-001",
+                            "NFR-REPRO-001",
+                            "NFR-SAFE-001",
+                        }
+                    ),
+                    frozenset({"execution", "results", "ml"}),
+                ),
+            }.items()
+        },
+    },
+}
 
 _STATISTICS_ARCHITECTURE_REFERENCE = (
     "ARCHITECTURE.md",
@@ -1106,6 +1363,7 @@ _RESEARCH_BENCHMARK_TEST_CONTEXT = BehaviorContext(
 # the conservative owner-based fallback. Changed Markdown is selected from its
 # actual changed sections, not assigned a whole-document behavior here.
 _BEHAVIOR_CONTEXTS: dict[str, BehaviorContext] = {
+    "src/tradingdev/adapters/storage/sqlite.py": _SQLITE_STORAGE_CONTEXT,
     "src/tradingdev/domain/statistics/benchmark.py": _RESEARCH_BENCHMARK_CONTEXT,
     "src/tradingdev/domain/statistics/comparison.py": _STATISTICS_API_CONTEXT,
     "tests/domain/statistics/test_statistics_benchmark.py": (
@@ -1788,4 +2046,4 @@ def sections_for_reference(
         if not section.headings
         or any(section.start_line <= line <= section.end_line for line in references)
     )
-    return tuple(section for index, section in enumerate(sections) if index in selected)
+    return _with_ancestor_sections(sections, selected)

@@ -1112,7 +1112,11 @@ def _assert_original_assignment_evidence(
             assert paths == []
             assert batch["path_diffs"] == evidence["path_diffs"]
             assert (
-                batch["candidate_tree_inventory"]
+                sorted(
+                    prefix + filename
+                    for prefix, filenames in batch["candidate_tree_inventory"].items()
+                    for filename in filenames
+                )
                 == evidence["candidate_tree_inventory"]
             )
             assert batch["candidate_files"] == {
@@ -1334,6 +1338,47 @@ def test_large_evidence_preserves_owned_sources_original_sections_and_cross_audi
     _assert_original_assignment_evidence(
         [record["prompt"] for record in records], evidence
     )
+    _assert_reviewer_cleanup(records)
+
+
+def test_each_cross_scope_context_partition_requires_its_own_passing_verdict(
+    repository: tuple[Path, str, str],
+    fake_codex: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repo, _, _ = repository
+    source = repo / "tooling/git/claim_issue.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 'old'\n")
+    document = repo / "docs/development.md"
+    document.parent.mkdir()
+    document.write_text(
+        "# 開發指南\n共用前提。\n\n## 接手 issue\n必要前提。\n"
+        + "".join(f"\n### Operation {i}\n" + str(i) * 6_000 + "\n" for i in range(4))
+    )
+    _git(repo, "add", ".")
+    base = _git(repo, "write-tree")
+    source.write_text("VALUE = 'new'\n")
+    _git(repo, "add", ".")
+    tree = _git(repo, "write-tree")
+    plan = review_docs.prepare_review(base, tree, repo=repo, max_prompt_bytes=20_000)
+    audits = [
+        batch["index"]
+        for batch in plan.manifest["batches"]
+        if batch["phase"] == "cross_scope"
+    ]
+    assert len(audits) > 1
+    monkeypatch.setenv(
+        "REVIEW_FAKE_BATCH_MODES", json.dumps({str(audits[-1]): "outdated"})
+    )
+    with pytest.raises(review_docs.ReviewError, match="Documentation needs updates"):
+        review_docs.review(base, tree, repo=repo, max_prompt_bytes=20_000)
+    records = _records(fake_codex)
+    reviewed = [
+        json.loads(record["prompt"].rsplit("\n\n", 1)[-1])["batch"]["index"]
+        for record in records
+    ]
+    assert set(audits) <= set(reviewed)
     _assert_reviewer_cleanup(records)
 
 
