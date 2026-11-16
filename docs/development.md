@@ -599,7 +599,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | --- | --- |
 | 策略生成、修復與既有結果查詢 | [test_llm_workflows.py](../tests/e2e/test_llm_workflows.py) |
 | 自然需求、必要資訊追問與工具探索 | [test_llm_novice_intake.py](../tests/e2e/test_llm_novice_intake.py)、[test_llm_discovery.py](../tests/e2e/test_llm_discovery.py) |
-| 執行計畫、使用者決策、訓練與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
+| 執行計畫、使用者決策、訓練、部分最佳化結果查詢與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
 | ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
@@ -607,7 +607,9 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
 
-測試使用隔離工作區、固定合成行情與模擬使用者，不下載市場資料；完成驗證後清理。
+測試使用隔離工作區與固定合成行情，不下載市場資料。核准情境在同一對話注入模擬
+使用者回覆；部分最佳化結果查詢情境先建立部分結果，再由模型查詢已保存證據。
+完成驗證後清理工作區。
 它不替真人保留報告，也不驗證桌面客戶端的互動。自然語言解讀仍須審閱輸出的最終
 回覆與報告評語；機械斷言通過不等於語意正確。使用者實際驗收的成果保存遵守
 [AGENTS.md](../AGENTS.md#測試與清理)。
