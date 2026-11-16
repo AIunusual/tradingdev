@@ -840,28 +840,16 @@ uv run --no-sync python -m tooling.review_docs \
 大小分別以 UTF-8 bytes 與 Unicode 字元計量，兩者都不是 tokens。若預設容量讓
 `--plan-only` 中止，可明示容量選項取得完整計畫；這不代表已核實模型容量。
 先檢查內容歸屬與重複，再核對所選模型容量並預留輸出空間，才設定實際審查上限。
-容量錯誤會列出實際請求與原文的大小組成；先確認超量的是完整 diff、固定來源，
-還是章節及其必要脈絡，不能只依變更行數判斷。計畫 manifest 保留完整版本身分、
-選取理由與覆蓋資料；模型請求使用按目錄前綴分組的路徑清單，以及文件版本／行範圍
-索引，減少封裝重複。原始 diff、交付來源與文件原文仍由計畫驗證器逐項核對。
+容量不足時，依錯誤訊息確認超量來自完整 diff、固定來源或文件脈絡。工具可將
+文件脈絡分批；若完整 diff、必要來源或不可拆章節仍超過上限，須拆分變更，
+或核實模型容量後調整上限。
 
-無工具 reviewer 無法自行開啟參照。必要來源未在同批時，用 `--review-context-for`
-補入指定範圍的完整候選檔案；跨範圍問題使用 `cross_scope`。已登錄的共用來源會
-自動附入需要它的批次，其他來源仍須明示補入。若必要完整來源仍超量，須分拆變更
-或核對模型容量後明示提高上限，再重新審查；不能以另一批已有原文視為通過。
-補充來源須為一般 UTF-8 文字檔，`--review-context` 與 `--review-context-for`
-不接受符號連結。一般變更中的符號連結則以 Git blob 保存的目標文字、mode 與
-diff 審查，不追隨連結讀取目標檔案；同時作為必要背景來源時仍須符合前述限制。
+無工具 reviewer 無法自行開啟參照。必要原文須出現在需要它的批次；來源清單或
+其他批次的結論不能代替原文。缺少來源時，以 `--review-context-for SCOPE:PATH`
+補入完整候選檔案；跨範圍比對使用 `cross_scope`。各批均須獨立通過。
 
-檔案的負責範圍與本次受影響的需求分開判定。已登錄的程式責任及文件章節，依
-固定版本的變更選取必要需求與契約；未知內容、共用前言及無法確認的章節變動仍
-保留保守脈絡。不能為了降低輸入大小而把未知路徑視為沒有需求。
-一般範圍與跨範圍審查可依文件脈絡分批，保留各章節所需的祖先敘述及引用定義。
-跨範圍的每批仍包含完整原始 diff 與明示補入的共同原文；來源清單只標示各範圍
-收到哪些 supporting sources，不代表跨範圍批次也收到那些原文。若跨範圍比對
-需要額外來源，仍須用 `cross_scope` 補入。每批皆須獨立通過，其他批的結論不能
-替代當批缺少的原文。固定來源、完整 diff 或不可拆章節本身超過容量時仍會失敗，
-分批不保證任意大小的變更都能通過。
+補充及必要背景來源須為一般 UTF-8 文字檔，不接受符號連結。一般變更中的
+符號連結只審查連結自身，不讀取其目標內容。
 
 | 選項 | 使用目的 |
 | --- | --- |
@@ -890,7 +878,7 @@ diff 審查，不追隨連結讀取目標檔案；同時作為必要背景來源
 | 維護任務 | 正式入口與可取得的資訊 |
 | --- | --- |
 | 核對路徑責任與所需來源 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_path`、`development_context_for_path`、`source_context_for_path`，提供行為、開發操作及必要來源的登錄。 |
-| 維護產品文件的章節責任 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_section` 與 `_BEHAVIOR_CHANGE_SECTIONS`，依完整標題階層取得需求及契約對應；未登錄內容保留保守背景。[test_review_scope.py](../tests/tooling/test_review_scope.py) 核對登錄與祖先，[test_review_plan.py](../tests/tooling/test_review_plan.py) 驗證實際變更的原文涵蓋。 |
+| 維護產品文件的章節責任 | [review_scope.py](../tooling/review_scope.py) 的 `behavior_context_for_section` 提供章節與需求／契約的對應；登錄與證據涵蓋測試見 [test_review_scope.py](../tests/tooling/test_review_scope.py)、[test_review_plan.py](../tests/tooling/test_review_plan.py)。 |
 | 追查簡報參照選取 | [review_evidence.py](../tooling/review_evidence.py) 的 `_presentation_context`、`_operation_definitions_only`、`automatic_document_paths`，判定何時需要編輯指南或完整簡報來源。 |
 | 追查容量及批次完整性 | [review_plan.py](../tooling/review_plan.py) 的 `_selected_evidence_size`、`build_review_plan`、`ReviewPlan.verify`，提供原文計量、批次規劃與完整性核對。 |
 
