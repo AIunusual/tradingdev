@@ -374,8 +374,8 @@ workspace/version when its historical manifest readers are still needed.
 Optimization fixes candidate ranges, objective/direction, calendar train/test
 bounds and the timeout for each training trial and the held-out test. This
 timeout is separate from MCP preflight's total process budget. The first training
-trial provides the estimate when it completes. A known candidate failure leaves
-the estimate unavailable and the search continues with the approved resource
+trial provides the estimate when it completes. A known failure in that first trial
+leaves the estimate unavailable and the search continues with the approved resource
 policy. The supervisor has a separate startup and cleanup allowance. An
 unresponsive process stops the job as an infrastructure fault.
 Older optimization manifests with an estimation-only timeout retain their
