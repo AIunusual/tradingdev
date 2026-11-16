@@ -1,7 +1,8 @@
-"""Model-driven research plans with an explicit simulated user approval.
+"""Model-driven plan approval and lookup of saved optimization results.
 
-Live cases retain one conversation and inspect each completed model turn before
-injecting a simulated user reply into the same messages or Codex thread.
+Live approval cases retain one conversation and inspect each completed model
+turn before injecting a simulated reply into the same messages or Codex thread.
+The live lookup case asks the model to read an existing partial result.
 Offline cases use the same real MCP server, workers, fixture and evidence checks
 without calling a model. Cached prices are synthetic; these tests do not validate
 external market-data access or a real human interface.
