@@ -784,6 +784,9 @@ echoes `max_page_size` and `max_export_rows`. `export_evaluation_series(artifact
 returns the full rows and manifest only up to `max_export_rows` (100,000). An
 oversized artifact fails the export explicitly; use row paging instead.
 Concatenating row pages in offset order reproduces the export exactly.
+The client-accessible `get_ml_contract` guidance keys
+`evaluation_series_rows` and `evaluation_series_recovery` carry the same row
+semantics and partial-publication limits without repository access.
 Discovery is a summary lookup: it reads manifests and checks that each manifest
 `artifact_id` matches its directory, but it does not verify the manifest identity
 digest or the Parquet content. Full verification happens when `artifact_id` is

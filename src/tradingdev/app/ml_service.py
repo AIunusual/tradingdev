@@ -212,6 +212,23 @@ _ML_GUIDANCE = {
         "export_evaluation_series returns all rows only below max_export_rows "
         "and fails explicitly above it; use row paging instead."
     ),
+    "evaluation_series_rows": (
+        "source_row is the original dataset coordinate; signal series keep the "
+        "0..row_count-1 order and UTC ISO timestamps. A null IC keeps its row "
+        "and an availability_reason (ic_warmup, constant_window, non_finite); "
+        "null is unavailable, never zero. Fold rows carry the actual fold "
+        "prediction and inclusive first/last train/eval row and time endpoints; "
+        "holdout_relationship is dataset-level, not evidence that each fold "
+        "prediction was held out."
+    ),
+    "evaluation_series_recovery": (
+        "Discovery pages are summary lookups and do not verify content; row "
+        "paging and export do. Publication is not rolled back if a later "
+        "leaderboard write or final model save fails, so a failed evaluation "
+        "can still leave a discoverable artifact. Cleanup is not transactional "
+        "and publication/pruning serialize on a lock with a 30-second default "
+        "timeout; contention can fail without tampering."
+    ),
     "simulated_returns": (
         "Position thresholds use earlier signals only; positions open after "
         "warm-up on a non-overlapping horizon-bar grid. Returns exclude costs "

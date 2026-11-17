@@ -60,10 +60,14 @@ them in the protected set passed to `cleanup_evaluation_series`. These lifecycle
 operations are on `MLService`; current MCP tools expose only discovery, row
 paging and export, so an MCP-only client cannot protect or clean up artifacts by
 itself. By default cleanup protects every series currently referenced by a
-leaderboard row, so a live row does protect its current artifact. The report's
-own reference receives no separate automatic protection: once an entry is
-replaced or removed, its old series becomes unreferenced and can be pruned unless
-`protect_evaluation_series` or an explicit protected set names the artifact.
+leaderboard row, so a live row does protect its current artifact. Passing an
+explicit `protected` set replaces that leaderboard-derived default; it does not
+add to it. A caller supplying the set must include every live leaderboard
+reference and every report-cited artifact it wants retained, or mark those IDs
+with `protect_evaluation_series` first. The report's own reference receives no
+separate automatic protection: once an entry is replaced or removed, its old
+series becomes unreferenced and can be pruned unless one of those protections
+names the artifact.
 Reports do not read the series to recompute metrics: report generation snapshots
 the leaderboard reference without checking whether its artifact still exists or
 is intact. The artifact exists so a reader can later inspect the exact scored
