@@ -802,6 +802,13 @@ discovery to see what remains; a failed cleanup is not evidence that no artifact
 was removed. Historical rows without `series_artifact_id` stay unavailable rather
 than being recomputed.
 
+Publication (`save`) and cleanup (`prune`) serialize on `.evaluation-series.lock`
+in that root, with a 30-second default acquisition timeout. Lock contention or a
+stale external holder can therefore make a recording or cleanup call fail without
+any artifact being tampered with. Discovery, row paging and export do not take
+that lock. The timeout is the store default; no MCP tool currently exposes it as
+an argument.
+
 Recording a signal series publishes its artifact before writing the leaderboard
 entry. If that later write fails, the evaluation call fails while leaving a
 discoverable, unreferenced series artifact with no `series_artifact_id` in any
