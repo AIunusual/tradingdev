@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.presentation.html import details_html, escape, json_text
 from tradingdev.domain.ml.leaderboard import ProducerSource
 from tradingdev.domain.ml.report import ML_SAMPLE_PROVENANCE_NOTE
+
+if TYPE_CHECKING:
+    from tradingdev.domain.ml.market_evidence import MarketComparison
 
 ML_REPORT_STYLE = """
 #ml .ml-candidate{border-top:1px solid var(--line);padding:12px 0}
@@ -275,6 +278,24 @@ def _definitions(block: dict[str, Any]) -> str:
     )
 
 
+def _market_comparison(comparison: MarketComparison | None) -> str:
+    if comparison is None:
+        return ""
+    checks = {
+        label: check["status"] + " · " + "；".join(check["reasons"])
+        for label, check in (
+            ("共用原始行情基線", comparison["raw_baseline"]),
+            ("實際評估列一致性", comparison["evaluation_rows"]),
+        )
+    }
+    return (
+        "<h4>行情與評估列核對</h4>"
+        + _pairs(checks)
+        + "<p class='muted'>原始行情一致仍可產生不同的標籤終點。"
+        "核對結果僅描述所選候選的資料與列位置。</p>"
+    )
+
+
 def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
     """Render every saved candidate and metric without inventing trading evidence."""
     # Keep the export as bytes: parsing the payload in JavaScript would round
@@ -336,13 +357,7 @@ def render_ml_report(block: dict[str, Any], *, has_runs: bool) -> str:
         )
         + "<h3>研究範圍與參數座標</h3>"
         + _pairs({_CONTEXT_LABELS.get(key, key): value for key, value in axes.items()})
-        + (
-            "<p class='notice'>跨 horizon 比較：來源與原始行情等價性未經驗證。"
-            "不同期距改變標籤及持有區間，須核對各資料集 manifest 與原始 K 棒；"
-            "此參數曲面的排名不是單一同條件測量。</p>"
-            if len(axes.get("horizon", [])) > 1
-            else ""
-        )
+        + _market_comparison(block.get("market_comparison"))
         + _ranking(block)
         + "<h3>選優限制與保存警語</h3><p>從多個候選選出第一名會產生選擇偏誤；"
         "排名本身不證明樣本外有效性，單一候選也不能證明優於其他選擇。"

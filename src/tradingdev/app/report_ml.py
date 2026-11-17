@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
+from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+from tradingdev.app.ml_surface import compare_market_evidence
 from tradingdev.domain.ml.registry import LeaderboardStore
 from tradingdev.domain.ml.report import ml_report_block
 
@@ -13,7 +15,7 @@ if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
 
 ML_REPORT_MAX_CANDIDATES = 50
-ML_REPORT_TEMPLATE_VERSION = "8"
+ML_REPORT_TEMPLATE_VERSION = "9"
 
 
 class MLReportError(ValueError):
@@ -25,14 +27,29 @@ class MLReportError(ValueError):
 
 
 def validate_ml_selection(
-    entry_ids: list[str] | None, metric: str, allow_parameter_axes: bool
+    entry_ids: list[str] | None,
+    metric: str,
+    allow_parameter_axes: bool,
+    *,
+    allow_mixed: bool = False,
+    require_verified_baseline: bool = False,
 ) -> None:
     """Bound the explicit selection and reject options without their evidence."""
     if (
         not isinstance(metric, str)
         or not metric.strip()
         or type(allow_parameter_axes) is not bool
-        or (entry_ids is None and (metric != "ic_mean" or allow_parameter_axes))
+        or type(allow_mixed) is not bool
+        or type(require_verified_baseline) is not bool
+        or (
+            entry_ids is None
+            and (
+                metric != "ic_mean"
+                or allow_parameter_axes
+                or allow_mixed
+                or require_verified_baseline
+            )
+        )
     ):
         raise MLReportError(
             "invalid_report_ml_selection",
@@ -56,6 +73,8 @@ def load_ml_report(
     *,
     metric: str,
     allow_parameter_axes: bool,
+    allow_mixed: bool = False,
+    require_verified_baseline: bool = False,
 ) -> dict[str, Any]:
     """Read one complete store generation and snapshot the requested candidates.
 
@@ -63,7 +82,13 @@ def load_ml_report(
     selected content, current definitions and ranking therefore travel inside
     the immutable report, independently of the mutable leaderboard file.
     """
-    validate_ml_selection(entry_ids, metric, allow_parameter_axes)
+    validate_ml_selection(
+        entry_ids,
+        metric,
+        allow_parameter_axes,
+        allow_mixed=allow_mixed,
+        require_verified_baseline=require_verified_baseline,
+    )
     try:
         stored = LeaderboardStore(workspace.ml_leaderboard).entries()
         indexed = {entry.entry_id: entry for entry in stored}
@@ -77,7 +102,15 @@ def load_ml_report(
             )
         entries = [indexed[key] for key in entry_ids]
         block = ml_report_block(
-            entries, metric, allow_parameter_axes=allow_parameter_axes
+            entries,
+            metric,
+            allow_parameter_axes=allow_parameter_axes,
+            allow_mixed=allow_mixed,
+        )
+        block["market_comparison"] = compare_market_evidence(
+            entries,
+            MLDatasetStore(workspace.ml_datasets),
+            require_verified_baseline=require_verified_baseline,
         )
         source = (
             json.dumps(

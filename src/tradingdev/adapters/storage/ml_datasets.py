@@ -12,16 +12,62 @@ from typing import Any
 
 import pandas as pd
 from filelock import FileLock
+from pydantic import TypeAdapter
 
 from tradingdev.adapters.storage.filesystem import write_json
+from tradingdev.domain.ml.market_evidence import (
+    RawMarketEvidence,
+    evaluated_rows_fingerprint,
+)
 
 _ID = re.compile(r"ds_[0-9a-f]{16}")
-_SCHEMA = 2
+_LEGACY_SCHEMA = 2
+_SCHEMA = 3
+_RAW_MARKET = TypeAdapter(RawMarketEvidence)
 
 
 def _identity(metadata: dict[str, Any]) -> str:
     payload = json.dumps(metadata, sort_keys=True, ensure_ascii=False, allow_nan=False)
     return "ds_" + hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _evaluation_rows(frame: pd.DataFrame, manifest: dict[str, Any]) -> dict[str, str]:
+    raw = _RAW_MARKET.validate_python(manifest["raw_market"], strict=True)
+    is_panel = manifest["kind"] == "panel"
+    symbols = manifest["symbols"] if is_panel else [manifest["symbol"]]
+    horizon = manifest["horizon"]
+    if (
+        type(horizon) is not int
+        or horizon < 1
+        or manifest["kind"] not in ("single", "panel")
+        or not symbols
+        or [series["symbol"] for series in raw["series"]] != sorted(set(symbols))
+        or any(
+            series["source"] != manifest["source"]
+            or series["market_type"] != manifest["market_type"]
+            or series["timeframe"] != manifest["timeframe"]
+            or re.fullmatch(r"[0-9a-f]{64}", series["fingerprint"]) is None
+            or not series["first_utc"].endswith("+00:00")
+            or not series["last_utc"].endswith("+00:00")
+            for series in raw["series"]
+        )
+        or not {"timestamp", "label_start", "label_end", "raw_row"} <= set(frame)
+    ):
+        raise ValueError("invalid dataset raw market evidence")
+    if is_panel:
+        if "symbol" not in frame or set(frame["symbol"]) != set(symbols):
+            raise ValueError(
+                "dataset panel membership does not match raw market evidence"
+            )
+        groups = dict(iter(frame.groupby("symbol")))
+    else:
+        groups = {symbols[0]: frame}
+    return {
+        series["symbol"]: evaluated_rows_fingerprint(
+            groups[series["symbol"]], series=series, horizon=horizon
+        )
+        for series in raw["series"]
+    }
 
 
 class MLDatasetStore:
@@ -38,10 +84,12 @@ class MLDatasetStore:
         blob = frame.to_parquet(index=False)
         manifest = {
             **metadata,
-            "schema_version": _SCHEMA,
+            "schema_version": _SCHEMA if "raw_market" in metadata else _LEGACY_SCHEMA,
             "rows": len(frame),
             "content_hash": hashlib.sha256(blob).hexdigest(),
         }
+        if manifest["schema_version"] == _SCHEMA:
+            manifest["evaluation_rows"] = _evaluation_rows(frame, manifest)
         dataset_id = _identity(manifest)
         manifest["dataset_id"] = dataset_id
         self.root.mkdir(parents=True, exist_ok=True)
@@ -74,7 +122,12 @@ class MLDatasetStore:
             raise ValueError(
                 f"unknown dataset_id or incomplete dataset: {dataset_id}"
             ) from exc
-        if not isinstance(raw, dict) or raw.get("schema_version") != _SCHEMA:
+        except OSError as exc:
+            raise ValueError(f"cannot read saved dataset: {dataset_id}") from exc
+        if not isinstance(raw, dict) or raw.get("schema_version") not in (
+            _LEGACY_SCHEMA,
+            _SCHEMA,
+        ):
             raise ValueError("unsupported dataset schema; rebuild the dataset")
         manifest: dict[str, Any] = raw
         identity = {
@@ -90,4 +143,9 @@ class MLDatasetStore:
         frame = pd.read_parquet(io.BytesIO(blob))
         if len(frame) != manifest.get("rows"):
             raise ValueError("dataset row count mismatch")
+        if manifest["schema_version"] == _SCHEMA and (
+            "raw_market" not in manifest
+            or _evaluation_rows(frame, manifest) != manifest.get("evaluation_rows")
+        ):
+            raise ValueError("dataset evaluation row evidence mismatch")
         return frame, manifest

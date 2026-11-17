@@ -96,7 +96,7 @@ REPORT_SECTIONS = MappingProxyType(
                 "Select their entry IDs with generate_report(ml_entry_ids=...). "
                 "Supports standalone ML reports or independent evidence alongside "
                 "runs; this is cost-free signal research, not executed backtests. "
-                "Series and cross-horizon source equivalence remain unavailable.",
+                "Horizon sweeps show saved market and evaluation row checks.",
             ),
         )
     }

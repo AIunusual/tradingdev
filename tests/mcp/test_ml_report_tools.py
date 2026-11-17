@@ -7,14 +7,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 import pytest
 from jsonschema import Draft202012Validator
 from mcp.server import MCPServer
 from mcp_types import CallToolResult
+from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_file
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.contracts.reports import ReportResponse
+from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.trade_history_service import TradeHistoryService
 from tradingdev.domain.ml.leaderboard import (
@@ -24,7 +28,7 @@ from tradingdev.domain.ml.leaderboard import (
 )
 from tradingdev.domain.ml.registry import LeaderboardStore
 from tradingdev.mcp.strict_server import StrictMCPServer
-from tradingdev.mcp.tools import history
+from tradingdev.mcp.tools import history, ml
 
 
 @pytest.fixture(params=[MCPServer, StrictMCPServer], ids=["sdk", "strict"])
@@ -148,6 +152,8 @@ def test_ml_report_tool_delegates_explicit_selection_and_preserves_summary(
             "ml_entry_ids": ["candidate", "unavailable"],
             "ml_ranking_metric": "rank_ic_mean",
             "ml_allow_parameter_axes": True,
+            "ml_allow_mixed": False,
+            "ml_require_verified_baseline": True,
         }
         return response
 
@@ -163,6 +169,7 @@ def test_ml_report_tool_delegates_explicit_selection_and_preserves_summary(
                 "ml_entry_ids": ["candidate", "unavailable"],
                 "ml_ranking_metric": "rank_ic_mean",
                 "ml_allow_parameter_axes": True,
+                "ml_require_verified_baseline": True,
             },
         )
     )
@@ -254,3 +261,85 @@ def test_unknown_ml_entry_does_not_publish_a_partial_report(
     assert result["success"] is False
     assert result["code"] == "ml_entry_not_found"
     assert not list((workspace.root / "reports").glob("**/*.html"))
+
+
+def test_mcp_horizon_check_is_frozen_in_the_report(
+    context: tuple[WorkspacePaths, SQLiteStore, MCPServer, ReportService],
+) -> None:
+    workspace, _, server, _ = context
+    service = MLService(workspace)
+    ml.register(server, service)
+    close = 100 + 2 * np.sin(np.arange(90) / 4)
+    seed_market_cache(
+        workspace.processed_data,
+        pd.DataFrame(
+            {
+                "timestamp": pd.date_range(
+                    "2024-01-01", periods=90, freq="h", tz="UTC"
+                ),
+                "open": close,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": 25.0,
+            }
+        ),
+    )
+    entries = []
+    for horizon in (1, 3):
+        summary = service.build_dataset(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2024-01-04",
+            feature_set="returns",
+            horizon=horizon,
+        )["dataset"]
+        values = pd.read_parquet(summary["path"])["forward_return"].tolist()
+        result = service.evaluate_signal(
+            values, values, window=12, record=True, dataset_id=summary["dataset_id"]
+        )
+        entries.append(result["recorded"]["entry_id"])
+
+    async def workflow() -> None:
+        board = await server.call_tool(
+            "leaderboard",
+            {
+                "metric": "ic_mean",
+                "allow_parameter_axes": True,
+                "require_verified_baseline": True,
+                "limit": 1,
+            },
+        )
+        assert isinstance(board, CallToolResult)
+        assert isinstance(board.structured_content, dict)
+        response = board.structured_content.get("result", board.structured_content)
+        assert response["success"], response
+        assert response["n_candidates"] == 2 and len(response["ranked"]) == 1
+        comparison = response["market_comparison"]
+        assert comparison["raw_baseline"]["status"] == "verified"
+        assert comparison["evaluation_rows"]["status"] == "mismatch"
+        options = {
+            "ml_entry_ids": list(reversed(entries)),
+            "ml_allow_parameter_axes": True,
+            "ml_require_verified_baseline": True,
+        }
+        report = await _call(server, options)
+        assert report["success"], report
+        html_path = Path(report["path"])
+        manifest_path = html_path.parent / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["ml"]["market_comparison"] == comparison
+        original = html_path.read_text()
+        assert "共用原始行情基線" in original
+        assert "實際評估列一致性" in original
+        # Corrupt the source after publication. The fixed comparison is preserved,
+        # while a newly requested report must refuse the corrupted source.
+        parquet = Path(summary["path"])
+        parquet.write_bytes(parquet.read_bytes() + b"modified")
+        rejected = await _call(server, options)
+        assert rejected["code"] == "report_ml_evidence_invalid"
+        assert html_path.read_text() == original
+        assert json.loads(manifest_path.read_text()) == manifest
+
+    asyncio.run(workflow())

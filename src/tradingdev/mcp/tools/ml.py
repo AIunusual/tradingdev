@@ -295,15 +295,16 @@ def register(mcp: MCPServer, service: MLService) -> None:
         limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
-        """Rank recorded evaluations or saved run scopes on one metric.
+        """Rank saved signal evaluations or run scopes on one metric.
 
-        Use bare or signal. metrics from get_ml_contract with signal filters, or
-        run. metrics from get_metric_catalog with runs; null scope uses the default.
-        Signal-only options are allow_mixed and allow_parameter_axes. Omitting
-        family includes all methods. Follow next_offset and read caveats.
-        For optimization rows, pass selection_evidence.reference identity to
-        get_selection_evidence for saved training trials.
+        Use bare/signal. metrics and signal options from get_ml_contract, or run.
+        metrics from get_metric_catalog with runs (null scope selects default).
+        Signal-only require_verified_baseline requires matching raw inputs.
+        Omit family for all methods. Follow next_offset; read caveats.
+        Read optimization trials via selection_evidence.reference with
+        get_selection_evidence.
         """
         try:
             result = ranking.rank_candidates(
@@ -323,6 +324,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 limit=limit,
                 allow_mixed=allow_mixed,
                 allow_parameter_axes=allow_parameter_axes,
+                require_verified_baseline=require_verified_baseline,
             )
         except (ValueError, TypeError) as exc:
             return ErrorResponse(

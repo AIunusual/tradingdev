@@ -49,13 +49,24 @@ training history even when declared as rules, including whether an external mode
 produced them. Report commentary and final interpretation must
 state that condition rather than infer a training relationship from model or dataset
 identities alone.
-The selected candidates must satisfy the
+By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
-The MCP/CLI options `ml_ranking_metric` (default `ic_mean`) and
-`ml_allow_parameter_axes` (default `false`) select ranking and the explicit surface
-opt-in. CLI uses `--ml-entry-id` repeatedly, `--ml-ranking-metric` and
-`--ml-allow-parameter-axes`. Without selected IDs, non-default ML options are
-invalid. Selecting the `ml` section without evidence is an error.
+`generate_report` and `tradingdev-report` expose the following ranking options.
+
+| MCP argument | CLI flag | Purpose |
+| --- | --- | --- |
+| `ml_ranking_metric` | `--ml-ranking-metric` | Choose the score. The default is `ic_mean`. |
+| `ml_allow_parameter_axes` | `--ml-allow-parameter-axes` | Allow a parameter sweep under the ML comparison rules. |
+| `ml_allow_mixed` | `--ml-allow-mixed` | Include otherwise incompatible evaluation contexts with a caveat to interpret their ranks as display order only. |
+| `ml_require_verified_baseline` | `--ml-require-verified-baseline` | Require valid saved raw evidence and matching baselines across the selected datasets. |
+
+The strict baseline requirement also applies to mixed display. With one
+candidate, the strict baseline option checks that candidate's saved evidence.
+Review the evaluation-row verdict separately. Repeat
+`--ml-entry-id` for the candidates.
+Non-default ML options require selected IDs. Selecting the `ml` section also
+requires evidence. The HTML, embedded JSON and manifest freeze the market
+comparison verdict, including its reasons, for the selected candidates.
 
 For either run/comparison selector, omitted/null sections select standard
 (plus `ml` when ML candidates are also selected); ML-only requests default to `ml`.

@@ -110,6 +110,7 @@ class RankingService:
         limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
         """Rank one source, chosen by the metric id's prefix.
 
@@ -150,6 +151,7 @@ class RankingService:
                 limit=limit,
                 allow_mixed=allow_mixed,
                 allow_parameter_axes=allow_parameter_axes,
+                require_verified_baseline=require_verified_baseline,
             )
             result["metric"] = metric
             return result
@@ -158,6 +160,7 @@ class RankingService:
                 any(value is not None for value in filters)
                 or allow_parameter_axes
                 or allow_mixed
+                or require_verified_baseline
             ):
                 raise ValueError(
                     "backtest ranking selects saved scopes with runs, "
