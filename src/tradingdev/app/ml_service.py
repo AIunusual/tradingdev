@@ -225,9 +225,15 @@ _ML_GUIDANCE = {
         "Discovery pages are summary lookups and do not verify content; row "
         "paging and export do. Publication is not rolled back if a later "
         "leaderboard write or final model save fails, so a failed evaluation "
-        "can still leave a discoverable artifact. Cleanup is not transactional "
-        "and publication/pruning serialize on a lock with a 30-second default "
-        "timeout; contention can fail without tampering."
+        "can still leave a discoverable artifact. After a failed train_model, "
+        "page unfiltered summaries with get_evaluation_series_page, match kind "
+        "fold_validation and dataset_id, then pass that artifact_id to row "
+        "paging or export_evaluation_series; the manifest records "
+        "fold_<dataset_id> and training_status fitted. Cleanup is not "
+        "transactional and publication/pruning serialize on a lock with a "
+        "30-second default timeout; contention can fail without tampering. "
+        "protect_evaluation_series writes a marker with no removal API in these "
+        "tools, so pruning always skips once-protected artifacts."
     ),
     "simulated_returns": (
         "Position thresholds use earlier signals only; positions open after "

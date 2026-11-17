@@ -800,6 +800,10 @@ increasing. Fold-validation series instead require unique `source_row`
 coordinates; chronological ordering is not imposed on fold rows. A failed
 publication removes its staging directory and leaves the previous artifact
 readable. `protect_evaluation_series` marks artifacts cited by saved reports;
+that marker is permanent through the documented API: neither the store nor
+`MLService` provides a removal operation, and pruning always skips marked
+artifacts. Protection therefore outlives the report or leaderboard row that
+motivated it and cannot be reversed through the documented API.
 `cleanup_evaluation_series` removes only unreferenced, unprotected artifacts.
 Cleanup is not transactional: each artifact is removed as it is visited, with no
 rollback, so a removal error can leave a partially completed cleanup. Re-run

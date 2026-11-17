@@ -64,10 +64,13 @@ leaderboard row, so a live row does protect its current artifact. Passing an
 explicit `protected` set replaces that leaderboard-derived default; it does not
 add to it. A caller supplying the set must include every live leaderboard
 reference and every report-cited artifact it wants retained, or mark those IDs
-with `protect_evaluation_series` first. The report's own reference receives no
-separate automatic protection: once an entry is replaced or removed, its old
-series becomes unreferenced and can be pruned unless one of those protections
-names the artifact.
+with `protect_evaluation_series` first. That marker has no removal operation in
+the documented API and pruning always skips it; see the
+[series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for the
+retention consequence. The report's own reference receives no separate automatic
+protection: once an entry is replaced or removed, its old series becomes
+unreferenced and can be pruned unless one of those protections names the
+artifact.
 Reports do not read the series to recompute metrics: report generation snapshots
 the leaderboard reference without checking whether its artifact still exists or
 is intact. The artifact exists so a reader can later inspect the exact scored
