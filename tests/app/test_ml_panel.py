@@ -12,8 +12,11 @@ import pytest
 from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.ml_service import MLService
+from tradingdev.app.ml_surface import compare_market_evidence, dataset_context
 from tradingdev.domain.ml.features.registry import get_feature_set
+from tradingdev.domain.ml.leaderboard import LeaderboardEntry
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +118,11 @@ class TestBuildPanel:
         intersection = _build(service)["panel"]
         assert panel["n_dates"] == intersection["n_dates"] + len(_HOLE)
         assert panel["rows"] == 2 * panel["n_dates"]
+        frame = pd.read_parquet(panel["path"])
+        filled = frame.loc[frame["timestamp"] != frame["label_start"]]
+        assert len(filled) == len(_HOLE)
+        assert set(filled["symbol"]) == {"ETH/USDT"}
+        assert set(filled["raw_row"]) == {_HOLE.start - 1}
 
     def test_max_staleness_bounds_how_far_a_bar_travels(
         self, service: MLService
@@ -284,3 +292,32 @@ class TestPanelTrainingLoop:
                 record=record,
                 window=20,
             )
+
+
+def test_panel_membership_changes_the_saved_market_comparison(
+    service: MLService, workspace: WorkspacePaths
+) -> None:
+    _write_bars(workspace, "SOL/USDT")
+    store = MLDatasetStore(workspace.ml_datasets)
+    entries = []
+    for symbols, horizon in ((_SYMBOLS, 1), (["BTC/USDT", "SOL/USDT"], 3)):
+        panel = _build(service, symbols=symbols, horizon=horizon)["panel"]
+        dataset_id = panel["dataset_id"]
+        _, manifest = store.load(dataset_id)
+        entries.append(
+            LeaderboardEntry(
+                entry_id=dataset_id,
+                label=dataset_id,
+                dataset_id=dataset_id,
+                context=dataset_context(manifest, window=20, n_quantiles=5),
+                n_observations=manifest["rows"],
+                metrics={"ic_mean": 0.5},
+            )
+        )
+    comparison = compare_market_evidence(
+        entries, store, require_verified_baseline=False
+    )
+    assert comparison is not None
+    assert comparison["raw_baseline"]["status"] == "mismatch"
+    assert "symbol membership differs" in comparison["raw_baseline"]["reasons"][0]
+    assert comparison["evaluation_rows"]["status"] == "mismatch"

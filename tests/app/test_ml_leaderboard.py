@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,7 @@ import pytest
 from tests.data_cache import cached_market_path, seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.ml_service import MLService
 from tradingdev.domain.ml.evaluation import simulate_strategy_returns
 from tradingdev.domain.ml.leaderboard import (
@@ -640,8 +642,14 @@ class TestParameterSurface:
         board = service.leaderboard("ic_mean", allow_parameter_axes=True)
         assert board["n_candidates"] == 2
         assert board["parameter_axes"]["horizon"] == [1, 3]
-        assert any(
-            "raw-data equivalence is not verified" in item for item in board["caveats"]
+        comparison = board["market_comparison"]
+        assert comparison["raw_baseline"]["status"] == "verified"
+        assert comparison["evaluation_rows"]["status"] == "mismatch"
+        assert (
+            service.leaderboard(
+                "ic_mean", allow_parameter_axes=True, require_verified_baseline=True
+            )["market_comparison"]
+            == comparison
         )
         assert {row["dataset_id"] for row in board["ranked"]} == dataset_ids
         assert all(row["window"] == 20 for row in board["ranked"])
@@ -1010,3 +1018,111 @@ def test_surface_rejects_distinct_manifests_even_with_identical_data(
     assert len({entry.context.data_fingerprint for entry in entries}) == 1
     with pytest.raises(ValueError, match="different dataset versions"):
         service.leaderboard("ic_mean", allow_parameter_axes=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("provider", "provider differs"),
+        ("market", "effective market type differs"),
+        ("revision", "ordered OHLCV content or timestamps differ"),
+        ("gap", "raw bar count differs"),
+        ("symbol", "symbol membership differs"),
+        ("legacy", "lack saved raw market evidence"),
+    ],
+)
+def test_horizon_surface_retains_rankings_with_unverified_sources(
+    service: MLService, workspace: WorkspacePaths, change: str, reason: str
+) -> None:
+    first_id = _build(service)
+    _record(service, workspace, dataset_id=first_id, model_id=_GOOD_MODEL, quality=1.0)
+    bars_path = cached_market_path(workspace.processed_data)
+    bars = pd.read_parquet(bars_path)
+    if change == "market":
+        seed_market_cache(workspace.processed_data, bars, market_type="spot")
+    elif change == "revision":
+        # The named features ignore the open of this warm-up bar.
+        bars.loc[0, "open"] = bars["open"].to_numpy(dtype=float)[0] + 0.5
+        seed_market_cache(workspace.processed_data, bars)
+    elif change == "gap":
+        seed_market_cache(workspace.processed_data, bars.drop(index=10))
+
+    second = service.build_dataset(
+        symbol="ETH/USDT" if change == "symbol" else "BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        feature_set="returns",
+        horizon=3,
+        source="yahoo_finance" if change == "provider" else "binance_vision",
+        market_type="spot" if change == "market" else "futures/um",
+    )["dataset"]["dataset_id"]
+    if change == "legacy":
+        store = MLDatasetStore(workspace.ml_datasets)
+        frame, manifest = store.load(second)
+        legacy_path, legacy = store.save(
+            frame.drop(columns="raw_row"),
+            {
+                key: value
+                for key, value in manifest.items()
+                if key not in {"dataset_id", "raw_market", "evaluation_rows"}
+            },
+        )
+        second = legacy["dataset_id"]
+        legacy_before = (legacy_path.parent / "manifest.json").read_bytes()
+    realized = _returns(workspace, second)
+    service.evaluate_signal(
+        realized, realized, window=20, record=True, dataset_id=second
+    )
+
+    board = service.leaderboard_page(
+        "ic_mean", limit=1, allow_parameter_axes=True, allow_mixed=change == "symbol"
+    )
+    assert board["n_candidates"] == 2
+    assert len(board["ranked"]) == 1
+    status = "unknown" if change == "legacy" else "mismatch"
+    result = board["market_comparison"]["raw_baseline"]
+    assert result["status"] == status
+    assert any(reason in item for item in result["reasons"])
+    with pytest.raises(ValueError, match=f"raw market baseline is {status}"):
+        service.leaderboard("ic_mean", allow_mixed=True, require_verified_baseline=True)
+    if change == "legacy":
+        assert (legacy_path.parent / "manifest.json").read_bytes() == legacy_before
+
+
+@pytest.mark.parametrize("tamper", ["manifest", "parquet", "unreadable"])
+def test_horizon_surface_rejects_changed_saved_evidence(
+    service: MLService, workspace: WorkspacePaths, tamper: str
+) -> None:
+    for horizon in (1, 3):
+        built = service.build_dataset(
+            symbol="BTC/USDT",
+            timeframe="1h",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            feature_set="returns",
+            horizon=horizon,
+        )["dataset"]
+        realized = _returns(workspace, built["dataset_id"])
+        service.evaluate_signal(
+            realized, realized, window=20, record=True, dataset_id=built["dataset_id"]
+        )
+
+    directory = workspace.ml_datasets / built["dataset_id"]
+    if tamper == "manifest":
+        path = directory / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["raw_market"]["series"][0]["fingerprint"] = "f" * 64
+        path.write_text(json.dumps(manifest))
+        error = "metadata identity mismatch"
+    elif tamper == "parquet":
+        path = directory / "dataset.parquet"
+        path.write_bytes(path.read_bytes() + b"changed")
+        error = "content hash mismatch"
+    else:
+        path = directory / "dataset.parquet"
+        path.rename(directory / "original.parquet")
+        path.mkdir()
+        error = "cannot read saved dataset"
+    with pytest.raises(ValueError, match=error):
+        service.leaderboard("ic_mean", allow_mixed=True)

@@ -290,16 +290,15 @@ The response reports the qualified id, so
 `metric="ic_mean"` comes back as `metric="signal.ic_mean"`; the submitted spelling
 is not echoed. The two argument sets are exclusive: a signal ranking refuses
 `runs`, and a run ranking refuses `dataset_id`, `symbol`, `timeframe`, `horizon`,
-`feature_set`, `family`, `allow_mixed=True` and `allow_parameter_axes=True`, because
-one call ranks one
-source. Selecting the same measurement twice is refused as `duplicate_selections`,
+`feature_set`, `family`, and signal ranking options, including
+`require_verified_baseline=True`, because one call ranks one source. Selecting the same measurement twice is refused as `duplicate_selections`,
 in two layers. Identical requested pairs are refused before anything is loaded;
 differently spelled selections are compared after they load and resolve, which
 catches an omitted scope that names a scalar scope already selected. A selection
 that cannot be loaded is skipped before that second comparison, so two spellings of
 an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
 `run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
-and the stored value; `context`, `families` and `parameter_axes` are `null` —
+and the stored value; `context`, `families`, `parameter_axes` and `market_comparison` are `null` —
 present but not applicable, because a named selection has no evaluation context or
 method mix to report. An empty value would read as measured-and-nothing, which is a
 different claim. Every row reports `source`, and one response never mixes the two: a
@@ -327,8 +326,9 @@ After inspecting saved candidates, discover the `ml` section with
 or attach independent evidence to selected runs/a fixed comparison. The report
 uses the recorded candidates and never reruns prediction or training. Its default
 ranking metric is `ic_mean`; `ml_ranking_metric` selects another directed metric,
-and `ml_allow_parameter_axes=True` explicitly enables the same surface rules.
-Missing or incompatible evidence fails instead of silently dropping candidates.
+and the [report options](reports.md#composable-offline-reports) apply the same
+surface and baseline checks. The report freezes the structured verdict across
+the selected candidates at publication.
 Deliver the returned report link and navigation instructions. The artifact saves
 the selected content even if those leaderboard entries are later replaced; it
 does not prove a model-to-run relationship or persist missing time series. Full
@@ -470,7 +470,7 @@ publication and retention are defined in [Reports](reports.md#composable-offline
 
 ### Immutable Datasets
 
-`MLDatasetStore` publishes schema version 2 datasets as a complete directory
+ML builds publish schema version 3 datasets through `MLDatasetStore` as a complete directory
 containing `dataset.parquet` and `manifest.json`. The manifest records:
 
 - The single symbol or ordered panel symbols, timeframe, requested date range,
@@ -478,19 +478,39 @@ containing `dataset.parquet` and `manifest.json`. The manifest records:
   kind. The effective market is also returned in dataset and panel summaries.
 - Feature-set name, ordered feature columns, build-time feature-code fingerprint,
   label column, label horizon and dropped-row count.
+- `raw_market` records the pre-feature, pre-label input for each symbol,
+  including provider (`source`), effective market type, exact symbol, timeframe,
+  actual UTC bounds, raw row count and a content fingerprint. Panel receipts
+  use sorted symbols. The build response includes this evidence.
 - For panels, the calendar settings, coverage summary and date count. As in the
   tool response, dropped/missing date lists each contain at most 50 dates;
   `n_dropped_dates` and each `n_missing` remain exact.
 - `schema_version`, `rows`, the SHA-256 `content_hash` of the exact Parquet bytes,
   and `dataset_id`.
 
-The Parquet frame retains `label_start` and `label_end`: the original source-bar
-timestamps used to calculate each row's forward return, captured before feature
-rows are dropped or a panel calendar is aligned. Panel labels are computed on
-each symbol's own bars. Forward filling carries these timestamps together with
-the original label; it does not turn that label into a newly observed outcome
-at the filled calendar date. Fold validation refuses panels with carried
-observations and requires rebuilding with intersection or dropped missing dates.
+Raw evidence version 1 hashes the actual bars in input order, before dropping
+warm-up rows, labelling or aligning panels. The SHA-256 input starts with
+UTF-8 `tradingdev.ml.raw_market.v1` and a NUL byte. Each row then contributes
+48 little-endian bytes in order: `timestamp` as signed 64-bit UTC epoch
+nanoseconds, then `open, high, low, close, volume` as IEEE-754 binary64.
+Naive times are interpreted as UTC; missing or duplicate timestamps fail.
+Missing numeric values use the bit pattern `0x7ff8000000000000`. The hash
+preserves bar order and excludes the DataFrame index, provider metadata and
+file encoding. Provider and market type are compared as separate identity
+fields. The feature-cache key has its own format. Cache ingestion sorts by
+timestamp before building features, so a different file order that yields
+the same input bars has the same raw identity.
+
+The Parquet frame's `timestamp` is the evaluation coordinate. The zero-based
+`raw_row` identifies the symbol's original input bar; `label_start` and
+`label_end` hold the timestamps at `raw_row` and `raw_row + horizon`.
+A forward-filled panel row keeps all three source coordinates beside its
+aligned timestamp. Fold validation refuses panels with carried observations.
+The manifest's per-symbol `evaluation_rows` digest covers the ordered
+evaluation timestamp, label start timestamp and raw ordinal, as three
+little-endian int64 values per row with timestamps in UTC nanoseconds.
+The label endpoint is preserved in the Parquet and excluded from this digest
+so candidates with different horizons can share the same row coordinates.
 
 `dataset_id` is `ds_` followed by the first 16 hexadecimal characters of the
 SHA-256 of the sorted JSON manifest, excluding `dataset_id` itself. Thus metadata,
@@ -509,8 +529,9 @@ file remains available to coordinate later writers.
 Every dataset load validates the ID syntax, schema, manifest identity, Parquet
 content hash and row count before exposing a frame. Hashing and parsing use the
 same bytes. Missing, incomplete or altered versions fail rather than rebuilding
-silently. Earlier dataset schemas are unsupported and must be rebuilt; reads do
-not migrate, delete or rewrite their files. These hashes detect inconsistent
+silently. Schema 3 also checks the stored evidence and evaluation coordinates.
+Schema 2 remains readable and provides no raw evidence. Schemas older than 2
+require rebuilding; existing files are preserved. These hashes detect inconsistent
 content, not a writer able to replace both the manifest and its data.
 
 Schema 2 alone does not establish that label intervals are present. Fold
@@ -834,8 +855,8 @@ accepting an independent or truncated ranking. `alpha` sets the family-wise
 significance level. Duplicate entry IDs raise `ValueError`. Comparability uses
 the leaderboard rules: settings must match by default; pass
 `allow_parameter_axes=True` for a surface, which still requires one research
-identity and one dataset version per horizon. Cross-horizon source equivalence
-remains unverified and is disclosed in the caveats.
+identity and one dataset version per horizon. The application fixes the
+structured `market_comparison` verdict in the report and renders both checks.
 
 Signal metric definitions now carry the two fields a portfolio metric definition
 already had, `modes` and `requires_annualization`, so one definition shape
@@ -860,14 +881,28 @@ bypasses dataset verification.
 permits horizon, IC window and quantile count to differ under these constraints.
 Instrument or panel symbols, timeframe, period, feature set and code fingerprint
 must still match, and one horizon may hold only one dataset ID and content hash, because a new horizon
-rebuilds its labels on its own dataset. Across horizons, provider and underlying
-source-bar equivalence are not verified. Inspect dataset manifests and source
-data separately before treating the sweep as a controlled comparison; the tool
-reports this limitation in its caveats. A ranking across those axes describes a
-parameter surface, not one comparable measurement, so the response reports the
-observed values of each axis and appends a caveat saying so. Every row states its
-own horizon, window and quantile count, so a point on the surface is readable
-without a second lookup.
+rebuilds its labels on its own dataset. A ranking across axes describes a
+parameter surface. The response includes observed axes and each candidate's
+coordinates, including those with unavailable scores.
+
+On a cross-horizon ranking, `market_comparison` covers all selected candidates
+before paging, with separate `raw_baseline` and `evaluation_rows` results.
+Both give a status and reasons. `verified` means all candidates have matching
+evidence for that check. `mismatch` means known evidence differs, including
+provider, effective market type, bar content or symbol membership for the raw
+check. `unknown` means evidence is absent and no difference was established.
+An older entry without a raw evidence binding stays unknown. Reads use only
+the immutable dataset referenced by a bound entry and fail on missing, altered
+or inconsistent bound artifacts. Reads neither rebuild evidence nor access the
+market cache. Other rankings return `market_comparison: null` unless strict
+verification was requested.
+
+Permissive rankings show both outcomes without excluding unknown or mismatched
+raw data. `require_verified_baseline=True` requires a verified raw result even
+with `allow_mixed=True`. `allow_mixed` only relaxes ranking-context constraints.
+A verified baseline can coincide with different evaluation rows or label ends.
+The check establishes saved input identity and alignment only. Sample holdout
+and causal interpretation require separate evidence.
 
 Entry identity binds the producer source, dataset and evaluation context to the
 model ID, or to a named method's family/name/settings. Only unnamed candidates include a

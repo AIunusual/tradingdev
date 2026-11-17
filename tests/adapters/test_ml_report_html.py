@@ -242,8 +242,15 @@ def test_cross_horizon_caveats_and_selection_limits_are_visible() -> None:
         dataset_id="dataset-horizon-2",
     )
     payload = _payload(first, second)
+    payload["ml"]["market_comparison"] = {
+        "raw_baseline": {"status": "verified", "reasons": ["saved inputs match"]},
+        "evaluation_rows": {"status": "mismatch", "reasons": ["row origins differ"]},
+    }
     body = _body(render_report(payload, "ml-report"))
-    assert "跨 horizon 比較：來源與原始行情等價性未經驗證" in body
+    assert "共用原始行情基線" in body
+    assert "verified · saved inputs match" in body
+    assert "實際評估列一致性" in body
+    assert "mismatch · row origins differ" in body
     assert "排名本身不證明樣本外有效性" in body
     assert "排序位置依保存的排序順序；同分先後不代表顯著差異" in body
     for caveat in payload["ml"]["caveats"]:

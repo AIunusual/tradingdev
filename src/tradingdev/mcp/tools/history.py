@@ -223,6 +223,8 @@ def register(
         ml_entry_ids: list[str] | None = None,
         ml_ranking_metric: str = "ic_mean",
         ml_allow_parameter_axes: bool = False,
+        ml_allow_mixed: bool = False,
+        ml_require_verified_baseline: bool = False,
     ) -> ReportResponse | ErrorResponse:
         """Render saved evidence: run_ids (1..8), comparison_job_id, or ML entries.
 
@@ -230,7 +232,9 @@ def register(
         accompany either: select 1..50 distinct ml_entry_ids from leaderboard or
         recorded evaluate_signal results; never infer model/run associations.
         ML is cost-free signal research, not a backtest; unsaved prediction/IC series
-        are not reconstructed. Parameter-axis ranking requires explicit opt-in.
+        are not reconstructed. Use ml_allow_parameter_axes for a parameter sweep.
+        The report freezes the same market checks as leaderboard; strict baseline
+        and mixed-context display use the corresponding ml_ options.
         A comparison needs a terminal job and complete ledger; every candidate,
         including failed/cancelled/not_run reasons, remains visible with any sections.
         Use its parent job ID even when zero candidates succeeded.
@@ -263,6 +267,8 @@ def register(
             ml_entry_ids=ml_entry_ids,
             ml_ranking_metric=ml_ranking_metric,
             ml_allow_parameter_axes=ml_allow_parameter_axes,
+            ml_allow_mixed=ml_allow_mixed,
+            ml_require_verified_baseline=ml_require_verified_baseline,
         )
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)

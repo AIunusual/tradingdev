@@ -12,6 +12,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.ml.leaderboard import ProducerSource
+from tradingdev.domain.ml.market_evidence import MarketComparison, RawMarketEvidence
 
 
 class FeatureSetSummary(ContractModel):
@@ -337,6 +338,8 @@ class LeaderboardResponse(ContractModel):
     The grid coordinates behind the ranking: when an axis holds more than one
     value the rows span a parameter surface rather than one measurement.
     """
+    market_comparison: MarketComparison | None = None
+    """Signal only: evidence across all candidates for a sweep or strict check."""
     ranked: list[RankedRow]
     skipped: list[SkippedRow]
     caveats: list[str]
@@ -428,6 +431,7 @@ class PanelSummary(ContractModel):
     label_column: str
     calendar: CalendarSummary
     content_hash: str
+    raw_market: RawMarketEvidence
     path: str
     features_from_cache: bool
     """True when every symbol's features came from a verified cache entry."""
@@ -465,6 +469,7 @@ class DatasetSummary(ContractModel):
     feature_columns: list[str]
     label_column: str
     content_hash: str
+    raw_market: RawMarketEvidence
     path: str
     features_from_cache: bool
     """True when the feature matrix was reused instead of recomputed.

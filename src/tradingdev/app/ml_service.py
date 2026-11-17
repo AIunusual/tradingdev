@@ -19,6 +19,11 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
+from tradingdev.app.ml_surface import (
+    compare_market_evidence,
+    dataset_context,
+    validate_dataset_context,
+)
 from tradingdev.app.ml_training import MLTrainingService
 from tradingdev.domain.data.cache import DataIdentity
 from tradingdev.domain.data.crawlers.registry import describe_sources
@@ -53,7 +58,6 @@ from tradingdev.domain.ml.features.registry import (
 )
 from tradingdev.domain.ml.leaderboard import (
     METHOD_FAMILIES,
-    EvaluationContext,
     LeaderboardEntry,
     MethodIdentity,
     ProducerSource,
@@ -66,6 +70,11 @@ from tradingdev.domain.ml.leaderboard import (
     resolve_method,
     signal_fingerprint,
     surface_caveats,
+)
+from tradingdev.domain.ml.market_evidence import (
+    OHLCV_COLUMNS,
+    RAW_MARKET_VERSION,
+    raw_market_series,
 )
 from tradingdev.domain.ml.models.registry import (
     RegisteredModelKind,
@@ -101,6 +110,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from tradingdev.domain.ml.calendar import PanelAlignment
+    from tradingdev.domain.ml.market_evidence import RawMarketSeries
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
@@ -112,6 +122,7 @@ class LabelledFrame:
     frame: pd.DataFrame
     dropped_rows: int
     features_from_cache: bool
+    raw_market: RawMarketSeries
 
 
 _PROCESSOR_TYPES = [
@@ -129,7 +140,6 @@ _PROCESSOR_TYPES = [
 
 # Filesystem IDs must match literal shapes to prevent path traversal.
 _MODEL_ID = re.compile(r"^[0-9a-f]{16}$")
-_OHLCV_COLUMNS = ("timestamp", "open", "high", "low", "close", "volume")
 # Keep exact missing-date counts, but cap the response listing.
 _MAX_REPORTED_DATES = 50
 
@@ -260,10 +270,13 @@ _ML_GUIDANCE = {
         "the score is in-sample when the model produced the signal, and inequality "
         "proves nothing. allow_mixed permits incompatible "
         "contexts but does not make them comparable; allow_parameter_axes "
-        "relaxes window, horizon and n_quantiles within the saved identity, "
-        "without verifying shared source bars across horizons. This ranks a "
-        "sensitivity surface and must not be read as one comparable "
-        "measurement. A candidate with no finite score is still recorded, and "
+        "relaxes window, horizon and n_quantiles within the saved identity. "
+        "Cross-horizon market_comparison checks the saved raw baseline and "
+        "evaluation rows separately. Each reports verified, mismatch or unknown "
+        "with reasons. require_verified_baseline=True requires verified raw "
+        "evidence, even with allow_mixed=True. Equal inputs can still produce "
+        "different evaluation rows or label endpoints. A candidate with no finite "
+        "score is still recorded, and "
         "its skipped row carries its window, horizon and n_quantiles, so the "
         "grid keeps the point where it failed instead of joining its "
         "neighbours. Ranking and selection caveats cover all candidates, even "
@@ -660,18 +673,7 @@ class MLService:
         if model_id is not None and not _MODEL_ID.match(model_id):
             raise ValueError(f"malformed model_id: {model_id}")
 
-        context = EvaluationContext(
-            symbol=self._manifest_symbol(manifest),
-            timeframe=str(manifest["timeframe"]),
-            start_date=str(manifest["start_date"]),
-            end_date=str(manifest["end_date"]),
-            horizon=horizon,
-            window=window,
-            n_quantiles=n_quantiles,
-            feature_set=str(manifest["feature_set"]),
-            code_fingerprint=str(manifest["code_fingerprint"]),
-            data_fingerprint=str(manifest["content_hash"]),
-        )
+        context = dataset_context(manifest, window=window, n_quantiles=n_quantiles)
         # Every measured metric is stored, including the ones that failed. A
         # NaN or Inf becomes an explicit None so the candidate keeps its
         # coordinates on the parameter grid: dropping the key would let a later
@@ -727,15 +729,6 @@ class MLService:
             "producer_source": producer_source.value,
         }
 
-    @staticmethod
-    def _manifest_symbol(manifest: dict[str, Any]) -> str:
-        """The instrument label of a dataset, including panels."""
-        symbol = manifest.get("symbol")
-        if symbol:
-            return str(symbol)
-        symbols = manifest.get("symbols") or []
-        return ",".join(str(item) for item in symbols)
-
     def _candidate_identity(
         self, model_id: str | None, fingerprint: str, identity: MethodIdentity
     ) -> tuple[str, dict[str, Any], str]:
@@ -782,6 +775,7 @@ class MLService:
         top_k: int | None = None,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
         """Rank recorded evaluations using the metric's declared direction.
 
@@ -790,8 +784,9 @@ class MLService:
         contexts raise ``ValueError`` unless ``allow_mixed`` is enabled; that
         opt-in does not make their measurements comparable.
         ``allow_parameter_axes`` permits the sweepable settings (window,
-        horizon, n_quantiles) to differ within the saved identity;
-        cross-horizon source-bar equivalence is unverified. Invalid metrics,
+        horizon, n_quantiles) to differ within the saved identity.
+        Cross-horizon rankings report raw market and evaluation row checks.
+        Invalid metrics,
         datasets, families or empty results also fail. Returns a
         ``LeaderboardResponse`` payload.
 
@@ -816,37 +811,24 @@ class MLService:
         )
         if manifest is not None:
             for entry in entries:
-                expected = EvaluationContext(
-                    symbol=self._manifest_symbol(manifest),
-                    timeframe=str(manifest["timeframe"]),
-                    start_date=str(manifest["start_date"]),
-                    end_date=str(manifest["end_date"]),
-                    horizon=int(manifest["horizon"]),
-                    window=entry.context.window,
-                    n_quantiles=entry.context.n_quantiles,
-                    feature_set=str(manifest["feature_set"]),
-                    code_fingerprint=str(manifest["code_fingerprint"]),
-                    data_fingerprint=str(manifest["content_hash"]),
-                )
-                if entry.context != expected or entry.n_observations != int(
-                    manifest["rows"]
-                ):
-                    raise ValueError(
-                        "recorded evaluation context does not match dataset_id "
-                        f"{dataset_id}: {entry.entry_id}"
-                    )
+                validate_dataset_context(entry, manifest)
         if not entries:
             raise ValueError(
                 "no recorded evaluations; call evaluate_signal with record=True first"
             )
         axes = parameter_axes(entries)
-        if not allow_mixed:
-            mismatch = comparability_error(
-                entries, allow_parameter_axes=allow_parameter_axes
-            )
-            if mismatch:
-                raise ValueError(mismatch)
+        mismatch = comparability_error(
+            entries, allow_parameter_axes=allow_parameter_axes
+        )
+        if mismatch and not allow_mixed:
+            raise ValueError(mismatch)
 
+        market_comparison = compare_market_evidence(
+            entries,
+            MLDatasetStore(self._workspace.ml_datasets),
+            require_verified_baseline=require_verified_baseline,
+            manifest=manifest,
+        )
         result = rank_entries(entries, metric, top_k=top_k)
         ranked = [
             {
@@ -880,7 +862,9 @@ class MLService:
         ]
         contexts = sorted({entry.context.describe() for entry in entries})
         caveats = list(result.caveats)
-        caveats.extend(surface_caveats(axes))
+        caveats.extend(
+            surface_caveats(axes, incompatible_contexts=mismatch is not None)
+        )
         return {
             "success": True,
             "source": "signal",
@@ -891,6 +875,7 @@ class MLService:
             "context": contexts[0] if len(contexts) == 1 else "mixed",
             "families": family_counts(entries),
             "parameter_axes": axes,
+            "market_comparison": market_comparison,
             "ranked": ranked,
             "skipped": [
                 {
@@ -928,6 +913,7 @@ class MLService:
         limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
         """Page output only after ranking and comparing the full candidate set."""
         if type(offset) is not int or offset < 0:
@@ -944,6 +930,7 @@ class MLService:
             family=family,
             allow_mixed=allow_mixed,
             allow_parameter_axes=allow_parameter_axes,
+            require_verified_baseline=require_verified_baseline,
         )
         ranked, skipped = result["ranked"], result["skipped"]
         total = max(len(ranked), len(skipped))
@@ -974,6 +961,7 @@ class MLService:
         limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
         """Return the shared ranking shape for recorded signal evaluations.
 
@@ -994,6 +982,7 @@ class MLService:
             limit=limit,
             allow_mixed=allow_mixed,
             allow_parameter_axes=allow_parameter_axes,
+            require_verified_baseline=require_verified_baseline,
         )
         return {
             **payload,
@@ -1047,20 +1036,17 @@ class MLService:
                 "start_date": start_date,
                 "end_date": end_date,
                 "source": source,
-                "market_type": self._market_identity(
-                    source,
-                    market_type,
-                    timeframe,
-                    start_date,
-                    end_date,
-                    symbol,
-                ).market_type,
+                "market_type": labelled.raw_market["market_type"],
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
                 "code_fingerprint": self._code_fingerprint(),
                 "label_column": "target",
                 "horizon": horizon,
                 "dropped_rows": int(dropped_rows),
+                "raw_market": {
+                    "version": RAW_MARKET_VERSION,
+                    "series": [labelled.raw_market],
+                },
             },
         )
         dataset_id = manifest["dataset_id"]
@@ -1083,6 +1069,7 @@ class MLService:
                 "feature_columns": feature_columns,
                 "label_column": "target",
                 "content_hash": content_hash,
+                "raw_market": manifest["raw_market"],
                 "path": str(parquet_path),
                 # Cache-hit status must not change dataset identity.
                 "features_from_cache": labelled.features_from_cache,
@@ -1122,6 +1109,7 @@ class MLService:
         entry = self._feature_set(feature_set)
 
         frames: dict[str, pd.DataFrame] = {}
+        raw_series: list[RawMarketSeries] = []
         dropped_rows = 0
         features_from_cache = True
         for symbol in ordered:
@@ -1139,6 +1127,7 @@ class MLService:
             # A panel is cached only when every symbol is a hit.
             features_from_cache = features_from_cache and labelled.features_from_cache
             frames[symbol] = labelled.frame.set_index("timestamp")
+            raw_series.append(labelled.raw_market)
 
         alignment = align_frames(
             frames, mode=mode, policy=policy, max_staleness=max_staleness
@@ -1168,14 +1157,7 @@ class MLService:
                 "start_date": start_date,
                 "end_date": end_date,
                 "source": source,
-                "market_type": self._market_identity(
-                    source,
-                    market_type,
-                    timeframe,
-                    start_date,
-                    end_date,
-                    symbol,
-                ).market_type,
+                "market_type": raw_series[0]["market_type"],
                 "feature_set": feature_set,
                 "feature_columns": feature_columns,
                 "code_fingerprint": self._code_fingerprint(),
@@ -1184,6 +1166,7 @@ class MLService:
                 "n_dates": int(alignment.calendar.n_dates),
                 "dropped_rows": int(dropped_rows),
                 "calendar": calendar,
+                "raw_market": {"version": RAW_MARKET_VERSION, "series": raw_series},
             },
         )
         dataset_id = manifest["dataset_id"]
@@ -1209,6 +1192,7 @@ class MLService:
                 "label_column": "target",
                 "calendar": calendar,
                 "content_hash": content_hash,
+                "raw_market": manifest["raw_market"],
                 "path": str(parquet_path),
                 "features_from_cache": features_from_cache,
             },
@@ -1466,52 +1450,41 @@ class MLService:
             market_type=market_type,
         )
         frame = loaded.frame.reset_index(drop=True)
-        missing = [column for column in _OHLCV_COLUMNS if column not in frame.columns]
+        missing = [column for column in OHLCV_COLUMNS if column not in frame.columns]
         if missing:
             raise ValueError(f"cached data is missing columns: {', '.join(missing)}")
         return frame
 
     def _feature_frame(
         self,
+        bars: pd.DataFrame,
         *,
         symbol: str,
         timeframe: str,
-        start_date: str,
-        end_date: str,
         entry: FeatureSet,
-        source: str,
-        market_type: str,
     ) -> tuple[pd.DataFrame, bool]:
         """Return bars plus features and a cache-hit flag.
 
         Cache features before labelling so the same matrix serves all horizons.
         """
-        bars = self._cached_bars(
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            source=source,
-            market_type=market_type,
-        )
         identity = FeatureCacheIdentity(
             symbol=symbol,
             timeframe=timeframe,
             # Hash bar values in fixed column order, independent of file encoding.
-            data_fingerprint=data_fingerprint(bars.loc[:, list(_OHLCV_COLUMNS)]),
+            data_fingerprint=data_fingerprint(bars.loc[:, list(OHLCV_COLUMNS)]),
             feature_set=entry.name,
             code_fingerprint=self._code_fingerprint(),
         )
         cached = self._feature_cache.load(identity, feature_columns=entry.columns)
-        if cached is not None:
-            return cached.reset_index(drop=True), True
-
-        features = entry.build(bars)
+        features = (
+            entry.build(bars) if cached is None else cached.reset_index(drop=True)
+        )
         frame = bars.copy()
         for column in entry.columns:
             frame[column] = features[column]
-        self._feature_cache.save(identity, frame, feature_columns=entry.columns)
-        return frame, False
+        if cached is None:
+            self._feature_cache.save(identity, frame, feature_columns=entry.columns)
+        return frame, cached is not None
 
     def _symbol_frame(
         self,
@@ -1526,16 +1499,24 @@ class MLService:
         market_type: str,
     ) -> LabelledFrame:
         """Label one symbol before panel alignment, dropping incomplete rows."""
-        frame, features_from_cache = self._feature_frame(
+        bars = self._cached_bars(
             symbol=symbol,
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
-            entry=entry,
             source=source,
             market_type=market_type,
         )
-        dataset = frame.copy()
+        raw_market = raw_market_series(
+            bars,
+            self._market_identity(
+                source, market_type, timeframe, start_date, end_date, symbol
+            ),
+        )
+        dataset, features_from_cache = self._feature_frame(
+            bars, symbol=symbol, timeframe=timeframe, entry=entry
+        )
+        dataset["raw_row"] = np.arange(len(bars), dtype=np.int64)
         forward = forward_returns(dataset["close"], horizon)
         # Keep returns for evaluation; training selects declared features only.
         dataset["forward_return"] = forward
@@ -1554,6 +1535,7 @@ class MLService:
             frame=dataset,
             dropped_rows=dropped_rows,
             features_from_cache=features_from_cache,
+            raw_market=raw_market,
         )
 
     @staticmethod

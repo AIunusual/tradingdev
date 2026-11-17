@@ -71,10 +71,23 @@ def test_label_intervals_keep_original_symbol_dates_before_panel_alignment(
         ("ETH/USDT", pd.read_parquet(single["path"])),
         *((str(symbol), group) for symbol, group in panel_frame.groupby("symbol")),
     ]
+    assert [series["symbol"] for series in panel["raw_market"]["series"]] == sorted(
+        SYMBOLS
+    )
+    assert single["raw_market"]["series"][0] == next(
+        series
+        for series in panel["raw_market"]["series"]
+        if series["symbol"] == "ETH/USDT"
+    )
     observed_gap = False
     for symbol, dataset in groups:
         source = pd.read_parquet(
             cached_market_path(workspace.processed_data, symbol=symbol)
+        )
+        pd.testing.assert_series_equal(
+            dataset["label_start"].reset_index(drop=True),
+            source["timestamp"].iloc[dataset["raw_row"]].reset_index(drop=True),
+            check_names=False,
         )
         expected_ends = pd.Series(
             source["timestamp"].shift(-3).to_numpy(), index=source["timestamp"]

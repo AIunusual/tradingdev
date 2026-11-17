@@ -118,6 +118,8 @@ class ReportService:
         ml_entry_ids: list[str] | None = None,
         ml_ranking_metric: str = "ic_mean",
         ml_allow_parameter_axes: bool = False,
+        ml_allow_mixed: bool = False,
+        ml_require_verified_baseline: bool = False,
     ) -> dict[str, Any]:
         """Publish runs, a finalized comparison and/or selected saved ML evidence.
 
@@ -127,7 +129,11 @@ class ReportService:
         """
         try:
             validate_ml_selection(
-                ml_entry_ids, ml_ranking_metric, ml_allow_parameter_axes
+                ml_entry_ids,
+                ml_ranking_metric,
+                ml_allow_parameter_axes,
+                allow_mixed=ml_allow_mixed,
+                require_verified_baseline=ml_require_verified_baseline,
             )
         except MLReportError as exc:
             return _error(exc.code, str(exc))
@@ -224,6 +230,8 @@ class ReportService:
                     ml_entry_ids,
                     metric=ml_ranking_metric,
                     allow_parameter_axes=ml_allow_parameter_axes,
+                    allow_mixed=ml_allow_mixed,
+                    require_verified_baseline=ml_require_verified_baseline,
                 )
             payload["sections"] = list(selected)
             if interpretation is not None:

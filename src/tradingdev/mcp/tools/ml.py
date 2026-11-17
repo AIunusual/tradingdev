@@ -295,6 +295,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         limit: int = 20,
         allow_mixed: bool = False,
         allow_parameter_axes: bool = False,
+        require_verified_baseline: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
         """Rank recorded evaluations or saved run scopes on one metric.
 
@@ -305,7 +306,8 @@ def register(mcp: MCPServer, service: MLService) -> None:
         get_ml_contract; choose run metrics and their declared directions from
         get_metric_catalog, which get_ml_contract does not list. Omitting family
         ranks every method together and reports the mix.
-        Filters, allow_mixed and allow_parameter_axes apply only to signal rankings.
+        Signal-only filters and options include require_verified_baseline, which
+        requires matching saved raw market inputs across the selected candidates.
         Follow next_offset; inspect caveats before believing the first row.
         """
         try:
@@ -326,6 +328,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
                 limit=limit,
                 allow_mixed=allow_mixed,
                 allow_parameter_axes=allow_parameter_axes,
+                require_verified_baseline=require_verified_baseline,
             )
         except (ValueError, TypeError) as exc:
             return ErrorResponse(

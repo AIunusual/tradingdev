@@ -327,6 +327,17 @@ class TestReportBlock:
         with pytest.raises(ValueError, match="different dataset versions"):
             ml_report_block(entries, "ic_mean", allow_parameter_axes=True)
 
+    def test_mixed_display_preserves_the_comparability_caveat_on_one_axis(self) -> None:
+        first = _entry("a", ic_mean=0.1)
+        second = replace(_entry("b", ic_mean=0.2), dataset_id="rebuilt")
+        block = ml_report_block(
+            [first, second], "ic_mean", allow_parameter_axes=True, allow_mixed=True
+        )
+        assert block["ranking"]["ranked_scope_ids"] == ["b", "a"]
+        assert any(
+            "incompatible measurement contexts" in note for note in block["caveats"]
+        )
+
     def test_duplicate_candidate_ids_are_rejected(self) -> None:
         entries = [_entry("a", ic_mean=0.1), _entry("a", ic_mean=0.2)]
         with pytest.raises(ValueError, match="unique"):
@@ -427,22 +438,6 @@ class TestReportBlock:
         assert not any(
             "more than one evaluation setting" in text for text in block["caveats"]
         )
-
-    def test_a_horizon_sweep_carries_the_provenance_caveat(self) -> None:
-        # A surface may span horizons, but nothing verified that the source
-        # bars match, so the block must say so rather than imply control.
-        block = self._block(
-            _entry("a", horizon=1, ic_mean=0.05),
-            _entry("b", horizon=3, ic_mean=0.02),
-        )
-        assert any("cross-horizon source" in text for text in block["caveats"])
-
-    def test_one_horizon_needs_no_provenance_caveat(self) -> None:
-        block = self._block(
-            _entry("a", horizon=1, ic_mean=0.05),
-            _entry("b", horizon=1, ic_mean=0.02),
-        )
-        assert not any("cross-horizon source" in text for text in block["caveats"])
 
     def test_the_block_encodes_with_the_report_encoder(self) -> None:
         # The report hashes its payload with allow_nan=False; a None must

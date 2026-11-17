@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
     from tradingdev.domain.ml.leaderboard import LeaderboardEntry
 
-ML_REPORT_SCHEMA_VERSION = 1
+ML_REPORT_SCHEMA_VERSION = 2
 ML_SIGNAL_KIND = "ml_signal"
 ML_SIGNAL_MODE = "signal"
 ML_SAMPLE_PROVENANCE_NOTE = (
@@ -89,6 +89,7 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "feature_set": context.feature_set,
             "code_fingerprint": context.code_fingerprint,
             "data_fingerprint": context.data_fingerprint,
+            "raw_market_version": context.raw_market_version,
         },
         # A signal evaluation records no orders and no equity curve, so there
         # is nothing to observe. Saying so is different from omitting the key.
@@ -102,6 +103,7 @@ def ml_report_block(
     *,
     alpha: float = 0.05,
     allow_parameter_axes: bool = False,
+    allow_mixed: bool = False,
 ) -> dict[str, Any]:
     """The whole signal-evidence block: every candidate, ranked or failed.
 
@@ -113,15 +115,14 @@ def ml_report_block(
     ordered = tuple(entries)
     if len({entry.entry_id for entry in ordered}) != len(ordered):
         raise ValueError("Report candidates must have unique entry IDs")
-    if mismatch := comparability_error(
-        ordered, allow_parameter_axes=allow_parameter_axes
-    ):
+    mismatch = comparability_error(ordered, allow_parameter_axes=allow_parameter_axes)
+    if mismatch and not allow_mixed:
         raise ValueError(mismatch)
     result = rank_entries(ordered, metric, alpha=alpha)
     metric_ids = sorted({key for entry in ordered for key in entry.metrics})
     axes = parameter_axes(ordered)
     caveats = list(result.caveats)
-    caveats.extend(surface_caveats(axes))
+    caveats.extend(surface_caveats(axes, incompatible_contexts=mismatch is not None))
     return {
         "schema_version": ML_REPORT_SCHEMA_VERSION,
         "kind": ML_SIGNAL_KIND,

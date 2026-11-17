@@ -16,6 +16,8 @@ class _ReportOptions(TypedDict, total=False):
     ml_entry_ids: list[str]
     ml_ranking_metric: str
     ml_allow_parameter_axes: bool
+    ml_allow_mixed: bool
+    ml_require_verified_baseline: bool
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -33,6 +35,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--ml-ranking-metric", default=None)
     parser.add_argument("--ml-allow-parameter-axes", action="store_true")
+    parser.add_argument("--ml-allow-mixed", action="store_true")
+    parser.add_argument("--ml-require-verified-baseline", action="store_true")
     parser.add_argument(
         "--sections",
         nargs="*",
@@ -81,6 +85,10 @@ def main(argv: list[str] | None = None) -> None:
         options["ml_ranking_metric"] = args.ml_ranking_metric
     if args.ml_allow_parameter_axes:
         options["ml_allow_parameter_axes"] = True
+    if args.ml_allow_mixed:
+        options["ml_allow_mixed"] = True
+    if args.ml_require_verified_baseline:
+        options["ml_require_verified_baseline"] = True
     result = ReportService(workspace=WorkspacePaths(args.workspace)).generate_report(
         args.run_ids,
         sections=args.sections,

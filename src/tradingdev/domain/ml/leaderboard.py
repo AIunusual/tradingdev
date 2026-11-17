@@ -99,6 +99,8 @@ class EvaluationContext:
     """Fingerprint of the feature code that built them; ``""`` when unknown."""
     data_fingerprint: str = ""
     """Content hash of the measured dataset; ``""`` when no dataset is bound."""
+    raw_market_version: int | None = None
+    """Version of raw market evidence in the manifest bound by dataset_id."""
 
     @property
     def key(self) -> str:
@@ -307,6 +309,11 @@ class LeaderboardEntry:
                 "feature_set": self.context.feature_set,
                 "code_fingerprint": self.context.code_fingerprint,
                 "data_fingerprint": self.context.data_fingerprint,
+                **(
+                    {"raw_market_version": self.context.raw_market_version}
+                    if self.context.raw_market_version is not None
+                    else {}
+                ),
             },
         }
 
@@ -329,6 +336,7 @@ class LeaderboardEntry:
             feature_set=str(raw_context.get("feature_set", "")),
             code_fingerprint=str(raw_context.get("code_fingerprint", "")),
             data_fingerprint=str(raw_context.get("data_fingerprint", "")),
+            raw_market_version=raw_context.get("raw_market_version"),
         )
         raw_metrics = record.get("metrics")
         if not isinstance(raw_metrics, Mapping):
@@ -593,8 +601,7 @@ def _examples(groups: Mapping[str, LeaderboardEntry]) -> str:
 def _surface_error(entries: Sequence[LeaderboardEntry]) -> str | None:
     """Why a parameter surface cannot be read, or ``None`` when it can.
 
-    A surface may span datasets across horizons; common source-bar provenance
-    is not verified by this context. Within one horizon the data must be a
+    A surface may span datasets across horizons. Within one horizon the data must be a
     single dataset version, so a rebuilt or corrected dataset is never averaged
     into the same row of the grid.
     """
@@ -667,26 +674,26 @@ def parameter_axes(entries: Sequence[LeaderboardEntry]) -> dict[str, list[int]]:
     return axes
 
 
-def surface_caveats(axes: dict[str, list[int]]) -> tuple[str, ...]:
+def surface_caveats(
+    axes: dict[str, list[int]], *, incompatible_contexts: bool = False
+) -> tuple[str, ...]:
     """The warnings a ranking needs once it spans more than one setting.
 
     Lives here rather than in a caller so every reader of the same axes gets
-    the same words: a ranking over a grid is not one comparable measurement,
-    and a sweep across horizons does not verify that the source bars match.
+    the same words: a ranking over a grid is not one comparable measurement.
     """
     caveats: list[str] = []
+    if incompatible_contexts:
+        caveats.append(
+            "mixed ranking includes incompatible measurement contexts; "
+            "interpret ranks as display order only"
+        )
     spanned = {name: values for name, values in axes.items() if len(values) > 1}
     if spanned:
         described = ", ".join(f"{name}={values}" for name, values in spanned.items())
         caveats.append(
             f"candidates span more than one evaluation setting ({described}); "
             "the ranking describes a parameter surface, not one comparable measurement"
-        )
-    if len(axes.get("horizon", ())) > 1:
-        caveats.append(
-            "cross-horizon source and raw-data equivalence is not verified; "
-            "check dataset manifests and source bars before treating the "
-            "surface as a controlled comparison"
         )
     return tuple(caveats)
 
