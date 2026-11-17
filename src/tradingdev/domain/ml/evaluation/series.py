@@ -347,6 +347,11 @@ def verify_series(bundle: EvaluationSeriesBundle) -> None:
             raise ValueError(
                 "evaluation series source rows are not in their original order"
             )
+        stamps = pd.to_datetime(bundle.frame["timestamp"], utc=True)
+        if not stamps.is_unique or not stamps.is_monotonic_increasing:
+            raise ValueError(
+                "evaluation series timestamps are not in chronological order"
+            )
         for reason, pearson, spearman in zip(
             bundle.frame["availability_reason"],
             bundle.frame["pearson_ic"],

@@ -1039,6 +1039,17 @@ class MLService:
                 f"evaluation series {artifact_id} is unavailable"
             ) from error
 
+    def evaluation_series_rows_page(
+        self, artifact_id: str, *, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        """Read one artifact's rows in pages that reassemble to the export."""
+        try:
+            return self.series_store.rows_page(artifact_id, offset=offset, limit=limit)
+        except FileNotFoundError as error:
+            raise ValueError(
+                f"evaluation series {artifact_id} is unavailable"
+            ) from error
+
     def cleanup_evaluation_series(
         self, *, protected: Sequence[str] | None = None
     ) -> dict[str, Any]:
@@ -1057,6 +1068,12 @@ class MLService:
             "removed": removed,
             "protected_count": len(referenced),
         }
+
+    def protect_evaluation_series(self, artifact_ids: Sequence[str]) -> int:
+        """Keep artifacts cited by a saved report out of later cleanup."""
+        for artifact_id in artifact_ids:
+            self.series_store.protect(artifact_id)
+        return len(set(artifact_ids))
 
     def rank_signal_candidates(
         self,

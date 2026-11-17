@@ -72,7 +72,11 @@ def test_saved_series_matches_the_dataset_rows_independently(
         record=True,
     )
     artifact_id = recorded["series_artifact_id"]
+    assert recorded["producer_source"] == "caller_array"
     exported = service.evaluation_series_export(str(artifact_id))
+    assert exported["manifest"]["producer_source"] == "caller_array"
+    assert exported["manifest"]["training_status"] == "no_fitting"
+    assert exported["manifest"]["holdout_relationship"] == "not_applicable"
 
     rows = exported["rows"]
     assert len(rows) == len(frame)

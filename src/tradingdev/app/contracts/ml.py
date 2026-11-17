@@ -660,5 +660,31 @@ class EvaluationSeriesExportResponse(ContractModel):
     rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow]
 
 
+class EvaluationSeriesReadResponse(ContractModel):
+    """One bounded read surface: artifact discovery or one artifact's rows."""
+
+    success: Literal[True]
+    mode: Literal["discovery", "rows"]
+    total: int
+    offset: int
+    next_offset: int | None
+    items: list[EvaluationSeriesSummary] = Field(default_factory=list)
+    artifact_id: str | None = None
+    manifest: dict[str, JsonValue] | None = None
+    rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def one_mode_only(self) -> Self:
+        """A page cannot mix artifact summaries with another artifact's rows."""
+        if self.mode == "discovery":
+            if self.artifact_id or self.manifest is not None or self.rows:
+                raise ValueError("a discovery page cannot carry row data")
+        elif not self.artifact_id or self.manifest is None or self.items:
+            raise ValueError("a row page needs its artifact and manifest")
+        return self
+
+
 class MlContractError(ErrorResponse):
     """Invalid ML request (e.g. mismatched or too-short signal arrays)."""

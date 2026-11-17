@@ -11,7 +11,7 @@ from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
     BuildPanelResponse,
     EvaluationSeriesExportResponse,
-    EvaluationSeriesPageResponse,
+    EvaluationSeriesReadResponse,
     LeaderboardPageResponse,
     MlContractError,
     MlContractResponse,
@@ -338,17 +338,27 @@ def register(mcp: MCPServer, service: MLService) -> None:
 
     @mcp.tool(annotations=read_only)
     def get_evaluation_series_page(
+        artifact_id: str | None = None,
         offset: int = 0,
         limit: int = 50,
-    ) -> EvaluationSeriesPageResponse | ErrorResponse:
-        """List saved series pages; follow next_offset."""
+    ) -> EvaluationSeriesReadResponse | ErrorResponse:
+        """Page artifact summaries, or one artifact's rows by artifact_id."""
         try:
-            result = service.evaluation_series_page(offset=offset, limit=limit)
-        except (ValueError, TypeError) as exc:
-            return ErrorResponse(
-                success=False, error=str(exc), code="invalid_series_request"
+            if artifact_id is None:
+                result = service.evaluation_series_page(offset=offset, limit=limit)
+                return EvaluationSeriesReadResponse.model_validate(
+                    {"success": True, "mode": "discovery", **result}
+                )
+            rows = service.evaluation_series_rows_page(
+                artifact_id, offset=offset, limit=limit
             )
-        return EvaluationSeriesPageResponse.model_validate({"success": True, **result})
+            return EvaluationSeriesReadResponse.model_validate(
+                {"success": True, "mode": "rows", "artifact_id": artifact_id, **rows}
+            )
+        except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
+            return ErrorResponse(
+                success=False, error=str(exc), code="series_unavailable"
+            )
 
     @mcp.tool(annotations=read_only)
     def export_evaluation_series(

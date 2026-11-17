@@ -36,6 +36,8 @@ class EvaluationSeriesStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._artifacts = self.root / "artifacts"
         self._artifacts.mkdir(parents=True, exist_ok=True)
+        self._protected = self.root / "protected"
+        self._protected.mkdir(parents=True, exist_ok=True)
         self._lock = FileLock(
             self.root / ".evaluation-series.lock", timeout=lock_timeout
         )
@@ -138,6 +140,27 @@ class EvaluationSeriesStore:
             "next_offset": end if end < len(selected) else None,
         }
 
+    def rows_page(
+        self, artifact_id: str, *, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        """Read one verified artifact's rows in bounded, reassemblable pages."""
+        if limit < 1 or limit > self.MAX_PAGE_SIZE:
+            raise ValueError(f"limit must be between 1 and {self.MAX_PAGE_SIZE}")
+        if offset < 0:
+            raise ValueError("offset must not be negative")
+        bundle = self.load(artifact_id)
+        total = int(len(bundle.frame))
+        if offset > total:
+            raise ValueError(f"offset exceeds series row count ({total})")
+        end = min(offset + limit, total)
+        return {
+            "manifest": bundle.manifest.model_dump(mode="json"),
+            "rows": to_json_records(bundle.frame.iloc[offset:end]),
+            "total": total,
+            "offset": offset,
+            "next_offset": end if end < total else None,
+        }
+
     def export(self, artifact_id: str) -> dict[str, Any]:
         """Return the full saved series; oversized artifacts fail explicitly."""
         bundle = self.load(artifact_id)
@@ -151,12 +174,20 @@ class EvaluationSeriesStore:
             "rows": to_json_records(bundle.frame),
         }
 
+    def protect(self, artifact_id: str) -> None:
+        """Mark one artifact as evidence a saved report still cites."""
+        self.path_for(artifact_id)
+        marker = self._protected / artifact_id
+        marker.touch(exist_ok=True)
+
     def prune(self, *, protected: set[str] | frozenset[str]) -> list[str]:
         """Remove only unreferenced artifacts; never touch protected evidence."""
         removed: list[str] = []
         with self._lock:
             for path in sorted(self._artifacts.iterdir()):
                 if not path.is_dir() or path.name in protected:
+                    continue
+                if (self._protected / path.name).exists():
                     continue
                 shutil.rmtree(path)
                 removed.append(path.name)

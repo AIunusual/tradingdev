@@ -54,9 +54,10 @@ By default, the report applies the
 
 A recorded candidate carries `series_artifact_id`, the stable reference to its
 [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
-A report that must keep that series after cleanup has to include its artifact ID
-in the protected set passed to `cleanup_evaluation_series`; a leaderboard row
-alone does not protect evidence a saved report cites. Reports do not read the
+A report that must keep that series after cleanup should call
+`protect_evaluation_series` with its artifact IDs, or include them in the
+protected set passed to `cleanup_evaluation_series`; a leaderboard row alone
+does not protect evidence a saved report cites. Reports do not read the
 series to recompute metrics: the artifact exists so a reader can inspect the
 exact scored rows, their original coordinates and unavailable-value reasons
 without the model file. Missing or tampered series are reported unavailable or

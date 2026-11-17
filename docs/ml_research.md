@@ -774,17 +774,20 @@ pair alone. Different IDs never assert a holdout, and a rule records
 
 A re-evaluation writes a new content-bound artifact instead of overwriting the
 old one; the leaderboard entry and the evaluation response carry
-`series_artifact_id`. `MLService.evaluation_series_page` additionally filters by `kind`, `dataset_id`
-and `entry_id`. MCP `get_evaluation_series_page` exposes the bounded
-`offset`/`limit` view; `export_evaluation_series(artifact_id)` returns the full
-rows and manifest.
+`series_artifact_id`. `MLService.evaluation_series_page` discovers artifacts with
+`kind`, `dataset_id` and `entry_id` filters. MCP `get_evaluation_series_page`
+pages artifact summaries; passing `artifact_id` instead pages that artifact's
+rows with bounded `offset`/`limit`, and `export_evaluation_series(artifact_id)`
+returns the full rows and manifest. Concatenating row pages in offset order
+reproduces the export exactly.
 Both are read-only and never load a model: a missing artifact is reported
-unavailable, and a changed value, setting, identity or row order fails the
-manifest hash check. Saved reports and exports must name artifacts they want
-retained when `cleanup_evaluation_series` removes unreferenced ones; leaderboard
-references alone protect artifacts still used by an already saved report only
-if that report is represented in the protected set. Historical rows without
-`series_artifact_id` stay unavailable rather than being recomputed.
+unavailable, and a changed value, setting, dataset/candidate identity, timestamp
+order or row order fails verification. A failed publication removes its staging
+directory and leaves the previous artifact readable. `protect_evaluation_series`
+marks artifacts cited by saved reports; `cleanup_evaluation_series` removes only
+unreferenced, unprotected artifacts, and a failed removal leaves the remaining
+artifacts intact. Historical rows without `series_artifact_id` stay unavailable
+rather than being recomputed.
 
 #### Fold prediction series
 

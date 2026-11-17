@@ -83,6 +83,67 @@ def test_changed_values_are_rejected_against_the_saved_content_hash() -> None:
         verify_series(tampered)
 
 
+def test_changed_settings_are_rejected_against_the_manifest_identity() -> None:
+    frame = build_signal_series(
+        [1.0, 2.0, 3.0, 2.0, 3.0, 4.0],
+        [0.1, 0.3, 0.2, 0.5, 0.4, 0.8],
+        _TIMESTAMPS,
+        window=3,
+    )
+    bundle = build_bundle(frame, **_manifest_fields())
+    changed = EvaluationSeriesBundle(
+        manifest=bundle.manifest.model_copy(
+            update={"settings": {"window": 99, "horizon": 1}}
+        ),
+        frame=bundle.frame,
+    )
+
+    with pytest.raises(ValueError, match="manifest identity"):
+        verify_series(changed)
+
+
+def test_reordered_timestamps_are_rejected_even_with_a_matching_hash() -> None:
+    frame = build_signal_series(
+        [1.0, 2.0, 3.0, 2.0, 3.0, 4.0],
+        [0.1, 0.3, 0.2, 0.5, 0.4, 0.8],
+        _TIMESTAMPS,
+        window=3,
+    )
+    swapped = frame.copy()
+    stamps = swapped["timestamp"].tolist()
+    stamps[1], stamps[2] = stamps[2], stamps[1]
+    swapped["timestamp"] = stamps
+    rebuilt = build_bundle(swapped, **_manifest_fields())
+
+    with pytest.raises(ValueError, match="chronological"):
+        verify_series(rebuilt)
+
+
+def test_dataset_pairing_reports_relationship_without_claiming_holdout() -> None:
+    frame = build_signal_series(
+        [1.0, 2.0, 3.0, 2.0, 3.0, 4.0],
+        [0.1, 0.3, 0.2, 0.5, 0.4, 0.8],
+        _TIMESTAMPS,
+        window=3,
+    )
+    different = build_bundle(
+        frame,
+        **_manifest_fields(
+            training_status="fitted",
+            training_dataset_id="train-1",
+            dataset_id="eval-1",
+        ),
+    )
+    unknown = build_bundle(
+        frame,
+        **_manifest_fields(training_status="unknown", training_dataset_id=""),
+    )
+
+    assert different.manifest.holdout_relationship == "different_dataset"
+    assert unknown.manifest.holdout_relationship == "unknown"
+    assert "out_of_sample" not in different.manifest.model_dump()
+
+
 def test_json_export_keeps_missing_values_as_null_not_zero() -> None:
     frame = build_signal_series(
         [1.0, 2.0, 3.0, 2.0, 3.0, 4.0],

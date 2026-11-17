@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import shutil
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytest
@@ -85,6 +86,19 @@ def test_page_is_bounded_and_export_returns_full_rows(tmp_path: Path) -> None:
     assert exported["rows"][0]["pearson_ic"] is None
 
 
+def test_rows_pages_reassemble_to_the_full_export(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    pages = [
+        store.rows_page(artifact_id, offset=offset, limit=2) for offset in (0, 2, 4)
+    ]
+
+    assembled = [row for page in pages for row in page["rows"]]
+
+    assert [page["next_offset"] for page in pages] == [2, 4, None]
+    assert assembled == store.export(artifact_id)["rows"]
+
+
 def test_prune_keeps_only_protected_artifacts(tmp_path: Path) -> None:
     store = EvaluationSeriesStore(tmp_path)
     keep_id = store.save(_bundle(entry_id="keep"))
@@ -95,3 +109,65 @@ def test_prune_keeps_only_protected_artifacts(tmp_path: Path) -> None:
     assert removed == [drop_id]
     assert store.path_for(keep_id).exists()
     assert not store.path_for(drop_id).exists()
+
+
+def test_report_protection_marker_survives_unprotected_cleanup(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    cited_id = store.save(_bundle(entry_id="cited"))
+    transient_id = store.save(_bundle(entry_id="transient"))
+
+    store.protect(cited_id)
+    removed = store.prune(protected=set())
+
+    assert removed == [transient_id]
+    assert store.path_for(cited_id).exists()
+    assert store.load(cited_id).manifest.artifact_id == cited_id
+
+
+def test_failed_publication_leaves_no_partial_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    first_id = store.save(_bundle())
+    second = _bundle(evaluation_id="eval_fedcba9876543210")
+    second_id = second.manifest.artifact_id
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(
+        "tradingdev.adapters.storage.evaluation_series.os.replace", fail_replace
+    )
+    with pytest.raises(OSError, match="publication failed"):
+        store.save(second)
+
+    assert not store.path_for(second_id).exists()
+    assert not list((store.root / ".staging").iterdir())
+    assert store.load(first_id).manifest.artifact_id == first_id
+
+
+def test_failed_cleanup_keeps_the_artifact_that_could_not_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    store.save(_bundle(entry_id="first"))
+    store.save(_bundle(entry_id="second"))
+    ordered_ids = sorted(
+        path.name for path in store.path_for("0" * 64).parent.iterdir()
+    )
+    removed_first, kept_id = ordered_ids
+    original = shutil.rmtree
+
+    def fail_on_second(path: str | Path, *args: Any, **kwargs: Any) -> None:
+        if str(path).endswith(kept_id):
+            raise OSError("cleanup failed")
+        original(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "tradingdev.adapters.storage.evaluation_series.shutil.rmtree", fail_on_second
+    )
+    with pytest.raises(OSError, match="cleanup failed"):
+        store.prune(protected=set())
+
+    assert not store.path_for(removed_first).exists()
+    assert store.path_for(kept_id).exists()
