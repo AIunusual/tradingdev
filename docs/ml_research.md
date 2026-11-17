@@ -470,8 +470,11 @@ publication and retention are defined in [Reports](reports.md#composable-offline
 
 ### Immutable Datasets
 
-ML builds publish schema version 3 datasets through `MLDatasetStore` as a complete directory
-containing `dataset.parquet` and `manifest.json`. The manifest records:
+`MLDatasetStore.save` publishes a complete directory containing
+`dataset.parquet` and `manifest.json`. `build_dataset` and `build_panel` always
+supply `raw_market` evidence and therefore write schema 3. Direct store callers
+that omit `raw_market` write schema 2 without that evidence. The schema 3 manifest
+records:
 
 - The single symbol or ordered panel symbols, timeframe, requested date range,
   source, effective `market_type` (`null` when the provider ignores it) and dataset
@@ -497,9 +500,11 @@ Naive times are interpreted as UTC; missing or duplicate timestamps fail.
 Missing numeric values use the bit pattern `0x7ff8000000000000`. The hash
 preserves bar order and excludes the DataFrame index, provider metadata and
 file encoding. Provider and market type are compared as separate identity
-fields. The feature-cache key has its own format. Cache ingestion sorts by
-timestamp before building features, so a different file order that yields
-the same input bars has the same raw identity.
+fields. The feature-cache key has its own format. The standard build path reads
+bars through `DataService.load_cached`, which sorts by timestamp before features
+are built. Different file orders that yield the same ordered bars on that path
+have the same raw identity. `raw_market_series` preserves the order of the
+frame it receives.
 
 The Parquet frame's `timestamp` is the evaluation coordinate. The zero-based
 `raw_row` identifies the symbol's original input bar; `label_start` and
@@ -845,8 +850,10 @@ legitimately contain a key of the same name, and merging would silently
 overwrite one of them. `parameters` retains the model artifact settings or
 caller-declared method settings, distinguished by `method_family`.
 `metadata.producer_source` preserves the stored origin, including `unknown`,
-without consulting the current model registry. Non-finite scores become `null`, as in leaderboard storage, while absent
-metric keys remain absent. `ml_report_block` collects the whole candidate set,
+without consulting the current model registry. The ML report block uses schema 2
+and records `metadata.raw_market_version`; `null` means the entry has no saved raw
+evidence binding. Non-finite scores become `null`, as in leaderboard storage,
+while absent metric keys remain absent. `ml_report_block` collects the whole candidate set,
 including candidates that failed to rank, with block-level definitions, the
 observed parameter axes, the skipped rows and their coordinates, and the ranking
 caveats. It accepts the complete candidate list and a ranking metric, computing
@@ -855,8 +862,10 @@ accepting an independent or truncated ranking. `alpha` sets the family-wise
 significance level. Duplicate entry IDs raise `ValueError`. Comparability uses
 the leaderboard rules: settings must match by default; pass
 `allow_parameter_axes=True` for a surface, which still requires one research
-identity and one dataset version per horizon. The application fixes the
-structured `market_comparison` verdict in the report and renders both checks.
+identity and one dataset version per horizon. `allow_mixed=True` permits
+otherwise incompatible candidates and adds a caveat when their settings fail
+the comparison rules. The application freezes the separate `market_comparison`
+verdict in the report and renders both checks.
 
 Signal metric definitions now carry the two fields a portfolio metric definition
 already had, `modes` and `requires_annualization`, so one definition shape

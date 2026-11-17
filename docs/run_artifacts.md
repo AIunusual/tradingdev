@@ -866,9 +866,9 @@ selections is the public form of this contract, and
 [the ML research contract](ml_research.md) documents the shared response shape,
 source selection and paging. The Python library accepts `(run_id, scope)` tuples
 and `top_k`; MCP accepts selection objects and pages with `offset`/`limit`.
-Arguments are exclusive
-to a source: a run ranking refuses the signal filters, `allow_mixed=True` and
-`allow_parameter_axes=True`, and a signal ranking refuses `runs`.
+Arguments are exclusive to a source. A run ranking refuses signal filters and
+the signal options `allow_mixed=True`, `allow_parameter_axes=True` and
+`require_verified_baseline=True`. A signal ranking refuses `runs`.
 
 A null `scope` selects that run's saved default. Duplicates are refused in two
 layers. Identical requested pairs are refused before anything is loaded, so a

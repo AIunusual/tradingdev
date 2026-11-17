@@ -790,6 +790,11 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
   --ml-entry-id CANDIDATE_ID --ml-entry-id ANOTHER_CANDIDATE_ID
 ```
 
+同一研究的參數比較可加 `--ml-allow-parameter-axes`。若要展示評估條件不相容的
+候選，可加 `--ml-allow-mixed`，報告會標明限制。若報告只接受已驗證的共用原始
+K 棒基線，可加 `--ml-require-verified-baseline`。這項要求在混合展示時仍然有效；
+詳見[報告選項與比較規則](docs/reports.md#composable-offline-reports)。
+
 ### 從終端機操作研究筆記
 
 與 MCP 共用相同工作區。先用 `read` 找到筆記代號與版本，再匯出指定版本：
