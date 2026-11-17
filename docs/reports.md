@@ -52,13 +52,17 @@ identities alone.
 By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 
-A recorded candidate carries `series_artifact_id`, the stable reference to its
-[saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
-A saved report copies that reference into its scope metadata but does not protect
-the artifact: report generation has no lifecycle side effect. The report-specific
-consequence is that the reference can outlive the leaderboard entry it came from
-without keeping the series alive; after that entry is replaced or removed, the
-report has no independent claim on the artifact. See the
+Newly recorded candidates carry `series_artifact_id`, the stable reference to
+their [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
+Historical leaderboard rows written before series publication may have no such
+field; the store reads it as an empty string and the series stays unavailable
+rather than being reconstructed. A report snapshot copies the reference only
+when one exists and records an empty reference otherwise. A saved report copies
+that reference into its scope metadata but does not protect the artifact: report
+generation has no lifecycle side effect. The report-specific consequence is that
+the reference can outlive the leaderboard entry it came from without keeping the
+series alive; after that entry is replaced or removed, the report has no
+independent claim on the artifact. See the
 [series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for default
 cleanup protection, explicit protected sets, permanent markers, partial cleanup
 and lock behavior. Current MCP tools expose only discovery, row paging and

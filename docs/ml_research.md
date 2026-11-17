@@ -789,8 +789,12 @@ The client-accessible `get_ml_contract` guidance keys
 semantics and partial-publication limits without repository access.
 Discovery is a summary lookup: it reads manifests and checks that each manifest
 `artifact_id` matches its directory, but it does not verify the manifest identity
-digest or the Parquet content. Full verification happens when `artifact_id` is
-supplied to page rows, or when `export_evaluation_series` reads the artifact.
+digest or the Parquet content. Artifact directories with no `manifest.json` are
+silently skipped, so a discovery page does not prove that every artifact
+directory is complete or well formed; reading a known `artifact_id` still reports
+the artifact unavailable or invalid. Full verification happens when
+`artifact_id` is supplied to page rows, or when `export_evaluation_series` reads
+the artifact.
 Both row paging and export are read-only and never load a model: a missing
 artifact is reported unavailable, and a changed value, setting,
 dataset/candidate identity or content hash fails verification. For
