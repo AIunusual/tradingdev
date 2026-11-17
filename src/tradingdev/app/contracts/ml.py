@@ -58,6 +58,16 @@ class RollingSchemeSummary(ContractModel):
     """Cadence when the strategy declares none; null follows its own interval."""
 
 
+class EvaluationSeriesLimits(ContractModel):
+    """Read bounds an MCP client can choose between before requesting rows."""
+
+    default_page_size: int
+    max_page_size: int
+    max_export_rows: int
+    overflow_read: str
+    """Tool call to use when an artifact exceeds ``max_export_rows``."""
+
+
 class MlContractResponse(ContractModel):
     """The full enumerable ML vocabulary; the menu for LLM-driven selection."""
 
@@ -76,6 +86,8 @@ class MlContractResponse(ContractModel):
     """Metrics a leaderboard may rank on; each declares a direction."""
     method_families: list[str]
     """Kinds of method a candidate can declare, from fitted model to unnamed."""
+    evaluation_series_limits: EvaluationSeriesLimits
+    """Publishable bounds for discovery, row paging and full export."""
     guidance: dict[str, str]
     """On-demand interpretation and workflow details for the advertised tools."""
 
@@ -678,6 +690,8 @@ class EvaluationSeriesReadResponse(ContractModel):
     next_offset: int | None
     items: list[EvaluationSeriesSummary] = Field(default_factory=list)
     artifact_id: str | None = None
+    max_page_size: int | None = None
+    max_export_rows: int | None = None
     manifest: dict[str, JsonValue] | None = None
     rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow] = Field(
         default_factory=list

@@ -205,6 +205,13 @@ _ML_GUIDANCE = {
         "Panel-trained models may be evaluated on a separate compatible "
         "single-symbol dataset; panel datasets themselves are refused."
     ),
+    "evaluation_series": (
+        "Saved pointwise series are discovered with get_evaluation_series_page. "
+        "The discovery page reports max_page_size and max_export_rows; pass an "
+        "artifact_id to the same tool to page rows with bounded offset/limit. "
+        "export_evaluation_series returns all rows only below max_export_rows "
+        "and fails explicitly above it; use row paging instead."
+    ),
     "simulated_returns": (
         "Position thresholds use earlier signals only; positions open after "
         "warm-up on a non-overlapping horizon-bar grid. Returns exclude costs "
@@ -379,6 +386,14 @@ class MLService:
             "missing_policies": [policy.value for policy in MissingPolicy],
             "leaderboard_metrics": list(rankable_metrics()),
             "method_families": list(METHOD_FAMILIES),
+            "evaluation_series_limits": {
+                "default_page_size": 50,
+                "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
+                "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+                "overflow_read": (
+                    "get_evaluation_series_page(artifact_id, offset, limit)"
+                ),
+            },
             "guidance": dict(_ML_GUIDANCE),
         }
 

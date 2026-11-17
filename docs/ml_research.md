@@ -777,11 +777,13 @@ old one; the leaderboard entry and the evaluation response carry
 `series_artifact_id`. `MLService.evaluation_series_page` discovers artifacts with
 `kind`, `dataset_id` and `entry_id` filters. MCP `get_evaluation_series_page`
 pages artifact summaries; passing `artifact_id` instead pages that artifact's
-rows with bounded `offset`/`limit` (default 50, store maximum 200), and
-`export_evaluation_series(artifact_id)` returns the full rows and manifest for
-artifacts up to `EvaluationSeriesStore.MAX_EXPORT_ROWS` (100,000). An oversized
-artifact fails the export explicitly; use row paging instead. Concatenating row
-pages in offset order reproduces the export exactly.
+rows with bounded `offset`/`limit` (default 50, maximum 200). MCP clients can
+read those bounds and the export ceiling before choosing a method from
+`get_ml_contract.evaluation_series_limits`; `get_evaluation_series_page` also
+echoes `max_page_size` and `max_export_rows`. `export_evaluation_series(artifact_id)`
+returns the full rows and manifest only up to `max_export_rows` (100,000). An
+oversized artifact fails the export explicitly; use row paging instead.
+Concatenating row pages in offset order reproduces the export exactly.
 Discovery is a summary lookup: it reads manifests and checks that each manifest
 `artifact_id` matches its directory, but it does not verify the manifest identity
 digest or the Parquet content. Full verification happens when `artifact_id` is

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from mcp_types import ToolAnnotations
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
@@ -343,17 +344,27 @@ def register(mcp: MCPServer, service: MLService) -> None:
         limit: int = 50,
     ) -> EvaluationSeriesReadResponse | ErrorResponse:
         """Page artifact summaries, or one artifact's rows by artifact_id."""
+        limits = {
+            "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
+            "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+        }
         try:
             if artifact_id is None:
                 result = service.evaluation_series_page(offset=offset, limit=limit)
                 return EvaluationSeriesReadResponse.model_validate(
-                    {"success": True, "mode": "discovery", **result}
+                    {"success": True, "mode": "discovery", **result, **limits}
                 )
             rows = service.evaluation_series_rows_page(
                 artifact_id, offset=offset, limit=limit
             )
             return EvaluationSeriesReadResponse.model_validate(
-                {"success": True, "mode": "rows", "artifact_id": artifact_id, **rows}
+                {
+                    "success": True,
+                    "mode": "rows",
+                    "artifact_id": artifact_id,
+                    **rows,
+                    **limits,
+                }
             )
         except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
             return ErrorResponse(
