@@ -907,10 +907,18 @@ Optimization rows carry `selection_evidence`, the search behind the run. The
 `scope_role` distinguishes the selected test, selected training trial, and other
 training trials. Each role refers to the same training search. Simple runs have
 `selection_evidence: null`. If a historical search cannot be verified, an otherwise
-readable ranking row reports `status: unavailable` with the reason. Unpublished
-optimization jobs appear among skipped selections with their job status. An
+readable ranking row reports `status: unavailable` with the reason. An
 unavailable search has an unknown count. The ranking's candidate count covers
 the selected rows, independent of each run's original search size.
+
+Unpublished optimization jobs appear among skipped selections with their job
+status. For a published optimization with an owning job record, ranking and
+`get_selection_evidence` also require that job's status to be `done`. A non-done
+job causes the ranking to skip the run and evidence lookup to report unavailable,
+even if `get_run_metrics` can read its published values: result publication and
+the job's lifecycle update are separate operations. A historical run without a
+job record is not rejected solely for that absence; its saved manifest and
+artifacts must still pass the applicable verification.
 
 Call `get_selection_evidence` with `run_id` and `performance_sha256` from
 `selection_evidence.reference`. Keep both values and follow `trials.next_offset`.

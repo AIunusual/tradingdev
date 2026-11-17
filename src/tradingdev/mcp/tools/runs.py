@@ -149,9 +149,11 @@ def register(mcp: MCPServer, service: RunService) -> None:
     ) -> OptimizationTrialsResponse | ErrorResponse:
         """Page grid positions and recorded outcomes, with separate test status.
 
+        completed counts fully observed trials, including undefined objectives;
+        rankable counts finite objectives. The leader is among observed trials.
         Follow trials.next_offset. Read values with get_run_metrics(job ID, explicit
-        scope). Leaders use finite observed objectives; search_complete requires
-        every trial to be observed. Use get_job_status for lifecycle.
+        scope). search_complete requires every trial to be observed.
+        Use get_job_status for lifecycle.
         """
         try:
             return service.get_optimization_trials(job_id, offset=offset, limit=limit)
