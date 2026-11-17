@@ -51,14 +51,18 @@ state that condition rather than infer a training relationship from model or dat
 identities alone.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
-Use `ml_ranking_metric` to choose the score (default `ic_mean`),
-`ml_allow_parameter_axes` for a sweep, `ml_allow_mixed` to display otherwise
-incompatible contexts, and `ml_require_verified_baseline` to require valid saved
-raw evidence and matching baselines across the selected datasets. With one
-candidate, the option checks that candidate's saved evidence. Review the
-evaluation-row verdict separately. CLI equivalents are `--ml-ranking-metric`,
-`--ml-allow-parameter-axes`, `--ml-allow-mixed` and
-`--ml-require-verified-baseline`. Repeat `--ml-entry-id` for the candidates.
+`generate_report` and `tradingdev-report` expose the following ranking options.
+
+| MCP argument | CLI flag | Purpose |
+| --- | --- | --- |
+| `ml_ranking_metric` | `--ml-ranking-metric` | Choose the score. The default is `ic_mean`. |
+| `ml_allow_parameter_axes` | `--ml-allow-parameter-axes` | Allow a parameter sweep under the ML comparison rules. |
+| `ml_allow_mixed` | `--ml-allow-mixed` | Display candidates with otherwise incompatible evaluation contexts. |
+| `ml_require_verified_baseline` | `--ml-require-verified-baseline` | Require valid saved raw evidence and matching baselines across the selected datasets. |
+
+With one candidate, the strict baseline option checks that candidate's saved
+evidence. Review the evaluation-row verdict separately. Repeat
+`--ml-entry-id` for the candidates.
 Non-default ML options require selected IDs. Selecting the `ml` section also
 requires evidence. The HTML, embedded JSON and manifest freeze the market
 comparison verdict, including its reasons, for the selected candidates.
