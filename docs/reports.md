@@ -49,7 +49,7 @@ training history even when declared as rules, including whether an external mode
 produced them. Report commentary and final interpretation must
 state that condition rather than infer a training relationship from model or dataset
 identities alone.
-The selected candidates must satisfy the
+By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 `generate_report` and `tradingdev-report` expose the following ranking options.
 
@@ -57,11 +57,12 @@ The selected candidates must satisfy the
 | --- | --- | --- |
 | `ml_ranking_metric` | `--ml-ranking-metric` | Choose the score. The default is `ic_mean`. |
 | `ml_allow_parameter_axes` | `--ml-allow-parameter-axes` | Allow a parameter sweep under the ML comparison rules. |
-| `ml_allow_mixed` | `--ml-allow-mixed` | Display candidates with otherwise incompatible evaluation contexts. |
+| `ml_allow_mixed` | `--ml-allow-mixed` | Include otherwise incompatible evaluation contexts with a caveat to interpret their ranks as display order only. |
 | `ml_require_verified_baseline` | `--ml-require-verified-baseline` | Require valid saved raw evidence and matching baselines across the selected datasets. |
 
-With one candidate, the strict baseline option checks that candidate's saved
-evidence. Review the evaluation-row verdict separately. Repeat
+The strict baseline requirement also applies to mixed display. With one
+candidate, the strict baseline option checks that candidate's saved evidence.
+Review the evaluation-row verdict separately. Repeat
 `--ml-entry-id` for the candidates.
 Non-default ML options require selected IDs. Selecting the `ml` section also
 requires evidence. The HTML, embedded JSON and manifest freeze the market
