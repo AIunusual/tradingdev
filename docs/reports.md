@@ -64,10 +64,13 @@ leaderboard row, so a live row does protect its current artifact. The report's
 own reference receives no separate automatic protection: once an entry is
 replaced or removed, its old series becomes unreferenced and can be pruned unless
 `protect_evaluation_series` or an explicit protected set names the artifact.
-Reports do not read the series to recompute metrics: the artifact exists so a
-reader can inspect the exact scored rows, their original coordinates and
-unavailable-value reasons without the model file. Missing or tampered series are
-reported unavailable or rejected, never silently reconstructed.
+Reports do not read the series to recompute metrics: report generation snapshots
+the leaderboard reference without checking whether its artifact still exists or
+is intact. The artifact exists so a reader can later inspect the exact scored
+rows, their original coordinates and unavailable-value reasons without the model
+file. Missing or tampered series are reported unavailable or rejected by the row
+paging and export operations, never silently reconstructed; generation itself
+does not surface those errors.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 `generate_report` and `tradingdev-report` expose the following ranking options.

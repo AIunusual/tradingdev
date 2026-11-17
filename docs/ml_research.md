@@ -822,7 +822,12 @@ When `train_model` runs `validation`, the typed MCP `ValidationSummary` exposes
 `fold_predictions_available` and nullable `fold_series_artifact_id`. That
 artifact saves the predictions produced by each fold model before aggregation,
 with the real `source_row`, timestamp, target and forward return, and that
-fold's train/eval row and time ranges. It does not use the final all-data model
+fold's train/eval row and time ranges. Each range records the first and last
+included row/time with inclusive endpoints, not a boundary just outside the
+split. Because fold validation reuses one dataset ID, the manifest's
+`holdout_relationship` is `in_sample` at the dataset level; it does not claim
+that individual fold predictions were in-sample. The per-fold train/eval ranges
+identify each prediction's actual split. It does not use the final all-data model
 to reconstruct fold predictions. A historical validation summary with
 `fold_predictions_available=null` or no artifact ID reports no saved fold
 sequence; it is unavailable, not an empty set of predictions.

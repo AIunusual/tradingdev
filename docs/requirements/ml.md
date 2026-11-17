@@ -22,7 +22,7 @@
 - **需求**：模型訊號及手設規則可在明示資料與持有期間下評估，核對完整資料對齊；綁定資料集的評估只支援單一標的，panel 須拒絕。評估回覆須區分實際產生來源與呼叫端宣告的方法。選擇記錄評估時，保存來源、方法家族、可取得的參數、訊號指紋與評估條件。
 - **驗收**：來源由實際執行入口決定，公開 caller 不可自稱後端模型或規則。未選擇記錄時只回傳評估結果，不寫入排名資料。未宣告設定時空參數表示未知，不是擬合預設值，不能事後推測補齊；caller 宣告的模型產物不存在或載入驗證失敗時可記錄未知參數，後端模型評估仍須有效產物；其他讀取錯誤則使記錄失敗且不寫入排名資料。呼叫端自備訊號的模型訓練欄位只描述被命名的模型，來源確認不代表樣本外。評估保留未啟動交易的列，並說明暖機及不重疊持有的限制；常數訊號無法形成多空組合，須拒絕評估。簡化無成本統計不宣稱等同交易回測或具有成交／權益證據。看過資料後選門檻保留樣本內選擇偏誤；未保存的序列不事後猜測補算。記錄成功的候選須保存可獨立驗證的逐點序列引用；MCP 須能分頁發現摘要、以 artifact 分頁讀取列或 bounded 完整匯出，保留原座標與不可用原因，缺檔或篡改不得靜默重算或補零。
 - **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[已記錄訊號評估](../ml_research.md#recorded-signal-evaluations)、[已保存逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)。
-- **驗證**：[規則評估](../../tests/app/test_ml_rule_evaluation.py)、[訊號收益](../../tests/domain/ml/test_simulated_returns.py) 核對持有區間、評估與無成本口徑；[評估來源與訓練綁定](../../tests/app/test_ml_training_binding.py) 核對入口來源、模型宣告及來源保護。
+- **驗證**：[規則評估](../../tests/app/test_ml_rule_evaluation.py)、[訊號收益](../../tests/domain/ml/test_simulated_returns.py) 核對持有區間、評估與無成本口徑；[評估來源與訓練綁定](../../tests/app/test_ml_training_binding.py) 核對入口來源、模型宣告及來源保護；[逐點序列契約](../../tests/domain/ml/test_evaluation_series.py)、[序列 store](../../tests/adapters/test_evaluation_series_store.py)、[評估 service](../../tests/app/test_ml_evaluation_series.py)、[訓練 fold 序列](../../tests/app/test_ml_training_series.py) 與 [MCP 序列工具](../../tests/mcp/test_ml_evaluation_series_tools.py) 核對保存、發現、分頁、完整匯出與竄改拒絕。這些連結標示應執行的檢查，不是通過收據。
 
 ## FR-ML-004 排名與比較條件
 
