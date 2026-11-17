@@ -53,8 +53,10 @@ The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 Use `ml_ranking_metric` to choose the score (default `ic_mean`),
 `ml_allow_parameter_axes` for a sweep, `ml_allow_mixed` to display otherwise
-incompatible contexts, and `ml_require_verified_baseline` to require saved
-evidence for a common raw baseline. CLI equivalents are `--ml-ranking-metric`,
+incompatible contexts, and `ml_require_verified_baseline` to require valid saved
+raw evidence and matching baselines across the selected datasets. With one
+candidate, the option checks that candidate's saved evidence. Review the
+evaluation-row verdict separately. CLI equivalents are `--ml-ranking-metric`,
 `--ml-allow-parameter-axes`, `--ml-allow-mixed` and
 `--ml-require-verified-baseline`. Repeat `--ml-entry-id` for the candidates.
 Non-default ML options require selected IDs. Selecting the `ml` section also

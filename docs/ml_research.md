@@ -919,6 +919,9 @@ market cache.
 Permissive rankings show both outcomes without excluding unknown or mismatched
 raw data. `require_verified_baseline=True` requires a verified raw result even
 with `allow_mixed=True`. `allow_mixed` only relaxes ranking-context constraints.
+For a single candidate, `verified` confirms that the saved raw evidence is
+present and passes the dataset and recorded-context checks. To verify that
+separate datasets share a baseline, select candidates from each dataset.
 A verified baseline can coincide with different evaluation rows or label ends.
 The check establishes saved input identity and alignment only. Sample holdout
 and causal interpretation require separate evidence.
