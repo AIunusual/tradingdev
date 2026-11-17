@@ -798,12 +798,16 @@ signal-evaluation series, verification additionally requires `source_row` to be
 the original `0..row_count-1` sequence and UTC timestamps to be unique and
 increasing. Fold-validation series instead require unique `source_row`
 coordinates; chronological ordering is not imposed on fold rows. A failed
-publication removes its staging directory and leaves the previous artifact
-readable. `protect_evaluation_series` marks artifacts cited by saved reports;
-that marker is permanent through the documented API: neither the store nor
-`MLService` provides a removal operation, and pruning always skips marked
-artifacts. Protection therefore outlives the report or leaderboard row that
-motivated it and cannot be reversed through the documented API.
+publication leaves the previous artifact readable and attempts to remove its
+staging directory in `finally`; if that removal fails, the staging directory can
+remain for operator cleanup and never becomes a published artifact.
+`protect_evaluation_series` marks artifacts cited by saved reports; that marker
+is permanent through the documented API: neither the store nor `MLService`
+provides a removal operation, and pruning skips an artifact once the marker is
+visible. `protect()` does not take the prune lock, so protection must complete
+before cleanup starts: concurrent protection and pruning are not coordinated, a
+prune already in progress may remove the artifact before the marker is visible,
+and protecting after removal cannot restore it.
 With the default cleanup call, `cleanup_evaluation_series` removes only
 unreferenced, unprotected artifacts. Passing an explicit `protected` set replaces
 the leaderboard-derived references, so callers must include every ID they want
