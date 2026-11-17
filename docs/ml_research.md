@@ -795,9 +795,19 @@ increasing. Fold-validation series instead require unique `source_row`
 coordinates; chronological ordering is not imposed on fold rows. A failed
 publication removes its staging directory and leaves the previous artifact
 readable. `protect_evaluation_series` marks artifacts cited by saved reports;
-`cleanup_evaluation_series` removes only unreferenced, unprotected artifacts,
-and a failed removal leaves the remaining artifacts intact. Historical rows
-without `series_artifact_id` stay unavailable rather than being recomputed.
+`cleanup_evaluation_series` removes only unreferenced, unprotected artifacts.
+Cleanup is not transactional: each artifact is removed as it is visited, with no
+rollback, so a removal error can leave a partially completed cleanup. Re-run
+discovery to see what remains; a failed cleanup is not evidence that no artifact
+was removed. Historical rows without `series_artifact_id` stay unavailable rather
+than being recomputed.
+
+Recording a signal series publishes its artifact before writing the leaderboard
+entry. If that later write fails, the evaluation call fails while leaving a
+discoverable, unreferenced series artifact with no `series_artifact_id` in any
+leaderboard row. Default cleanup protects leaderboard references, so such an
+orphan is eligible for removal; protect its artifact ID first if it is still
+needed. A failed recording therefore does not prove that no series was published.
 
 #### Fold prediction series
 
@@ -813,9 +823,11 @@ sequence; it is unavailable, not an empty set of predictions.
 Validation publishes the fold series before fitting and saving the final
 all-data model. If that later step fails, `train_model` can fail after the fold
 artifact was published, so the caller receives no model ID or validation summary
-with its `fold_series_artifact_id`. Publication is not rolled back. A reader can
-still discover that evidence through `MLService.evaluation_series_page` with
-`kind="fold_validation"` and the dataset ID; its manifest records
+with its `fold_series_artifact_id`. Publication is not rolled back. MCP clients can recover the evidence by paging
+unfiltered summaries with `get_evaluation_series_page` and matching `kind` and
+`dataset_id` in each returned item, then passing that `artifact_id` to row paging
+or export; only the Python `MLService.evaluation_series_page` accepts those
+fields as query filters. The manifest records
 `evaluation_id="fold_<dataset_id>"` and `training_status="fitted"`. A failed
 `train_model` call therefore does not prove that no fold evidence exists.
 
