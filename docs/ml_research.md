@@ -777,9 +777,11 @@ old one; the leaderboard entry and the evaluation response carry
 `series_artifact_id`. `MLService.evaluation_series_page` discovers artifacts with
 `kind`, `dataset_id` and `entry_id` filters. MCP `get_evaluation_series_page`
 pages artifact summaries; passing `artifact_id` instead pages that artifact's
-rows with bounded `offset`/`limit`, and `export_evaluation_series(artifact_id)`
-returns the full rows and manifest. Concatenating row pages in offset order
-reproduces the export exactly.
+rows with bounded `offset`/`limit` (default 50, store maximum 200), and
+`export_evaluation_series(artifact_id)` returns the full rows and manifest for
+artifacts up to `EvaluationSeriesStore.MAX_EXPORT_ROWS` (100,000). An oversized
+artifact fails the export explicitly; use row paging instead. Concatenating row
+pages in offset order reproduces the export exactly.
 Both are read-only and never load a model: a missing artifact is reported
 unavailable, and a changed value, setting, dataset/candidate identity, timestamp
 order or row order fails verification. A failed publication removes its staging
@@ -799,6 +801,15 @@ row and time ranges. It does not use the final all-data model to reconstruct
 fold predictions. A historical validation summary without the artifact ID
 reports no saved fold sequence; it is unavailable, not an empty set of
 predictions.
+
+Validation publishes the fold series before fitting and saving the final
+all-data model. If that later step fails, `train_model` can fail after the fold
+artifact was published, so the caller receives no model ID or validation summary
+with its `fold_series_artifact_id`. Publication is not rolled back. A reader can
+still discover that evidence through `MLService.evaluation_series_page` with
+`kind="fold_validation"` and the dataset ID; its manifest records
+`evaluation_id="fold_<dataset_id>"` and `training_status="fitted"`. A failed
+`train_model` call therefore does not prove that no fold evidence exists.
 
 #### Method families
 
