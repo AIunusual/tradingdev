@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import numpy as np
 import pandas as pd
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
+    now_iso,
 )
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
@@ -46,6 +48,7 @@ from tradingdev.domain.ml.evaluation.performance import (
     periods_per_year,
     return_metrics,
 )
+from tradingdev.domain.ml.evaluation.series import build_bundle, build_signal_series
 from tradingdev.domain.ml.feature_cache import (
     FeatureCacheIdentity,
     data_fingerprint,
@@ -323,6 +326,11 @@ class MLService:
         """The workspace this service reads; shared, not copied, by ranking."""
         return self._workspace
 
+    @property
+    def series_store(self) -> EvaluationSeriesStore:
+        """The store holding immutable pointwise evaluation artifacts."""
+        return EvaluationSeriesStore(self._workspace.ml_evaluation_series)
+
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
         if self._injected_code_fingerprint is None:
@@ -539,12 +547,15 @@ class MLService:
             "simulated": simulated_summary,
         }
         if record:
-            payload["recorded"] = self._record_evaluation(
+            recorded = self._record_evaluation(
                 {
                     **metrics,
                     "strata_monotonicity": payload["strata_monotonicity"],
                     "long_short_spread": payload["long_short_spread"],
                 },
+                signal=signal,
+                forward_returns=forward_returns,
+                evaluation_id=evaluation_id,
                 fingerprint=fingerprint,
                 manifest=manifest,
                 n_observations=int(len(aligned)),
@@ -556,6 +567,8 @@ class MLService:
                 identity=identity,
                 producer_source=producer_source,
             )
+            payload["recorded"] = recorded
+            payload["series_artifact_id"] = recorded["series_artifact_id"]
         return payload
 
     def _recording_horizon(
@@ -651,6 +664,9 @@ class MLService:
         self,
         metrics: dict[str, Any],
         *,
+        signal: list[float],
+        forward_returns: list[float],
+        evaluation_id: str,
         fingerprint: str,
         manifest: dict[str, Any] | None,
         n_observations: int,
@@ -692,19 +708,48 @@ class MLService:
         label, parameters, training_dataset_id = self._candidate_identity(
             model_id, fingerprint, identity
         )
+        entry_id = build_entry_id(
+            model_id=model_id or "",
+            dataset_id=dataset_id,
+            context=context,
+            # Named methods use family/name/settings; anonymous signals
+            # need the fingerprint to distinguish candidates.
+            signal_fingerprint="" if (model_id or identity.name) else fingerprint,
+            method_name=identity.name,
+            method_family=identity.family,
+            method_parameters=identity.parameters,
+            producer_source=producer_source,
+        )
+        training_status = (
+            "fitted" if training_dataset_id else "unknown" if model_id else "no_fitting"
+        )
+        frame, _ = self._load_dataset(dataset_id)
+        series_frame = build_signal_series(
+            signal, forward_returns, frame["timestamp"].tolist(), window=window
+        )
+        bundle = build_bundle(
+            series_frame,
+            kind="signal_evaluation",
+            evaluation_id=evaluation_id,
+            dataset_id=dataset_id,
+            dataset_hash=str(manifest["content_hash"]),
+            settings={
+                "horizon": horizon,
+                "window": window,
+                "n_quantiles": n_quantiles,
+                "ic_methods": ["pearson", "spearman"],
+            },
+            method_family=identity.family,
+            producer_source=producer_source.value,
+            signal_fingerprint=fingerprint,
+            entry_id=entry_id,
+            training_dataset_id=training_dataset_id,
+            training_status=training_status,  # type: ignore[arg-type]
+            created_at=now_iso(),
+        )
+        artifact_id = self.series_store.save(bundle)
         entry = LeaderboardEntry(
-            entry_id=build_entry_id(
-                model_id=model_id or "",
-                dataset_id=dataset_id,
-                context=context,
-                # Named methods use family/name/settings; anonymous signals
-                # need the fingerprint to distinguish candidates.
-                signal_fingerprint="" if (model_id or identity.name) else fingerprint,
-                method_name=identity.name,
-                method_family=identity.family,
-                method_parameters=identity.parameters,
-                producer_source=producer_source,
-            ),
+            entry_id=entry_id,
             label=label,
             context=context,
             metrics=stored_metrics,
@@ -717,6 +762,7 @@ class MLService:
             method_name=identity.name,
             training_dataset_id=training_dataset_id,
             producer_source=producer_source,
+            series_artifact_id=artifact_id,
         )
         store = LeaderboardStore(self._workspace.ml_leaderboard)
         replaced = store.record(entry)
@@ -730,6 +776,7 @@ class MLService:
             "method_name": identity.name,
             "training_dataset_id": training_dataset_id,
             "producer_source": producer_source.value,
+            "series_artifact_id": artifact_id,
         }
 
     def _candidate_identity(
@@ -948,6 +995,67 @@ class MLService:
             "offset": offset,
             "limit": limit,
             "next_offset": end if end < total else None,
+        }
+
+    def evaluation_series_page(
+        self,
+        *,
+        kind: str | None = None,
+        dataset_id: str | None = None,
+        entry_id: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Discover bounded saved series without loading any model."""
+        raw = self.series_store.page(
+            kind=kind,
+            dataset_id=dataset_id,
+            entry_id=entry_id,
+            offset=offset,
+            limit=limit,
+        )
+        keys = (
+            "artifact_id",
+            "kind",
+            "evaluation_id",
+            "dataset_id",
+            "entry_id",
+            "row_count",
+            "training_status",
+            "holdout_relationship",
+            "created_at",
+        )
+        return {
+            **raw,
+            "items": [{key: item[key] for key in keys} for item in raw["items"]],
+        }
+
+    def evaluation_series_export(self, artifact_id: str) -> dict[str, Any]:
+        """Read one complete saved series; missing evidence stays unavailable."""
+        try:
+            return self.series_store.export(artifact_id)
+        except FileNotFoundError as error:
+            raise ValueError(
+                f"evaluation series {artifact_id} is unavailable"
+            ) from error
+
+    def cleanup_evaluation_series(
+        self, *, protected: Sequence[str] | None = None
+    ) -> dict[str, Any]:
+        """Remove unreferenced series; reports must name what they protect."""
+        if protected is None:
+            referenced = {
+                entry.series_artifact_id
+                for entry in LeaderboardStore(self._workspace.ml_leaderboard).entries()
+                if entry.series_artifact_id
+            }
+        else:
+            referenced = set(protected)
+        removed = self.series_store.prune(protected=frozenset(referenced))
+        return {
+            "success": True,
+            "removed": removed,
+            "protected_count": len(referenced),
         }
 
     def rank_signal_candidates(

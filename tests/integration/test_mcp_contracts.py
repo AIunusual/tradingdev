@@ -49,6 +49,8 @@ _READ_ONLY_TOOLS = {
     "get_artifact",
     "list_feature_requests",
     "get_ml_contract",
+    "get_evaluation_series_page",
+    "export_evaluation_series",
     "predict",
     "leaderboard",
 }

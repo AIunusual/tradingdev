@@ -153,8 +153,11 @@ universal gain measure.
 The final persisted artifact is fitted on every dataset row, and
 `in_sample_accuracy` evaluates those same training rows. Optional validation
 fits additional models for its folds; it does not replace the artifact with a
-fold model or persist an out-of-fold prediction stream. Preserve the returned
-validation evidence if it is needed later.
+fold model. The final all-data model is never used to reconstruct fold
+predictions: optional validation publishes the actual fold predictions as a
+content-bound series described in
+[fold prediction series](ml_research.md#fold-prediction-series). Preserve the
+returned artifact ID if that evidence is needed later.
 
 MCP `predict` verifies the saved dataset and model blob, requires an exact ordered
 feature-column match, then returns one page of `signal` and `forward_returns` in
@@ -751,6 +754,48 @@ two identities, and genuinely different versions can still cover overlapping
 periods. A training window and an evaluation window that share dates produce two
 identities and no holdout. Older records are not backfilled, and a reader must not
 substitute the evaluation dataset for a missing training one.
+
+#### Saved pointwise evaluation series
+
+A recorded evaluation also publishes a separate versioned artifact under
+`ml_leaderboard/evaluation_series/artifacts/<artifact_id>/`. `series.parquet`
+holds one row per scored dataset row with its zero-based `source_row`, UTC
+`timestamp`, signal, realised return, rolling Pearson and Spearman IC, and an
+`availability_reason`. IC warm-up and constant windows keep their original
+coordinates and reasons; their values are `null`, never zero, and no row is
+dropped or renumbered. `manifest.json` binds the artifact ID, schema version,
+evaluation ID, leaderboard `entry_id`, dataset ID and hash, candidate settings,
+method family, producer source, full signal fingerprint, calculation settings,
+training dataset ID and status, and a SHA-256 content hash. `training_status`
+is `fitted`, `no_fitting` or `unknown`; `holdout_relationship` reports
+`in_sample`, `different_dataset`, `not_applicable` or `unknown` from the recorded
+pair alone. Different IDs never assert a holdout, and a rule records
+`no_fitting` rather than pretending the evaluation dataset trained it.
+
+A re-evaluation writes a new content-bound artifact instead of overwriting the
+old one; the leaderboard entry and the evaluation response carry
+`series_artifact_id`. `MLService.evaluation_series_page` additionally filters by `kind`, `dataset_id`
+and `entry_id`. MCP `get_evaluation_series_page` exposes the bounded
+`offset`/`limit` view; `export_evaluation_series(artifact_id)` returns the full
+rows and manifest.
+Both are read-only and never load a model: a missing artifact is reported
+unavailable, and a changed value, setting, identity or row order fails the
+manifest hash check. Saved reports and exports must name artifacts they want
+retained when `cleanup_evaluation_series` removes unreferenced ones; leaderboard
+references alone protect artifacts still used by an already saved report only
+if that report is represented in the protected set. Historical rows without
+`series_artifact_id` stay unavailable rather than being recomputed.
+
+#### Fold prediction series
+
+When `train_model` runs `validation`, the returned `validation` block carries
+`fold_predictions_available` and `fold_series_artifact_id`. That artifact saves
+the predictions produced by each fold model before aggregation, with the real
+`source_row`, timestamp, target and forward return, and that fold's train/eval
+row and time ranges. It does not use the final all-data model to reconstruct
+fold predictions. A historical validation summary without the artifact ID
+reports no saved fold sequence; it is unavailable, not an empty set of
+predictions.
 
 #### Method families
 

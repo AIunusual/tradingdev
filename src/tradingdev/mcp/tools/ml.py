@@ -10,6 +10,8 @@ from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
     BuildPanelResponse,
+    EvaluationSeriesExportResponse,
+    EvaluationSeriesPageResponse,
     LeaderboardPageResponse,
     MlContractError,
     MlContractResponse,
@@ -333,3 +335,32 @@ def register(mcp: MCPServer, service: MLService) -> None:
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)
         return LeaderboardPageResponse.model_validate(result)
+
+    @mcp.tool(annotations=read_only)
+    def get_evaluation_series_page(
+        offset: int = 0,
+        limit: int = 50,
+    ) -> EvaluationSeriesPageResponse | ErrorResponse:
+        """List saved series pages; follow next_offset."""
+        try:
+            result = service.evaluation_series_page(offset=offset, limit=limit)
+        except (ValueError, TypeError) as exc:
+            return ErrorResponse(
+                success=False, error=str(exc), code="invalid_series_request"
+            )
+        return EvaluationSeriesPageResponse.model_validate({"success": True, **result})
+
+    @mcp.tool(annotations=read_only)
+    def export_evaluation_series(
+        artifact_id: str,
+    ) -> EvaluationSeriesExportResponse | ErrorResponse:
+        """Read one verified series, or report it unavailable."""
+        try:
+            result = service.evaluation_series_export(artifact_id)
+        except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
+            return ErrorResponse(
+                success=False, error=str(exc), code="series_unavailable"
+            )
+        return EvaluationSeriesExportResponse.model_validate(
+            {"success": True, **result}
+        )

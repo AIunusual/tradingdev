@@ -19,7 +19,9 @@ BUDGETS = {
     # in #38: about 2.6 KB for one new tool plus a wider compare_runs schema,
     # with room for one revision round.
     "model_tools": 76000,
-    "initial_total": 86000,
+    # Two read-only pointwise-series tools add ~0.7 KB of tool projection;
+    # their bounded page and verified export are part of issue #62.
+    "initial_total": 87000,
     "strategy_section": 16000,
     "indicator_reference": 10000,
     "discovery_response": 20000,

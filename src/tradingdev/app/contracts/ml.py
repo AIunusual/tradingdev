@@ -129,6 +129,8 @@ class RecordedEvaluation(ContractModel):
     nothing: a dataset identity also covers the requested period and the code
     fingerprint, and different versions can still overlap.
     """
+    series_artifact_id: str
+    """Content-bound pointwise series saved with this recorded evaluation."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -155,6 +157,8 @@ class SignalEvaluationResponse(ContractModel):
     strata_monotonicity: float | None
     long_short_spread: float | None
     simulated: SimulatedReturnsSummary
+    series_artifact_id: str | None = None
+    """Saved pointwise series, present only for a recorded evaluation."""
     recorded: RecordedEvaluation | None = None
     """Present only when the evaluation was recorded for the leaderboard."""
 
@@ -591,6 +595,69 @@ class PredictionResponse(ContractModel):
 
     success: Literal[True]
     prediction: PredictionSummary
+
+
+class EvaluationSeriesSummary(ContractModel):
+    """One discoverable pointwise artifact, without loading its rows."""
+
+    artifact_id: str
+    kind: Literal["signal_evaluation", "fold_validation"]
+    evaluation_id: str
+    dataset_id: str
+    entry_id: str
+    row_count: int
+    training_status: str
+    holdout_relationship: str
+    created_at: str
+
+
+class EvaluationSeriesPageResponse(ContractModel):
+    """A bounded discovery page of saved evaluation series."""
+
+    success: Literal[True]
+    items: list[EvaluationSeriesSummary]
+    total: int
+    offset: int
+    next_offset: int | None
+
+
+class EvaluationSeriesSignalRow(ContractModel):
+    """One saved signal row; an absent IC is null with its reason beside it."""
+
+    source_row: int
+    timestamp: str
+    signal: float | None
+    realized_return: float | None
+    pearson_ic: float | None
+    spearman_ic: float | None
+    availability_reason: str
+
+
+class EvaluationSeriesFoldRow(ContractModel):
+    """One fold prediction and the split that actually produced it."""
+
+    fold: int
+    source_row: int
+    timestamp: str
+    prediction: float | None
+    target: float | None
+    forward_return: float | None
+    train_start_row: int
+    train_end_row: int
+    eval_start_row: int
+    eval_end_row: int
+    train_start: str
+    train_end: str
+    eval_start: str
+    eval_end: str
+
+
+class EvaluationSeriesExportResponse(ContractModel):
+    """A complete, content-bound series; reading it never loads a model."""
+
+    success: Literal[True]
+    manifest: dict[str, JsonValue]
+    rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow]
 
 
 class MlContractError(ErrorResponse):

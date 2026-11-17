@@ -9,8 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
+from tradingdev.adapters.storage.filesystem import WorkspacePaths, now_iso
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.domain.ml.evaluation import signal_metrics
+from tradingdev.domain.ml.evaluation.series import (
+    build_bundle,
+    build_fold_series,
+)
+from tradingdev.domain.ml.leaderboard import signal_fingerprint
 from tradingdev.domain.ml.models.registry import (
     RegisteredModelKind,
     create_direction_model,
@@ -87,6 +94,8 @@ class MLTrainingService:
         if request is not None:
             validation_summary = self._validate_in_folds(
                 request,
+                dataset_id=dataset_id,
+                dataset_hash=str(manifest["content_hash"]),
                 model_kind=model_kind,
                 params=params,
                 frame=frame,
@@ -176,6 +185,8 @@ class MLTrainingService:
         self,
         request: _ValidationRequest,
         *,
+        dataset_id: str,
+        dataset_hash: str,
         model_kind: str,
         params: dict[str, Any],
         frame: pd.DataFrame,
@@ -197,12 +208,17 @@ class MLTrainingService:
         )
 
         folds: list[dict[str, Any]] = []
+        fold_rows: list[dict[str, Any]] = []
+        all_predictions: list[float] = []
         for index, split in enumerate(splits):
-            train_frame = frame.iloc[list(split.train_rows)]
-            test_frame = frame.iloc[list(split.test_rows)]
+            train_rows = [int(row) for row in split.train_rows]
+            test_rows = [int(row) for row in split.test_rows]
+            train_frame = frame.iloc[train_rows]
+            test_frame = frame.iloc[test_rows]
             fold_model = create_direction_model(model_kind, **params)
             fold_model.train(train_frame[feature_columns + ["target"]])
             predictions = fold_model.predict(test_frame).to_numpy()
+            all_predictions.extend(float(value) for value in predictions)
             folds.append(
                 {
                     "fold": index,
@@ -213,6 +229,64 @@ class MLTrainingService:
                     **self._frame_scores(test_frame, predictions),
                 }
             )
+            for position, (source_row, prediction) in enumerate(
+                zip(test_frame.index, predictions, strict=True)
+            ):
+                fold_rows.append(
+                    {
+                        "fold": index,
+                        "source_row": int(source_row),
+                        "timestamp": pd.to_datetime(
+                            test_frame["timestamp"].iloc[position], utc=True
+                        ).isoformat(),
+                        "prediction": float(prediction),
+                        "target": float(test_frame["target"].iloc[position]),
+                        "forward_return": float(
+                            test_frame["forward_return"].iloc[position]
+                        ),
+                        "train_start_row": train_rows[0],
+                        "train_end_row": train_rows[-1],
+                        "eval_start_row": test_rows[0],
+                        "eval_end_row": test_rows[-1],
+                        "train_start": pd.to_datetime(
+                            frame["timestamp"].iloc[train_rows[0]], utc=True
+                        ).isoformat(),
+                        "train_end": pd.to_datetime(
+                            frame["timestamp"].iloc[train_rows[-1]], utc=True
+                        ).isoformat(),
+                        "eval_start": pd.to_datetime(
+                            frame["timestamp"].iloc[test_rows[0]], utc=True
+                        ).isoformat(),
+                        "eval_end": pd.to_datetime(
+                            frame["timestamp"].iloc[test_rows[-1]], utc=True
+                        ).isoformat(),
+                    }
+                )
+
+        series_frame = build_fold_series(fold_rows)
+        fingerprint = signal_fingerprint(all_predictions)
+        bundle = build_bundle(
+            series_frame,
+            kind="fold_validation",
+            evaluation_id=f"fold_{dataset_id}",
+            dataset_id=dataset_id,
+            dataset_hash=dataset_hash,
+            settings={
+                "scheme": request.scheme,
+                "n_folds": request.n_folds,
+                "embargo": request.embargo,
+                "label_horizon": request.label_horizon,
+                "min_train_bars": request.min_train_bars,
+                "model_kind": model_kind,
+                "parameters": dict(params),
+            },
+            method_family="ml_model",
+            producer_source="backend_model",
+            signal_fingerprint=fingerprint,
+            training_dataset_id=dataset_id,
+            training_status="fitted",
+            created_at=now_iso(),
+        )
 
         return {
             "scheme": request.scheme,
@@ -223,6 +297,10 @@ class MLTrainingService:
             "embargoed_bars": sum(split.embargoed_rows for split in splits),
             "leakage_audit_clean": True,
             "artifact_trained_on": "all_bars",
+            "fold_predictions_available": True,
+            "fold_series_artifact_id": EvaluationSeriesStore(
+                self._workspace.ml_evaluation_series
+            ).save(bundle),
             "folds": folds,
             "aggregate": self._aggregated_scores(folds),
         }
