@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from tradingdev.domain.ml.evaluation.series import (
     EvaluationSeriesBundle,
     build_bundle,
     build_signal_series,
+    frame_bytes,
 )
 
 if TYPE_CHECKING:
@@ -171,3 +173,101 @@ def test_failed_cleanup_keeps_the_artifact_that_could_not_be_removed(
 
     assert not store.path_for(removed_first).exists()
     assert store.path_for(kept_id).exists()
+
+
+def test_malformed_ids_are_rejected(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    with pytest.raises(ValueError, match="malformed"):
+        store.path_for("not-a-hash")
+    with pytest.raises(ValueError, match="malformed"):
+        store.protect("not-a-hash")
+
+
+def test_saving_the_same_bundle_twice_is_idempotent(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    bundle = _bundle()
+
+    first = store.save(bundle)
+    second = store.save(bundle)
+
+    assert first == second
+    assert store.load(first).manifest == bundle.manifest
+
+
+def test_missing_artifact_is_unavailable(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    with pytest.raises(FileNotFoundError, match="unavailable"):
+        store.load("0" * 64)
+
+
+def test_incomplete_and_unreadable_artifacts_are_rejected(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    bundle = _bundle()
+    incomplete = store.path_for("1" * 64)
+    incomplete.mkdir(parents=True)
+    (incomplete / "manifest.json").write_text(
+        json.dumps(bundle.manifest.model_dump(mode="json")), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        store.load("1" * 64)
+
+    unreadable = store.path_for("2" * 64)
+    unreadable.mkdir(parents=True)
+    (unreadable / "manifest.json").write_text("{not-json", encoding="utf-8")
+    (unreadable / "series.parquet").write_bytes(frame_bytes(bundle.frame))
+    with pytest.raises(ValueError, match="unreadable evaluation series manifest"):
+        store.load("2" * 64)
+
+
+def test_directory_id_must_match_the_manifest(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    bundle = _bundle()
+    wrong_id = "3" * 64
+    path = store.path_for(wrong_id)
+    path.mkdir(parents=True)
+    (path / "manifest.json").write_text(
+        json.dumps(bundle.manifest.model_dump(mode="json")), encoding="utf-8"
+    )
+    (path / "series.parquet").write_bytes(frame_bytes(bundle.frame))
+
+    with pytest.raises(ValueError, match="does not match its directory"):
+        store.load(wrong_id)
+    with pytest.raises(ValueError, match="does not match its directory"):
+        store.page()
+
+
+def test_bounds_are_enforced_for_discovery_and_rows(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    for limit in (0, 201):
+        with pytest.raises(ValueError):
+            store.page(limit=limit)
+    with pytest.raises(ValueError):
+        store.page(offset=-1)
+    for limit in (0, 201):
+        with pytest.raises(ValueError):
+            store.rows_page(artifact_id, limit=limit)
+    for offset in (-1, 7):
+        with pytest.raises(ValueError):
+            store.rows_page(artifact_id, offset=offset)
+
+
+def test_export_bound_is_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(EvaluationSeriesStore, "MAX_EXPORT_ROWS", 5)
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+
+    with pytest.raises(ValueError, match="export bound"):
+        store.export(artifact_id)
+
+
+def test_prune_ignores_non_directory_entries(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    stray = store.path_for("0" * 64).parent / "stray.txt"
+    stray.write_text("keep", encoding="utf-8")
+
+    assert store.prune(protected={artifact_id}) == []
+    assert stray.exists()
