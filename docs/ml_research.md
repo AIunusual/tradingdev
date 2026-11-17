@@ -804,7 +804,10 @@ that marker is permanent through the documented API: neither the store nor
 `MLService` provides a removal operation, and pruning always skips marked
 artifacts. Protection therefore outlives the report or leaderboard row that
 motivated it and cannot be reversed through the documented API.
-`cleanup_evaluation_series` removes only unreferenced, unprotected artifacts.
+With the default cleanup call, `cleanup_evaluation_series` removes only
+unreferenced, unprotected artifacts. Passing an explicit `protected` set replaces
+the leaderboard-derived references, so callers must include every ID they want
+retained; see [Reports](reports.md) for that explicit-set semantics.
 Cleanup is not transactional: each artifact is removed as it is visited, with no
 rollback, so a removal error can leave a partially completed cleanup. Re-run
 discovery to see what remains; a failed cleanup is not evidence that no artifact

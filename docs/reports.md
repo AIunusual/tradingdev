@@ -54,28 +54,21 @@ By default, the report applies the
 
 A recorded candidate carries `series_artifact_id`, the stable reference to its
 [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
-A report that must keep that series after cleanup needs an application or Python
-caller to invoke `protect_evaluation_series` with its artifact IDs, or to include
-them in the protected set passed to `cleanup_evaluation_series`. These lifecycle
-operations are on `MLService`; current MCP tools expose only discovery, row
-paging and export, so an MCP-only client cannot protect or clean up artifacts by
-itself. By default cleanup protects every series currently referenced by a
-leaderboard row, so a live row does protect its current artifact. Passing an
-explicit `protected` set replaces that leaderboard-derived default; it does not
-add to it. A caller supplying the set must include every live leaderboard
-reference and every report-cited artifact it wants retained, or mark those IDs
-with `protect_evaluation_series` first. That marker has no removal operation in
-the documented API and pruning always skips it; see the
-[series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for the
-retention consequence. The report's own reference receives no separate automatic
-protection: once an entry is replaced or removed, its old series becomes
-unreferenced and can be pruned unless one of those protections names the
-artifact.
-Reports do not read the series to recompute metrics: report generation snapshots
-the leaderboard reference without checking whether its artifact still exists or
-is intact. The artifact exists so a reader can later inspect the exact scored
-rows, their original coordinates and unavailable-value reasons without the model
-file. Missing or tampered series are reported unavailable or rejected by the row
+A saved report copies that reference into its scope metadata but does not protect
+the artifact: report generation has no lifecycle side effect. The report-specific
+consequence is that the reference can outlive the leaderboard entry it came from
+without keeping the series alive; after that entry is replaced or removed, the
+report has no independent claim on the artifact. See the
+[series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for default
+cleanup protection, explicit protected sets, permanent markers, partial cleanup
+and lock behavior. Current MCP tools expose only discovery, row paging and
+export, so an MCP-only client cannot protect or clean up artifacts by itself.
+
+Reports do not read the series to recompute metrics: generation snapshots the
+leaderboard reference without checking whether the artifact still exists or is
+intact. The artifact exists so a reader can later inspect the exact scored rows,
+their original coordinates and unavailable-value reasons without the model file.
+Missing or tampered series are reported unavailable or rejected by the row
 paging and export operations, never silently reconstructed; generation itself
 does not surface those errors.
 The selected candidates must satisfy the
