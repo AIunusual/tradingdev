@@ -543,6 +543,14 @@ class ValidationSummary(ContractModel):
     artifact_trained_on: str
     folds: list[ValidationFold]
     aggregate: ValidationAggregate
+    fold_predictions_available: bool | None = None
+    """Whether this record carried an actual fold prediction sequence.
+
+    ``null`` means a historical summary predates series publication, not an
+    empty set of predictions.
+    """
+    fold_series_artifact_id: str | None = None
+    """Content-bound series of the predictions made inside those folds."""
 
 
 class TrainedModelSummary(ContractModel):

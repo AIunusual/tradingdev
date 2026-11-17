@@ -782,25 +782,33 @@ rows with bounded `offset`/`limit` (default 50, store maximum 200), and
 artifacts up to `EvaluationSeriesStore.MAX_EXPORT_ROWS` (100,000). An oversized
 artifact fails the export explicitly; use row paging instead. Concatenating row
 pages in offset order reproduces the export exactly.
-Both are read-only and never load a model: a missing artifact is reported
-unavailable, and a changed value, setting, dataset/candidate identity, timestamp
-order or row order fails verification. A failed publication removes its staging
-directory and leaves the previous artifact readable. `protect_evaluation_series`
-marks artifacts cited by saved reports; `cleanup_evaluation_series` removes only
-unreferenced, unprotected artifacts, and a failed removal leaves the remaining
-artifacts intact. Historical rows without `series_artifact_id` stay unavailable
-rather than being recomputed.
+Discovery is a summary lookup: it reads manifests and checks that each manifest
+`artifact_id` matches its directory, but it does not verify the manifest identity
+digest or the Parquet content. Full verification happens when `artifact_id` is
+supplied to page rows, or when `export_evaluation_series` reads the artifact.
+Both row paging and export are read-only and never load a model: a missing
+artifact is reported unavailable, and a changed value, setting,
+dataset/candidate identity or content hash fails verification. For
+signal-evaluation series, verification additionally requires `source_row` to be
+the original `0..row_count-1` sequence and UTC timestamps to be unique and
+increasing. Fold-validation series instead require unique `source_row`
+coordinates; chronological ordering is not imposed on fold rows. A failed
+publication removes its staging directory and leaves the previous artifact
+readable. `protect_evaluation_series` marks artifacts cited by saved reports;
+`cleanup_evaluation_series` removes only unreferenced, unprotected artifacts,
+and a failed removal leaves the remaining artifacts intact. Historical rows
+without `series_artifact_id` stay unavailable rather than being recomputed.
 
 #### Fold prediction series
 
-When `train_model` runs `validation`, the returned `validation` block carries
-`fold_predictions_available` and `fold_series_artifact_id`. That artifact saves
-the predictions produced by each fold model before aggregation, with the real
-`source_row`, timestamp, target and forward return, and that fold's train/eval
-row and time ranges. It does not use the final all-data model to reconstruct
-fold predictions. A historical validation summary without the artifact ID
-reports no saved fold sequence; it is unavailable, not an empty set of
-predictions.
+When `train_model` runs `validation`, the typed MCP `ValidationSummary` exposes
+`fold_predictions_available` and nullable `fold_series_artifact_id`. That
+artifact saves the predictions produced by each fold model before aggregation,
+with the real `source_row`, timestamp, target and forward return, and that
+fold's train/eval row and time ranges. It does not use the final all-data model
+to reconstruct fold predictions. A historical validation summary with
+`fold_predictions_available=null` or no artifact ID reports no saved fold
+sequence; it is unavailable, not an empty set of predictions.
 
 Validation publishes the fold series before fitting and saving the final
 all-data model. If that later step fails, `train_model` can fail after the fold
