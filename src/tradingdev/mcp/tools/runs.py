@@ -151,6 +151,7 @@ def register(mcp: MCPServer, service: RunService) -> None:
 
         completed counts fully observed trials, including undefined objectives;
         rankable counts finite objectives. The leader is among observed trials.
+        Out-of-range objectives are null with reason metric_outside_numeric_range.
         Follow trials.next_offset. Read values with get_run_metrics(job ID, explicit
         scope). search_complete requires every trial to be observed.
         Use get_job_status for lifecycle.

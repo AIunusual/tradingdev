@@ -18,7 +18,9 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 import pytest
+from mcp.server import MCPServer
 from tests.integration.mcp_harness import temporary_mcp_workspace
+from tests.mcp.test_ml_leaderboard_runs import _dispatch
 from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.execution.process_runner import (
@@ -48,6 +50,7 @@ from tradingdev.domain.strategies.bundled.kd_strategy.strategy import KDStrategy
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.domain.strategies.schemas import StrategySpec, StrategyStatus
 from tradingdev.domain.strategies.signals import StrategyCallbackError
+from tradingdev.mcp.tools import jobs, runs
 from tradingdev.mcp.workers import optimization
 from tradingdev.mcp.workers.optimization import ComboEvaluation, _run_optimization
 
@@ -444,6 +447,8 @@ def _run_drawdown_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     values: list[float | None],
+    *,
+    test_value: float | None = None,
 ) -> tuple[JobStore, ExecutionManifest, list[dict[str, Any]]]:
     store, manifest = _queued_job(tmp_path, monkeypatch, metric="max_drawdown")
 
@@ -477,7 +482,7 @@ def _run_drawdown_optimization(
         if bt_cfg.start_date.day == 4:
             oos_calls.append(params)
             # A valid training winner may have an unavailable OOS metric.
-            return _evaluation(params, metric, None, frame, bt_cfg)
+            return _evaluation(params, metric, test_value, frame, bt_cfg)
         value = values[0 if params["direction"] == -1 else 1]
         return _evaluation(params, metric, value, frame, bt_cfg)
 
@@ -587,6 +592,46 @@ def test_worker_minimizes_drawdown_and_rejects_unrankable_search(
             oos_scope["metadata"]["unavailable"]["max_drawdown"] == "insufficient_data"
         )
         assert len(observations["scopes"]["test"]["equity_curve"]) == 4
+
+
+@pytest.mark.parametrize("overflow_scope", ["trial/0/train", "test"])
+def test_mcp_projects_out_of_range_objectives_without_rewriting_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overflow_scope: str
+) -> None:
+    huge = 10**400
+    training_overflow = overflow_scope == "trial/0/train"
+    store, _, _ = _run_drawdown_optimization(
+        tmp_path,
+        monkeypatch,
+        [huge if training_overflow else 0.5, 0.2],
+        test_value=None if training_overflow else huge,
+    )
+    store.update_job(
+        "fixture", pid=None, process_create_time=None, worker_control_id=None
+    )
+    performance_path = store.workspace.runs / "fixture" / "performance.json"
+    original = performance_path.read_bytes()
+    assert (
+        json.loads(original)["scopes"][overflow_scope]["values"]["max_drawdown"] == huge
+    )
+    server = MCPServer("optimization-numeric-range")
+    runs.register(server, RunService(workspace=store.workspace, store=store.store))
+    jobs.register(server, JobService(job_store=store))
+
+    page = _dispatch(server, "get_optimization_trials", {"job_id": "fixture"})
+    progress = page["progress"]
+    assert progress["attempted"] == progress["completed"] == 2
+    assert progress["rankable"] == (1 if training_overflow else 2)
+    assert progress["search_complete"] and progress["leading_trial_index"] == 1
+    trial = page["trials"]["items"][0] if training_overflow else progress["test"]
+    assert trial["scope"] == overflow_scope and trial["state"] == "completed"
+    assert trial["target_value"] is None
+    assert trial["reason"] == "metric_outside_numeric_range"
+    assert page["trials"]["items"][1]["target_value"] == 0.2
+    status = _dispatch(server, "get_job_status", {"job_id": "fixture"})
+    assert status["status"] == "done" and status["optimization"] == progress
+    assert status["cleanup_error"] is None
+    assert performance_path.read_bytes() == original
 
 
 def test_done_status_retains_ledger_error(

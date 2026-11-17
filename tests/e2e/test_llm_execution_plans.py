@@ -28,6 +28,7 @@ from tests.e2e.conversation_user import ObservedPlanUser, review_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.research_evidence import assert_saved_research
 from tests.e2e.strategy_scenarios import market_frame
+from tests.e2e.test_llm_comparison import _read_only_tools
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_research import (
     assert_research_matches_config,
@@ -42,6 +43,7 @@ from tests.integration.test_mcp_optimization import (
     _opposite_trends,
     prepare_partial_optimization,
 )
+from tests.mcp.test_optimization_manifest import _run_drawdown_optimization
 from tests.research_fixtures import research_for_config
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
@@ -866,6 +868,81 @@ def test_llm_reads_partial_optimization_without_rerun(
             and call.result.get("result_completeness") == "partial"
         }
         assert values.keys() >= {"trial/0/train", "trial/2/train"}, calls
+
+
+@pytest.mark.live_llm
+def test_llm_reads_out_of_range_optimization_objective(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Discover why a completed, saved trial cannot participate in selection."""
+    prompt = (
+        "請查看我先前保存的最佳化工作 fixture，報告已嘗試、完成及可用於選擇的組數，"
+        "逐組說明訓練目標值及不可用原因，並確認保留區間測試狀況。只讀既有資料，不重跑。"
+    )
+    options = {
+        "model": pytestconfig.getoption("llm_model"),
+        "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+        "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+    }
+
+    async def inspect(workspace: MCPWorkspace) -> tuple[list[ToolCall], set[str]]:
+        async with workspace.connect() as client:
+            read_only = await _read_only_tools(client)
+            options["tool_names"] = list(client.output_schemas)
+            if pytestconfig.getoption("llm_provider") == "local":
+                calls = await run_local_model(
+                    client,
+                    prompt,
+                    base_url=pytestconfig.getoption("llm_base_url"),
+                    temperature=pytestconfig.getoption("llm_temperature"),
+                    **options,
+                )
+                return calls, read_only
+        return (
+            codex_calls(await run_codex(workspace.root, prompt, **options)),
+            read_only,
+        )
+
+    with temporary_mcp_workspace() as workspace:
+        with pytest.MonkeyPatch.context() as patch:
+            store, _, _ = _run_drawdown_optimization(
+                workspace.root, patch, [10**400, 0.2]
+            )
+        # The in-process producer never launched a supervisor. Do not expose
+        # its synthetic worker identity as a real archived process to MCP.
+        store.update_job(
+            "fixture", pid=None, process_create_time=None, worker_control_id=None
+        )
+        calls, read_only = asyncio.run(inspect(workspace))
+        assert all(
+            call.name in read_only
+            or (
+                call.name == "get_job_status"
+                and call.arguments.get("job_id") == "fixture"
+            )
+            for call in calls
+        ), calls
+        pages = [
+            call.result
+            for call in calls
+            if call.name == "get_optimization_trials"
+            and call.arguments.get("job_id") == "fixture"
+            and isinstance(call.result, dict)
+            and call.result.get("success")
+        ]
+        assert pages, calls
+        progress = pages[-1]["progress"]
+        assert progress["attempted"] == progress["completed"] == 2
+        assert progress["rankable"] == 1 and progress["search_complete"]
+        assert progress["test"]["state"] == "completed"
+        trials = {
+            trial["trial_index"]: trial
+            for page in pages
+            for trial in page["trials"]["items"]
+        }
+        assert trials[0]["target_value"] is None
+        assert trials[0]["reason"] == "metric_outside_numeric_range"
+        assert trials[1]["target_value"] == 0.2
 
 
 @pytest.mark.live_llm

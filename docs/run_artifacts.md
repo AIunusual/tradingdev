@@ -776,7 +776,9 @@ Call `get_optimization_trials(job_id, offset, limit)` for trial states and follo
 `trials.next_offset`. A completed trial can have a null objective. `completed`
 counts full observations. `rankable` counts objectives representable as finite
 floating-point numbers. An objective outside that range leaves its trial
-unrankable. `search_complete` requires observations for the full grid. The
+unrankable. Trial and test projections return such objectives as `null` with
+reason `metric_outside_numeric_range`, preserving the original saved evidence.
+`search_complete` requires observations for the full grid. The
 leader uses rankable objectives, with ties resolved by the first approved position.
 
 Candidate exceptions and timeouts are recorded separately. Ordinary exceptions
