@@ -298,15 +298,12 @@ def register(mcp: MCPServer, service: MLService) -> None:
     ) -> LeaderboardPageResponse | ErrorResponse:
         """Rank recorded evaluations or saved run scopes on one metric.
 
-        A bare metric name ranks recorded signal evaluations; prefix it with
-        run. to rank saved backtest scopes instead. runs is a list of objects
-        with run_id and optional scope; null selects that run's default.
-        Choose signal metrics and filters from
-        get_ml_contract; choose run metrics and their declared directions from
-        get_metric_catalog, which get_ml_contract does not list. Omitting family
-        ranks every method together and reports the mix.
-        Filters, allow_mixed and allow_parameter_axes apply only to signal rankings.
-        Follow next_offset; inspect caveats before believing the first row.
+        Use bare or signal. metrics from get_ml_contract with signal filters, or
+        run. metrics from get_metric_catalog with runs; null scope uses the default.
+        Signal-only options are allow_mixed and allow_parameter_axes. Omitting
+        family includes all methods. Follow next_offset and read caveats.
+        For optimization rows, pass selection_evidence.reference identity to
+        get_selection_evidence for saved training trials.
         """
         try:
             result = ranking.rank_candidates(

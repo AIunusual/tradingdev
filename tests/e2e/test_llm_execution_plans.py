@@ -2,7 +2,7 @@
 
 Live approval cases retain one conversation and inspect each completed model
 turn before injecting a simulated reply into the same messages or Codex thread.
-The live lookup case asks the model to read an existing partial result.
+Live lookup cases ask the model to read existing optimization evidence.
 Offline cases use the same real MCP server, workers, fixture and evidence checks
 without calling a model. Cached prices are synthetic; these tests do not validate
 external market-data access or a real human interface.
@@ -21,12 +21,14 @@ import pandas as pd
 import pytest
 import yaml
 
+from tests.app.test_selection_evidence import _publish
 from tests.e2e.codex_harness import run_codex
 from tests.e2e.conversation import ModelTurn
 from tests.e2e.conversation_user import ObservedPlanUser, review_text
 from tests.e2e.llm_client import ToolCall, codex_calls, run_local_model
 from tests.e2e.research_evidence import assert_saved_research
 from tests.e2e.strategy_scenarios import market_frame
+from tests.e2e.test_llm_comparison import _read_only_tools
 from tests.e2e.workflow_arguments import effective_workflow_calls
 from tests.e2e.workflow_research import (
     assert_research_matches_config,
@@ -41,7 +43,10 @@ from tests.integration.test_mcp_optimization import (
     _opposite_trends,
     prepare_partial_optimization,
 )
+from tests.mcp.test_optimization_manifest import _run_drawdown_optimization
 from tests.research_fixtures import research_for_config
+from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.preflight import PreflightReceipt
 from tradingdev.domain.research import NewResearchSpec, research_payload
@@ -863,3 +868,162 @@ def test_llm_reads_partial_optimization_without_rerun(
             and call.result.get("result_completeness") == "partial"
         }
         assert values.keys() >= {"trial/0/train", "trial/2/train"}, calls
+
+
+@pytest.mark.live_llm
+def test_llm_reads_out_of_range_optimization_objective(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Discover why a completed, saved trial cannot participate in selection."""
+    prompt = (
+        "請查看我先前保存的最佳化工作 fixture，報告已嘗試、完成及可用於選擇的組數，"
+        "逐組說明訓練目標值及不可用原因，並確認保留區間測試狀況。只讀既有資料，不重跑。"
+    )
+    options = {
+        "model": pytestconfig.getoption("llm_model"),
+        "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+        "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+    }
+
+    async def inspect(workspace: MCPWorkspace) -> tuple[list[ToolCall], set[str]]:
+        async with workspace.connect() as client:
+            read_only = await _read_only_tools(client)
+            options["tool_names"] = list(client.output_schemas)
+            if pytestconfig.getoption("llm_provider") == "local":
+                calls = await run_local_model(
+                    client,
+                    prompt,
+                    base_url=pytestconfig.getoption("llm_base_url"),
+                    temperature=pytestconfig.getoption("llm_temperature"),
+                    **options,
+                )
+                return calls, read_only
+        return (
+            codex_calls(await run_codex(workspace.root, prompt, **options)),
+            read_only,
+        )
+
+    with temporary_mcp_workspace() as workspace:
+        with pytest.MonkeyPatch.context() as patch:
+            store, _, _ = _run_drawdown_optimization(
+                workspace.root, patch, [10**400, 0.2]
+            )
+        # The in-process producer never launched a supervisor. Do not expose
+        # its synthetic worker identity as a real archived process to MCP.
+        store.update_job(
+            "fixture", pid=None, process_create_time=None, worker_control_id=None
+        )
+        calls, read_only = asyncio.run(inspect(workspace))
+        assert all(
+            call.name in read_only
+            or (
+                call.name == "get_job_status"
+                and call.arguments.get("job_id") == "fixture"
+            )
+            for call in calls
+        ), calls
+        pages = [
+            call.result
+            for call in calls
+            if call.name == "get_optimization_trials"
+            and call.arguments.get("job_id") == "fixture"
+            and isinstance(call.result, dict)
+            and call.result.get("success")
+        ]
+        assert pages, calls
+        progress = pages[-1]["progress"]
+        assert progress["attempted"] == progress["completed"] == 2
+        assert progress["rankable"] == 1 and progress["search_complete"]
+        assert progress["test"]["state"] == "completed"
+        trials = {
+            trial["trial_index"]: trial
+            for page in pages
+            for trial in page["trials"]["items"]
+        }
+        assert trials[0]["target_value"] is None
+        assert trials[0]["reason"] == "metric_outside_numeric_range"
+        assert trials[1]["target_value"] == 0.2
+
+
+@pytest.mark.live_llm
+def test_llm_reads_ranked_optimization_search_without_rerun(
+    pytestconfig: pytest.Config,
+) -> None:
+    """Read the saved search through the public ranking reference."""
+    tool_names = [
+        "list_runs",
+        "get_run",
+        "get_run_metrics",
+        "get_job_status",
+        "list_jobs",
+        "get_metric_catalog",
+        "get_ml_contract",
+        "leaderboard",
+        "get_selection_evidence",
+        "get_optimization_trials",
+        "list_artifacts",
+        "get_artifact",
+        "prepare_optimization",
+        "submit_execution_decision",
+    ]
+    prompt = (
+        "請按測試期 Sharpe 比較我之前保存的兩個最佳化結果 narrow 和 wide。"
+        "說明各自實際搜尋幾組，再從排名附帶的原始證據找出搜尋較大的結果的"
+        "前兩組參數和訓練期 Sharpe。若有缺值請報原始原因。只查既有結果。"
+    )
+    options = {
+        "model": pytestconfig.getoption("llm_model"),
+        "reasoning_effort": pytestconfig.getoption("llm_reasoning_effort"),
+        "timeout_seconds": pytestconfig.getoption("llm_timeout"),
+        "tool_names": tool_names,
+    }
+
+    async def inspect(workspace: MCPWorkspace) -> list[ToolCall]:
+        if pytestconfig.getoption("llm_provider") == "codex":
+            return codex_calls(await run_codex(workspace.root, prompt, **options))
+        async with workspace.connect() as client:
+            return await run_local_model(
+                client,
+                prompt,
+                base_url=pytestconfig.getoption("llm_base_url"),
+                temperature=pytestconfig.getoption("llm_temperature"),
+                **options,
+            )
+
+    with temporary_mcp_workspace() as workspace:
+        paths = WorkspacePaths(workspace.workspace)
+        store = SQLiteStore(paths)
+        _publish(paths, store, "narrow", 5, historical=True)
+        _publish(paths, store, "wide", 500)
+        calls = asyncio.run(inspect(workspace))
+        assert all(
+            call.name not in {"prepare_optimization", "submit_execution_decision"}
+            for call in calls
+        )
+        board = next(
+            call.result["ranked"]
+            for call in calls
+            if call.name == "leaderboard"
+            and call.result.get("success")
+            and call.result["metric"] == "run.sharpe_ratio"
+            and {row["run_id"] for row in call.result["ranked"]} == {"narrow", "wide"}
+        )
+        wide, narrow = board
+        assert wide["scope"] == narrow["scope"] == "test"
+        assert [
+            row["selection_evidence"]["summary"]["raw_attempted"] for row in board
+        ] == [500, 5]
+        reference = wide["selection_evidence"]["reference"]
+        trials = {
+            trial["trial_index"]: trial
+            for call in calls
+            if call.name == "get_selection_evidence"
+            and call.result.get("success")
+            and call.result["reference"] == reference
+            for trial in call.result["trials"]["items"]
+        }
+        assert trials[0]["metrics"]["sharpe_ratio"]["value"] == 0.0
+        assert trials[1]["metrics"]["sharpe_ratio"] == {
+            "value": None,
+            "reason": "insufficient_data",
+        }

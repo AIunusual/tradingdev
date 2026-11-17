@@ -298,14 +298,15 @@ differently spelled selections are compared after they load and resolve, which
 catches an omitted scope that names a scalar scope already selected. A selection
 that cannot be loaded is skipped before that second comparison, so two spellings of
 an unloadable scope appear as two skipped rows; neither is ranked. A run row carries
-`run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`
-and the stored value; `context`, `families` and `parameter_axes` are `null` —
+`run_id`, `scope`, the trading conditions its manifest recorded, `metric_source`,
+the stored value and `selection_evidence` for applicable optimization runs.
+`context`, `families` and `parameter_axes` are `null` —
 present but not applicable, because a named selection has no evaluation context or
 method mix to report. An empty value would read as measured-and-nothing, which is a
 different claim. Every row reports `source`, and one response never mixes the two: a
 signal metric and a backtest metric share no definition, so they share no column.
 The run-ranking semantics — saved scope parameters and metadata, manifest-level
-conditions, definition checks and fold-summary skips — are in
+conditions, definition checks, optimization evidence and fold-summary skips — are in
 [the run-ranking contract](run_artifacts.md#ranking-saved-run-scopes).
 
 MCP `leaderboard` accepts `offset=0` and `limit=20` (1–100); it does not accept

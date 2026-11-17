@@ -44,7 +44,9 @@ def test_equal_candidates_preserve_search_order() -> None:
     assert best_result([first, second], direction="minimize") is first
 
 
-@pytest.mark.parametrize("value", [None, True, "1.0", float("nan"), float("inf")])
+@pytest.mark.parametrize(
+    "value", [None, True, "1.0", float("nan"), float("inf"), 10**400]
+)
 def test_unavailable_metric_is_not_coerced_to_zero(value: object) -> None:
     assert finite_metric_value(value) is None
 

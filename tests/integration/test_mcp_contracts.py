@@ -34,6 +34,7 @@ _READ_ONLY_TOOLS = {
     "get_metric_catalog",
     "get_run_metrics",
     "get_optimization_trials",
+    "get_selection_evidence",
     "find_runs",
     "get_run_trades",
     "get_run_equity",
@@ -222,6 +223,12 @@ async def test_application_errors_follow_advertised_output_schemas(
             ),
             ("get_run_metrics", {"run_id": "missing_run"}, "success", False),
             ("get_optimization_trials", missing_job, "success", False),
+            (
+                "get_selection_evidence",
+                {"run_id": "missing_run", "performance_sha256": "0" * 64},
+                "code",
+                "selection_evidence_unavailable",
+            ),
             (
                 "get_artifact",
                 {"artifact_id": "missing_artifact"},

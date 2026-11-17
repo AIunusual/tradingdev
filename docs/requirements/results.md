@@ -44,6 +44,13 @@
 - **契約**：[對話紀錄](../reports.md#recorded-conversations)。
 - **驗證**：[對話保存與匯出](../../tests/app/test_conversations.py) 檢查文字順序、部分狀態、衝突、容量與固定成果；[Codex 接入](../../tests/adapters/test_codex_recording.py) 以替代協定端檢查事件、續接與實際子程序清理。人工驗收另用真實 Codex CLI／TradingDev MCP 執行多輪對話、關閉後續接，核對原文、工具內容及匯出 HTML 的閱讀與展開操作。
 
+## FR-RES-007 最佳化排名的搜尋證據
+
+- **需求**：最佳化排名候選可追溯到同一執行 manifest、選中訓練 scope 與測試 scope 所屬的原始訓練搜尋。
+- **驗收**：排名分頁維持原搜尋的計畫、實際嘗試、完成及 objective 可用數。透過固定引用續讀實際 trial 參數、訓練指標、設定及缺值原因，引用不符時拒絕。未發布完整結果的工作沒有排名候選，無法驗證的歷史搜尋回傳不可用原因。原始嘗試數不代表有效獨立樣本數，訓練搜尋與測試績效分開解讀。
+- **契約**：[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)、[搜尋證據](../performance_artifacts.md#optimization-selection-evidence)。
+- **驗證**：[排序與證據續讀](../../tests/app/test_selection_evidence.py) 核對搜尋規模、分頁及歷史證據，[最佳化 MCP 流程](../../tests/integration/test_mcp_optimization.py) 核對 worker 發布及部分結果的排名行為。
+
 ## NFR-DATA-001 保存完整性與可追溯性
 
 - **需求**：歷史結果固定各自保存的設定與來源身分；回測 run 另保存當時指標定義。讀取及發佈須核對相關證據，區分完整結果、部分狀態與不可用資料，並區分指標定義的取得時點。
