@@ -276,7 +276,7 @@ class PerformanceStore:
 
     def _read(
         self, run_id: str, name: str, *, allow_pending: bool = False
-    ) -> tuple[bytes, dict[str, Any]]:
+    ) -> tuple[bytes, dict[str, Any], str]:
         if (
             not allow_pending
             and (self._path(run_id, name).parent / ".result-publication").exists()
@@ -301,9 +301,10 @@ class PerformanceStore:
             ):
                 raise ValueError("Artifact does not belong to the requested run")
             content = path.read_bytes()
-            if hashlib.sha256(content).hexdigest() != artifact.get("sha256"):
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != artifact.get("sha256"):
                 raise ValueError("Artifact SHA-256 does not match stored metadata")
-            return content, run
+            return content, run, digest
         except (OSError, ValueError) as exc:
             raise PerformanceArtifactError(
                 "performance_artifact_invalid",
@@ -315,7 +316,18 @@ class PerformanceStore:
         return self._load(run_id)
 
     def _load(self, run_id: str, *, allow_pending: bool = False) -> PerformanceBundle:
-        content, run = self._read(run_id, "performance", allow_pending=allow_pending)
+        return self._load_with_hash(run_id, allow_pending=allow_pending)[0]
+
+    def load_with_hash(self, run_id: str) -> tuple[PerformanceBundle, str]:
+        """Read a published bundle and the digest of exactly those bytes."""
+        return self._load_with_hash(run_id)
+
+    def _load_with_hash(
+        self, run_id: str, *, allow_pending: bool = False
+    ) -> tuple[PerformanceBundle, str]:
+        content, run, digest = self._read(
+            run_id, "performance", allow_pending=allow_pending
+        )
         try:
             bundle = PerformanceBundle.model_validate_json(content)
             if bundle.run_id != run_id or bundle.manifest_hash != run.get(
@@ -324,7 +336,7 @@ class PerformanceStore:
                 raise ValueError(
                     "Performance JSON identity differs from the recorded run"
                 )
-            return bundle
+            return bundle, digest
         except ValueError as exc:
             raise PerformanceArtifactError(
                 "performance_artifact_invalid", str(exc)
@@ -338,7 +350,7 @@ class PerformanceStore:
         self, run_id: str, *, allow_pending: bool = False
     ) -> ObservationsBundle:
         performance = self._load(run_id, allow_pending=allow_pending)
-        content, _ = self._read(run_id, "observations", allow_pending=allow_pending)
+        content, _, _ = self._read(run_id, "observations", allow_pending=allow_pending)
         try:
             observations = ObservationsBundle.model_validate_json(content)
             PerformanceArtifacts(performance=performance, observations=observations)

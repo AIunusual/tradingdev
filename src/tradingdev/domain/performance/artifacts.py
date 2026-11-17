@@ -171,6 +171,32 @@ class PerformanceScope(ArtifactModel):
         return self
 
 
+class OptimizationSelection(ArtifactModel):
+    """Selection summary for a published grid. Trial values live in train scopes."""
+
+    schema_version: Literal[1] = 1
+    split: Literal["train"] = "train"
+    selected_train_scope: str
+    test_scope: Literal["test"] = "test"
+    objective: str
+    direction: Literal["maximize", "minimize"]
+    planned: int = Field(gt=0)
+    raw_attempted: int = Field(gt=0)
+    completed: int = Field(gt=0)
+    objective_available: int = Field(gt=0)
+    objective_unavailable: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> Self:
+        if (
+            self.planned != self.raw_attempted
+            or self.raw_attempted != self.completed
+            or self.completed != self.objective_available + self.objective_unavailable
+        ):
+            raise ValueError("Published selection requires an observed complete grid")
+        return self
+
+
 class PerformanceBundle(ArtifactModel):
     """Complete scoped metrics, definitions and their execution identity."""
 
@@ -182,6 +208,9 @@ class PerformanceBundle(ArtifactModel):
     definitions: dict[str, MetricDefinitionSnapshot]
     selected_train_scope: str | None = None
     benchmarks: dict[str, BenchmarkScope] = Field(default_factory=dict)
+    optimization_selection: OptimizationSelection | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def consistent_scopes(self) -> Self:
@@ -192,6 +221,14 @@ class PerformanceBundle(ArtifactModel):
             selected = self.scopes.get(self.selected_train_scope)
             if selected is None or selected.split != "train":
                 raise ValueError("Selected train scope must reference a train result")
+        if (selection := self.optimization_selection) is not None and (
+            self.default_scope != selection.test_scope
+            or self.scopes[self.default_scope].split != "test"
+            or self.selected_train_scope != selection.selected_train_scope
+            or len(self.scopes) != selection.completed + 1
+            or selection.objective not in self.definitions
+        ):
+            raise ValueError("Optimization selection does not match its saved scopes")
         for key, definition in self.definitions.items():
             if key != definition.id:
                 raise ValueError("Metric definition ID differs from its mapping key")
@@ -415,6 +452,8 @@ def build_artifacts(
     *,
     selected_train_scope: str | None = None,
     benchmarks: dict[str, BenchmarkScope] | None = None,
+    optimization_selection: OptimizationSelection | None = None,
+    definitions: dict[str, MetricDefinitionSnapshot] | None = None,
 ) -> PerformanceArtifacts:
     """Freeze the producer's definitions and complete scope/observation mapping."""
     frozen_benchmarks = {} if benchmarks is None else benchmarks
@@ -428,9 +467,12 @@ def build_artifacts(
             manifest_hash=manifest_hash,
             default_scope=default_scope,
             scopes=scopes,
-            definitions=metric_definition_snapshots(keys),
+            definitions=metric_definition_snapshots(keys)
+            if definitions is None
+            else definitions,
             selected_train_scope=selected_train_scope,
             benchmarks=frozen_benchmarks,
+            optimization_selection=optimization_selection,
         ),
         observations=ObservationsBundle(
             run_id=run_id, manifest_hash=manifest_hash, scopes=observations

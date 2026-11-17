@@ -297,18 +297,14 @@ def register(mcp: MCPServer, service: MLService) -> None:
         allow_parameter_axes: bool = False,
         require_verified_baseline: bool = False,
     ) -> LeaderboardPageResponse | ErrorResponse:
-        """Rank recorded evaluations or saved run scopes on one metric.
+        """Rank saved signal evaluations or run scopes on one metric.
 
-        A bare metric name ranks recorded signal evaluations; prefix it with
-        run. to rank saved backtest scopes instead. runs is a list of objects
-        with run_id and optional scope; null selects that run's default.
-        Choose signal metrics and filters from
-        get_ml_contract; choose run metrics and their declared directions from
-        get_metric_catalog, which get_ml_contract does not list. Omitting family
-        ranks every method together and reports the mix.
-        Signal-only filters and options include require_verified_baseline, which
-        requires matching saved raw market inputs across the selected candidates.
-        Follow next_offset; inspect caveats before believing the first row.
+        Use bare/signal. metrics and signal options from get_ml_contract, or run.
+        metrics from get_metric_catalog with runs (null scope selects default).
+        Signal-only require_verified_baseline requires matching raw inputs.
+        Omit family for all methods. Follow next_offset; read caveats.
+        Read optimization trials via selection_evidence.reference with
+        get_selection_evidence.
         """
         try:
             result = ranking.rank_candidates(

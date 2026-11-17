@@ -608,6 +608,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | Job progress or cancellation | `list_jobs`, `get_job_status`, `cancel_job` |
 | Saved result identity and scopes | `list_runs`, `get_run`, `find_runs` |
 | Optimization grid progress and partial trial scope discovery | `get_job_status`, `get_optimization_trials` |
+| Training trials behind a ranked optimization | `get_selection_evidence` with the [ranking reference](#ranking-saved-run-scopes) |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
@@ -773,9 +774,12 @@ reports `detail_error`; a completed job still exposes its published run when tha
 run verifies.
 Call `get_optimization_trials(job_id, offset, limit)` for trial states and follow
 `trials.next_offset`. A completed trial can have a null objective. `completed`
-counts full observations, `rankable` counts finite objectives and `search_complete`
-requires observations for the full grid. The leader reflects only ranked evidence
-and ties retain the first approved position.
+counts full observations. `rankable` counts objectives representable as finite
+floating-point numbers. An objective outside that range leaves its trial
+unrankable. Trial and test projections return such objectives as `null` with
+reason `metric_outside_numeric_range`, preserving the original saved evidence.
+`search_complete` requires observations for the full grid. The
+leader uses rankable objectives, with ties resolved by the first approved position.
 
 Candidate exceptions and timeouts are recorded separately. Ordinary exceptions
 raised within bundled strategy callbacks are recorded as candidate failures.
@@ -900,6 +904,47 @@ Ranking does not reconstruct or merge these settings. Its `metadata` preserves t
 provenance and settings; fitted values remain separately identified by
 `metadata.strategy_parameters` when recorded. Growing rolling traces retain the
 summary and artifact references supplied by `get_run_metrics`.
+
+Optimization rows carry `selection_evidence`, the search behind the run. The
+`scope_role` distinguishes the selected test, selected training trial, and other
+training trials. Each role refers to the same training search. Simple runs have
+`selection_evidence: null`. If a historical search cannot be verified, an otherwise
+readable ranking row reports `status: unavailable` with the reason. An
+unavailable search has an unknown count. The ranking's candidate count covers
+the selected rows, independent of each run's original search size.
+
+Unpublished optimization jobs appear among skipped selections with their job
+status. For a published optimization with an owning job record, ranking and
+`get_selection_evidence` also require that job's status to be `done`. A non-done
+job causes the ranking to skip the run and evidence lookup to report unavailable,
+even if `get_run_metrics` can read its published values: result publication and
+the job's lifecycle update are separate operations. A historical run without a
+job record is not rejected solely for that absence; its saved manifest and
+artifacts must still pass the applicable verification.
+
+Call `get_selection_evidence` with `run_id` and `performance_sha256` from
+`selection_evidence.reference`. Keep both values and follow `trials.next_offset`.
+The reference also identifies the saved manifest. Its `source` is `trial_ledger`
+for the summary published from committed trial records, or
+`verified_historical_bundle` for a historical bundle verified against its manifest
+and saved observations.
+
+The page includes the selected training trial's execution context and any saved
+definitions for the objective or training Sharpe. Each trial gives its grid
+position, overrides, saved values and missing-value reasons, with calculation
+settings, provider versions and applicable calculation fallbacks when recorded.
+A saved metric outside the supported numeric range is returned as unavailable
+with reason `metric_outside_numeric_range`.
+For other trial values, pass the trial's `scope` to `get_run_metrics`. Paging
+preserves the original search counts. The query rejects a mismatched reference
+or evidence that cannot be verified. See
+[optimization selection evidence](performance_artifacts.md#optimization-selection-evidence)
+for publication and historical verification rules.
+
+Trial dependence and manual searches across runs remain unknown. Raw attempts
+count tried grid positions, including completed trials whose objective is
+undefined. Training-trial Sharpe values characterize the training search.
+They cannot establish a deflated Sharpe for the selected test returns.
 
 The trading `conditions` describe the run's submitted manifest and remain the same
 for all scopes of that run. They are not a fold's observed dates: use the scope's

@@ -50,8 +50,9 @@ recalculate previously published artifacts.
 ## Performance Scopes and Provenance
 
 `performance.json` schema version 1 records `run_id`, `manifest_hash`,
-`default_scope`, `scopes`, `definitions`, and optionally `benchmarks`. Each scope
-contains `values` and `metadata`, its engine `mode`, `kind`, `split`, optional
+`default_scope`, `scopes`, `definitions`, and optionally `benchmarks` and
+`optimization_selection`. Each scope contains `values` and `metadata`, its
+engine `mode`, `kind`, `split`, optional
 fold/trial index, and parameter values. Definition snapshots describe unit,
 provider, meaning, applicability, summary selection and optimization direction.
 They are saved with the result; queries do not substitute the current catalog.
@@ -259,6 +260,34 @@ Historical runs without performance artifacts remain readable through ordinary
 run lookup, marked as lacking detailed provenance. `get_run_metrics` reports
 `performance_artifact_unavailable`; reads never migrate, unpickle or recompute
 those results. Historical values are not asserted to follow the new definitions.
+
+## Optimization Selection Evidence
+
+Published optimizations embed a versioned `optimization_selection` summary in
+`performance.json`. The worker takes counts and the winning position from the
+committed trial ledger. Before storing the bundle, the run publisher verifies the
+summary against the approved grid and saved objectives. It determines the winning
+trial from the saved training objectives using the manifest's search direction
+and verifies that `selected_train_scope` identifies that winner. It checks that
+`test` uses the winner's parameters and that the saved observations fall within
+their approved training or test ranges.
+Trial values and calculation settings stay in their original scopes. The same
+hashed bundle preserves metric definition snapshots from the committed evidence.
+The selected training scope and `test` use the same grid overrides in distinct
+measurement periods.
+
+`planned`, `raw_attempted` and `completed` agree for a published complete grid.
+Trials with an undefined objective count in all three. The finite objective count
+and the unavailable objective count describe the values available to selection.
+Partial jobs expose recorded attempts separately through `get_optimization_trials`.
+An older bundle provides selection evidence only when its full scopes and original
+observations verify against the saved manifest. Read-time verification leaves the
+historical files intact. Newly published optimization bundles require a reader
+that recognizes `optimization_selection`.
+
+Use `get_selection_evidence` to page saved training trials behind a ranked
+optimization. The [saved-run ranking contract](run_artifacts.md#ranking-saved-run-scopes)
+describes the required reference, continuation and interpretation limits.
 
 ## Benchmarks
 

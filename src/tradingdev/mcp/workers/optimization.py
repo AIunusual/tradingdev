@@ -38,7 +38,11 @@ from tradingdev.domain.backtest.schemas import BacktestConfig, ParallelConfig
 from tradingdev.domain.execution import ExecutionManifest, ManifestError
 from tradingdev.domain.optimization.grid_search import finite_metric_value
 from tradingdev.domain.optimization.trials import TrialEvidence
-from tradingdev.domain.performance.artifacts import build_artifacts, scope_from_backtest
+from tradingdev.domain.performance.artifacts import (
+    OptimizationSelection,
+    build_artifacts,
+    scope_from_backtest,
+)
 from tradingdev.domain.randomness import execution_randomness
 from tradingdev.domain.research_scope import (
     optimization_backtest,
@@ -61,6 +65,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from tradingdev.domain.backtest.result import BacktestResult
+    from tradingdev.domain.performance.artifacts import MetricDefinitionSnapshot
     from tradingdev.domain.strategies.execution import StrategyExecution
 
 logger = setup_logger(__name__)
@@ -370,10 +375,18 @@ def _save_complete(
         for trial in snapshot.trials
     }
     evidence["test"] = ledger.read_evidence(snapshot.test)
+    definitions: dict[str, MetricDefinitionSnapshot] = {}
+    for item in evidence.values():
+        for name, definition in item.definitions.items():
+            if definitions.setdefault(name, definition) != definition:
+                raise ManifestError(f"Trial metric definitions disagree for {name}")
     selected_scope = f"trial/{index}/train"
     train = evidence[selected_scope].scope
     test = evidence["test"].scope
     metric = ledger.search.optimization_metric
+    objective_available = sum(
+        finite_metric_value(trial.target_value) is not None for trial in snapshot.trials
+    )
     result = {
         "best_params": train.parameters,
         "optimization_metric": metric,
@@ -398,6 +411,19 @@ def _save_complete(
             {key: item.scope for key, item in evidence.items()},
             {key: item.observations for key, item in evidence.items()},
             selected_train_scope=selected_scope,
+            definitions=definitions,
+            optimization_selection=OptimizationSelection(
+                selected_train_scope=selected_scope,
+                objective=metric,
+                direction=ledger.search.direction,
+                planned=len(ledger.grid),
+                raw_attempted=sum(
+                    trial.state != "not_attempted" for trial in snapshot.trials
+                ),
+                completed=sum(trial.state == "completed" for trial in snapshot.trials),
+                objective_available=objective_available,
+                objective_unavailable=len(snapshot.trials) - objective_available,
+            ),
         ),
     )
     job_store.update_job(

@@ -288,6 +288,9 @@ _ML_GUIDANCE = {
         "ML reports snapshot the selected evidence without rerunning predictions "
         "or training. Keep unavailable candidates and comparison caveats; "
         "including runs does not prove a model-to-run relationship. "
+        "generate_report applies the corresponding leaderboard options through "
+        "ml_allow_parameter_axes, ml_allow_mixed and ml_require_verified_baseline, "
+        "and freezes market_comparison in the report. "
         f"{ML_SAMPLE_PROVENANCE_NOTE}"
     ),
 }

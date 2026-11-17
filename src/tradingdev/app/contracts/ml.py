@@ -13,6 +13,7 @@ from pydantic import Field, JsonValue, model_validator
 from tradingdev.app.contracts.common import ContractModel, ErrorResponse
 from tradingdev.domain.ml.leaderboard import ProducerSource
 from tradingdev.domain.ml.market_evidence import MarketComparison, RawMarketEvidence
+from tradingdev.domain.optimization.selection import SelectionEvidence
 
 
 class FeatureSetSummary(ContractModel):
@@ -279,6 +280,8 @@ class RankedRunRow(ContractModel):
     conditions: RunConditions
     metric_source: Literal["bundle", "legacy_summary"]
     """Whether the value came from the performance bundle or a legacy summary."""
+    selection_evidence: SelectionEvidence | None = None
+    """Training-search context for an optimization, with a saved evidence reference."""
 
 
 class SkippedRunRow(ContractModel):

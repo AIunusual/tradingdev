@@ -17,13 +17,17 @@ from tradingdev.app.contracts.research import RunSummary
 from tradingdev.app.optimization_results import OptimizationResults
 from tradingdev.app.pagination import paginate
 from tradingdev.app.rolling_trace_summary import query_metadata
+from tradingdev.app.selection_evidence import PublishedSelectionEvidence
 from tradingdev.domain.performance.catalog import metric_catalog
 from tradingdev.domain.presentation.metrics import display_metrics
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tradingdev.app.contracts.optimization import OptimizationTrialsResponse
+    from tradingdev.app.contracts.optimization import (
+        OptimizationTrialsResponse,
+        SelectionEvidencePage,
+    )
     from tradingdev.app.optimization_results import OptimizationResultView
     from tradingdev.domain.performance.artifacts import (
         MetricDefinitionSnapshot,
@@ -56,6 +60,7 @@ class RunService:
         self._store = store or get_sqlite_store(self._workspace)
         self._performance = PerformanceStore(self._workspace, self._store)
         self._optimization = OptimizationResults(self._workspace, self._store)
+        self._selection = PublishedSelectionEvidence(self._workspace, self._store)
 
     def list_runs(self) -> list[dict[str, Any]]:
         """List compact default-scope values with explicit detail discovery."""
@@ -109,6 +114,18 @@ class RunService:
     ) -> OptimizationTrialsResponse:
         """Read a bounded page of the manifest-bound optimization grid."""
         return self._optimization.page(job_id, offset=offset, limit=limit)
+
+    def get_selection_evidence(
+        self,
+        run_id: str,
+        performance_sha256: str,
+        *,
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_LIMIT,
+    ) -> SelectionEvidencePage:
+        return self._selection.page(
+            run_id, performance_sha256, offset=offset, limit=limit
+        )
 
     def get_run_metrics(
         self,

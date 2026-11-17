@@ -231,10 +231,9 @@ def register(
         run_ids and comparison_job_id are mutually exclusive. ML can stand alone or
         accompany either: select 1..50 distinct ml_entry_ids from leaderboard or
         recorded evaluate_signal results; never infer model/run associations.
-        ML is cost-free signal research, not a backtest; unsaved prediction/IC series
-        are not reconstructed. Use ml_allow_parameter_axes for a parameter sweep.
-        The report freezes the same market checks as leaderboard; strict baseline
-        and mixed-context display use the corresponding ml_ options.
+        ML is cost-free signal research, not a backtest;
+        unsaved series stay unavailable.
+        Read get_ml_contract for ml_ comparison options and frozen market checks.
         A comparison needs a terminal job and complete ledger; every candidate,
         including failed/cancelled/not_run reasons, remains visible with any sections.
         Use its parent job ID even when zero candidates succeeded.

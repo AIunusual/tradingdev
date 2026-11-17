@@ -51,7 +51,11 @@ def finite_metric_value(value: object) -> float | None:
     """Keep unavailable and nonfinite observations out of objective selection."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        numeric = float(value)
+    except OverflowError:
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def is_better_metric(

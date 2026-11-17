@@ -14,7 +14,13 @@ from typing import TYPE_CHECKING, Any
 
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
-from tradingdev.app.run_service import RunService
+from tradingdev.adapters.storage.performance import (
+    PerformanceArtifactError,
+    PerformanceStore,
+)
+from tradingdev.adapters.storage.sqlite import get_sqlite_store
+from tradingdev.app.rolling_trace_summary import query_metadata
+from tradingdev.app.selection_evidence import PublishedSelectionEvidence
 from tradingdev.domain.backtest.schemas import BacktestConfig
 from tradingdev.domain.execution import ManifestError
 from tradingdev.domain.performance.artifacts import MetricDefinitionSnapshot
@@ -84,7 +90,9 @@ class RankingService:
     ) -> None:
         self._workspace = workspace or WorkspacePaths()
         self._workspace.ensure()
-        self._runs = RunService(workspace=self._workspace, store=store)
+        self._store = store or get_sqlite_store(self._workspace)
+        self._performance = PerformanceStore(self._workspace, self._store)
+        self._selection = PublishedSelectionEvidence(self._workspace, self._store)
         self._ml = ml_service
 
     def rank_candidates(
@@ -264,6 +272,10 @@ class RankingService:
                         "slippage": item.candidate.payload.conditions.slippage,
                     },
                     "metric_source": item.candidate.payload.metric_source,
+                    "selection_evidence": evidence.model_dump(mode="json")
+                    if (evidence := item.candidate.payload.selection_evidence)
+                    is not None
+                    else None,
                 }
                 for item in result.ranked
             ],
@@ -290,27 +302,37 @@ class RankingService:
         self, run_id: str, scope: str | None, metric: str
     ) -> Candidate[RunCandidate]:
         """Build one candidate from stored values; raise ValueError with the reason."""
-        run_payload = self._runs.get_run(run_id)
-        if run_payload.get("success") is False:
-            raise ValueError(f"unknown run: {run_id}")
-        run = run_payload["run"]
-        metrics_payload = self._runs.get_run_metrics(run_id, scope=scope)
-        if metrics_payload.get("success") is False:
+        run = self._store.get_run(run_id)
+        job = self._store.get_job(run_id if run is None else str(run["job_id"]))
+        if (
+            job is not None
+            and job.get("job_type") == "optimization"
+            and (run is None or job.get("status") != "done")
+        ):
             raise ValueError(
-                f"{run_id} {scope or 'default'}: "
-                f"{metrics_payload.get('error') or metrics_payload.get('code')}"
+                f"{run_id}: optimization status {job.get('status')}; "
+                "no completed ranking candidate. Inspect get_optimization_trials."
             )
-        # A null request resolves to the run's default, and the row must name the
-        # scope it was actually read from rather than the request that found it.
-        resolved_scope = str(metrics_payload["scope"])
-        if metrics_payload["kind"] == "fold_summary":
+        if run is None:
+            raise ValueError(f"unknown run: {run_id}")
+        try:
+            bundle, digest = self._performance.load_with_hash(run_id)
+        except PerformanceArtifactError as exc:
+            raise ValueError(f"{run_id} {scope or 'default'}: {exc}") from exc
+        resolved_scope = bundle.default_scope if scope is None else scope
+        selected = bundle.scopes.get(resolved_scope)
+        if selected is None:
+            raise ValueError(
+                f"{run_id} {scope or 'default'}: Unknown metric scope: {resolved_scope}"
+            )
+        if selected.kind == "fold_summary":
             raise ValueError(
                 f"{run_id} {resolved_scope}: fold summary cannot be "
                 "ranked; select a fold scope"
             )
         name = metric[len(_RUN_PREFIX) :]
-        recorded = metrics_payload["definitions"].get(name)
-        if recorded is not None:
+        if name in selected.values:
+            recorded = bundle.definitions[name].model_dump()
             current = MetricDefinitionSnapshot.model_validate(
                 asdict(METRIC_CATALOG[name])
             ).model_dump()
@@ -350,8 +372,10 @@ class RankingService:
             scope=resolved_scope,
             strategy_id=str(run["strategy_id"]),
             revision_id=str(run.get("revision_id") or ""),
-            parameters=metrics_payload["parameters"],
-            metadata=metrics_payload["metadata"],
+            parameters=selected.parameters,
+            metadata=query_metadata(
+                selected.metadata, run_id=run_id, scope_id=resolved_scope
+            ),
             symbol=backtest.symbol,
             timeframe=backtest.timeframe,
             start_date=backtest.start_date.isoformat(),
@@ -359,5 +383,10 @@ class RankingService:
             fees=backtest.fees,
             slippage=backtest.slippage,
             metric_source="bundle",
+            selection_evidence=self._selection.describe(
+                manifest, bundle, digest, resolved_scope
+            ),
         )
-        return to_ranking_candidate(candidate, metrics_payload["metrics"])
+        return to_ranking_candidate(
+            candidate, selected.model_dump(mode="json")["values"]
+        )

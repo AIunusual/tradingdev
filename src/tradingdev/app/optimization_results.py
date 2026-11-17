@@ -86,6 +86,9 @@ class OptimizationResultView:
                 self.job.get("error")
                 or "Execution ended before a result was committed."
             )
+        target_value = finite_metric_value(record.target_value)
+        if record.target_value is not None and target_value is None:
+            reason = "metric_outside_numeric_range"
         return OptimizationTrial(
             trial_index=record.selected_index
             if record.position == TEST_POSITION
@@ -93,7 +96,7 @@ class OptimizationResultView:
             parameters=self.ledger.parameters(record),
             state=state,
             scope=self.scope_id(record) if state == "completed" else None,
-            target_value=record.target_value,
+            target_value=target_value,
             reason=reason,
         )
 
