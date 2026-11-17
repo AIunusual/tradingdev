@@ -23,6 +23,7 @@ from tradingdev.domain.ml.evaluation.series import (
 )
 
 _ARTIFACT_ID = re.compile(r"^[0-9a-f]{64}$")
+_READ_ERRORS = (ValueError, TypeError, KeyError, OSError)
 
 
 class EvaluationSeriesStore:
@@ -205,7 +206,7 @@ class EvaluationSeriesStore:
                 manifest = EvaluationSeriesManifest.from_record(
                     json.loads(manifest_path.read_text(encoding="utf-8"))
                 )
-            except ValueError, TypeError, KeyError, OSError:
+            except _READ_ERRORS:
                 # A corrupt index entry is reported through `load`, never
                 # silently omitted from discovery.
                 raise ValueError(
