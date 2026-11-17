@@ -506,9 +506,10 @@ are built. Different file orders that yield the same ordered bars on that path
 have the same raw identity. `raw_market_series` preserves the order of the
 frame it receives.
 
-The Parquet frame's `timestamp` is the evaluation coordinate. The zero-based
-`raw_row` identifies the symbol's original input bar; `label_start` and
-`label_end` hold the timestamps at `raw_row` and `raw_row + horizon`.
+The Parquet frame's `timestamp` is the evaluation coordinate. The standard
+builder records the symbol's zero-based input ordinal as `raw_row` and takes
+`label_start` and `label_end` from the bars at `raw_row` and
+`raw_row + horizon`, respectively.
 A forward-filled panel row keeps all three source coordinates beside its
 aligned timestamp. Fold validation refuses panels with carried observations.
 The manifest's per-symbol `evaluation_rows` digest covers the ordered
@@ -534,7 +535,12 @@ file remains available to coordinate later writers.
 Every dataset load validates the ID syntax, schema, manifest identity, Parquet
 content hash and row count before exposing a frame. Hashing and parsing use the
 same bytes. Missing, incomplete or altered versions fail rather than rebuilding
-silently. Schema 3 also checks the stored evidence and evaluation coordinates.
+silently. For schema 3, loads also check the raw evidence's structure and
+agreement with the manifest, validate label timestamp bounds and raw ordinal
+bounds and ordering, and recompute the evaluation-row digest from Parquet.
+Loading reads only the manifest and retained Parquet rows. Recomputing the
+raw OHLCV fingerprint or checking that each label timestamp matches its original
+bar would require the complete input series.
 Schema 2 remains readable and provides no raw evidence. Schemas older than 2
 require rebuilding; existing files are preserved. These hashes detect inconsistent
 content, not a writer able to replace both the manifest and its data.
@@ -894,17 +900,21 @@ rebuilds its labels on its own dataset. A ranking across axes describes a
 parameter surface. The response includes observed axes and each candidate's
 coordinates, including those with unavailable scores.
 
-On a cross-horizon ranking, `market_comparison` covers all selected candidates
-before paging, with separate `raw_baseline` and `evaluation_rows` results.
+Rankings return `market_comparison` when the selection spans multiple horizons
+or `require_verified_baseline=True`. With fewer than two distinct horizons and
+strict verification disabled, `market_comparison` is `null`. When present, it
+covers all selected candidates before paging, with separate `raw_baseline` and
+`evaluation_rows` results.
 Both give a status and reasons. `verified` means all candidates have matching
-evidence for that check. `mismatch` means known evidence differs, including
-provider, effective market type, bar content or symbol membership for the raw
-check. `unknown` means evidence is absent and no difference was established.
+saved evidence for that check. `mismatch` means known evidence differs. The
+raw baseline checks symbol membership and each symbol's provider, effective
+market type, timeframe, first and last UTC timestamps, raw bar count and
+ordered OHLCV fingerprint. `unknown` means evidence is absent and no difference
+was established.
 An older entry without a raw evidence binding stays unknown. Reads use only
 the immutable dataset referenced by a bound entry and fail on missing, altered
 or inconsistent bound artifacts. Reads neither rebuild evidence nor access the
-market cache. Other rankings return `market_comparison: null` unless strict
-verification was requested.
+market cache.
 
 Permissive rankings show both outcomes without excluding unknown or mismatched
 raw data. `require_verified_baseline=True` requires a verified raw result even
