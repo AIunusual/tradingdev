@@ -118,7 +118,13 @@ def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) 
     ml.register(mcp, MLService(WorkspacePaths(tmp_path / "workspace")))
     entries = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
     writers = {"build_dataset", "build_panel", "train_model", "evaluate_signal"}
-    readers = {"get_ml_contract", "predict", "leaderboard"}
+    readers = {
+        "get_ml_contract",
+        "predict",
+        "leaderboard",
+        "get_evaluation_series_page",
+        "export_evaluation_series",
+    }
     assert set(entries) == writers | readers
     for name, tool in entries.items():
         annotations = tool.annotations
