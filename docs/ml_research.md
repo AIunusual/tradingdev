@@ -801,7 +801,12 @@ reports the artifact unavailable or invalid. Full verification happens when
 the artifact.
 Both row paging and export are read-only and never load a model: a missing
 artifact is reported unavailable, and a changed value, setting,
-dataset/candidate identity or content hash fails verification. For
+dataset/candidate identity or content hash fails verification. Verification is
+against the expected artifact identity derived from that manifest and content
+hash; it is not a publisher signature. A writer able to rewrite the artifact,
+manifest and stored reference consistently can recompute the hash and identity,
+so verification does not authenticate the publisher or defend against coordinated
+workspace rewrites. Workspace access control remains outside this contract. For
 signal-evaluation series, verification additionally requires `source_row` to be
 the original `0..row_count-1` sequence and UTC timestamps to be unique and
 increasing. Fold-validation series instead require unique `source_row`
