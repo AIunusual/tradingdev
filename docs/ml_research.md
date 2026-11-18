@@ -851,13 +851,16 @@ artifact saves the predictions produced by each fold model before aggregation,
 with the real `source_row`, timestamp, target and forward return, and that
 fold's train/eval row and time ranges. Each range records the first and last
 included row/time with inclusive endpoints, not a boundary just outside the
-split. Because fold validation reuses one dataset ID, the manifest's
-`holdout_relationship` is `in_sample` at the dataset level; it does not claim
-that individual fold predictions were in-sample. The per-fold train/eval ranges
-identify each prediction's actual split. It does not use the final all-data model
-to reconstruct fold predictions. A historical validation summary with
-`fold_predictions_available=null` or no artifact ID reports no saved fold
-sequence; it is unavailable, not an empty set of predictions.
+split; it is a bound, not a complete membership list. In particular,
+`purged_kfold` can train on data on both sides of the test window while purging
+and embargo remove rows between those endpoints. See
+[Fold Validation and Signal Interpretation](ml_research.md#fold-validation-and-signal-interpretation)
+for split construction. Because fold validation reuses one dataset ID, the
+manifest's `holdout_relationship` is `in_sample` at the dataset level; it does
+not claim that individual fold predictions were in-sample. It does not use the
+final all-data model to reconstruct fold predictions. A historical validation
+summary with `fold_predictions_available=null` or no artifact ID reports no saved
+fold sequence; it is unavailable, not an empty set of predictions.
 
 Validation publishes the fold series before fitting and saving the final
 all-data model. If that later step fails, `train_model` can fail after the fold
