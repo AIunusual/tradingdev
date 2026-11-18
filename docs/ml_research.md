@@ -791,8 +791,12 @@ Discovery is a summary lookup: it reads manifests and checks that each manifest
 `artifact_id` matches its directory, but it does not verify the manifest identity
 digest or the Parquet content. Artifact directories with no `manifest.json` are
 silently skipped, so a discovery page does not prove that every artifact
-directory is complete or well formed; reading a known `artifact_id` still reports
-the artifact unavailable or invalid. Full verification happens when
+directory is complete. A present but unreadable or schema-invalid manifest, or a
+manifest whose `artifact_id` does not match its directory, raises `ValueError`
+and fails the whole discovery page: one corrupt manifest can prevent the page
+from returning. That failure is distinct from a skipped directory without a
+manifest and from full content verification. Reading a known `artifact_id` still
+reports the artifact unavailable or invalid. Full verification happens when
 `artifact_id` is supplied to page rows, or when `export_evaluation_series` reads
 the artifact.
 Both row paging and export are read-only and never load a model: a missing
