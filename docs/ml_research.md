@@ -830,11 +830,14 @@ that lock. The timeout is the store default; no MCP tool currently exposes it as
 an argument.
 
 Recording a signal series publishes its artifact before writing the leaderboard
-entry. If that later write fails, the evaluation call fails while leaving a
-discoverable, unreferenced series artifact with no `series_artifact_id` in any
-leaderboard row. Default cleanup protects leaderboard references, so such an
+entry. If that later write fails, the evaluation call fails while leaving the
+newly published artifact discoverable and unreferenced. For a first recording no
+leaderboard row points at it; for a re-recording the atomic replacement leaves
+the previous row intact, still carrying its earlier `series_artifact_id` and
+earlier artifact. Default cleanup protects leaderboard references, so the new
 orphan is eligible for removal; protect its artifact ID first if it is still
-needed. A failed recording therefore does not prove that no series was published.
+needed. A failed recording therefore does not prove that no new series was
+published, nor that an existing candidate lost its old evidence.
 
 #### Fold prediction series
 
