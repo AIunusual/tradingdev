@@ -846,11 +846,12 @@ uv run --no-sync python -m tooling.review_docs \
 assigned files。若 fallback path 與 registered path 共享同一 owner，規劃器會把
 registered obligations 的文件章節附加到 fallback batch，而不是強制把兩者綁成同一
 source unit；來源一開始可依容量分批，並各自帶到 owner contract context。
-`append_source_unit()` 仍可能把相鄰、同 owner 且 document context 相同的 unit 合併；
-合併後 assigned paths 會共用 source_unit，contract context 也不再按每個 fallback path
-重複。因此單批 prompt 仍可能因 contract context 而變大，但實際重複次數取決於最後的
-source_unit 分布。此時先確認超量是否來自重複的 contract 章節，再拆分變更，或核實
-模型容量後調整上限。
+`append_source_unit()` 只有在前一個 source unit 已經跨越多個 partitions（prompt
+parts）時，才會嘗試合併相鄰、同 scope/owner 且 document context 相同的 unit；兩個
+都只佔單一批的 unit 不會因此合併。合併後 assigned paths 會共用 source_unit，contract
+context 也不再按每個 fallback path 重複。因此單批 prompt 仍可能因 contract context
+而變大，但實際重複次數取決於最後的 source_unit 分布。此時先確認超量是否來自重複的
+contract 章節，再拆分變更，或核實模型容量後調整上限。
 
 無工具 reviewer 無法自行開啟參照。必要原文須出現在需要它的批次；來源清單或
 其他批次的結論不能代替原文。缺少來源時，以 `--review-context-for SCOPE:PATH`
