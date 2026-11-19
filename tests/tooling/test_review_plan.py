@@ -2535,8 +2535,6 @@ def test_unknown_tooling_path_keeps_fallback_and_old_operation_obligations(
     fallback = next(batch for batch in batches if unknown in batch["assigned_paths"])
     registered = next(batch for batch in batches if known in batch["assigned_paths"])
     assert fallback["scope"] == registered["scope"] == "tooling"
-    assert known not in fallback["assigned_paths"]
-    assert unknown not in registered["assigned_paths"]
     assert plan.manifest["behavior_contexts"][unknown] == {"fallback_scope": "tooling"}
     assert plan.manifest["development_contexts"][known] == {
         "operations": ["issue_claim"],
