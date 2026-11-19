@@ -227,7 +227,10 @@ _ML_GUIDANCE = {
     ),
     "evaluation_series_recovery": (
         "Discovery pages are summary lookups; row paging and export verify the "
-        "exact published bytes against the manifest. Publication is not rolled "
+        "exact published bytes against the manifest. An artifact directory "
+        "without manifest.json is skipped, but a present unreadable or "
+        "schema-invalid manifest, or a mismatched directory ID, fails the "
+        "whole discovery page. Publication is not rolled "
         "back if a later leaderboard write or final model save fails, so a "
         "failed evaluation can still leave a discoverable artifact. After a "
         "failed train_model, page unfiltered summaries with "
