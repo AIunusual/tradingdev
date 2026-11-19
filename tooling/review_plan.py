@@ -1655,7 +1655,20 @@ def build_review_plan(
                         )
         return [sections[key] for key in sorted(sections)]
 
-    def scope_batch(scope: str, paths: list[str]) -> dict[str, Any]:
+    def owner_contract_paths(scope: str) -> tuple[str, ...]:
+        """Registered paths whose obligations travel with fallback consumers."""
+        return tuple(
+            path
+            for path, owner in owners.items()
+            if owner == scope
+            and (
+                behavior_contexts.get(path) is not None or path in development_contexts
+            )
+        )
+
+    def scope_batch(
+        scope: str, paths: list[str], *, owner_paths: tuple[str, ...] = ()
+    ) -> dict[str, Any]:
         assigned = set(paths)
         included = assigned | additional | scoped.get(scope, set())
         supporting = _source_requirements(source_contexts, paths)
@@ -1663,7 +1676,7 @@ def build_review_plan(
         base_included = {path for version, path in supporting if version == "base"}
         if scope == "presentation":
             included |= presentation
-        sections = document_context(scope, included, paths)
+        sections = document_context(scope, included, [*paths, *owner_paths])
         return common | {
             "phase": "scope",
             "scope": scope,
@@ -1836,11 +1849,16 @@ def build_review_plan(
                 part for part in batches if part["source_unit"] == previous["id"]
             ]
             if previous["scope"] == batch["scope"] and len(previous_parts) > 1:
+                owner_paths = owner_contract_paths(previous["scope"])
                 previous_batch = scope_batch(
-                    previous["scope"], previous["assigned_paths"]
+                    previous["scope"],
+                    previous["assigned_paths"],
+                    owner_paths=owner_paths,
                 )
                 combined = scope_batch(
-                    batch["scope"], previous["assigned_paths"] + batch["assigned_paths"]
+                    batch["scope"],
+                    previous["assigned_paths"] + batch["assigned_paths"],
+                    owner_paths=owner_paths,
                 )
                 # Identical selected originals keep the audit inventory and
                 # review obligations unchanged; no broader context is discarded.
@@ -1892,58 +1910,23 @@ def build_review_plan(
             else [[p] for p in paths]
         )
 
-        def keeps_owner_obligations(group: list[str], unit: list[str]) -> bool:
-            """A fallback consumer must stay with a registered owner's evidence."""
-            combined = [*group, *unit]
-            registered = any(
-                behavior_contexts.get(path) is not None or path in development_contexts
-                for path in combined
-            )
-            fallback = any(
-                behavior_contexts.get(path) is None and path not in development_contexts
-                for path in combined
-            )
-            return registered and fallback
-
-        has_registered_owner = any(
-            behavior_contexts.get(path) is not None or path in development_contexts
-            for path in paths
-        )
-
-        def is_fallback_only(unit: list[str]) -> bool:
-            return all(
-                behavior_contexts.get(path) is None and path not in development_contexts
-                for path in unit
-            )
-
+        owner_paths = owner_contract_paths(scope)
         group: list[str] = []
         for unit in units:
-            shared_owner = keeps_owner_obligations(group, unit)
-            combined = scope_batch(scope, [*group, *unit])
+            combined = scope_batch(scope, [*group, *unit], owner_paths=owner_paths)
             if fits(combined):
                 group.extend(unit)
                 continue
-            if group and not shared_owner:
-                append_source_unit(scope_batch(scope, group))
+            if group:
+                append_source_unit(scope_batch(scope, group, owner_paths=owner_paths))
                 group = []
-            if shared_owner:
-                # Context may need several prompt parts, but path ownership
-                # stays together so registered obligations remain visible to
-                # an unknown consumer in the same owner batch.
-                group.extend(unit)
-                continue
-            single = scope_batch(scope, unit)
+            single = scope_batch(scope, unit, owner_paths=owner_paths)
             if not fits(single):
-                if is_fallback_only(unit) and has_registered_owner:
-                    # Keep an oversized fallback consumer pending only when a
-                    # registered owner in the same scope can still join it.
-                    group.extend(unit)
-                    continue
                 append_source_unit(single)
                 continue
             group.extend(unit)
         if group:
-            append_source_unit(scope_batch(scope, group))
+            append_source_unit(scope_batch(scope, group, owner_paths=owner_paths))
 
     cross_scope_audit = None
     if len(batches) > 1 or "cross_scope" in scoped:

@@ -7,6 +7,8 @@ import json
 import os
 import re
 import shutil
+from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -33,8 +35,17 @@ class EvaluationSeriesStore:
     MAX_PAGE_SIZE = 200
     MAX_EXPORT_ROWS = 100_000
     MAX_EXPORT_BYTES = 8 * 1024 * 1024
+    DEFAULT_VERIFIED_CACHE_SIZE = 8
 
-    def __init__(self, root: Path | None = None, *, lock_timeout: float = 30) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        lock_timeout: float = 30,
+        verified_cache_size: int = DEFAULT_VERIFIED_CACHE_SIZE,
+    ) -> None:
+        if verified_cache_size < 1:
+            raise ValueError("verified_cache_size must be at least 1")
         self.root = Path(root or WorkspacePaths().ml_evaluation_series)
         self.root.mkdir(parents=True, exist_ok=True)
         self._artifacts = self.root / "artifacts"
@@ -44,13 +55,14 @@ class EvaluationSeriesStore:
         self._lock = FileLock(
             self.root / ".evaluation-series.lock", timeout=lock_timeout
         )
-        self._verified: dict[
+        self._verified_cache_size = verified_cache_size
+        self._verified: OrderedDict[
             str,
             tuple[
                 tuple[tuple[int, int, int], tuple[int, int, int]],
                 EvaluationSeriesBundle,
             ],
-        ] = {}
+        ] = OrderedDict()
 
     @property
     def lock(self) -> FileLock:
@@ -114,6 +126,22 @@ class EvaluationSeriesStore:
         stat = path.stat()
         return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
+    @staticmethod
+    def _copy_bundle(bundle: EvaluationSeriesBundle) -> EvaluationSeriesBundle:
+        """Detach cache state from objects callers are free to mutate."""
+        return deepcopy(bundle)
+
+    def _remember(
+        self,
+        artifact_id: str,
+        signature: tuple[tuple[int, int, int], tuple[int, int, int]],
+        bundle: EvaluationSeriesBundle,
+    ) -> None:
+        self._verified[artifact_id] = (signature, bundle)
+        self._verified.move_to_end(artifact_id)
+        while len(self._verified) > self._verified_cache_size:
+            self._verified.popitem(last=False)
+
     def _load_verified(self, artifact_id: str, path: Path) -> EvaluationSeriesBundle:
         manifest_path = path / "manifest.json"
         series_path = path / "series.parquet"
@@ -122,11 +150,12 @@ class EvaluationSeriesStore:
         signature = (self._signature(manifest_path), self._signature(series_path))
         cached = self._verified.get(artifact_id)
         if cached is not None and cached[0] == signature:
-            return cached[1]
+            self._verified.move_to_end(artifact_id)
+            return self._copy_bundle(cached[1])
         raw = series_path.read_bytes()
         bundle = self._load_from(path, raw)
-        self._verified[artifact_id] = (signature, bundle)
-        return bundle
+        self._remember(artifact_id, signature, bundle)
+        return self._copy_bundle(bundle)
 
     def _load_from(
         self, path: Path, raw: bytes | None = None

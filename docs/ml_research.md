@@ -774,10 +774,11 @@ The signal-series writer passes the computed leaderboard `entry_id` into the
 manifest; fold-validation artifacts have no leaderboard row and leave it empty.
 `training_status` is `fitted`, `no_fitting` or `unknown`; only backend model/rule
 execution can confirm a fitting state, so caller arrays and unknown sources stay
-`unknown` even when they name a model. For backend results, `fitted` means a
-training dataset ID was recorded, while `no_fitting` means no such binding was
-saved — including legacy model artifacts that predate that field. Legacy
-`no_fitting` therefore does not prove that the model weights were never fitted.
+`unknown` even when they name a model. For backend results, `fitted` means a model artifact recorded a training
+dataset ID, while `no_fitting` is reserved for backend rules. A backend model
+artifact without that binding — including legacy models that predate the field —
+stays `unknown`: the missing identity does not prove that the weights were never
+fitted.
 `holdout_relationship` reports
 `in_sample`, `different_dataset`, `not_applicable` or `unknown` from the recorded
 pair alone. Different IDs never assert a holdout, and a rule records
@@ -797,7 +798,11 @@ up to `max_export_rows` (100,000) and `max_export_bytes` (8 MiB). An artifact
 above either bound fails the export explicitly; use row paging instead.
 Concatenating row pages in offset order reproduces the export exactly. Continued
 pages reuse one verified snapshot while the saved file signature is unchanged,
-so paging does not re-encode the whole artifact on every request.
+so paging does not re-encode the whole artifact on every request. Each read
+receives a detached copy of that snapshot; caller mutation of the returned frame
+or nested settings cannot rewrite the cached evidence. The cache is a bounded
+least-recently-used set (eight artifacts by default), so paging through many
+artifacts cannot retain every DataFrame indefinitely.
 The client-accessible `get_ml_contract` guidance keys `evaluation_series`,
 `evaluation_series_rows` and `evaluation_series_recovery` carry the paging/export
 semantics, row semantics and partial-publication/recovery limits without
@@ -813,9 +818,10 @@ from returning. That failure is distinct from a skipped directory without a
 manifest and from full content verification. Reading a known `artifact_id` still
 reports the artifact unavailable or invalid. Row paging and export verify a
 manifest/Parquet pair on first read or when its file signature changes; a
-verified bundle is cached by `(mtime_ns, size, inode)` for both files and reused
-while the signature is unchanged. A rewrite that preserves that signature can
-therefore return the previously verified snapshot without rereading the bytes.
+verified bundle is cached by `(mtime_ns, size, inode)` for both files, with an
+LRU eviction bound, and detached copies are returned while the signature is
+unchanged. A rewrite that preserves that signature can therefore return the
+previously verified snapshot without rereading the bytes.
 Both row paging and export are read-only and never load a model: a missing
 artifact is reported unavailable, and on a signature change a changed value,
 setting, dataset/candidate identity or content hash fails verification.

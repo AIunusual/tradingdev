@@ -843,10 +843,11 @@ uv run --no-sync python -m tooling.review_docs \
 先檢查內容歸屬與重複，再核對所選模型容量並預留輸出空間，才設定實際審查上限。
 容量不足時，依錯誤訊息確認超量來自完整 diff、固定來源或文件脈絡。工具可將
 文件脈絡分批，且每批都會重複完整的 assigned files 與 diff；partition 不能拆開
-assigned files。若 fallback path 與 registered path 共享同一 owner，規劃器可把兩者
-留在同一 source unit，以保住 registered obligations；因此合併後的完整來源與 diff
-即使個別 path 都放得下，仍可能超過單批 prompt 上限。此時先確認是否被這條分組規則
-綁住，再拆分變更，或核實模型容量後調整上限。
+assigned files。若 fallback path 與 registered path 共享同一 owner，規劃器會把
+registered obligations 的文件章節附加到 fallback batch，而不是把來源檔案綁成同一
+source unit；來源仍可依容量分批，但每個 fallback batch 會重複這份 owner contract
+context，因此仍需為單批 prompt 留出空間。此時先確認超量是否來自重複的 contract
+章節，再拆分變更，或核實模型容量後調整上限。
 
 無工具 reviewer 無法自行開啟參照。必要原文須出現在需要它的批次；來源清單或
 其他批次的結論不能代替原文。缺少來源時，以 `--review-context-for SCOPE:PATH`

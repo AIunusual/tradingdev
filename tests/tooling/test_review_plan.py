@@ -2532,21 +2532,35 @@ def test_unknown_tooling_path_keeps_fallback_and_old_operation_obligations(
     original = json.loads(raw)
     plan = build_review_plan(raw)
     batches = [_payload(prompt) for prompt in plan.prompts]
-    batch = next(batch for batch in batches if known in batch["assigned_paths"])
-    assert set(batch["assigned_paths"]) == {known, unknown}
+    fallback = next(batch for batch in batches if unknown in batch["assigned_paths"])
+    registered = next(batch for batch in batches if known in batch["assigned_paths"])
+    assert fallback["scope"] == registered["scope"] == "tooling"
+    assert known not in fallback["assigned_paths"]
+    assert unknown not in registered["assigned_paths"]
     assert plan.manifest["behavior_contexts"][unknown] == {"fallback_scope": "tooling"}
     assert plan.manifest["development_contexts"][known] == {
         "operations": ["issue_claim"],
         "selection_basis": "registered-path",
     }
-    assert batch["path_diffs"] == original["path_diffs"]
-    assert batch["base_file_blobs"][known] == original["base_file_blobs"][known]
+    for batch in (fallback, registered):
+        assert batch["path_diffs"] == {
+            path: diff
+            for path, diff in original["path_diffs"].items()
+            if path in batch["assigned_paths"]
+        }
+    assert registered["base_file_blobs"][known] == original["base_file_blobs"][known]
     if change_kind != "modify":
-        assert known not in batch["candidate_files"]
-        assert "-VALUE = 'original claim implementation'" in batch["path_diffs"][known]
-    for path in (known, unknown):
-        if path in original["candidate_files"]:
-            assert batch["candidate_files"][path] == original["candidate_files"][path]
+        assert known not in registered["candidate_files"]
+        assert (
+            "-VALUE = 'original claim implementation'"
+            in registered["path_diffs"][known]
+        )
+    for batch in (fallback, registered):
+        for path in batch["assigned_paths"]:
+            if path in original["candidate_files"]:
+                assert (
+                    batch["candidate_files"][path] == original["candidate_files"][path]
+                )
     for path, heading in (
         ("docs/development.md", "接手 issue"),
         ("docs/development.md", "4. 合併後更新 main、清理本機分支"),
@@ -2560,7 +2574,7 @@ def test_unknown_tooling_path_keeps_fallback_and_old_operation_obligations(
         )
         assert any(
             s["path"] == path and s["text"] == expected
-            for s in batch["document_sections"]
+            for s in fallback["document_sections"]
         )
 
 
@@ -2727,7 +2741,7 @@ def test_operational_precision_keeps_shared_and_ambiguous_context(
     plan.verify()
 
 
-def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
+def test_unknown_path_retains_registered_obligations_without_binding_sources(
     real_document_repository: Path,
 ) -> None:
     repo = real_document_repository
@@ -2741,16 +2755,18 @@ def test_unknown_path_keeps_registered_obligations_in_the_same_owner_batch(
     plan = build_review_plan(
         build_evidence(repo, base, _tree(repo)), max_prompt_bytes=450_000
     )
-    batch = next(
-        _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
-    )
-    assert unknown in batch["assigned_paths"]
-    assert batch["scope"] == "ml"
-    sections = batch["document_sections"]
+    payloads = [_payload(prompt) for prompt in plan.prompts]
+    fallback = next(p for p in payloads if unknown in p["assigned_paths"])
+    registered = next(p for p in payloads if known in p["assigned_paths"])
+
+    assert fallback["scope"] == registered["scope"] == "ml"
+    assert known not in fallback["assigned_paths"]
+    assert unknown not in registered["assigned_paths"]
+    sections = fallback["document_sections"]
     assert any(
         s["path"] == "docs/requirements/execution.md" and "FR-EXEC-004" in s["text"]
         for s in sections
-    ), "Unknown paths must not erase a registered shared comparison obligation"
+    ), "Fallback batches must retain the registered shared comparison obligation"
     assert any(s["path"] == "docs/requirements/quality.md" for s in sections)
 
 

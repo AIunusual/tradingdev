@@ -199,6 +199,62 @@ def test_caller_array_with_model_id_keeps_training_relationship_unknown(
     assert manifest["holdout_relationship"] == "unknown"
 
 
+def test_recording_reuses_scoring_rolling_ic(
+    workspace: WorkspacePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tradingdev.domain.ml.evaluation.series as series_module
+
+    def forbidden(*args: Any, **kwargs: Any) -> float:
+        raise AssertionError("series recording recomputed rolling IC")
+
+    monkeypatch.setattr(series_module, "_correlation", forbidden)
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+
+    recorded = service.evaluate_signal(
+        [value * 0.5 for value in realized],
+        realized,
+        dataset_id=dataset_id,
+        window=20,
+        record=True,
+    )
+
+    assert recorded["series_artifact_id"]
+
+
+def test_legacy_backend_model_without_binding_keeps_unknown_status(
+    workspace: WorkspacePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    trained = service.train_model(
+        dataset_id=dataset_id,
+        model_kind="lightgbm_direction",
+        parameters={"n_estimators": 12, "max_depth": 3, "n_jobs": 1},
+    )
+    original_identity = service._candidate_identity
+
+    def legacy_identity(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any], str]:
+        label, parameters, _ = original_identity(*args, **kwargs)
+        return label, parameters, ""
+
+    monkeypatch.setattr(service, "_candidate_identity", legacy_identity)
+    recorded = service.evaluate_prediction(
+        model_id=str(trained["model"]["model_id"]),
+        dataset_id=dataset_id,
+        window=20,
+        record=True,
+    )
+    manifest = service.evaluation_series_export(str(recorded["series_artifact_id"]))[
+        "manifest"
+    ]
+
+    assert manifest["training_status"] == "unknown"
+    assert manifest["holdout_relationship"] == "unknown"
+
+
 def test_series_survives_model_removal_and_reports_legacy_absence(
     workspace: WorkspacePaths,
 ) -> None:

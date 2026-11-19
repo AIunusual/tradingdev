@@ -38,7 +38,7 @@ from tradingdev.domain.ml.calendar import (
 from tradingdev.domain.ml.evaluation import (
     forward_returns,
     quantile_strata,
-    signal_metrics,
+    signal_metrics_with_series,
     simulate_strategy_returns,
     strata_statistics,
 )
@@ -224,15 +224,16 @@ _ML_GUIDANCE = {
         "settings bind candidate identity and effective parameters, and "
         "training_status is derived from producer_source: caller arrays stay "
         "unknown even when they name a model; a backend artifact with no saved "
-        "training_dataset_id, including legacy models, reports no_fitting, "
-        "which does not prove its weights were unfitted."
+        "training_dataset_id, including legacy models, stays unknown; "
+        "no_fitting is reserved for backend rules."
     ),
     "evaluation_series_recovery": (
         "Discovery pages are summary lookups; row paging and export verify "
         "published bytes against the manifest on first read or when a "
         "manifest/Parquet signature changes. An unchanged (mtime_ns, size, "
-        "inode) signature reuses one verified snapshot without rereading "
-        "bytes. An artifact directory "
+        "inode) signature reuses one bounded verified snapshot without "
+        "rereading bytes; each read receives a detached copy and the cache "
+        "evicts least-recently-used artifacts. An artifact directory "
         "without manifest.json is skipped, but a present unreadable or "
         "schema-invalid manifest, or a mismatched directory ID, fails the "
         "whole discovery page. Publication is not rolled "
@@ -546,7 +547,9 @@ class MLService:
         pred = pd.Series(signal, dtype=float)
         fwd = pd.Series(forward_returns, dtype=float)
 
-        raw_metrics = signal_metrics(pred, fwd, window=window)
+        raw_metrics, pearson_ic, spearman_ic = signal_metrics_with_series(
+            pred, fwd, window=window
+        )
         metrics = {key: self._finite(value) for key, value in raw_metrics.items()}
 
         strata_df = quantile_strata(pred, fwd, n_bins=n_quantiles)
@@ -612,6 +615,8 @@ class MLService:
                 },
                 signal=signal,
                 forward_returns=forward_returns,
+                pearson_ic=pearson_ic,
+                spearman_ic=spearman_ic,
                 evaluation_id=evaluation_id,
                 fingerprint=fingerprint,
                 manifest=manifest,
@@ -723,6 +728,8 @@ class MLService:
         *,
         signal: list[float],
         forward_returns: list[float],
+        pearson_ic: pd.Series[float] | Sequence[float] | None,
+        spearman_ic: pd.Series[float] | Sequence[float] | None,
         evaluation_id: str,
         fingerprint: str,
         manifest: dict[str, Any] | None,
@@ -777,15 +784,20 @@ class MLService:
             method_parameters=identity.parameters,
             producer_source=producer_source,
         )
-        training_status = (
-            ("fitted" if training_dataset_id else "no_fitting")
-            if producer_source
-            in (ProducerSource.BACKEND_MODEL, ProducerSource.BACKEND_RULE)
-            else "unknown"
-        )
+        if producer_source == ProducerSource.BACKEND_RULE:
+            training_status = "no_fitting"
+        elif producer_source == ProducerSource.BACKEND_MODEL and training_dataset_id:
+            training_status = "fitted"
+        else:
+            training_status = "unknown"
         frame, _ = self._load_dataset(dataset_id)
         series_frame = build_signal_series(
-            signal, forward_returns, frame["timestamp"].tolist(), window=window
+            signal,
+            forward_returns,
+            frame["timestamp"].tolist(),
+            window=window,
+            pearson_ic=pearson_ic,
+            spearman_ic=spearman_ic,
         )
         bundle = build_bundle(
             series_frame,

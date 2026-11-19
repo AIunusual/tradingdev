@@ -251,32 +251,25 @@ def ic_decay(
     return decay
 
 
-def signal_metrics(
+def signal_metrics_with_series(
     prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
     forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
     *,
     window: int = 60,
     price: pd.Series[float] | pd.Series[int] | Sequence[float] | None = None,
     horizons: Sequence[int] = (1, 3, 5, 10),
-) -> dict[str, MetricScalar]:
-    """Compute Pearson IC, Spearman Rank IC and the remaining signal metrics."""
+) -> tuple[dict[str, MetricScalar], pd.Series[float], pd.Series[float]]:
+    """Compute signal metrics and expose the exact rolling IC series used."""
     frame = _aligned_frame(prediction, forward_return, price=price)
     pred = frame["prediction"]
     fwd = frame["forward_return"]
 
+    pearson_ic = rolling_ic(pred, fwd, window=window, method="pearson")
+    spearman_ic = rolling_ic(pred, fwd, window=window, method="spearman")
+
     metrics: dict[str, MetricScalar] = {}
-    metrics.update(
-        ic_statistics(
-            rolling_ic(pred, fwd, window=window, method="pearson"), window=window
-        )
-    )
-    metrics.update(
-        _prefixed_statistics(
-            rolling_ic(pred, fwd, window=window, method="spearman"),
-            window=window,
-            prefix="rank",
-        )
-    )
+    metrics.update(ic_statistics(pearson_ic, window=window))
+    metrics.update(_prefixed_statistics(spearman_ic, window=window, prefix="rank"))
     metrics["hit_rate"] = hit_rate(pred, fwd)
     metrics["signal_turnover"] = signal_turnover(pred)
     if price is not None:
@@ -286,5 +279,24 @@ def signal_metrics(
         len(frame),
         window,
         metrics.get("rank_icir"),
+    )
+    return metrics, pearson_ic, spearman_ic
+
+
+def signal_metrics(
+    prediction: pd.Series[float] | pd.Series[int] | Sequence[float],
+    forward_return: pd.Series[float] | pd.Series[int] | Sequence[float],
+    *,
+    window: int = 60,
+    price: pd.Series[float] | pd.Series[int] | Sequence[float] | None = None,
+    horizons: Sequence[int] = (1, 3, 5, 10),
+) -> dict[str, MetricScalar]:
+    """Compute Pearson IC, Spearman Rank IC and the remaining signal metrics."""
+    metrics, _, _ = signal_metrics_with_series(
+        prediction,
+        forward_return,
+        window=window,
+        price=price,
+        horizons=horizons,
     )
     return metrics

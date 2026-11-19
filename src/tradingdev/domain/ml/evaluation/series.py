@@ -244,6 +244,8 @@ def build_signal_series(
     timestamps: Sequence[Any] | pd.DatetimeIndex,
     *,
     window: int,
+    pearson_ic: Sequence[float] | pd.Series[float] | None = None,
+    spearman_ic: Sequence[float] | pd.Series[float] | None = None,
 ) -> pd.DataFrame:
     """Save every scored row with rolling IC and its availability reason."""
     if len(signal) != len(forward_returns) or len(signal) != len(timestamps):
@@ -261,6 +263,28 @@ def build_signal_series(
     if utc.isna().any():
         raise ValueError("evaluation timestamps must all be parseable")
 
+    def supplied(values: Sequence[float] | pd.Series[float] | None) -> list[Any]:
+        if values is None:
+            return [None] * len(signal)
+        result = list(values)
+        if len(result) != len(signal):
+            raise ValueError("precomputed IC series must match the row count")
+        return result
+
+    pearson_values = supplied(pearson_ic)
+    spearman_values = supplied(spearman_ic)
+    pearson_provided = pearson_ic is not None
+    spearman_provided = spearman_ic is not None
+    signal_frame = pd.Series(list(signal), dtype=float)
+    forward_frame = pd.Series(list(forward_returns), dtype=float)
+    constant_window = (
+        signal_frame.rolling(window, min_periods=window).min()
+        == signal_frame.rolling(window, min_periods=window).max()
+    ) | (
+        forward_frame.rolling(window, min_periods=window).min()
+        == forward_frame.rolling(window, min_periods=window).max()
+    )
+
     pearson: list[float | None] = []
     spearman: list[float | None] = []
     pearson_reasons: list[str] = []
@@ -274,29 +298,33 @@ def build_signal_series(
             spearman_reasons.append("ic_warmup")
             reasons.append("ic_warmup")
             continue
-        window_signal = [
-            float(value) for value in signal[index - window + 1 : index + 1]
-        ]
-        window_forward = [
-            float(value) for value in forward_returns[index - window + 1 : index + 1]
-        ]
-        if len(set(window_signal)) < 2 or len(set(window_forward)) < 2:
+        if bool(constant_window.iloc[index]):
             pearson.append(None)
             spearman.append(None)
             pearson_reasons.append("constant_window")
             spearman_reasons.append("constant_window")
             reasons.append("constant_window")
             continue
-        pearson_value = _correlation_value(window_signal, window_forward, rank=False)
-        spearman_value = _correlation_value(window_signal, window_forward, rank=True)
-        pearson.append(_finite(pearson_value))
-        spearman.append(_finite(spearman_value))
-        pearson_reasons.append(
-            "ok" if _finite(pearson_value) is not None else "non_finite"
-        )
-        spearman_reasons.append(
-            "ok" if _finite(spearman_value) is not None else "non_finite"
-        )
+        if pearson_provided:
+            pearson_value = _finite(pearson_values[index])
+        else:
+            pearson_value = _correlation_value(
+                signal[index - window + 1 : index + 1],
+                forward_returns[index - window + 1 : index + 1],
+                rank=False,
+            )
+        if spearman_provided:
+            spearman_value = _finite(spearman_values[index])
+        else:
+            spearman_value = _correlation_value(
+                signal[index - window + 1 : index + 1],
+                forward_returns[index - window + 1 : index + 1],
+                rank=True,
+            )
+        pearson.append(pearson_value)
+        spearman.append(spearman_value)
+        pearson_reasons.append("ok" if pearson_value is not None else "non_finite")
+        spearman_reasons.append("ok" if spearman_value is not None else "non_finite")
         reasons.append(
             pearson_reasons[-1]
             if pearson_reasons[-1] == spearman_reasons[-1]

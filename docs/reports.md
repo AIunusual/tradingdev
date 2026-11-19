@@ -60,8 +60,10 @@ field; the store reads it as an empty string and the series stays unavailable
 rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
-and verify, and a missing or corrupt artifact raises an error so the report is
-not published, even when leaderboard metrics remain readable. Protection is not
+and verify, and its manifest must match the cited scope's entry, dataset,
+fingerprint, producer source, settings and row count. A missing, corrupt or
+scope-mismatched artifact raises an error so the report is not published, even
+when leaderboard metrics remain readable. Protection is not
 rolled back if a later artifact check or publication fails, so a failed request
 can leave some or all cited series protected without a published report.
 Generating a report does protect the artifacts it cites; MCP tools otherwise

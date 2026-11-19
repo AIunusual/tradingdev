@@ -133,6 +133,31 @@ def test_successive_row_pages_reuse_the_verified_snapshot(
     assert calls == 1
 
 
+def test_cached_bundle_is_isolated_from_caller_mutation(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+
+    first = store.load(artifact_id)
+    first.frame.loc[0, "signal"] = 999.0
+    first.manifest.settings["caller_mutated"] = True
+
+    second = store.load(artifact_id)
+    assert second.frame["signal"].iloc[0] != 999.0
+    assert "caller_mutated" not in second.manifest.settings
+
+
+def test_verified_cache_is_bounded(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path, verified_cache_size=2)
+    artifact_ids = [
+        store.save(_bundle(entry_id=f"entry-{index}")) for index in range(3)
+    ]
+
+    for artifact_id in artifact_ids:
+        store.load(artifact_id)
+
+    assert len(store._verified) == 2
+
+
 def test_loading_uses_published_bytes_not_a_fresh_encoding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
