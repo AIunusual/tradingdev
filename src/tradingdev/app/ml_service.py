@@ -239,7 +239,8 @@ _ML_GUIDANCE = {
         "Cleanup is not transactional; publication, protection and pruning "
         "share a lock with a 30-second default timeout. protect requires the "
         "artifact to exist and has no removal API; reports protect cited "
-        "artifacts at publication and successful fold validation protects its "
+        "artifacts before publication and do not roll those markers back if "
+        "publication later fails, and successful fold validation protects its "
         "own series."
     ),
     "simulated_returns": (

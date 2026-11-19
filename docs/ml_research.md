@@ -770,6 +770,8 @@ the artifact ID, schema version, evaluation ID, leaderboard `entry_id`, dataset
 ID and hash, calculation settings, candidate identity and declared or effective
 parameters under `settings.candidate`, method family, producer source, full
 signal fingerprint, training dataset ID and status, and a SHA-256 content hash.
+The signal-series writer passes the computed leaderboard `entry_id` into the
+manifest; fold-validation artifacts have no leaderboard row and leave it empty.
 `training_status` is `fitted`, `no_fitting` or `unknown`; only backend model/rule
 execution can confirm a fitting state, so caller arrays and unknown sources stay
 `unknown` even when they name a model. `holdout_relationship` reports
@@ -828,8 +830,12 @@ provides a removal operation, and pruning skips an artifact once the marker is
 visible. `protect()` takes the same lock as pruning and checks that the artifact
 still exists and verifies before writing the marker; a missing or corrupt
 artifact fails instead of reporting a false success. Report generation protects
-the series IDs it cites, and successful fold validation protects its fold series
-at publication. With the default cleanup call, `cleanup_evaluation_series`
+the series IDs it cites before publication, and successful fold validation
+protects its fold series at publication. Report publication is not transactional
+with those markers: if a later artifact check or publication step fails, the
+markers already written remain even though no report was published, and default
+cleanup keeps those artifacts. A retry may protect additional cited artifacts.
+With the default cleanup call, `cleanup_evaluation_series`
 removes only artifacts that are neither leaderboard-referenced nor protected.
 Passing an explicit `protected` set replaces the leaderboard-derived references,
 so callers must include every ID they want retained; see

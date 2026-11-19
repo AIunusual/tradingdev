@@ -60,7 +60,11 @@ rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
 and verify, and the permanent marker keeps it out of later default cleanup even
-after the leaderboard entry is replaced or removed. See the
+after the leaderboard entry is replaced or removed. Protection is not rolled
+back if a later artifact check or report publication fails, so a failed request
+can leave some or all cited series permanently protected without a published
+report; a retry may add more markers, and default cleanup will still skip every
+marked artifact. See the
 [series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for default
 cleanup protection, explicit protected sets, permanent markers, partial cleanup
 and lock behavior. Current MCP tools expose only discovery, row paging and

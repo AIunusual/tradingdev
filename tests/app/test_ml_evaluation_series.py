@@ -125,6 +125,7 @@ def test_saved_series_matches_the_dataset_rows_independently(
     assert recorded["producer_source"] == "caller_array"
     exported = service.evaluation_series_export(str(artifact_id))
     assert exported["manifest"]["producer_source"] == "caller_array"
+    assert exported["manifest"]["entry_id"] == recorded["recorded"]["entry_id"]
     assert exported["manifest"]["training_status"] == "unknown"
     assert exported["manifest"]["holdout_relationship"] == "unknown"
 
