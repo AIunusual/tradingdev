@@ -807,17 +807,20 @@ manifest whose `artifact_id` does not match its directory, raises `ValueError`
 and fails the whole discovery page: one corrupt manifest can prevent the page
 from returning. That failure is distinct from a skipped directory without a
 manifest and from full content verification. Reading a known `artifact_id` still
-reports the artifact unavailable or invalid. Full verification happens when
-`artifact_id` is supplied to page rows, or when `export_evaluation_series` reads
-the artifact.
+reports the artifact unavailable or invalid. Row paging and export verify a
+manifest/Parquet pair on first read or when its file signature changes; a
+verified bundle is cached by `(mtime_ns, size, inode)` for both files and reused
+while the signature is unchanged. A rewrite that preserves that signature can
+therefore return the previously verified snapshot without rereading the bytes.
 Both row paging and export are read-only and never load a model: a missing
-artifact is reported unavailable, and a changed value, setting,
-dataset/candidate identity or content hash fails verification. Verification
-checks the exact published Parquet bytes against the manifest; it does not
-depend on a fresh serialization whose metadata may differ across library
-versions. It is still not a publisher signature: a writer able to rewrite the
-artifact, manifest and stored reference consistently can recompute hash and
-identity, so workspace access control remains outside this contract. For
+artifact is reported unavailable, and on a signature change a changed value,
+setting, dataset/candidate identity or content hash fails verification.
+Verification checks the exact published Parquet bytes against the manifest on
+that read; it does not depend on a fresh serialization whose metadata may differ
+across library versions. It is still not a publisher signature: a writer able to
+rewrite the artifact, manifest and stored reference consistently can recompute
+hash and identity, and a signature-preserving rewrite can leave the cached
+snapshot in place, so workspace access control remains outside this contract. For
 signal-evaluation series, verification additionally requires `source_row` to be
 the original `0..row_count-1` sequence and UTC timestamps to be unique and
 increasing. Fold-validation series instead require unique `source_row`

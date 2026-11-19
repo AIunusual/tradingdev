@@ -226,8 +226,11 @@ _ML_GUIDANCE = {
         "unknown even when they name a model."
     ),
     "evaluation_series_recovery": (
-        "Discovery pages are summary lookups; row paging and export verify the "
-        "exact published bytes against the manifest. An artifact directory "
+        "Discovery pages are summary lookups; row paging and export verify "
+        "published bytes against the manifest on first read or when a "
+        "manifest/Parquet signature changes. An unchanged (mtime_ns, size, "
+        "inode) signature reuses one verified snapshot without rereading "
+        "bytes. An artifact directory "
         "without manifest.json is skipped, but a present unreadable or "
         "schema-invalid manifest, or a mismatched directory ID, fails the "
         "whole discovery page. Publication is not rolled "
