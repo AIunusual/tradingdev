@@ -223,7 +223,9 @@ _ML_GUIDANCE = {
         "endpoints; these are bounds, not complete membership. Manifest "
         "settings bind candidate identity and effective parameters, and "
         "training_status is derived from producer_source: caller arrays stay "
-        "unknown even when they name a model."
+        "unknown even when they name a model; a backend artifact with no saved "
+        "training_dataset_id, including legacy models, reports no_fitting, "
+        "which does not prove its weights were unfitted."
     ),
     "evaluation_series_recovery": (
         "Discovery pages are summary lookups; row paging and export verify "
