@@ -52,9 +52,8 @@ identities alone.
 By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 
-### ML series evidence
-
-Newly recorded candidates carry `series_artifact_id`, the stable reference to
+**ML series evidence.** Newly recorded candidates carry `series_artifact_id`, the
+stable reference to
 their [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
 Historical leaderboard rows written before series publication may have no such
 field; the store reads it as an empty string and the series stays unavailable

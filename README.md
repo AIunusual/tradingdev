@@ -442,7 +442,7 @@ stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整�
 請依結果確認實際資料範圍與筆數。
 產生報告前會驗證所選候選引用的逐點序列；若引用序列缺失或損毀，報告不會出版，
 即使 leaderboard 指標仍可讀。限制見
-[ML series evidence](docs/reports.md#ml-series-evidence)。
+[ML series evidence](docs/reports.md#composable-offline-reports)。
 
 後續可以請助手「比較剛才保存的候選，列出排名與沒有分數的原因」。
 有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因。歷史候選可能沒有
