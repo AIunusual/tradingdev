@@ -59,8 +59,10 @@ field; the store reads it as an empty string and the series stays unavailable
 rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
-and verify, and the permanent marker keeps it out of later default cleanup even
-after the leaderboard entry is replaced or removed. Protection is not rolled
+and verify, and a missing or corrupt artifact raises an error so the report is
+not published. The permanent marker keeps a published report's artifact out of
+later default cleanup even after the leaderboard entry is replaced or removed.
+Protection is not rolled
 back if a later artifact check or report publication fails, so a failed request
 can leave some or all cited series permanently protected without a published
 report; a retry may add more markers, and default cleanup will still skip every

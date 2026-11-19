@@ -13,9 +13,9 @@
 ## FR-ML-002 訓練、驗證與預測
 
 - **需求**：訓練固定模型參數及種子，保存模型與特徵身分；分折驗證與最後使用全部訓練列擬合的模型分開解讀。預測核對特徵順序與模型內容。
-- **驗收**：不把分折分數當作最終模型的樣本外證明。預測核對資料集與模型產物的完整性及特徵順序，不符時拒絕；保存的訓練資料集身分用於來源追溯，不要求預測資料集等同訓練資料集。分折以 panel 共用的相異時間戳切分，排除實際標籤區間與測試區間重疊的訓練時間點，包含 K-fold 右側重疊；含前向填補觀察的 panel 拒絕分折驗證。完整預測與回覆預覽分開，預覽分頁不裁減實際評估的訊號。模型檔案需可信，身分檢查不使 pickle 成為安全格式。
-- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[模型保存](../ml_research.md#trained-models)。
-- **驗證**：[訓練驗證](../../tests/app/test_ml_training_validation.py)、[時間完整性](../../tests/app/test_ml_temporal_integrity.py)、[預測 service](../../tests/app/test_ml_predict.py) 核對分折、標籤區間與預測邊界。
+- **驗收**：不把分折分數當作最終模型的樣本外證明。預測核對資料集與模型產物的完整性及特徵順序，不符時拒絕；保存的訓練資料集身分用於來源追溯，不要求預測資料集等同訓練資料集。分折以 panel 共用的相異時間戳切分，排除實際標籤區間與測試區間重疊的訓練時間點，包含 K-fold 右側重疊；含前向填補觀察的 panel 拒絕分折驗證。完整預測與回覆預覽分開，預覽分頁不裁減實際評估的訊號。模型檔案需可信，身分檢查不使 pickle 成為安全格式。成功的分折驗證須保存每折實際預測為 content-bound artifact，在訓練回覆公開 `fold_series_artifact_id`，並讓 MCP 能發現、依 artifact 分頁讀取列或 bounded 完整匯出；列須保留原座標、可用的標的及 inclusive train/eval bounds。該 artifact 預設受清理保護；最終模型保存失敗後仍可復原，缺檔或篡改須明確失敗，不得重建或補零。
+- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[模型保存](../ml_research.md#trained-models)、[Fold prediction series](../ml_research.md#fold-prediction-series)、[已保存逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)。
+- **驗證**：[訓練驗證](../../tests/app/test_ml_training_validation.py)、[時間完整性](../../tests/app/test_ml_temporal_integrity.py)、[預測 service](../../tests/app/test_ml_predict.py) 核對分折、標籤區間與預測邊界；[訓練 fold 序列](../../tests/app/test_ml_training_series.py)、[序列 store](../../tests/adapters/test_evaluation_series_store.py) 與 [MCP 序列工具](../../tests/mcp/test_ml_evaluation_series_tools.py) 核對 fold artifact 保存、保護、發現、分頁、完整匯出與竄改拒絕。
 
 ## FR-ML-003 訊號與手設規則評估
 
