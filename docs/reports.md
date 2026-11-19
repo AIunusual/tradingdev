@@ -52,6 +52,8 @@ identities alone.
 By default, the report applies the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 
+### ML series evidence
+
 Newly recorded candidates carry `series_artifact_id`, the stable reference to
 their [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series).
 Historical leaderboard rows written before series publication may have no such
@@ -60,18 +62,13 @@ rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
 and verify, and a missing or corrupt artifact raises an error so the report is
-not published. The permanent marker keeps a published report's artifact out of
-later default cleanup even after the leaderboard entry is replaced or removed.
-Protection is not rolled
-back if a later artifact check or report publication fails, so a failed request
-can leave some or all cited series permanently protected without a published
-report; a retry may add more markers, and default cleanup will still skip every
-marked artifact. See the
-[series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for default
-cleanup protection, explicit protected sets, permanent markers, partial cleanup
-and lock behavior. Current MCP tools expose only discovery, row paging and
-export, so an MCP-only client cannot directly protect or clean up artifacts;
-generating a report does protect the artifacts it cites.
+not published, even when leaderboard metrics remain readable. Protection is not
+rolled back if a later artifact check or publication fails, so a failed request
+can leave some or all cited series protected without a published report.
+Generating a report does protect the artifacts it cites; MCP tools otherwise
+expose only discovery, row paging and export. Default cleanup protection,
+explicit protected sets, partial cleanup and lock behavior are in the
+[series lifecycle](ml_research.md#saved-pointwise-evaluation-series).
 
 Reports do not read the series to recompute metrics: generation verifies that a
 cited artifact exists and is intact, then snapshots only the leaderboard
