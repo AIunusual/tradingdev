@@ -760,30 +760,38 @@ substitute the evaluation dataset for a missing training one.
 A recorded evaluation also publishes a separate versioned artifact under
 `ml_leaderboard/evaluation_series/artifacts/<artifact_id>/`. `series.parquet`
 holds one row per scored dataset row with its zero-based `source_row`, UTC
-`timestamp`, signal, realised return, rolling Pearson and Spearman IC, and an
-`availability_reason`. IC warm-up and constant windows keep their original
-coordinates and reasons; their values are `null`, never zero, and no row is
-dropped or renumbered. `manifest.json` binds the artifact ID, schema version,
-evaluation ID, leaderboard `entry_id`, dataset ID and hash, candidate settings,
-method family, producer source, full signal fingerprint, calculation settings,
-training dataset ID and status, and a SHA-256 content hash. `training_status`
-is `fitted`, `no_fitting` or `unknown`; `holdout_relationship` reports
+`timestamp`, signal, realised return, rolling Pearson and Spearman IC, each
+family's own `pearson_availability_reason` / `spearman_availability_reason`,
+and a combined `availability_reason`. One IC family failing never erases the
+other; the combined reason is `partial` when they differ. IC warm-up and
+constant windows keep their original coordinates and reasons; their values are
+`null`, never zero, and no row is dropped or renumbered. `manifest.json` binds
+the artifact ID, schema version, evaluation ID, leaderboard `entry_id`, dataset
+ID and hash, calculation settings, candidate identity and declared or effective
+parameters under `settings.candidate`, method family, producer source, full
+signal fingerprint, training dataset ID and status, and a SHA-256 content hash.
+`training_status` is `fitted`, `no_fitting` or `unknown`; only backend model/rule
+execution can confirm a fitting state, so caller arrays and unknown sources stay
+`unknown` even when they name a model. `holdout_relationship` reports
 `in_sample`, `different_dataset`, `not_applicable` or `unknown` from the recorded
 pair alone. Different IDs never assert a holdout, and a rule records
 `no_fitting` rather than pretending the evaluation dataset trained it.
 
 A re-evaluation writes a new content-bound artifact instead of overwriting the
-old one; the leaderboard entry and the evaluation response carry
-`series_artifact_id`. `MLService.evaluation_series_page` discovers artifacts with
-`kind`, `dataset_id` and `entry_id` filters. MCP `get_evaluation_series_page`
-pages artifact summaries; passing `artifact_id` instead pages that artifact's
-rows with bounded `offset`/`limit` (default 50, maximum 200). MCP clients can
-read those bounds and the export ceiling before choosing a method from
+old one; the leaderboard entry, its ranked/skipped responses, and the evaluation
+response carry `series_artifact_id`. `MLService.evaluation_series_page`
+discovers artifacts with `kind`, `dataset_id` and `entry_id` filters. MCP
+`get_evaluation_series_page` pages artifact summaries; passing `artifact_id`
+instead pages that artifact's rows with bounded `offset`/`limit` (default 50,
+maximum 200). MCP clients can read the read/export ceilings from
 `get_ml_contract.evaluation_series_limits`; `get_evaluation_series_page` also
-echoes `max_page_size` and `max_export_rows`. `export_evaluation_series(artifact_id)`
-returns the full rows and manifest only up to `max_export_rows` (100,000). An
-oversized artifact fails the export explicitly; use row paging instead.
-Concatenating row pages in offset order reproduces the export exactly.
+echoes `max_page_size`, `max_export_rows` and `max_export_bytes`.
+`export_evaluation_series(artifact_id)` returns the full rows and manifest only
+up to `max_export_rows` (100,000) and `max_export_bytes` (8 MiB). An artifact
+above either bound fails the export explicitly; use row paging instead.
+Concatenating row pages in offset order reproduces the export exactly. Continued
+pages reuse one verified snapshot while the saved file signature is unchanged,
+so paging does not re-encode the whole artifact on every request.
 The client-accessible `get_ml_contract` guidance keys
 `evaluation_series_rows` and `evaluation_series_recovery` carry the same row
 semantics and partial-publication limits without repository access.
@@ -801,12 +809,12 @@ reports the artifact unavailable or invalid. Full verification happens when
 the artifact.
 Both row paging and export are read-only and never load a model: a missing
 artifact is reported unavailable, and a changed value, setting,
-dataset/candidate identity or content hash fails verification. Verification is
-against the expected artifact identity derived from that manifest and content
-hash; it is not a publisher signature. A writer able to rewrite the artifact,
-manifest and stored reference consistently can recompute the hash and identity,
-so verification does not authenticate the publisher or defend against coordinated
-workspace rewrites. Workspace access control remains outside this contract. For
+dataset/candidate identity or content hash fails verification. Verification
+checks the exact published Parquet bytes against the manifest; it does not
+depend on a fresh serialization whose metadata may differ across library
+versions. It is still not a publisher signature: a writer able to rewrite the
+artifact, manifest and stored reference consistently can recompute hash and
+identity, so workspace access control remains outside this contract. For
 signal-evaluation series, verification additionally requires `source_row` to be
 the original `0..row_count-1` sequence and UTC timestamps to be unique and
 increasing. Fold-validation series instead require unique `source_row`
@@ -817,44 +825,49 @@ remain for operator cleanup and never becomes a published artifact.
 `protect_evaluation_series` marks artifacts cited by saved reports; that marker
 is permanent through the documented API: neither the store nor `MLService`
 provides a removal operation, and pruning skips an artifact once the marker is
-visible. `protect()` does not take the prune lock, so protection must complete
-before cleanup starts: concurrent protection and pruning are not coordinated, a
-prune already in progress may remove the artifact before the marker is visible,
-and protecting after removal cannot restore it.
-With the default cleanup call, `cleanup_evaluation_series` removes only
-unreferenced, unprotected artifacts. Passing an explicit `protected` set replaces
-the leaderboard-derived references, so callers must include every ID they want
-retained; see [Reports](reports.md) for that explicit-set semantics.
+visible. `protect()` takes the same lock as pruning and checks that the artifact
+still exists and verifies before writing the marker; a missing or corrupt
+artifact fails instead of reporting a false success. Report generation protects
+the series IDs it cites, and successful fold validation protects its fold series
+at publication. With the default cleanup call, `cleanup_evaluation_series`
+removes only artifacts that are neither leaderboard-referenced nor protected.
+Passing an explicit `protected` set replaces the leaderboard-derived references,
+so callers must include every ID they want retained; see
+[Reports](reports.md) for that explicit-set semantics.
 Cleanup is not transactional: each artifact is removed as it is visited, with no
 rollback, so a removal error can leave a partially completed cleanup. Re-run
 discovery to see what remains; a failed cleanup is not evidence that no artifact
 was removed. Historical rows without `series_artifact_id` stay unavailable rather
 than being recomputed.
 
-Publication (`save`) and cleanup (`prune`) serialize on `.evaluation-series.lock`
-in that root, with a 30-second default acquisition timeout. Lock contention or a
-stale external holder can therefore make a recording or cleanup call fail without
-any artifact being tampered with. Discovery, row paging and export do not take
-that lock. The timeout is the store default; no MCP tool currently exposes it as
-an argument.
+Publication (`save`), protection (`protect`), default cleanup reference
+snapshotting and cleanup (`prune`) serialize on `.evaluation-series.lock` in that
+root, with a 30-second default acquisition timeout. Application recording holds
+that lock across series publication and the leaderboard write, so default
+cleanup cannot delete the just-published artifact between those steps. Lock
+contention or a stale external holder can therefore make a recording or cleanup
+call fail without any artifact being tampered with. Discovery, row paging and
+export do not take that lock. The timeout is the store default; no MCP tool
+currently exposes it as an argument.
 
-Recording a signal series publishes its artifact before writing the leaderboard
-entry. If that later write fails, the evaluation call fails while leaving the
-newly published artifact discoverable and unreferenced. For a first recording no
-leaderboard row points at it; for a re-recording the atomic replacement leaves
-the previous row intact, still carrying its earlier `series_artifact_id` and
-earlier artifact. Default cleanup protects leaderboard references, so the new
-orphan is eligible for removal; protect its artifact ID first if it is still
-needed. A failed recording therefore does not prove that no new series was
-published, nor that an existing candidate lost its old evidence.
+Application recording publishes the series and writes the leaderboard entry
+under the same store lock. If the leaderboard write fails, the evaluation call
+fails while leaving the newly published artifact discoverable and unreferenced.
+For a first recording no leaderboard row points at it; for a re-recording the
+atomic replacement leaves the previous row intact, still carrying its earlier
+`series_artifact_id` and earlier artifact. Default cleanup protects leaderboard
+references, so the new orphan is eligible for removal; protect its artifact ID
+first if it is still needed. A failed recording therefore does not prove that no
+new series was published, nor that an existing candidate lost its old evidence.
 
 #### Fold prediction series
 
 When `train_model` runs `validation`, the typed MCP `ValidationSummary` exposes
 `fold_predictions_available` and nullable `fold_series_artifact_id`. That
 artifact saves the predictions produced by each fold model before aggregation,
-with the real `source_row`, timestamp, target and forward return, and that
-fold's train/eval row and time ranges. Each range records the first and last
+with the real `source_row`, dataset `symbol` when one was saved, timestamp,
+target and forward return, and that fold's train/eval row and time ranges. Each
+range records the first and last
 included row/time with inclusive endpoints, not a boundary just outside the
 split; it is a bound, not a complete membership list. In particular,
 `purged_kfold` can train on data on both sides of the test window while purging
@@ -875,8 +888,10 @@ unfiltered summaries with `get_evaluation_series_page` and matching `kind` and
 `dataset_id` in each returned item, then passing that `artifact_id` to row paging
 or export; only the Python `MLService.evaluation_series_page` accepts those
 fields as query filters. The manifest records
-`evaluation_id="fold_<dataset_id>"` and `training_status="fitted"`. A failed
-`train_model` call therefore does not prove that no fold evidence exists.
+`evaluation_id="fold_<dataset_id>"` and `training_status="fitted"`. Successful
+fold publication marks its series protected, so default cleanup keeps it even
+though no leaderboard row references it. A failed `train_model` call therefore
+does not prove that no fold evidence exists.
 
 #### Method families
 

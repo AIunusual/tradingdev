@@ -11,6 +11,7 @@ from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.registry import LeaderboardStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,6 +55,55 @@ def _dataset(service: MLService) -> str:
     return str(result["dataset"]["dataset_id"])
 
 
+def test_publication_and_leaderboard_update_share_the_series_lock(
+    workspace: WorkspacePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    original = LeaderboardStore.record
+
+    def record(self: LeaderboardStore, entry: object) -> bool:
+        assert service.series_store.lock.is_locked
+        return original(self, entry)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(LeaderboardStore, "record", record)
+
+    assert service.evaluate_signal(
+        [value * 0.5 for value in realized],
+        realized,
+        dataset_id=dataset_id,
+        window=20,
+        record=True,
+    )["recorded"]["series_artifact_id"]
+
+
+def test_leaderboard_response_exposes_the_current_series_id(
+    workspace: WorkspacePaths,
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    recorded = service.evaluate_signal(
+        [value * 0.5 for value in realized],
+        realized,
+        dataset_id=dataset_id,
+        window=20,
+        record=True,
+    )
+    artifact_id = str(recorded["series_artifact_id"])
+
+    payload = service.leaderboard("ic_mean")
+    rows = [*payload["ranked"], *payload["skipped"]]
+    row = next(
+        item for item in rows if item["entry_id"] == recorded["recorded"]["entry_id"]
+    )
+
+    assert row["series_artifact_id"] == artifact_id
+
+
 def test_saved_series_matches_the_dataset_rows_independently(
     workspace: WorkspacePaths,
 ) -> None:
@@ -75,8 +125,8 @@ def test_saved_series_matches_the_dataset_rows_independently(
     assert recorded["producer_source"] == "caller_array"
     exported = service.evaluation_series_export(str(artifact_id))
     assert exported["manifest"]["producer_source"] == "caller_array"
-    assert exported["manifest"]["training_status"] == "no_fitting"
-    assert exported["manifest"]["holdout_relationship"] == "not_applicable"
+    assert exported["manifest"]["training_status"] == "unknown"
+    assert exported["manifest"]["holdout_relationship"] == "unknown"
 
     rows = exported["rows"]
     assert len(rows) == len(frame)
@@ -89,6 +139,63 @@ def test_saved_series_matches_the_dataset_rows_independently(
     assert [row["realized_return"] for row in rows] == pytest.approx(realized)
     assert all(row["pearson_ic"] is None for row in rows[:19])
     assert rows[19]["pearson_ic"] is not None
+
+
+def test_manifest_binds_candidate_identity_and_declared_settings(
+    workspace: WorkspacePaths,
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    recorded = service.evaluate_signal(
+        [value * 0.5 for value in realized],
+        realized,
+        dataset_id=dataset_id,
+        window=20,
+        method_family="rule",
+        method_name="rsi14",
+        method_parameters={"threshold": 50.0},
+        record=True,
+    )
+    manifest = service.evaluation_series_export(str(recorded["series_artifact_id"]))[
+        "manifest"
+    ]
+
+    assert manifest["settings"]["candidate"] == {
+        "model_id": "",
+        "method_name": "rsi14",
+        "parameters": {"threshold": 50.0},
+    }
+
+
+def test_caller_array_with_model_id_keeps_training_relationship_unknown(
+    workspace: WorkspacePaths,
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    trained = service.train_model(
+        dataset_id=dataset_id,
+        model_kind="lightgbm_direction",
+        parameters={"n_estimators": 12, "max_depth": 3, "n_jobs": 1},
+    )
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    recorded = service.evaluate_signal(
+        [value * 0.5 for value in realized],
+        realized,
+        model_id=str(trained["model"]["model_id"]),
+        dataset_id=dataset_id,
+        window=20,
+        record=True,
+    )
+    manifest = service.evaluation_series_export(str(recorded["series_artifact_id"]))[
+        "manifest"
+    ]
+
+    assert recorded["producer_source"] == "caller_array"
+    assert manifest["training_status"] == "unknown"
+    assert manifest["holdout_relationship"] == "unknown"
 
 
 def test_series_survives_model_removal_and_reports_legacy_absence(

@@ -57,24 +57,23 @@ their [saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluat
 Historical leaderboard rows written before series publication may have no such
 field; the store reads it as an empty string and the series stays unavailable
 rather than being reconstructed. A report snapshot copies the reference only
-when one exists and records an empty reference otherwise. A saved report copies
-that reference into its scope metadata but does not protect the artifact: report
-generation has no lifecycle side effect. The report-specific consequence is that
-the reference can outlive the leaderboard entry it came from without keeping the
-series alive; after that entry is replaced or removed, the report has no
-independent claim on the artifact. See the
+when one exists and records an empty reference otherwise. Report generation
+protects every cited series artifact before publication: the artifact must exist
+and verify, and the permanent marker keeps it out of later default cleanup even
+after the leaderboard entry is replaced or removed. See the
 [series lifecycle](ml_research.md#saved-pointwise-evaluation-series) for default
 cleanup protection, explicit protected sets, permanent markers, partial cleanup
 and lock behavior. Current MCP tools expose only discovery, row paging and
-export, so an MCP-only client cannot protect or clean up artifacts by itself.
+export, so an MCP-only client cannot directly protect or clean up artifacts;
+generating a report does protect the artifacts it cites.
 
-Reports do not read the series to recompute metrics: generation snapshots the
-leaderboard reference without checking whether the artifact still exists or is
-intact. The artifact exists so a reader can later inspect the exact scored rows,
-their original coordinates and unavailable-value reasons without the model file.
-Missing or tampered series are reported unavailable or rejected by the row
-paging and export operations, never silently reconstructed; generation itself
-does not surface those errors.
+Reports do not read the series to recompute metrics: generation verifies that a
+cited artifact exists and is intact, then snapshots only the leaderboard
+reference and its scope metadata. The artifact exists so a reader can later
+inspect the exact scored rows, their original coordinates and unavailable-value
+reasons without the model file. Missing or tampered series are reported
+unavailable or rejected by the row paging and export operations, never silently
+reconstructed.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 `generate_report` and `tradingdev-report` expose the following ranking options.

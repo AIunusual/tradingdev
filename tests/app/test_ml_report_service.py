@@ -11,11 +11,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.adapters.test_evaluation_series_store import _bundle
 from tests.app.test_comparison_report import _fixture
 from tests.app.test_report_service import _payload, _save
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore
+from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
 from tradingdev.domain.ml.leaderboard import (
     EvaluationContext,
@@ -67,6 +70,25 @@ def _read(result: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     assert payload["navigation_instructions"] == manifest["navigation_instructions"]
     assert payload["navigation_instructions"] == result["navigation_instructions"]
     return payload, manifest
+
+
+def test_report_publication_protects_its_series_reference(
+    context: tuple[WorkspacePaths, SQLiteStore, ReportService],
+) -> None:
+    workspace, database, service = context
+    series = EvaluationSeriesStore(workspace.ml_evaluation_series)
+    artifact_id = series.save(_bundle(entry_id="first"))
+    board, entry = _seed(workspace)
+    board.record(replace(entry, series_artifact_id=artifact_id))
+
+    result = service.generate_report(ml_entry_ids=["first", "failed"])
+
+    assert result["success"], result
+    board.record(replace(entry, series_artifact_id="b" * 64))
+    removed = MLService(workspace=workspace).cleanup_evaluation_series()
+
+    assert artifact_id not in removed["removed"]
+    assert series.load(artifact_id).manifest.artifact_id == artifact_id
 
 
 @pytest.mark.parametrize("has_run", [False, True])

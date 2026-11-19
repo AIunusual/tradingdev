@@ -31,12 +31,15 @@ SIGNAL_COLUMNS: tuple[str, ...] = (
     "signal",
     "realized_return",
     "pearson_ic",
+    "pearson_availability_reason",
     "spearman_ic",
+    "spearman_availability_reason",
     "availability_reason",
 )
 FOLD_COLUMNS: tuple[str, ...] = (
     "fold",
     "source_row",
+    "symbol",
     "timestamp",
     "prediction",
     "target",
@@ -51,7 +54,7 @@ FOLD_COLUMNS: tuple[str, ...] = (
     "eval_end",
 )
 _FOLD_TEXT_COLUMNS = frozenset(
-    {"timestamp", "train_start", "train_end", "eval_start", "eval_end"}
+    {"symbol", "timestamp", "train_start", "train_end", "eval_start", "eval_end"}
 )
 
 _FOLD_INT_COLUMNS = frozenset(
@@ -64,6 +67,8 @@ _FOLD_INT_COLUMNS = frozenset(
         "eval_end_row",
     }
 )
+
+_CORRELATION_ERRORS = (ValueError, ZeroDivisionError)
 
 SeriesKind = Literal["signal_evaluation", "fold_validation"]
 TrainingStatus = Literal["fitted", "no_fitting", "unknown"]
@@ -223,6 +228,16 @@ def _correlation(left: Sequence[float], right: Sequence[float], *, rank: bool) -
     return float(correlation(left_values, right_values))
 
 
+def _correlation_value(
+    left: Sequence[float], right: Sequence[float], *, rank: bool
+) -> float | None:
+    """One correlation family; failure stays local to that family."""
+    try:
+        return _finite(_correlation(left, right, rank=rank))
+    except _CORRELATION_ERRORS:
+        return None
+
+
 def build_signal_series(
     signal: Sequence[float],
     forward_returns: Sequence[float],
@@ -248,11 +263,15 @@ def build_signal_series(
 
     pearson: list[float | None] = []
     spearman: list[float | None] = []
+    pearson_reasons: list[str] = []
+    spearman_reasons: list[str] = []
     reasons: list[str] = []
     for index in range(len(signal)):
         if index + 1 < window:
             pearson.append(None)
             spearman.append(None)
+            pearson_reasons.append("ic_warmup")
+            spearman_reasons.append("ic_warmup")
             reasons.append("ic_warmup")
             continue
         window_signal = [
@@ -264,24 +283,25 @@ def build_signal_series(
         if len(set(window_signal)) < 2 or len(set(window_forward)) < 2:
             pearson.append(None)
             spearman.append(None)
+            pearson_reasons.append("constant_window")
+            spearman_reasons.append("constant_window")
             reasons.append("constant_window")
             continue
-        try:
-            pair = (
-                _correlation(window_signal, window_forward, rank=False),
-                _correlation(window_signal, window_forward, rank=True),
-            )
-        except ValueError, ZeroDivisionError:
-            pair = (float("nan"), float("nan"))
-        values = tuple(_finite(value) for value in pair)
-        if any(value is None for value in values):
-            pearson.append(None)
-            spearman.append(None)
-            reasons.append("non_finite")
-            continue
-        pearson.append(values[0])
-        spearman.append(values[1])
-        reasons.append("ok")
+        pearson_value = _correlation_value(window_signal, window_forward, rank=False)
+        spearman_value = _correlation_value(window_signal, window_forward, rank=True)
+        pearson.append(_finite(pearson_value))
+        spearman.append(_finite(spearman_value))
+        pearson_reasons.append(
+            "ok" if _finite(pearson_value) is not None else "non_finite"
+        )
+        spearman_reasons.append(
+            "ok" if _finite(spearman_value) is not None else "non_finite"
+        )
+        reasons.append(
+            pearson_reasons[-1]
+            if pearson_reasons[-1] == spearman_reasons[-1]
+            else "partial"
+        )
 
     return pd.DataFrame(
         {
@@ -290,7 +310,9 @@ def build_signal_series(
             "signal": [float(value) for value in signal],
             "realized_return": [float(value) for value in forward_returns],
             "pearson_ic": pearson,
+            "pearson_availability_reason": pearson_reasons,
             "spearman_ic": spearman,
+            "spearman_availability_reason": spearman_reasons,
             "availability_reason": reasons,
         }
     )
@@ -330,10 +352,22 @@ def to_json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
-def verify_series(bundle: EvaluationSeriesBundle) -> None:
-    """Refuse changed values, settings, identity or misaligned coordinates."""
+def verify_series(
+    bundle: EvaluationSeriesBundle, *, content_bytes: bytes | None = None
+) -> None:
+    """Refuse changed values, settings, identity or misaligned coordinates.
+
+    When ``content_bytes`` is supplied, the hash is checked against the exact
+    published Parquet bytes. The fallback re-encodes the frame for direct
+    callers that do not own the artifact file.
+    """
     manifest = bundle.manifest
-    if hashlib.sha256(frame_bytes(bundle.frame)).hexdigest() != manifest.content_hash:
+    digest = (
+        hashlib.sha256(content_bytes).hexdigest()
+        if content_bytes is not None
+        else hashlib.sha256(frame_bytes(bundle.frame)).hexdigest()
+    )
+    if digest != manifest.content_hash:
         raise ValueError("evaluation series content hash does not match its manifest")
     if compute_artifact_id(manifest.model_dump()) != manifest.artifact_id:
         raise ValueError("evaluation series manifest identity does not match its ID")
@@ -352,17 +386,37 @@ def verify_series(bundle: EvaluationSeriesBundle) -> None:
             raise ValueError(
                 "evaluation series timestamps are not in chronological order"
             )
-        for reason, pearson, spearman in zip(
-            bundle.frame["availability_reason"],
-            bundle.frame["pearson_ic"],
-            bundle.frame["spearman_ic"],
-            strict=True,
-        ):
-            if reason == "ok":
-                if _finite(pearson) is None or _finite(spearman) is None:
+        columns = bundle.frame.columns
+        if "pearson_availability_reason" in columns:
+            for pearson_reason, spearman_reason, pearson, spearman in zip(
+                bundle.frame["pearson_availability_reason"],
+                bundle.frame["spearman_availability_reason"],
+                bundle.frame["pearson_ic"],
+                bundle.frame["spearman_ic"],
+                strict=True,
+            ):
+                pearson_available = _finite(pearson) is not None
+                spearman_available = _finite(spearman) is not None
+                if pearson_reason == "ok" and not pearson_available:
                     raise ValueError("an available IC cell is missing its value")
-            elif _finite(pearson) is not None or _finite(spearman) is not None:
-                raise ValueError("an unavailable IC cell carries a value")
+                if pearson_reason != "ok" and pearson_available:
+                    raise ValueError("an unavailable IC cell carries a value")
+                if spearman_reason == "ok" and not spearman_available:
+                    raise ValueError("an available IC cell is missing its value")
+                if spearman_reason != "ok" and spearman_available:
+                    raise ValueError("an unavailable IC cell carries a value")
+        else:
+            for reason, pearson, spearman in zip(
+                bundle.frame["availability_reason"],
+                bundle.frame["pearson_ic"],
+                bundle.frame["spearman_ic"],
+                strict=True,
+            ):
+                if reason == "ok":
+                    if _finite(pearson) is None or _finite(spearman) is None:
+                        raise ValueError("an available IC cell is missing its value")
+                elif _finite(pearson) is not None or _finite(spearman) is not None:
+                    raise ValueError("an unavailable IC cell carries a value")
     else:
         if bundle.frame["source_row"].duplicated().any():
             raise ValueError("fold prediction rows repeat a source coordinate")

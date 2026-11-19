@@ -207,6 +207,28 @@ def test_non_finite_correlation_keeps_a_reason(monkeypatch: pytest.MonkeyPatch) 
     assert pd.isna(frame.loc[2, "pearson_ic"])
 
 
+def test_one_ic_failure_does_not_erase_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = series_module._correlation
+
+    def fail_pearson(left: Any, right: Any, *, rank: bool) -> float:
+        if not rank:
+            raise ZeroDivisionError("pearson unavailable")
+        return original(left, right, rank=rank)
+
+    monkeypatch.setattr(series_module, "_correlation", fail_pearson)
+
+    frame = build_signal_series(
+        [1.0, 2.0, 3.0, 4.0], [0.1, 0.3, 0.2, 0.7], _TIMESTAMPS[:4], window=3
+    )
+
+    assert pd.isna(frame.loc[2, "pearson_ic"])
+    assert frame.loc[2, "pearson_availability_reason"] == "non_finite"
+    assert frame.loc[2, "spearman_ic"] is not None
+    assert frame.loc[2, "spearman_availability_reason"] == "ok"
+
+
 def test_build_bundle_rejects_wrong_columns_and_empty_frames() -> None:
     frame = _series_frame()
     with pytest.raises(ValueError, match="needs columns"):
@@ -253,6 +275,32 @@ def test_verify_rejects_wrong_ic_availability_claims() -> None:
     frame.loc[0, "pearson_ic"] = 0.1
     with pytest.raises(ValueError, match="unavailable IC cell carries a value"):
         verify_series(build_bundle(frame, **_manifest_fields()))
+
+
+def test_fold_series_keeps_symbol_for_panel_predictions() -> None:
+    record = {
+        "fold": 0,
+        "source_row": 4,
+        "symbol": "BTC/USDT",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "prediction": 1.0,
+        "target": 1.0,
+        "forward_return": 0.1,
+        "train_start_row": 0,
+        "train_end_row": 3,
+        "eval_start_row": 4,
+        "eval_end_row": 5,
+        "train_start": "2024-01-01T00:00:00+00:00",
+        "train_end": "2024-01-01T03:00:00+00:00",
+        "eval_start": "2024-01-01T04:00:00+00:00",
+        "eval_end": "2024-01-01T05:00:00+00:00",
+    }
+
+    frame = build_fold_series(
+        [record, {**record, "source_row": 5, "symbol": "ETH/USDT"}]
+    )
+
+    assert frame["symbol"].tolist() == ["BTC/USDT", "ETH/USDT"]
 
 
 def test_verify_rejects_duplicate_fold_coordinates() -> None:

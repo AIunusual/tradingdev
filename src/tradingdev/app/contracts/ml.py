@@ -64,6 +64,7 @@ class EvaluationSeriesLimits(ContractModel):
     default_page_size: int
     max_page_size: int
     max_export_rows: int
+    max_export_bytes: int
     overflow_read: str
     """Tool call to use when an artifact exceeds ``max_export_rows``."""
 
@@ -212,6 +213,8 @@ class LeaderboardRow(ContractModel):
     the boundary. Every producer states the source it actually measured.
     """
     entry_id: str
+    series_artifact_id: str
+    """Current pointwise series for this leaderboard row; empty on old records."""
     producer_source: ProducerSource
     """Saved signal execution path; caller/unknown model IDs are only labels."""
     label: str
@@ -249,6 +252,8 @@ class LeaderboardSkipped(ContractModel):
     source: Literal["signal"]
     """Which kind of measurement this is; a run candidate carries ``run``."""
     entry_id: str
+    series_artifact_id: str
+    """Current pointwise series for this row; empty when none was recorded."""
     producer_source: ProducerSource
     """Saved signal execution path, retained even when its score is unavailable."""
     label: str
@@ -649,7 +654,9 @@ class EvaluationSeriesSignalRow(ContractModel):
     signal: float | None
     realized_return: float | None
     pearson_ic: float | None
+    pearson_availability_reason: str = ""
     spearman_ic: float | None
+    spearman_availability_reason: str = ""
     availability_reason: str
 
 
@@ -658,6 +665,8 @@ class EvaluationSeriesFoldRow(ContractModel):
 
     fold: int
     source_row: int
+    symbol: str
+    """Dataset symbol; empty when the saved dataset has no symbol column."""
     timestamp: str
     prediction: float | None
     target: float | None
@@ -692,6 +701,7 @@ class EvaluationSeriesReadResponse(ContractModel):
     artifact_id: str | None = None
     max_page_size: int | None = None
     max_export_rows: int | None = None
+    max_export_bytes: int | None = None
     manifest: dict[str, JsonValue] | None = None
     rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow] = Field(
         default_factory=list

@@ -101,6 +101,57 @@ def test_rows_pages_reassemble_to_the_full_export(tmp_path: Path) -> None:
     assert assembled == store.export(artifact_id)["rows"]
 
 
+def test_export_enforces_a_byte_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    monkeypatch.setattr(EvaluationSeriesStore, "MAX_EXPORT_BYTES", 16)
+
+    with pytest.raises(ValueError, match="byte bound"):
+        store.export(artifact_id)
+
+
+def test_successive_row_pages_reuse_the_verified_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    calls = 0
+    original = store._load_from
+
+    def counted(path: object, raw: object = None) -> object:
+        nonlocal calls
+        calls += 1
+        return original(path, raw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store, "_load_from", counted)
+
+    store.rows_page(artifact_id, limit=2)
+    store.rows_page(artifact_id, offset=2, limit=2)
+
+    assert calls == 1
+
+
+def test_loading_uses_published_bytes_not_a_fresh_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+
+    def reject_encoding(frame: object) -> bytes:
+        raise AssertionError("reading must not re-encode the saved frame")
+
+    monkeypatch.setattr(
+        "tradingdev.adapters.storage.evaluation_series.frame_bytes", reject_encoding
+    )
+    monkeypatch.setattr(
+        "tradingdev.domain.ml.evaluation.series.frame_bytes", reject_encoding
+    )
+
+    assert store.load(artifact_id).manifest.artifact_id == artifact_id
+
+
 def test_prune_keeps_only_protected_artifacts(tmp_path: Path) -> None:
     store = EvaluationSeriesStore(tmp_path)
     keep_id = store.save(_bundle(entry_id="keep"))
@@ -123,6 +174,21 @@ def test_report_protection_marker_survives_unprotected_cleanup(tmp_path: Path) -
 
     assert removed == [transient_id]
     assert store.path_for(cited_id).exists()
+    assert store.load(cited_id).manifest.artifact_id == cited_id
+
+
+def test_protect_rejects_a_missing_artifact(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+
+    with pytest.raises(FileNotFoundError, match="unavailable"):
+        store.protect("a" * 64)
+
+
+def test_publication_can_mark_an_artifact_for_default_cleanup(tmp_path: Path) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    cited_id = store.save(_bundle(entry_id="cited"), protect=True)
+
+    assert store.prune(protected=set()) == []
     assert store.load(cited_id).manifest.artifact_id == cited_id
 
 

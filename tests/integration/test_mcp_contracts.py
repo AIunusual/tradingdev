@@ -80,10 +80,10 @@ _MUTATING_HINTS = {
     # Recording can replace an evaluation; dataset/panel builds can evict
     # feature caches, and training rewrites stored model artifacts. Stable
     # identities do not remove these operations' destructive side effects.
-    "evaluate_signal": (False, True, True, False),
+    "evaluate_signal": (False, True, False, False),
     "build_dataset": (False, True, True, False),
     "build_panel": (False, True, True, False),
-    "train_model": (False, True, True, False),
+    "train_model": (False, True, False, False),
 }
 
 

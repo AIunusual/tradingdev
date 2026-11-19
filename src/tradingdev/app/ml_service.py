@@ -207,33 +207,37 @@ _ML_GUIDANCE = {
     ),
     "evaluation_series": (
         "Saved pointwise series are discovered with get_evaluation_series_page. "
-        "The discovery page reports max_page_size and max_export_rows; pass an "
-        "artifact_id to the same tool to page rows with bounded offset/limit. "
-        "export_evaluation_series returns all rows only below max_export_rows "
-        "and fails explicitly above it; use row paging instead."
+        "The discovery page reports max_page_size, max_export_rows and "
+        "max_export_bytes; pass an artifact_id to the same tool to page rows "
+        "with bounded offset/limit. export_evaluation_series returns all rows "
+        "only below both export bounds and fails explicitly above them; use "
+        "row paging instead. The ledger/ranked and skipped rows carry the "
+        "current series_artifact_id."
     ),
     "evaluation_series_rows": (
         "source_row is the original dataset coordinate; signal series keep the "
-        "0..row_count-1 order and UTC ISO timestamps. A null IC keeps its row "
-        "and an availability_reason (ic_warmup, constant_window, non_finite); "
-        "null is unavailable, never zero. Fold rows carry the actual fold "
-        "prediction and inclusive first/last train/eval row and time endpoints; "
-        "holdout_relationship is dataset-level, not evidence that each fold "
-        "prediction was held out."
+        "0..row_count-1 order and UTC ISO timestamps. Each IC keeps its own "
+        "availability_reason so one family's failure does not erase the other. "
+        "Fold rows carry the actual fold prediction, the dataset symbol when "
+        "one was saved, and inclusive first/last train/eval row and time "
+        "endpoints; these are bounds, not complete membership. Manifest "
+        "settings bind candidate identity and effective parameters, and "
+        "training_status is derived from producer_source: caller arrays stay "
+        "unknown even when they name a model."
     ),
     "evaluation_series_recovery": (
-        "Discovery pages are summary lookups and do not verify content; row "
-        "paging and export do. Publication is not rolled back if a later "
-        "leaderboard write or final model save fails, so a failed evaluation "
-        "can still leave a discoverable artifact. After a failed train_model, "
-        "page unfiltered summaries with get_evaluation_series_page, match kind "
-        "fold_validation and dataset_id, then pass that artifact_id to row "
-        "paging or export_evaluation_series; the manifest records "
-        "fold_<dataset_id> and training_status fitted. Cleanup is not "
-        "transactional and publication/pruning serialize on a lock with a "
-        "30-second default timeout; contention can fail without tampering. "
-        "protect_evaluation_series writes a marker with no removal API in these "
-        "tools, so pruning always skips once-protected artifacts."
+        "Discovery pages are summary lookups; row paging and export verify the "
+        "exact published bytes against the manifest. Publication is not rolled "
+        "back if a later leaderboard write or final model save fails, so a "
+        "failed evaluation can still leave a discoverable artifact. After a "
+        "failed train_model, page unfiltered summaries with "
+        "get_evaluation_series_page, match kind fold_validation and dataset_id, "
+        "then pass that artifact_id to row paging or export_evaluation_series. "
+        "Cleanup is not transactional; publication, protection and pruning "
+        "share a lock with a 30-second default timeout. protect requires the "
+        "artifact to exist and has no removal API; reports protect cited "
+        "artifacts at publication and successful fold validation protects its "
+        "own series."
     ),
     "simulated_returns": (
         "Position thresholds use earlier signals only; positions open after "
@@ -350,6 +354,7 @@ class MLService:
         )
         # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
+        self._series_store: EvaluationSeriesStore | None = None
 
     @property
     def workspace(self) -> WorkspacePaths:
@@ -359,7 +364,11 @@ class MLService:
     @property
     def series_store(self) -> EvaluationSeriesStore:
         """The store holding immutable pointwise evaluation artifacts."""
-        return EvaluationSeriesStore(self._workspace.ml_evaluation_series)
+        if self._series_store is None:
+            self._series_store = EvaluationSeriesStore(
+                self._workspace.ml_evaluation_series
+            )
+        return self._series_store
 
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
@@ -413,6 +422,7 @@ class MLService:
                 "default_page_size": 50,
                 "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
                 "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+                "max_export_bytes": EvaluationSeriesStore.MAX_EXPORT_BYTES,
                 "overflow_read": (
                     "get_evaluation_series_page(artifact_id, offset, limit)"
                 ),
@@ -759,7 +769,10 @@ class MLService:
             producer_source=producer_source,
         )
         training_status = (
-            "fitted" if training_dataset_id else "unknown" if model_id else "no_fitting"
+            ("fitted" if training_dataset_id else "no_fitting")
+            if producer_source
+            in (ProducerSource.BACKEND_MODEL, ProducerSource.BACKEND_RULE)
+            else "unknown"
         )
         frame, _ = self._load_dataset(dataset_id)
         series_frame = build_signal_series(
@@ -776,6 +789,11 @@ class MLService:
                 "window": window,
                 "n_quantiles": n_quantiles,
                 "ic_methods": ["pearson", "spearman"],
+                "candidate": {
+                    "model_id": model_id or "",
+                    "method_name": identity.name,
+                    "parameters": dict(parameters),
+                },
             },
             method_family=identity.family,
             producer_source=producer_source.value,
@@ -785,30 +803,33 @@ class MLService:
             training_status=training_status,  # type: ignore[arg-type]
             created_at=now_iso(),
         )
-        artifact_id = self.series_store.save(bundle)
-        entry = LeaderboardEntry(
-            entry_id=entry_id,
-            label=label,
-            context=context,
-            metrics=stored_metrics,
-            n_observations=n_observations,
-            model_id=model_id or "",
-            dataset_id=dataset_id,
-            parameters=parameters,
-            signal_fingerprint=fingerprint,
-            method_family=identity.family,
-            method_name=identity.name,
-            training_dataset_id=training_dataset_id,
-            producer_source=producer_source,
-            series_artifact_id=artifact_id,
-        )
-        store = LeaderboardStore(self._workspace.ml_leaderboard)
-        replaced = store.record(entry)
+        store = self.series_store
+        with store.lock:
+            artifact_id = store.save(bundle)
+            entry = LeaderboardEntry(
+                entry_id=entry_id,
+                label=label,
+                context=context,
+                metrics=stored_metrics,
+                n_observations=n_observations,
+                model_id=model_id or "",
+                dataset_id=dataset_id,
+                parameters=parameters,
+                signal_fingerprint=fingerprint,
+                method_family=identity.family,
+                method_name=identity.name,
+                training_dataset_id=training_dataset_id,
+                producer_source=producer_source,
+                series_artifact_id=artifact_id,
+            )
+            leaderboard = LeaderboardStore(self._workspace.ml_leaderboard)
+            replaced = leaderboard.record(entry)
+            candidates = len(leaderboard.entries())
         return {
             "entry_id": entry.entry_id,
             "replaced": replaced,
             "context": context.describe(),
-            "n_candidates": len(store.entries()),
+            "n_candidates": candidates,
             "signal_fingerprint": fingerprint,
             "method_family": identity.family,
             "method_name": identity.name,
@@ -923,6 +944,7 @@ class MLService:
                 "source": "signal",
                 "rank": item.rank,
                 "entry_id": item.entry.entry_id,
+                "series_artifact_id": item.entry.series_artifact_id,
                 "label": item.entry.label,
                 "model_id": item.entry.model_id,
                 "dataset_id": item.entry.dataset_id,
@@ -969,6 +991,7 @@ class MLService:
                 {
                     "source": "signal",
                     "entry_id": item.entry.entry_id,
+                    "series_artifact_id": item.entry.series_artifact_id,
                     "label": item.entry.label,
                     "method_family": item.entry.family,
                     "method_name": item.entry.method_name,
@@ -1092,15 +1115,19 @@ class MLService:
         self, *, protected: Sequence[str] | None = None
     ) -> dict[str, Any]:
         """Remove unreferenced series; reports must name what they protect."""
-        if protected is None:
-            referenced = {
-                entry.series_artifact_id
-                for entry in LeaderboardStore(self._workspace.ml_leaderboard).entries()
-                if entry.series_artifact_id
-            }
-        else:
-            referenced = set(protected)
-        removed = self.series_store.prune(protected=frozenset(referenced))
+        store = self.series_store
+        with store.lock:
+            if protected is None:
+                referenced = {
+                    entry.series_artifact_id
+                    for entry in LeaderboardStore(
+                        self._workspace.ml_leaderboard
+                    ).entries()
+                    if entry.series_artifact_id
+                }
+            else:
+                referenced = set(protected)
+            removed = store.prune(protected=frozenset(referenced))
         return {
             "success": True,
             "removed": removed,

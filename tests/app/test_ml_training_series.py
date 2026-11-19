@@ -11,6 +11,7 @@ from tests.data_cache import seed_market_cache
 
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.app.ml_service import MLService
+from tradingdev.domain.ml.models.registry import get_model_kind
 from tradingdev.domain.ml.validation.temporal import temporal_folds
 
 if TYPE_CHECKING:
@@ -42,6 +43,60 @@ def workspace(tmp_path: Path) -> WorkspacePaths:
         ),
     )
     return paths
+
+
+def test_fold_manifest_binds_effective_model_settings(
+    workspace: WorkspacePaths,
+) -> None:
+    service = MLService(workspace=workspace)
+    built: dict[str, Any] = service.build_dataset(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        feature_set="returns",
+        horizon=5,
+    )["dataset"]
+    model: dict[str, Any] = service.train_model(
+        dataset_id=str(built["dataset_id"]),
+        model_kind="lightgbm_direction",
+        parameters={"n_estimators": 8},
+        validation="purged_walk_forward",
+        n_folds=_FOLDS,
+    )["model"]
+    artifact_id = str(model["validation"]["fold_series_artifact_id"])
+    expected = (
+        get_model_kind("lightgbm_direction").config_cls(n_estimators=8).model_dump()
+    )
+    manifest = service.evaluation_series_export(artifact_id)["manifest"]
+
+    assert manifest["settings"]["candidate"]["parameters"] == expected
+
+
+def test_fold_series_survives_default_cleanup(workspace: WorkspacePaths) -> None:
+    service = MLService(workspace=workspace)
+    built: dict[str, Any] = service.build_dataset(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        feature_set="returns",
+        horizon=5,
+    )["dataset"]
+    model: dict[str, Any] = service.train_model(
+        dataset_id=str(built["dataset_id"]),
+        model_kind="lightgbm_direction",
+        parameters={"n_estimators": 8, "max_depth": 2, "n_jobs": 1},
+        validation="purged_walk_forward",
+        n_folds=_FOLDS,
+    )["model"]
+    artifact_id = str(model["validation"]["fold_series_artifact_id"])
+
+    removed = service.cleanup_evaluation_series()
+
+    assert artifact_id not in removed["removed"]
+    exported = service.evaluation_series_export(artifact_id)
+    assert exported["manifest"]["artifact_id"] == artifact_id
 
 
 def test_fold_rows_use_real_split_coordinates(workspace: WorkspacePaths) -> None:

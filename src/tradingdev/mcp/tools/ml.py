@@ -81,18 +81,23 @@ def register(mcp: MCPServer, service: MLService) -> None:
             return MlContractError.model_validate(result)
         return MlContractResponse.model_validate(result)
 
-    # Recording an evaluation persists a row, so this tool is not read-only in
-    # the general case; it writes nothing unless `record=True` is passed, and
-    # recording the same candidate twice rewrites one row rather than adding a
-    # second, which keeps it idempotent.
+    # Recording an evaluation persists a row and a new pointwise artifact, so
+    # repeated calls are not state-equivalent. The dataset/panel builders below
+    # are content-addressed and remain idempotent.
     write_artifact = ToolAnnotations(
         read_only_hint=False,
         destructive_hint=True,
         idempotent_hint=True,
         open_world_hint=False,
     )
+    publish_artifact = ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=False,
+        open_world_hint=False,
+    )
 
-    @mcp.tool(annotations=write_artifact)
+    @mcp.tool(annotations=publish_artifact)
     def evaluate_signal(
         dataset_id: str,
         model_id: str | None = None,
@@ -224,7 +229,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
             return ErrorResponse.model_validate(result)
         return BuildPanelResponse.model_validate(result)
 
-    @mcp.tool(annotations=write_artifact)
+    @mcp.tool(annotations=publish_artifact)
     def train_model(
         dataset_id: str,
         model_kind: str,
@@ -347,6 +352,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
         limits = {
             "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
             "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+            "max_export_bytes": EvaluationSeriesStore.MAX_EXPORT_BYTES,
         }
         try:
             if artifact_id is None:

@@ -206,6 +206,8 @@ class MLTrainingService:
             embargo=request.embargo,
             min_train_dates=request.min_train_bars,
         )
+        model_kind_info = get_model_kind(model_kind)
+        effective_parameters = model_kind_info.config_cls(**params).model_dump()
 
         folds: list[dict[str, Any]] = []
         fold_rows: list[dict[str, Any]] = []
@@ -236,6 +238,11 @@ class MLTrainingService:
                     {
                         "fold": index,
                         "source_row": int(source_row),
+                        "symbol": (
+                            str(test_frame["symbol"].iloc[position])
+                            if "symbol" in test_frame.columns
+                            else ""
+                        ),
                         "timestamp": pd.to_datetime(
                             test_frame["timestamp"].iloc[position], utc=True
                         ).isoformat(),
@@ -279,6 +286,11 @@ class MLTrainingService:
                 "min_train_bars": request.min_train_bars,
                 "model_kind": model_kind,
                 "parameters": dict(params),
+                "candidate": {
+                    "model_id": "",
+                    "method_name": "",
+                    "parameters": effective_parameters,
+                },
             },
             method_family="ml_model",
             producer_source="backend_model",
@@ -300,7 +312,7 @@ class MLTrainingService:
             "fold_predictions_available": True,
             "fold_series_artifact_id": EvaluationSeriesStore(
                 self._workspace.ml_evaluation_series
-            ).save(bundle),
+            ).save(bundle, protect=True),
             "folds": folds,
             "aggregate": self._aggregated_scores(folds),
         }

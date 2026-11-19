@@ -25,6 +25,7 @@ from tradingdev.adapters.reporting.tables import (
     ledger_table,
     trade_table,
 )
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.contracts.reports import ReportAnalysis
@@ -382,6 +383,15 @@ class ReportService:
             if ml_entry_ids is not None:
                 manifest["ml_entry_ids"] = list(ml_entry_ids)
                 manifest["ml"] = payload["ml"]
+            if "ml" in payload:
+                series = EvaluationSeriesStore(self._workspace.ml_evaluation_series)
+                cited = {
+                    str(scope["metadata"]["series_artifact_id"])
+                    for scope in payload["ml"]["scopes"]
+                    if scope.get("metadata", {}).get("series_artifact_id")
+                }
+                for artifact_id in sorted(cited):
+                    series.protect(artifact_id)
             published = publish_report(
                 self._workspace,
                 self._store,

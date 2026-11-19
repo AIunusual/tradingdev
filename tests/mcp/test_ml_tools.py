@@ -125,11 +125,12 @@ def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) 
         "get_evaluation_series_page",
         "export_evaluation_series",
     }
+    publishing = {"evaluate_signal", "train_model"}
     assert set(entries) == writers | readers
     for name, tool in entries.items():
         annotations = tool.annotations
         assert annotations is not None
         assert annotations.read_only_hint is (name in readers)
         assert annotations.destructive_hint is (name in writers)
-        assert annotations.idempotent_hint is True
+        assert annotations.idempotent_hint is (name not in publishing)
         assert annotations.open_world_hint is False
