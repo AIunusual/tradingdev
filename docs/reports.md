@@ -61,7 +61,8 @@ rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
 and verify, and its manifest must match the cited scope's entry, dataset,
-fingerprint, producer source, settings and row count. A missing, corrupt or
+fingerprint, producer source, row count and checked scoring settings (horizon,
+window, quantile count, candidate model ID and method name). A missing, corrupt or
 scope-mismatched artifact raises an error so the report is not published, even
 when leaderboard metrics remain readable. Protection is not
 rolled back if a later artifact check or publication fails, so a failed request
