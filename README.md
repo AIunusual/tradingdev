@@ -444,14 +444,16 @@ stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整�
 後續可以請助手「比較剛才保存的候選，列出排名與沒有分數的原因」。
 有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因；這類證據保存在
 獨立產物中，可透過 MCP 探索與分頁讀取。歷史候選可能沒有 `series_artifact_id`，
-此時序列是 unavailable，不會事後重建。容量、分頁、座標、驗證與復原限制可直接向
-MCP `get_ml_contract` 的 guidance keys `evaluation_series`、`evaluation_series_rows`
-與 `evaluation_series_recovery` 取得，不需讀取 repository 文件；背景見
+此時序列是 unavailable，不會事後重建。數值上限（分頁大小、列數與 byte 匯出上限）
+由 MCP `get_ml_contract.evaluation_series_limits` 公開，`get_evaluation_series_page`
+也會回傳；分頁與匯出語意、原座標／缺值原因、驗證與復原限制則見 guidance keys
+`evaluation_series`、`evaluation_series_rows` 與 `evaluation_series_recovery`，
+不需讀取 repository 文件；背景見
 [已保存逐點評估序列](docs/ml_research.md#saved-pointwise-evaluation-series)。
 若訓練時要求 purged walk-forward 驗證，也可要求查看各 fold 當時的預測、原座標
 與 train/eval 範圍；回傳的 `fold_series_artifact_id` 同樣可透過 MCP 分頁讀取或
-bounded 匯出，限制見上述 guidance keys 與
-[Fold prediction series](docs/ml_research.md#fold-prediction-series)。
+bounded 匯出，上限見 `evaluation_series_limits`，語意與 recovery 見上述 guidance keys
+及 [Fold prediction series](docs/ml_research.md#fold-prediction-series)。
 
 不同期間、資料或評估條件的結果預設不混合排名；若要比較不同預測長度或視窗，
 請在需求中說明，並留意報告列出的比較限制。
