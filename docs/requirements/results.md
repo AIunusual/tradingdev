@@ -19,9 +19,9 @@
 ## FR-RES-003 紀錄查詢與可離線報告
 
 - **需求**：以已保存證據產生可離線閱讀的 HTML，提供設定、績效、交易及適用的委託／帳戶明細；計算結果、模型解讀與診斷限制分開標示。
-- **驗收**：生成報告不重跑或下載行情；明細保存原值，回測表格可切換完整精度檢視，匯出保留完整紀錄，不受畫面篩選限制。固定比較保留失敗候選；無相應證據的章節明示缺少。報告生成前須驗證引用的 ML series artifact；若引用 artifact 缺失或損毀，報告生成失敗且不出版，即使 leaderboard 證據仍可用。ML 附加章節不宣稱其模型曾用於旁邊的回測；隱藏章節不移除內嵌資料。
+- **驗收**：生成報告不重跑或下載行情；明細保存原值，回測表格可切換完整精度檢視，匯出保留完整紀錄，不受畫面篩選限制。固定比較保留失敗候選；無相應證據的章節明示缺少。報告生成前須驗證引用的 ML series artifact；若引用 artifact 缺失、損毀或與引用 scope 不符，報告生成失敗且不出版，即使 leaderboard 證據仍可用。ML 附加章節不宣稱其模型曾用於旁邊的回測；隱藏章節不移除內嵌資料。
 - **契約**：[報告組裝與呈現](../reports.md#composable-offline-reports)。
-- **驗證**：[報告 service](../../tests/app/test_report_service.py)、[精度與匯出](../../tests/adapters/test_report_precision.py)、[ML 報告 HTML](../../tests/adapters/test_ml_report_html.py) 核對內容；瀏覽器互動另需人工操作，離線測試不代表所有瀏覽器相容。
+- **驗證**：[報告 service](../../tests/app/test_report_service.py)、[精度與匯出](../../tests/adapters/test_report_precision.py)、[ML 報告 HTML](../../tests/adapters/test_ml_report_html.py) 核對內容；[ML 報告 service](../../tests/app/test_ml_report_service.py) 是報告保護與引用 series scope 不符時拒絕出版的檢查入口，列為入口不代表測試已通過；瀏覽器互動另需人工操作，離線測試不代表所有瀏覽器相容。
 
 ## FR-RES-004 研究解讀與最終交付
 
