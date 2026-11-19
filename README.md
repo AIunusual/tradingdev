@@ -442,13 +442,10 @@ stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整�
 請依結果確認實際資料範圍與筆數。
 
 後續可以請助手「比較剛才保存的候選，列出排名與沒有分數的原因」。
-有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因；這類證據保存在
-獨立產物中，可透過 MCP 探索與分頁讀取。歷史候選可能沒有序列，此時證據是
-unavailable，不會事後重建。若訓練時要求 purged walk-forward 驗證，也可要求查看
-各 fold 當時的預測、原座標與 train/eval 範圍；回傳的 `fold_series_artifact_id`
-同樣可透過 MCP 讀取。MCP client 可由 `get_ml_contract` 的 `evaluation_series_limits`
-取得數值上限，並由 `evaluation_series`、`evaluation_series_rows`、
-`evaluation_series_recovery` guidance 取得分頁、驗證與復原語意；完整背景見
+有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因。歷史候選可能沒有
+序列，此時證據是 unavailable，不會事後重建。若訓練時要求 purged walk-forward
+驗證，也可要求查看各 fold 當時的預測、原座標與 train/eval 範圍。工具、容量與
+復原限制見
 [已保存逐點評估序列](docs/ml_research.md#saved-pointwise-evaluation-series) 與
 [Fold prediction series](docs/ml_research.md#fold-prediction-series)。
 
