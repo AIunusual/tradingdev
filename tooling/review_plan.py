@@ -1891,17 +1891,54 @@ def build_review_plan(
             if scope == "presentation" and presentation & PRESENTATION_ARTIFACT_PATHS
             else [[p] for p in paths]
         )
+
+        def keeps_owner_obligations(group: list[str], unit: list[str]) -> bool:
+            """A fallback consumer must stay with a registered owner's evidence."""
+            combined = [*group, *unit]
+            registered = any(
+                behavior_contexts.get(path) is not None or path in development_contexts
+                for path in combined
+            )
+            fallback = any(
+                behavior_contexts.get(path) is None and path not in development_contexts
+                for path in combined
+            )
+            return registered and fallback
+
+        has_registered_owner = any(
+            behavior_contexts.get(path) is not None or path in development_contexts
+            for path in paths
+        )
+
+        def is_fallback_only(unit: list[str]) -> bool:
+            return all(
+                behavior_contexts.get(path) is None and path not in development_contexts
+                for path in unit
+            )
+
         group: list[str] = []
         for unit in units:
+            shared_owner = keeps_owner_obligations(group, unit)
             combined = scope_batch(scope, [*group, *unit])
             if fits(combined):
                 group.extend(unit)
                 continue
-            if group:
+            if group and not shared_owner:
                 append_source_unit(scope_batch(scope, group))
                 group = []
+            if shared_owner:
+                # Context may need several prompt parts, but path ownership
+                # stays together so registered obligations remain visible to
+                # an unknown consumer in the same owner batch.
+                group.extend(unit)
+                continue
             single = scope_batch(scope, unit)
             if not fits(single):
+                if is_fallback_only(unit) and has_registered_owner:
+                    # Keep an oversized fallback consumer pending only when a
+                    # registered owner in the same scope can still join it.
+                    group.extend(unit)
+                    continue
                 append_source_unit(single)
                 continue
             group.extend(unit)

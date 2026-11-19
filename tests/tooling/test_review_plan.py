@@ -3039,7 +3039,9 @@ def test_unknown_research_module_preserves_known_and_conservative_context(
     # insufficient budget rather than silently discard the unknown obligation.
     with pytest.raises(ReviewError, match="budget|capacity"):
         build_review_plan(raw, max_prompt_bytes=1_000)
-    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    plan = build_review_plan(
+        raw, max_prompt_bytes=1_500_000, max_evidence_bytes=800_000
+    )
     batch = next(
         _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
     )
@@ -3306,7 +3308,9 @@ def test_unknown_non_ml_consumer_keeps_owner_fallback_and_registered_obligations
     original = json.loads(raw)
     with pytest.raises(ReviewError, match="budget|capacity"):
         build_review_plan(raw, max_prompt_bytes=1_000)
-    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    plan = build_review_plan(
+        raw, max_prompt_bytes=1_500_000, max_evidence_bytes=800_000
+    )
     batch = next(
         _payload(p) for p in plan.prompts if known in _payload(p)["assigned_paths"]
     )
@@ -3405,7 +3409,9 @@ def test_architecture_section_review_keeps_uncertain_edits_conservative(
     _write(repo, "ARCHITECTURE.md", source)
     raw = build_evidence(repo, base, _tree(repo))
     original = json.loads(raw)
-    plan = build_review_plan(raw, max_prompt_bytes=1_500_000)
+    plan = build_review_plan(
+        raw, max_prompt_bytes=1_500_000, max_evidence_bytes=800_000
+    )
     owners = [
         _payload(p)
         for p in plan.prompts
