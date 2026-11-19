@@ -794,9 +794,10 @@ above either bound fails the export explicitly; use row paging instead.
 Concatenating row pages in offset order reproduces the export exactly. Continued
 pages reuse one verified snapshot while the saved file signature is unchanged,
 so paging does not re-encode the whole artifact on every request.
-The client-accessible `get_ml_contract` guidance keys
-`evaluation_series_rows` and `evaluation_series_recovery` carry the same row
-semantics and partial-publication limits without repository access.
+The client-accessible `get_ml_contract` guidance keys `evaluation_series`,
+`evaluation_series_rows` and `evaluation_series_recovery` carry the paging/export
+semantics, row semantics and partial-publication/recovery limits without
+repository access.
 Discovery is a summary lookup: it reads manifests and checks that each manifest
 `artifact_id` matches its directory, but it does not verify the manifest identity
 digest or the Parquet content. Artifact directories with no `manifest.json` are
