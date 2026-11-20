@@ -23,6 +23,25 @@ and why they are historical observations are documented in
 `tests/domain/statistics/test_statistics_kd_fixture.py` and
 `tests/domain/statistics/test_statistics_cross_module.py`.
 
+## Rebuild inputs
+
+`extract.py` reads two private pickles that must be placed in
+`workspace/data/processed/cache` at the repository root (not committed):
+
+- `cd03bf19459b48af.pkl` (`source`): supplies the equity curve and timestamps;
+  its four shared trade fields (`size_quote`, `entry_price`, `exit_price`,
+  `net_pnl`) are checked against the other pickle.
+- `cli_5ed5dc0b0579cc80_95a98854a8984f82be488c4bff48902d.pkl`
+  (`engine_source`): supplies the written trade table (the shared fields plus
+  `fee`, `exit_notional`, `status`) and, from its config snapshot and run
+  result, the identity, parameters, settings and reported `engine_metrics` in
+  `run.json`.
+
+The script verifies each pickle's SHA-256, that the two equity curves and
+timestamps are equal by value, the trade count, and the four shared trade
+fields before writing. Both filenames and digests are recorded in `run.json`
+and in `extract.py`; a missing or altered pickle is rejected, not guessed.
+
 ## Update procedure
 
 Do not edit a fixture to make a test pass. Daily tests must not rewrite these
