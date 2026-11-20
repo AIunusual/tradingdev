@@ -15,8 +15,9 @@ Every load verifies:
 * the recorded identity (strategy, symbol, timeframe, bar count, trade
   count) and that every trade is closed with a known status.
 
-A failure raises ``ValueError`` naming the file and reason. Unknown source
-settings stay unknown; they are never guessed from equity or timestamps.
+A failed check raises ``ValueError`` explaining the reason and, where
+applicable, naming the file. Unknown source settings stay unknown; they are
+never guessed from equity or timestamps.
 """
 
 from __future__ import annotations
@@ -87,7 +88,8 @@ class KDFixture:
     magnitude. The older ``source`` pickle used superseded definitions
     (negative ``max_drawdown``, bars counted as days); those old metrics are
     not part of ``run.json``. Settings absent from the source JSON (notably
-    the declared bar frequency and risk-free rate) remain unknown.
+    the declared bar frequency and risk-free rate) remain unknown; the tests
+    supply them explicitly as settings, never inferred from equity or gaps.
     """
 
     timestamps: pd.DatetimeIndex

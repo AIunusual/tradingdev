@@ -11,6 +11,13 @@ committed bytes; 1e-9 is far above float64 accumulation noise for these
 magnitudes (notional ~5e6, so the absolute allowance is ~0.005) and far
 below any economically meaningful change. A fixture edit also has to pass
 the SHA-256 manifest, so a silent drift cannot pass either way.
+
+The fixture's `run.json` also carries the engine's own reported
+`engine_metrics`; those are historical provenance only, not the truth for a
+recomputed statistic. The named cost-share figure is a specific estimate
+(`notional × (fees + slippage) / abs(last equity − first equity)`), not
+realised fees or P&L attribution. Daily returns go through
+`period_returns(..., "daily")`, so the UTC resample is actually exercised.
 """
 
 from __future__ import annotations
