@@ -8,9 +8,9 @@ extractor, or touches a private workspace cache.
 ## Source and provenance
 
 These files are extracted from two historical engine runs named in
-`run.json` (`source` and `engine_source`, each with a pickle SHA-256). The
-equity curve and timestamps are bitwise identical across the two; trade
-fields come from the current-engine run, whose 412 closed trades carry
+`run.json` (`source` and `engine_source`, each with a pickle SHA-256). The extractor checks the two runs agree on the equity curve and timestamps
+by value (`np.array_equal`, `DatetimeIndex.equals`) and on the trade count and
+four shared trade fields. Trade fields come from the current-engine run, whose 412 closed trades carry
 `exit_notional`, `status`, and fees. The original extraction script is kept
 as `extract.py` for provenance only and is **not imported or executed** by
 any test. It needs both private pickles and is never part of a test run.
@@ -26,7 +26,8 @@ provenance only and must not be treated as truth for a recomputed statistic.
 
 ## Contents and format
 
-Schema version 1, verified by `kd_fixture.py`:
+Schema version 1 (the constant declared in `kd_fixture.py`), with the
+observed structure validated on every load:
 
 - `equity.parquet`: 8,761 UTC hourly bars, `timestamp` as
   `datetime64[ns, UTC]`, `equity` as `float64`, from 2024-01-01 00:00 to
@@ -50,9 +51,10 @@ part of this observation set; they are stated explicitly in the tests.
 `tests/domain/statistics/kd_fixture.py::load_kd_fixture` verifies the SHA-256
 of each file, exact column names and dtypes, strictly increasing UTC
 timestamps, the recorded range and identity, finite positive equity, and
-that all trades are closed. A mismatch raises `ValueError` naming the file
-and reason. It reads only committed Parquet/JSON; there is no code path that
-unpickles or executes fixture content.
+that all trades are closed. A failed check raises `ValueError` explaining the
+reason and, where applicable, naming the affected file. It reads only
+committed Parquet/JSON; there is no code path that unpickles or executes
+fixture content.
 
 Three figures are pinned at `rel=1e-9` in
 `test_statistics_kd_fixture.py`:

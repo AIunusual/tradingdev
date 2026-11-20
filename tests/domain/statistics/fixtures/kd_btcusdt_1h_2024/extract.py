@@ -4,7 +4,8 @@ Run: uv run python tests/domain/statistics/fixtures/kd_btcusdt_1h_2024/extract.p
 
 The pickles live in the unversioned workspace cache; see README.md for what
 is taken from each and why. The script refuses to write unless both pickles
-have their recorded SHA-256 and agree on every field they share.
+have their recorded SHA-256 and agree on the equity curve, timestamps, trade
+count and the four shared trade fields listed below.
 """
 
 from __future__ import annotations
