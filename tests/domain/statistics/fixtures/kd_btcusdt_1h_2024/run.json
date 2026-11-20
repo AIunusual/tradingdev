@@ -1,0 +1,59 @@
+{
+  "engine_metrics": {
+    "annual_return": -0.6378271372950304,
+    "annual_volatility": 0.13288981485671453,
+    "avg_holding_bars": 1.0,
+    "calmar_ratio": -0.9914047021298998,
+    "daily_max_drawdown": 0.6433569821937948,
+    "daily_pnl_max": 155.60284511428745,
+    "daily_pnl_mean": -17.454467308633483,
+    "daily_pnl_median": -0.150051730949599,
+    "daily_pnl_min": -271.7572103580178,
+    "daily_pnl_std": 45.48705706661599,
+    "max_drawdown": 0.6437650582961815,
+    "max_drawdown_amount": 6444.689699966835,
+    "monthly_pnl_max": -185.5956668098438,
+    "monthly_pnl_mean": -532.3612529133212,
+    "monthly_pnl_median": -443.80719165948767,
+    "monthly_pnl_min": -1331.6406983404713,
+    "monthly_pnl_std": 305.83473724546513,
+    "monthly_trades_mean": 34.333333333333336,
+    "monthly_volume_mean": 417894.6429589074,
+    "n_days": 366,
+    "n_months": 12,
+    "open_trades": 0,
+    "profit_factor": 0.2499194542624306,
+    "sharpe_ratio": -7.5651031436730225,
+    "sortino_ratio": -7.49426829911789,
+    "total_fees": 3008.841429304074,
+    "total_pnl": -6388.335034959855,
+    "total_return": -0.6388335034959856,
+    "total_slippage": null,
+    "total_trades": 412,
+    "total_volume": 5014735.715506889,
+    "trade_expectancy": -15.505667560582257,
+    "win_rate": 0.2936893203883495
+  },
+  "engine_source": {
+    "pickle": "cli_5ed5dc0b0579cc80_95a98854a8984f82be488c4bff48902d.pkl",
+    "sha256": "af4fc3905570f44f318dc900baa2b754af0892b32829da8f45b80cf1466aacb7"
+  },
+  "fees": 0.0006,
+  "init_cash": 10000.0,
+  "mode": "signal",
+  "parameters": {
+    "d_period": 3,
+    "k_period": 14,
+    "overbought": 80.0,
+    "oversold": 20.0,
+    "smooth_k": 3
+  },
+  "slippage": 0.0005,
+  "source": {
+    "pickle": "cd03bf19459b48af.pkl",
+    "sha256": "b9493b6bf5f1f171fee472812a9c6f7aab7a58f5d93fc6644386211d5b6febd0"
+  },
+  "strategy": "kd_crossover",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h"
+}
