@@ -57,7 +57,11 @@ To regenerate, both private pickles named in `run.json` must be present:
 uv run python tests/domain/statistics/fixtures/kd_btcusdt_1h_2024/extract.py
 ```
 
-Then update the SHA-256 manifest in `kd_fixture.py` and the documented
-file structure in the same reviewed PR. Justify any figure change from a new
-independent computation. A checksum change without a documented source change
-is a rejection, not a silent refresh.
+A legitimate rebuild after the private source changes is a reviewed PR with
+all of these steps: update the `SOURCE_SHA256` / `ENGINE_SHA256` pins in
+`extract.py`, run the extractor to regenerate the Parquet/JSON files, then
+update the fixture-file SHA-256 manifest in `kd_fixture.py`. Skipping the
+extractor pins makes the rebuild fail at its first check; skipping the loader
+manifest makes the regenerated fixture fail on load. Justify any figure change
+from a new independent computation. A checksum change without a documented
+source change is a rejection, not a silent refresh.
