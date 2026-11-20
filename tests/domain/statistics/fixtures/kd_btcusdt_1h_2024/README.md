@@ -15,9 +15,14 @@ fields come from the current-engine run, whose 412 closed trades carry
 as `extract.py` for provenance only and is **not imported or executed** by
 any test. It needs both private pickles and is never part of a test run.
 
-`run.json` also keeps the engine's 33 `engine_metrics` for traceability.
-They use superseded conventions (bars counted as days, negative
-`max_drawdown`) and must not be treated as truth for recomputed statistics.
+`run.json` also keeps 33 `engine_metrics` from the `engine_source` pickle
+(`cli_....pkl`, the current-engine run). That run records `max_drawdown` as a
+positive magnitude (`0.6437650582961815`). The older `source` pickle
+(`cd03bf....pkl`, cited by the original demo) used superseded conventions —
+bars counted as days and a negative `max_drawdown` — but those older metrics
+are **not** copied into `run.json`. The retained figures are still the
+engine's own reported values under its historical definitions, so they are
+provenance only and must not be treated as truth for a recomputed statistic.
 
 ## Contents and format
 

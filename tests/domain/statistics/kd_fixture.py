@@ -81,10 +81,13 @@ _REQUIRED_RUN_KEYS: Final = (
 class KDFixture:
     """Raw observations of the pinned KD backtest, as statistics read them.
 
-    ``engine_metrics`` are the historical engine's reported figures under
-    superseded definitions; they are provenance only, never the truth for a
-    recomputed statistic. Settings absent from the source JSON (notably the
-    declared bar frequency and risk-free rate) remain unknown.
+    ``engine_metrics`` are the current engine run's self-reported figures
+    (from ``engine_source``), kept for provenance only: they are never the
+    truth for a recomputed statistic. Its ``max_drawdown`` is a positive
+    magnitude. The older ``source`` pickle used superseded definitions
+    (negative ``max_drawdown``, bars counted as days); those old metrics are
+    not part of ``run.json``. Settings absent from the source JSON (notably
+    the declared bar frequency and risk-free rate) remain unknown.
     """
 
     timestamps: pd.DatetimeIndex
