@@ -12,8 +12,9 @@ Every load verifies:
 * exact column names and dtypes (schema version 1), including UTC-aware
   nanosecond timestamps and float64 values;
 * strictly increasing UTC timestamps and the reported observation range;
-* the recorded identity (strategy, symbol, timeframe, bar count, trade
-  count) and that every trade is closed with a known status.
+* the recorded identity (strategy, symbol, timeframe) from ``run.json``,
+  with bar and trade counts checked separately against module constants,
+  and that every trade is closed with a known status.
 
 A failed check raises ``ValueError`` explaining the reason and, where
 applicable, naming the file. Unknown source settings stay unknown; they are
