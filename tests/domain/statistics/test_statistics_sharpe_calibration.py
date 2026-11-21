@@ -9,12 +9,16 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+import tooling.sharpe_calibration as calibration
 from tooling.sharpe_calibration import (
     CONFIGS,
     FULL_CONFIG,
     PROCESSES,
     SMOKE_CONFIG,
     _interpret,
+    _markov_states,
+    _summarize_proportion,
+    _summarize_width,
     build_report,
     generate_returns,
     main,
@@ -179,6 +183,89 @@ class TestDsrBaseline:
         assert correlated_hurdle != pytest.approx(independent_hurdle, abs=1e-12)
 
 
+class TestDefensiveBranches:
+    def test_invalid_process_settings_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="phi"):
+            population_sharpe(replace(_spec("ar1_positive"), phi=1.0))
+        with pytest.raises(ValueError, match="df"):
+            population_sharpe(replace(_spec("fat_tail_t5"), df=2))
+        with pytest.raises(ValueError, match="unknown process kind"):
+            population_sharpe(replace(_spec("iid_normal"), kind=cast("Any", "other")))
+
+    def test_invalid_generators_and_markov_settings_are_rejected(self) -> None:
+        spec = _spec("iid_normal")
+        with pytest.raises(ValueError, match="at least 2"):
+            generate_returns(spec, 1, seed=0)
+        with pytest.raises(ValueError, match="phi"):
+            generate_returns(replace(spec, kind="ar1", phi=1.0), 10, seed=0)
+        with pytest.raises(ValueError, match="df"):
+            generate_returns(replace(spec, kind="fat_tail", df=2), 10, seed=0)
+        with pytest.raises(ValueError, match="unknown process kind"):
+            generate_returns(replace(spec, kind=cast("Any", "other")), 10, seed=0)
+        with pytest.raises(ValueError, match="Markov"):
+            _markov_states(0, 0.1, seed=np.random.default_rng(0))
+
+    def test_empty_and_bounded_summaries_are_explicit(self) -> None:
+        assert _summarize_proportion([]) == {
+            "rate": 0.0,
+            "mcse": 0.0,
+            "low": 0.0,
+            "high": 0.0,
+        }
+        assert _summarize_width([]) == {"mean": 0.0, "mcse": 0.0}
+        assert _summarize_width([1.5])["mcse"] == 0.0
+        assert _summarize_proportion([False, False])["low"] == 0.0
+        assert _summarize_proportion([True, True])["high"] == 1.0
+
+    def test_timeout_is_reported(self) -> None:
+        config = replace(
+            SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10, max_seconds=-1.0
+        )
+
+        with pytest.raises(TimeoutError, match="exceeded"):
+            run_matrix(config)
+
+    def test_unavailable_intervals_are_counted(self, monkeypatch: Any) -> None:
+        def unavailable(*_args: object, **_kwargs: object) -> IntervalUnavailable:
+            return IntervalUnavailable("no_valid_resample", 0.1, 60, 20, 5)
+
+        monkeypatch.setattr(calibration, "sharpe_interval_outcome", unavailable)
+        config = replace(SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10)
+        cells, _ = run_matrix(config)
+
+        intervals = cast("dict[str, object]", cells[0]["intervals"])
+        summary = cast("dict[str, object]", intervals["auto"])
+        assert cast("float", summary["unavailable_rate"]) == 1.0
+
+    def test_unexpected_interval_type_raises(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            calibration, "sharpe_interval_outcome", lambda *_a, **_k: object()
+        )
+        config = replace(SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10)
+
+        with pytest.raises(TypeError, match="unexpected"):
+            run_matrix(config)
+
+    def test_undefined_point_estimate_raises(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(calibration, "sharpe_ratio", lambda *_a, **_k: None)
+        config = replace(SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10)
+
+        with pytest.raises(RuntimeError, match="undefined Sharpe"):
+            run_matrix(config)
+
+    def test_dsr_undefined_trial_and_result_raise(self, monkeypatch: Any) -> None:
+        config = replace(SMOKE_CONFIG, seeds=(2000,))
+        monkeypatch.setattr(calibration, "sharpe_ratio", lambda *_a, **_k: None)
+        with pytest.raises(RuntimeError, match="undefined Sharpe"):
+            run_dsr(config)
+        monkeypatch.undo()
+        monkeypatch.setattr(
+            calibration, "deflated_sharpe_ratio", lambda *_a, **_k: None
+        )
+        with pytest.raises(RuntimeError, match="DSR is undefined"):
+            run_dsr(config)
+
+
 class TestCommandLine:
     def test_output_is_deterministic_and_outside_the_checkout(
         self, tmp_path: Any, monkeypatch: Any
@@ -202,6 +289,8 @@ class TestCommandLine:
 
         with pytest.raises(SystemExit):
             main(["--profile", "smoke", "--output", str(checkout / "inside.json")])
+        with pytest.raises(SystemExit):
+            main(["--profile", "smoke", "--output", "relative.json"])
 
 
 def _summarize(flags: list[bool]) -> float:
