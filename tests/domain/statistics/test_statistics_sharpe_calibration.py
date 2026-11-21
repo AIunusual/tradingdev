@@ -224,6 +224,8 @@ class TestDefensiveBranches:
 
         with pytest.raises(TimeoutError, match="exceeded"):
             run_matrix(config)
+        with pytest.raises(TimeoutError, match="exceeded"):
+            run_dsr(config)
 
     def test_unavailable_intervals_are_counted(self, monkeypatch: Any) -> None:
         def unavailable(*_args: object, **_kwargs: object) -> IntervalUnavailable:

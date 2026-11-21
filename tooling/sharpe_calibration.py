@@ -251,10 +251,11 @@ def _block_label(block_size: int | None) -> str:
 
 
 def run_matrix(
-    config: Config,
+    config: Config, *, deadline: float | None = None
 ) -> tuple[list[dict[str, object]], list[str]]:
     """Run every process/sample/block cell and return cells plus measured limits."""
-    started = time.monotonic()
+    if deadline is None:
+        deadline = time.monotonic() + config.max_seconds
     cells: list[dict[str, object]] = []
     limits: list[str] = []
 
@@ -272,10 +273,8 @@ def run_matrix(
             annualised: list[float] = []
 
             for seed in config.seeds:
-                if time.monotonic() - started > config.max_seconds:
-                    raise TimeoutError(
-                        f"calibration exceeded {config.max_seconds} seconds"
-                    )
+                if time.monotonic() > deadline:
+                    raise TimeoutError("calibration exceeded the time limit")
                 values = generate_returns(spec, observations, seed)
                 psr = probabilistic_sharpe_ratio(values, benchmark_sr=truth)
                 psr_flags.append(psr is not None and psr > config.confidence)
@@ -369,8 +368,10 @@ def run_matrix(
     return cells, limits
 
 
-def run_dsr(config: Config) -> dict[str, object]:
+def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, object]:
     """Fixed independent-trial baseline plus a correlated-trial limitation."""
+    if deadline is None:
+        deadline = time.monotonic() + config.max_seconds
     results: dict[str, dict[str, list[float]]] = {
         "independent_trials": {"dsr": [], "hurdle": [], "reject": []},
         "correlated_trials": {"dsr": [], "hurdle": [], "reject": []},
@@ -378,6 +379,8 @@ def run_dsr(config: Config) -> dict[str, object]:
     idiosyncratic_sd = math.sqrt(1.0 - _CORRELATION**2)
 
     for seed in config.seeds:
+        if time.monotonic() > deadline:
+            raise TimeoutError("calibration exceeded the time limit")
         independent_rng = np.random.default_rng(seed)
         independent = [
             independent_rng.normal(size=config.long_n) for _ in range(_DSR_TRIALS)
@@ -439,8 +442,9 @@ def run_dsr(config: Config) -> dict[str, object]:
 def build_report(config: Config) -> dict[str, object]:
     """Build the complete report for one fixed configuration."""
     started = time.monotonic()
-    cells, limits = run_matrix(config)
-    dsr = run_dsr(config)
+    deadline = started + config.max_seconds
+    cells, limits = run_matrix(config, deadline=deadline)
+    dsr = run_dsr(config, deadline=deadline)
     return {
         "schema_version": 1,
         "profile": config.name,
