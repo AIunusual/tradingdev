@@ -92,6 +92,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | `tooling/review_scope.py`、`tooling/review_plan.py` | 固定責任範圍、文件原文章節、完整變更涵蓋與有容量上限的審查規劃 |
 | `tooling/review_docs.py`、`tooling/review_options.py` | 共用操作參數，協調模型批次、共同期限、清理與判定 |
 | `tooling/process_guard.py`、`tooling/codex_binary.py` | 開發工具與測試共用的程序觀測／清理及 Codex 執行檔定位 |
+| `tooling/sharpe_calibration.py` | 固定 Sharpe 推論校準矩陣：預先登錄生成程序、seed、樣本量、block size 與判讀規則；離線產生 JSON，不讀取 run、artifact 或 workspace |
 | `tests/` | 測試案例、fixtures、MCP 與模型測試情境 |
 | `research/` | 獨立研究原型；MAE 原型直接讀取指定行情檔案，與正式 Dashboard 分開 |
 
@@ -357,7 +358,9 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `sharpe.py` 的 `sharpe_ratio` 計算比率，`sharpe_interval_outcome` 提供 bootstrap
 區間或不可用原因；`probabilistic_sharpe_ratio` 與 `deflated_sharpe_ratio` 分別計算
 相對指定門檻及搜尋調整門檻的機率。各函式的 docstring 維護報酬輸入、年化設定、
-不可用條件與推論假設。`comparison.py` 提供配對差值推論與各序列的個別區間，
+不可用條件與推論假設；`tooling/sharpe_calibration.py` 的固定離線矩陣量測這些推論
+在登錄程序下的拒絕率、覆蓋率與 block-size 敏感性，結果只適用該矩陣，不改善或
+擴大算法保證。`comparison.py` 提供配對差值推論與各序列的個別區間，
 `benchmark.py` 提供研究用的買進持有報酬與策略迴歸比較，後者與前述產品基準的
 保存值不是同一種測量；兩者的公開入口、回傳契約與解讀限制見各模組與函式 docstring
 （`domain/statistics/comparison.py`、`domain/statistics/benchmark.py`）。

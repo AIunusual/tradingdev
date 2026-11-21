@@ -11,6 +11,15 @@ compounding can change the ratio, and the direction depends on the return
 process. Report the frequency and compare ratios at matching frequencies
 and annualisation bases.
 
+Inference scope: the square-root factor is a reporting convention for the
+supplied single-period ratio. It is not the Sharpe ratio of a one-year
+holding-period return when returns compound or are autocorrelated. PSR uses
+an iid asymptotic variance; DSR inherits it and adds an independent-trial
+selection assumption. Bootstrap intervals assume a stationary sample and do
+not guarantee nominal coverage under regime switching or strongly persistent
+volatility. The fixed offline matrix in ``tooling.sharpe_calibration`` reports
+measured limits for named processes; it does not widen these guarantees.
+
 Conventions:
 
 * The Sharpe ratio is the mean over the sample standard deviation
@@ -156,6 +165,11 @@ class DeflatedSharpe:
 def sharpe_ratio(returns: Iterable[float], *, periods_per_year: float) -> float | None:
     """Annualised Sharpe ratio: mean over sample std times ``sqrt(ppy)``.
 
+    The ``sqrt(periods_per_year)`` factor annualises a single-period ratio
+    by convention. It is not the Sharpe of an annual holding-period return
+    when returns compound or are serially dependent; compare ratios computed
+    at the same frequency and basis instead.
+
     Returns ``None`` with fewer than two returns or zero dispersion.
 
     Raises:
@@ -205,7 +219,9 @@ def sharpe_interval_outcome(
     Automatic block selection does not guarantee nominal coverage. When
     regimes persist for much of the sample, too few transitions may be
     observed to estimate the sampling variability reliably, regardless
-    of block length.
+    of block length. The offline matrix in ``tooling.sharpe_calibration``
+    measures coverage under its fixed process families and block sizes;
+    those results are evidence for those cases only.
 
     Pass ``block_size`` to use a fixed mean block length instead, reported
     back unchanged. Give one whenever the estimate is known to be too
@@ -302,7 +318,8 @@ def probabilistic_sharpe_ratio(
     and fat tails but has no term for serial correlation.
     Serial correlation can invalidate the reported probability; this
     function does not estimate an effective sample size or adjust for
-    serial correlation.
+    serial correlation. The fixed matrix in ``tooling.sharpe_calibration``
+    reports rejection rates under named dependent processes.
 
     Returns ``None`` with fewer than two returns, zero dispersion, or a
     non-positive variance term.
@@ -381,7 +398,10 @@ def deflated_sharpe_ratio(
     design choice meant to lean conservative, preferring a missed edge to
     a false positive; it is not a demonstrated property of the result.
     Estimating the effective ``N`` requires clustering the trials by the
-    correlation of their returns and is out of scope. The DSR is also a
+    correlation of their returns and is out of scope. The offline matrix in
+    ``tooling.sharpe_calibration`` reports a fixed independent-trial baseline
+    and a correlated-trial limitation separately; it does not estimate an
+    effective trial count. The DSR is also a
     :func:`probabilistic_sharpe_ratio` against a raised benchmark, so it
     inherits that function's assumption of independent returns unchanged:
     serial correlation can invalidate its probability, separately from any
