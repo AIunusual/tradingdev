@@ -45,7 +45,7 @@ Sharpe 校準入口以 `--profile full` 執行完整固定矩陣，`--profile sm
 900 與 120 秒是重複之間的合作式期限，進行中的計算不會被中斷，實際時間可能超過；
 檢查發現逾時會丟出 `TimeoutError` 且不寫出 JSON。兩者都要求絕對路徑的 `--output`，
 且路徑必須在 checkout 外。報告欄位與適用限制見
-[tooling/sharpe_calibration.py](../tooling/sharpe_calibration.py)。
+[`build_report`／`main`](../tooling/sharpe_calibration.py)。
 
 檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
 確認所需的 Python 工具；缺少時回報套件名稱與 `uv sync --locked --all-extras`。
