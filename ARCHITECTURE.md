@@ -358,10 +358,7 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `sharpe.py` 的 `sharpe_ratio` 計算比率，`sharpe_interval_outcome` 提供 bootstrap
 區間或不可用原因；`probabilistic_sharpe_ratio` 與 `deflated_sharpe_ratio` 分別計算
 相對指定門檻及搜尋調整門檻的機率。各函式的 docstring 維護報酬輸入、年化設定、
-不可用條件與推論假設；`tooling/sharpe_calibration.py` 的固定離線矩陣量測 PSR
-拒絕率及 bootstrap 區間覆蓋率與 block-size 敏感性；DSR 只提供固定獨立／相關候選的
-描述性基線，不宣稱其拒絕率已校準。結果只適用該矩陣，不改善或擴大算法保證。
-`comparison.py` 提供配對差值推論與各序列的個別區間，
+不可用條件與推論假設。`comparison.py` 提供配對差值推論與各序列的個別區間，
 `benchmark.py` 提供研究用的買進持有報酬與策略迴歸比較，後者與前述產品基準的
 保存值不是同一種測量；兩者的公開入口、回傳契約與解讀限制見各模組與函式 docstring
 （`domain/statistics/comparison.py`、`domain/statistics/benchmark.py`）。
