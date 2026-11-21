@@ -239,8 +239,16 @@ def _summarize_width(widths: Sequence[float]) -> dict[str, float]:
     return {"mean": mean, "mcse": sd / math.sqrt(count)}
 
 
-def _interpret(rate: float, nominal: float, mcse: float) -> str:
-    """Classify a deviation only after allowing two Monte Carlo standard errors."""
+def _interpret(rate: float, nominal: float, repetitions: int) -> str:
+    """Classify a deviation after allowing two Monte Carlo standard errors.
+
+    The error is evaluated at the nominal rate, not the observed rate: the
+    plug-in estimate collapses to zero at rates of 0 or 1 and would label
+    ordinary boundary samples as real deviations.
+    """
+    if repetitions <= 0:
+        raise ValueError("repetitions must be positive")
+    mcse = math.sqrt(nominal * (1.0 - nominal) / repetitions)
     if abs(rate - nominal) <= 2.0 * mcse:
         return "within_simulation_error"
     return "below_nominal" if rate < nominal else "above_nominal"
@@ -248,6 +256,11 @@ def _interpret(rate: float, nominal: float, mcse: float) -> str:
 
 def _block_label(block_size: int | None) -> str:
     return "auto" if block_size is None else str(block_size)
+
+
+def _repository_root() -> Path:
+    """Repository checkout containing this tool, independent of the caller's cwd."""
+    return Path(__file__).resolve().parents[1]
 
 
 def run_matrix(
@@ -313,7 +326,7 @@ def run_matrix(
 
             psr_summary = _summarize_proportion(psr_flags)
             psr_label = _interpret(
-                psr_summary["rate"], 1.0 - config.confidence, psr_summary["mcse"]
+                psr_summary["rate"], 1.0 - config.confidence, len(psr_flags)
             )
             if psr_label != "within_simulation_error":
                 limits.append(f"{spec.name}/{sample_name}: PSR {psr_label}")
@@ -325,9 +338,16 @@ def run_matrix(
                     sum(record.ok for record in block_records) / len(block_records)
                 )
                 valid = [record for record in block_records if record.ok]
-                coverage = _summarize_proportion([record.covered for record in valid])
+                # Unavailable intervals count as non-covering so the label is
+                # not conditional on a selected subset of resamples.
+                unconditional = _summarize_proportion(
+                    [record.ok and record.covered for record in block_records]
+                )
+                conditional = _summarize_proportion(
+                    [record.covered for record in valid]
+                )
                 coverage_label = _interpret(
-                    coverage["rate"], config.confidence, coverage["mcse"]
+                    unconditional["rate"], config.confidence, len(block_records)
                 )
                 if coverage_label != "within_simulation_error":
                     limits.append(
@@ -340,7 +360,8 @@ def run_matrix(
                     if record.block_size is not None
                 ]
                 interval_summaries[_block_label(block_size)] = {
-                    "coverage": coverage,
+                    "coverage": unconditional,
+                    "conditional_coverage": conditional,
                     "coverage_label": coverage_label,
                     "width": _summarize_width([record.width for record in valid]),
                     "unavailable_rate": unavailable,
@@ -423,18 +444,19 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
         reject = _summarize_proportion([bool(value) for value in bucket["reject"]])
         summaries[label] = {
             "trials": _DSR_TRIALS,
-            "trial_correlation_within_series": (
+            "cross_trial_correlation": (
                 0.0 if label == "independent_trials" else _CORRELATION
             ),
+            "within_series_time_correlation": 0.0,
+            # Each candidate has N(0, 1) marginals; selecting on sample Sharpe
+            # does not change the selected candidate's population moments.
             "selected_population_sharpe": 0.0,
             "mean_dsr": float(np.mean(bucket["dsr"])),
             "mean_hurdle": float(np.mean(bucket["hurdle"])),
-            "dsr_reject": {
-                **reject,
-                "label": _interpret(
-                    reject["rate"], 1.0 - config.confidence, reject["mcse"]
-                ),
-            },
+            # The DSR hurdle is estimated from the same trials, so its null
+            # rejection rate is not the PSR's 5% nominal. Report it only as a
+            # descriptive baseline, not as a calibrated rejection rate.
+            "dsr_reject": {**reject, "label": "descriptive_only"},
         }
     return summaries
 
@@ -505,7 +527,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = Path(args.output).expanduser()
     if not output.is_absolute():
         parser.error("--output must be an absolute path")
-    if output.resolve().is_relative_to(Path.cwd().resolve()):
+    if output.resolve().is_relative_to(_repository_root()):
         parser.error("--output must be outside the repository checkout")
 
     report = build_report(CONFIGS[args.profile])

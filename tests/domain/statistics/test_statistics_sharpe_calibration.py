@@ -81,10 +81,17 @@ class TestFixedMatrix:
         assert FULL_CONFIG.block_sizes == (None, 5, 20, 80)
         assert FULL_CONFIG.max_seconds == 900.0
 
-    def test_interpretation_uses_monte_carlo_error(self) -> None:
-        assert _interpret(0.94, 0.95, 0.01) == "within_simulation_error"
-        assert _interpret(0.90, 0.95, 0.01) == "below_nominal"
-        assert _interpret(0.99, 0.95, 0.01) == "above_nominal"
+    def test_interpretation_uses_nominal_monte_carlo_error(self) -> None:
+        assert _interpret(0.94, 0.95, 1000) == "within_simulation_error"
+        assert _interpret(0.90, 0.95, 1000) == "below_nominal"
+        assert _interpret(0.99, 0.95, 1000) == "above_nominal"
+
+    def test_boundary_rates_with_few_repetitions_stay_within_error(self) -> None:
+        assert _interpret(0.0, 0.05, 10) == "within_simulation_error"
+        assert _interpret(1.0, 0.95, 10) == "within_simulation_error"
+        assert _interpret(0.0, 0.05, 1000) == "below_nominal"
+        with pytest.raises(ValueError, match="repetitions"):
+            _interpret(0.5, 0.5, 0)
 
 
 class TestMatrixReport:
@@ -107,7 +114,9 @@ class TestMatrixReport:
             for summary in intervals.values():
                 interval = cast("dict[str, object]", summary)
                 coverage = cast("dict[str, float]", interval["coverage"])
+                conditional = cast("dict[str, float]", interval["conditional_coverage"])
                 assert 0.0 <= coverage["rate"] <= 1.0
+                assert 0.0 <= conditional["rate"] <= 1.0
                 unavailable = cast("float", interval["unavailable_rate"])
                 assert 0.0 <= unavailable <= 1.0
                 assert interval["coverage_label"] in {
@@ -175,8 +184,10 @@ class TestDsrBaseline:
         independent = cast("dict[str, object]", report["independent_trials"])
         correlated = cast("dict[str, object]", report["correlated_trials"])
         assert independent["trials"] == 10
-        assert independent["trial_correlation_within_series"] == 0.0
-        assert correlated["trial_correlation_within_series"] == pytest.approx(0.7)
+        assert independent["cross_trial_correlation"] == 0.0
+        assert correlated["cross_trial_correlation"] == pytest.approx(0.7)
+        assert independent["within_series_time_correlation"] == 0.0
+        assert correlated["within_series_time_correlation"] == 0.0
         independent_hurdle = cast("float", independent["mean_hurdle"])
         correlated_hurdle = cast("float", correlated["mean_hurdle"])
         assert independent_hurdle > 0.0
@@ -269,14 +280,20 @@ class TestDefensiveBranches:
 
 
 class TestCommandLine:
+    def test_repository_root_is_independent_of_cwd(self, monkeypatch: Any) -> None:
+        root = calibration._repository_root()
+        assert (root / "tooling" / "sharpe_calibration.py").exists()
+
     def test_output_is_deterministic_and_outside_the_checkout(
         self, tmp_path: Any, monkeypatch: Any
     ) -> None:
         tiny = replace(SMOKE_CONFIG, seeds=(2000, 2001), bootstrap_reps=10)
         monkeypatch.setitem(CONFIGS, "smoke", tiny)
         checkout = tmp_path / "checkout"
-        checkout.mkdir()
-        monkeypatch.chdir(checkout)
+        nested = checkout / "nested"
+        nested.mkdir(parents=True)
+        monkeypatch.setattr(calibration, "_repository_root", lambda: checkout)
+        monkeypatch.chdir(nested)
         first = tmp_path / "first.json"
         second = tmp_path / "second.json"
 
