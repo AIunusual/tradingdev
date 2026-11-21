@@ -42,8 +42,9 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
 Sharpe 校準入口以 `--profile full` 執行完整固定矩陣，`--profile smoke` 做快速抽樣；
-上限分別為 900 與 120 秒，逾時會丟出 `TimeoutError` 且不寫出 JSON。兩者都要求絕對
-路徑的 `--output`，且路徑必須在 checkout 外。報告欄位與適用限制見
+900 與 120 秒是重複之間的合作式期限，進行中的計算不會被中斷，實際時間可能超過；
+檢查發現逾時會丟出 `TimeoutError` 且不寫出 JSON。兩者都要求絕對路徑的 `--output`，
+且路徑必須在 checkout 外。報告欄位與適用限制見
 [tooling/sharpe_calibration.py](../tooling/sharpe_calibration.py)。
 
 檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
