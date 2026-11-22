@@ -11,7 +11,7 @@ Every load verifies:
   cannot change the pinned figures;
 * exact column names and dtypes (schema version 1), including UTC-aware
   nanosecond timestamps and float64 values;
-* strictly increasing UTC timestamps and the reported observation range;
+* the complete UTC hourly timestamp grid over the reported observation range;
 * the recorded identity (strategy, symbol, timeframe) from ``run.json``,
   with bar and trade counts checked separately against module constants,
   and that every trade is closed with a known status.
@@ -137,6 +137,11 @@ def load_kd_fixture(
         raise ValueError(
             f"equity.parquet range is {timestamps[0]}..{timestamps[-1]}, "
             f"expected {_FIRST}..{_LAST}"
+        )
+    expected_timestamps = pd.date_range(_FIRST, _LAST, freq="h").as_unit("ns")
+    if not timestamps.equals(expected_timestamps):
+        raise ValueError(
+            "equity.parquet timestamps must match the complete UTC hourly grid"
         )
     equity = bars["equity"].to_numpy(dtype=np.float64)
     if not np.isfinite(equity).all() or not (equity > 0).all():

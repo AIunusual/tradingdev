@@ -215,6 +215,16 @@ class TestLoaderRejects:
         with pytest.raises(ValueError, match="range is"):
             load_kd_fixture(broken, checksums=_checksums_of(broken))
 
+    def test_interior_timestamp_off_hourly_grid(self, broken: Path) -> None:
+        bars = pd.read_parquet(broken / "equity.parquet")
+        # Keep the count, endpoints and strict ordering valid so only the
+        # internal hourly alignment can reject the regenerated fixture.
+        bars.loc[5, "timestamp"] = pd.Timestamp("2024-01-01 05:30:00", tz="UTC")
+        bars.to_parquet(broken / "equity.parquet", index=False)
+
+        with pytest.raises(ValueError, match="complete UTC hourly grid"):
+            load_kd_fixture(broken, checksums=_checksums_of(broken))
+
     def test_missing_run_key(self, broken: Path) -> None:
         run = json.loads((broken / "run.json").read_text())
         del run["slippage"]
