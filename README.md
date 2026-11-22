@@ -445,12 +445,11 @@ stdio 或無法使用 HTTP 交付時，須透過客戶端保存並核對完整�
 [ML series evidence](docs/reports.md#composable-offline-reports)。
 
 後續可以請助手「比較剛才保存的候選，列出排名與沒有分數的原因」。
-有保存序列的候選，也可以要求查看逐點評估列、原座標與缺值原因。歷史候選可能沒有
-序列，此時證據是 unavailable，不會事後重建。若訓練時要求 purged walk-forward
-驗證，也可要求查看各 fold 當時的預測、原座標，以及 train/eval 的起訖端點
-（第一筆與最後一筆 row／timestamp）。purged k-fold 的訓練列可能不連續；端點不是
-完整清單，不能視為該 fold 用到的所有列。工具、容量與
-復原限制見
+有保存序列的候選，可以請助手分批查看逐筆訊號、報酬與指標缺值原因。
+歷史候選若未保存序列，會明確回報證據不可用，不會事後重建。
+訓練時採用分折驗證，也可請助手讀取當時保存的預測，說明每折的資料範圍。
+分折資料可能不連續，不能僅憑起訖範圍認定每筆資料都有參與。
+需要核對原始座標、欄位定義、讀取容量或復原限制時，見
 [已保存逐點評估序列](docs/ml_research.md#saved-pointwise-evaluation-series) 與
 [Fold prediction series](docs/ml_research.md#fold-prediction-series)。
 
