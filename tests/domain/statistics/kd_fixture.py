@@ -43,8 +43,8 @@ _EXPECTED_N_TRADES: Final = 412
 _FIRST: Final = pd.Timestamp("2024-01-01 00:00:00", tz="UTC")
 _LAST: Final = pd.Timestamp("2024-12-31 00:00:00", tz="UTC")
 
-# SHA-256 of the committed bytes. Rebuild procedure is in the fixture README;
-# a checksum change requires a deliberate, reviewed fixture version bump.
+# SHA-256 of committed bytes. Changes require a reviewed source or format update;
+# see the fixture README for rebuild and schema-version steps.
 _CHECKSUMS: Final[dict[str, str]] = {
     "equity.parquet": (
         "5f6c56c529de73a3a841ae30364ce4650c32224d64323389d1ebbff8f14d8f4a"

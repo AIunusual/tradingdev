@@ -16,10 +16,12 @@ cache access.
   pickle provenance, and the engine's own reported `engine_metrics`.
 - `extract.py`: provenance-only rebuild script, never imported by tests.
 
-The exact column names, dtypes, bar/trade counts and UTC range are enforced by
-`kd_fixture.py` and rechecked by its tests; see those files for the values.
+The exact column names, dtypes, bar/trade counts and complete UTC hourly grid
+are enforced by `load_kd_fixture` in `kd_fixture.py` and rechecked by its tests;
+see that module for the values.
 
-Schema version is the `SCHEMA_VERSION` constant in `kd_fixture.py`; column
+The `SCHEMA_VERSION` constant in `kd_fixture.py` records the supported file
+format; data revisions are tracked by Git history and checksums. Column
 names, dtypes and identities are checked on every load. Which settings the
 tests declare rather than recover from `run.json`, which figures are pinned,
 and why they are historical observations are documented in
@@ -64,4 +66,10 @@ update the fixture-file SHA-256 manifest in `kd_fixture.py`. Skipping the
 extractor pins makes the rebuild fail at its first check; skipping the loader
 manifest makes the regenerated fixture fail on load. Justify any figure change
 from a new independent computation. A checksum change without a documented
-source change is a rejection, not a silent refresh.
+source or format change is a rejection, not a silent refresh.
+
+Keep `SCHEMA_VERSION` unchanged for data-only updates. When the schema changes,
+increment it and update the extractor, loader schema checks and affected tests
+together before regenerating the files and updating the loader's checksum
+manifest. The constant documents the supported format; it is not read from the
+fixture files or compared during loading.
