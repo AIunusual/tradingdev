@@ -75,6 +75,7 @@ def ml_signal_scope(entry: LeaderboardEntry) -> dict[str, Any]:
             "dataset_id": entry.dataset_id,
             "n_observations": entry.n_observations,
             "signal_fingerprint": entry.signal_fingerprint,
+            "series_artifact_id": entry.series_artifact_id,
             "method_family": entry.family,
             "method_name": entry.method_name,
             "producer_source": entry.producer_source.value,

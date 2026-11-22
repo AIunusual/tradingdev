@@ -264,6 +264,7 @@ def verify_ml_report_outcome(
             "model_id": entry.model_id,
             "dataset_id": entry.dataset_id,
             "signal_fingerprint": entry.signal_fingerprint,
+            "series_artifact_id": entry.series_artifact_id,
             "n_observations": entry.n_observations,
             # The family travels with the snapshot so a saved report cannot
             # render a hand-set rule in the model slot. It is the resolved

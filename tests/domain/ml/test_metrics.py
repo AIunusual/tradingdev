@@ -207,6 +207,38 @@ class TestRankAgainstPearson:
 
 
 class TestAlignmentAndDegeneracy:
+    @pytest.mark.parametrize("constant_side", ["prediction", "forward_return"])
+    def test_decimal_constant_windows_have_no_correlation(
+        self, constant_side: str
+    ) -> None:
+        varying = [0.1, 0.3, 0.2, 0.5, 0.4, 0.8]
+        constant = [0.1] * len(varying)
+        prediction, forward = (
+            (constant, varying)
+            if constant_side == "prediction"
+            else (varying, constant)
+        )
+
+        metrics = signal_metrics(prediction, forward, window=3)
+
+        for prefix in ("", "rank_"):
+            for suffix in (
+                "ic_mean",
+                "ic_std",
+                "icir",
+                "ic_t_stat",
+                "ic_positive_rate",
+            ):
+                assert metrics[prefix + suffix] is None
+
+    def test_distinct_near_constant_windows_keep_their_correlations(self) -> None:
+        signal = [0.1, 0.1 + 1e-12, 0.1 - 1e-12, 0.1 + 2e-12]
+
+        metrics = signal_metrics(signal, signal, window=3)
+
+        assert metrics["ic_mean"] == pytest.approx(1.0)
+        assert metrics["rank_ic_mean"] == pytest.approx(1.0)
+
     def test_non_finite_pairs_are_dropped_together_before_windowing(self) -> None:
         """A dropped row shortens the series, so fewer windows exist."""
         prediction = [1.0, 2.0, np.nan, 4.0, 5.0, 6.0, 7.0, 8.0]
@@ -251,6 +283,23 @@ class TestHitRateAndTurnover:
 
 
 class TestDecay:
+    def test_underflowing_prediction_variance_keeps_rank_decay_available(self) -> None:
+        prediction = [value * 1e-200 for value in (1, 2, 3, 4, 5, 6)]
+        price = [100.0, 101.0, 103.0, 102.0, 104.0, 105.0]
+        forward = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
+
+        metrics = signal_metrics(
+            prediction, forward, window=3, price=price, horizons=(1,)
+        )
+
+        realised = pd.Series(price).shift(-1) / pd.Series(price) - 1.0
+        expected = float(
+            np.corrcoef(pd.Series(prediction[:-1]).rank(), realised.iloc[:-1].rank())[
+                0, 1
+            ]
+        )
+        assert metrics["rank_ic_h1"] == pytest.approx(expected)
+
     def test_decay_needs_a_price_series(self) -> None:
         prediction = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         forward = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]

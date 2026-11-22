@@ -44,6 +44,10 @@ class WorkspacePaths:
         return self.root / "ml_leaderboard"
 
     @property
+    def ml_evaluation_series(self) -> Path:
+        return self.root / "ml_leaderboard" / "evaluation_series"
+
+    @property
     def ml_feature_cache(self) -> Path:
         return self.root / "ml_feature_cache"
 

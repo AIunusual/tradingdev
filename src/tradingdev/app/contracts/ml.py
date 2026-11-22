@@ -58,6 +58,17 @@ class RollingSchemeSummary(ContractModel):
     """Cadence when the strategy declares none; null follows its own interval."""
 
 
+class EvaluationSeriesLimits(ContractModel):
+    """Read bounds an MCP client can choose between before requesting rows."""
+
+    default_page_size: int
+    max_page_size: int
+    max_export_rows: int
+    max_export_bytes: int
+    overflow_read: str
+    """Tool call to use when an artifact exceeds ``max_export_rows``."""
+
+
 class MlContractResponse(ContractModel):
     """The full enumerable ML vocabulary; the menu for LLM-driven selection."""
 
@@ -76,6 +87,8 @@ class MlContractResponse(ContractModel):
     """Metrics a leaderboard may rank on; each declares a direction."""
     method_families: list[str]
     """Kinds of method a candidate can declare, from fitted model to unnamed."""
+    evaluation_series_limits: EvaluationSeriesLimits
+    """Publishable bounds for discovery, row paging and full export."""
     guidance: dict[str, str]
     """On-demand interpretation and workflow details for the advertised tools."""
 
@@ -129,6 +142,8 @@ class RecordedEvaluation(ContractModel):
     nothing: a dataset identity also covers the requested period and the code
     fingerprint, and different versions can still overlap.
     """
+    series_artifact_id: str
+    """Content-bound pointwise series saved with this recorded evaluation."""
 
 
 class SignalEvaluationResponse(ContractModel):
@@ -155,6 +170,8 @@ class SignalEvaluationResponse(ContractModel):
     strata_monotonicity: float | None
     long_short_spread: float | None
     simulated: SimulatedReturnsSummary
+    series_artifact_id: str | None = None
+    """Saved pointwise series, present only for a recorded evaluation."""
     recorded: RecordedEvaluation | None = None
     """Present only when the evaluation was recorded for the leaderboard."""
 
@@ -196,6 +213,8 @@ class LeaderboardRow(ContractModel):
     the boundary. Every producer states the source it actually measured.
     """
     entry_id: str
+    series_artifact_id: str
+    """Current pointwise series for this leaderboard row; empty on old records."""
     producer_source: ProducerSource
     """Saved signal execution path; caller/unknown model IDs are only labels."""
     label: str
@@ -233,6 +252,8 @@ class LeaderboardSkipped(ContractModel):
     source: Literal["signal"]
     """Which kind of measurement this is; a run candidate carries ``run``."""
     entry_id: str
+    series_artifact_id: str
+    """Current pointwise series for this row; empty when none was recorded."""
     producer_source: ProducerSource
     """Saved signal execution path, retained even when its score is unavailable."""
     label: str
@@ -539,6 +560,14 @@ class ValidationSummary(ContractModel):
     artifact_trained_on: str
     folds: list[ValidationFold]
     aggregate: ValidationAggregate
+    fold_predictions_available: bool | None = None
+    """Whether this record carried an actual fold prediction sequence.
+
+    ``null`` means a historical summary predates series publication, not an
+    empty set of predictions.
+    """
+    fold_series_artifact_id: str | None = None
+    """Content-bound series of the predictions made inside those folds."""
 
 
 class TrainedModelSummary(ContractModel):
@@ -591,6 +620,102 @@ class PredictionResponse(ContractModel):
 
     success: Literal[True]
     prediction: PredictionSummary
+
+
+class EvaluationSeriesSummary(ContractModel):
+    """One discoverable pointwise artifact, without loading its rows."""
+
+    artifact_id: str
+    kind: Literal["signal_evaluation", "fold_validation"]
+    evaluation_id: str
+    dataset_id: str
+    entry_id: str
+    row_count: int
+    training_status: str
+    holdout_relationship: str
+    created_at: str
+
+
+class EvaluationSeriesPageResponse(ContractModel):
+    """A bounded discovery page of saved evaluation series."""
+
+    success: Literal[True]
+    items: list[EvaluationSeriesSummary]
+    total: int
+    offset: int
+    next_offset: int | None
+
+
+class EvaluationSeriesSignalRow(ContractModel):
+    """One saved signal row; an absent IC is null with its reason beside it."""
+
+    source_row: int
+    timestamp: str
+    signal: float | None
+    realized_return: float | None
+    pearson_ic: float | None
+    pearson_availability_reason: str = ""
+    spearman_ic: float | None
+    spearman_availability_reason: str = ""
+    availability_reason: str
+
+
+class EvaluationSeriesFoldRow(ContractModel):
+    """One fold prediction and the split that actually produced it."""
+
+    fold: int
+    source_row: int
+    symbol: str
+    """Dataset symbol; empty when the saved dataset has no symbol column."""
+    timestamp: str
+    prediction: float | None
+    target: float | None
+    forward_return: float | None
+    train_start_row: int
+    train_end_row: int
+    eval_start_row: int
+    eval_end_row: int
+    train_start: str
+    train_end: str
+    eval_start: str
+    eval_end: str
+
+
+class EvaluationSeriesExportResponse(ContractModel):
+    """A complete, content-bound series; reading it never loads a model."""
+
+    success: Literal[True]
+    manifest: dict[str, JsonValue]
+    rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow]
+
+
+class EvaluationSeriesReadResponse(ContractModel):
+    """One bounded read surface: artifact discovery or one artifact's rows."""
+
+    success: Literal[True]
+    mode: Literal["discovery", "rows"]
+    total: int
+    offset: int
+    next_offset: int | None
+    items: list[EvaluationSeriesSummary] = Field(default_factory=list)
+    artifact_id: str | None = None
+    max_page_size: int | None = None
+    max_export_rows: int | None = None
+    max_export_bytes: int | None = None
+    manifest: dict[str, JsonValue] | None = None
+    rows: list[EvaluationSeriesSignalRow | EvaluationSeriesFoldRow] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def one_mode_only(self) -> Self:
+        """A page cannot mix artifact summaries with another artifact's rows."""
+        if self.mode == "discovery":
+            if self.artifact_id or self.manifest is not None or self.rows:
+                raise ValueError("a discovery page cannot carry row data")
+        elif not self.artifact_id or self.manifest is None or self.items:
+            raise ValueError("a row page needs its artifact and manifest")
+        return self
 
 
 class MlContractError(ErrorResponse):
