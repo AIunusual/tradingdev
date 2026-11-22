@@ -60,8 +60,9 @@ field; the store reads it as an empty string and the series stays unavailable
 rather than being reconstructed. A report snapshot copies the reference only
 when one exists and records an empty reference otherwise. Report generation
 protects every cited series artifact before publication: the artifact must exist
-and verify, and its manifest must match the cited scope's entry, dataset,
-training dataset, fingerprint, producer source, row count, candidate identity
+and pass the series read checks described below. Its manifest must match the
+cited scope's entry, dataset, training dataset, fingerprint, producer source,
+row count, candidate identity
 (model ID, method family, method name and complete parameters), and scoring
 settings (horizon, window and quantile count). A missing, corrupt or
 scope-mismatched artifact raises an error so the report is not published, even
@@ -73,14 +74,18 @@ expose only discovery, row paging and export. Default cleanup protection,
 explicit protected sets, partial cleanup and lock behavior are in the
 [series lifecycle](ml_research.md#saved-pointwise-evaluation-series).
 
-Report generation verifies each cited series and preserves the complete selected
+Report generation preserves the complete selected
 leaderboard evidence in the report's ML block, including each scope's series
 reference and metadata. The series rows are not embedded in the report or used to
 recompute metrics. The separate artifact lets a reader later
 inspect the exact scored rows, their original coordinates and unavailable-value
-reasons without the model file. Missing or tampered series are reported
-unavailable or rejected by the row paging and export operations, never silently
-reconstructed.
+reasons without the model file. Missing artifacts or failed integrity checks make
+row paging and export report unavailability or fail; they never reconstruct series.
+Report verification, row paging and export share the
+[series verification and cache contract](ml_research.md#saved-pointwise-evaluation-series):
+content checks run on first read or when the saved file signature changes. An
+unchanged signature can reuse the previously verified snapshot, including after
+a rewrite that preserves that signature.
 The selected candidates must satisfy the
 [ML comparison rules](ml_research.md#recorded-signal-evaluations).
 `generate_report` and `tradingdev-report` expose the following ranking options.
