@@ -774,11 +774,14 @@ The signal-series writer passes the computed leaderboard `entry_id` into the
 manifest; fold-validation artifacts have no leaderboard row and leave it empty.
 `training_status` is `fitted`, `no_fitting` or `unknown`; only backend model/rule
 execution can confirm a fitting state, so caller arrays and unknown sources stay
-`unknown` even when they name a model. For backend results, `fitted` means a model artifact recorded a training
-dataset ID, while `no_fitting` is reserved for backend rules. A backend model
+`unknown` even when they name a model. For backend-model signal evaluations,
+`fitted` means the model artifact recorded a training dataset ID, while
+`no_fitting` is reserved for backend rules. A backend model
 artifact without that binding — including legacy models that predate the field —
 stays `unknown`: the missing identity does not prove that the weights were never
-fitted.
+fitted. For fold-validation series, `fitted` records that the fold models were
+fitted on training subsets of the bound dataset; it does not assert that a model
+artifact was saved. See [Fold prediction series](#fold-prediction-series).
 `holdout_relationship` reports
 `in_sample`, `different_dataset`, `not_applicable` or `unknown` from the recorded
 pair alone. Different IDs never assert a holdout, and a rule records
