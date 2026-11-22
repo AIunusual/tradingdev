@@ -111,6 +111,14 @@ environment.require_local_service = lambda _url: probe("local")
         "    Path('ml_pipeline.ran').write_text('done', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    (tmp_path / "tests/e2e/test_llm_evaluation_series.py").write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "pytestmark = pytest.mark.live_llm\n"
+        "def test_evaluation_series_only():\n"
+        "    Path('evaluation_series.ran').write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     (tmp_path / "tests/e2e/test_llm_discovery.py").write_text(
         "from pathlib import Path\n"
         "import pytest\n"
@@ -309,6 +317,7 @@ def test_script_streams_progress_through_pipe_and_stops_at_first_failure(
         "cleanup",
         "execution_plan",
         "ml_pipeline",
+        "evaluation_series",
         "natural_request",
         "strategy_execution_guidance",
         "novice_intake",
@@ -346,7 +355,7 @@ def test_script_selects_scenario_without_running_authoring_suite(
         check=False,
     )
     assert result.returncode == pytest.ExitCode.OK, result.stdout
-    assert "1 passed, 13 deselected" in result.stdout
+    assert "1 passed, 14 deselected" in result.stdout
     assert (script_workspace / f"{scenario}.ran").read_text() == "done"
     assert not (script_workspace / "completed.ran").exists()
 

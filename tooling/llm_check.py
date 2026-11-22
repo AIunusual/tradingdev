@@ -17,6 +17,7 @@ _SCENARIOS = (
     "cleanup",
     "execution_plans",
     "ml",
+    "evaluation_series",
     "automatic_walk_forward",
     "discovery",
     "novice_intake",
