@@ -63,6 +63,10 @@ def _validate_report_series_scope(manifest: Any, scope: dict[str, Any]) -> None:
     pairs = {
         "entry_id": (manifest.entry_id, scope.get("scope_id")),
         "dataset_id": (manifest.dataset_id, metadata.get("dataset_id")),
+        "training_dataset_id": (
+            manifest.training_dataset_id,
+            metadata.get("training_dataset_id"),
+        ),
         "signal_fingerprint": (
             manifest.signal_fingerprint,
             metadata.get("signal_fingerprint"),
@@ -78,6 +82,7 @@ def _validate_report_series_scope(manifest: Any, scope: dict[str, Any]) -> None:
             metadata.get("method_name"),
         ),
         "model_id": (candidate.get("model_id") or "", metadata.get("model_id")),
+        "parameters": (candidate.get("parameters"), scope.get("parameters")),
         "horizon": (settings.get("horizon"), metadata.get("horizon")),
         "window": (settings.get("window"), metadata.get("window")),
         "n_quantiles": (settings.get("n_quantiles"), metadata.get("n_quantiles")),
