@@ -67,7 +67,9 @@ Application services 直接使用具體的儲存與程序 adapters；`domain/dat
 crawlers 與 loader 仍執行網路及檔案 I/O。策略檔案讀取與實例生命週期由
 `adapters/execution/strategy_factory.py` 負責，domain 的訊號檢查依賴 factory port。
 `domain/ml/registry` 的模型、特徵快取與排行榜 stores
-也執行檔案 I/O；ML dataset store 位於 `adapters/storage`。
+也執行檔案 I/O；ML dataset store 與 `EvaluationSeriesStore` 位於 `adapters/storage`。
+後者負責不可變逐列評估序列的發布、完整性驗證、分頁讀取與保存保護；
+資料語意與清理限制見 [ML 研究的逐列評估序列契約](docs/ml_research.md#saved-pointwise-evaluation-series)。
 最佳化的完整流程仍由 worker 協調，尚未全部收斂到 app。
 修改這些模組時，不能假設 domain 全部都是無副作用的純計算。
 

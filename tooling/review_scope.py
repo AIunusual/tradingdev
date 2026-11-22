@@ -367,6 +367,11 @@ _DOC_HEADINGS.update(
                 "Recorded Signal Evaluations"
             ],
             **_headings(
+                {"ml", "results", "interfaces"},
+                "Saved pointwise evaluation series",
+                "Fold prediction series",
+            ),
+            **_headings(
                 {"ml", "strategy", "execution", "interfaces"},
                 "Rolling Retraining Schemes",
             ),

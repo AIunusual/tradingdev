@@ -6,10 +6,13 @@ from typing import TYPE_CHECKING, Literal
 
 from mcp_types import ToolAnnotations
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.app.contracts.common import ErrorResponse
 from tradingdev.app.contracts.ml import (
     BuildDatasetResponse,
     BuildPanelResponse,
+    EvaluationSeriesExportResponse,
+    EvaluationSeriesReadResponse,
     LeaderboardPageResponse,
     MlContractError,
     MlContractResponse,
@@ -78,18 +81,23 @@ def register(mcp: MCPServer, service: MLService) -> None:
             return MlContractError.model_validate(result)
         return MlContractResponse.model_validate(result)
 
-    # Recording an evaluation persists a row, so this tool is not read-only in
-    # the general case; it writes nothing unless `record=True` is passed, and
-    # recording the same candidate twice rewrites one row rather than adding a
-    # second, which keeps it idempotent.
+    # Recording an evaluation persists a row and a new pointwise artifact, so
+    # repeated calls are not state-equivalent. The dataset/panel builders below
+    # are content-addressed and remain idempotent.
     write_artifact = ToolAnnotations(
         read_only_hint=False,
         destructive_hint=True,
         idempotent_hint=True,
         open_world_hint=False,
     )
+    publish_artifact = ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=False,
+        open_world_hint=False,
+    )
 
-    @mcp.tool(annotations=write_artifact)
+    @mcp.tool(annotations=publish_artifact)
     def evaluate_signal(
         dataset_id: str,
         model_id: str | None = None,
@@ -221,7 +229,7 @@ def register(mcp: MCPServer, service: MLService) -> None:
             return ErrorResponse.model_validate(result)
         return BuildPanelResponse.model_validate(result)
 
-    @mcp.tool(annotations=write_artifact)
+    @mcp.tool(annotations=publish_artifact)
     def train_model(
         dataset_id: str,
         model_kind: str,
@@ -333,3 +341,53 @@ def register(mcp: MCPServer, service: MLService) -> None:
         if result.get("success") is False:
             return ErrorResponse.model_validate(result)
         return LeaderboardPageResponse.model_validate(result)
+
+    @mcp.tool(annotations=read_only)
+    def get_evaluation_series_page(
+        artifact_id: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> EvaluationSeriesReadResponse | ErrorResponse:
+        """Page artifact summaries, or one artifact's rows by artifact_id."""
+        limits = {
+            "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
+            "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+            "max_export_bytes": EvaluationSeriesStore.MAX_EXPORT_BYTES,
+        }
+        try:
+            if artifact_id is None:
+                result = service.evaluation_series_page(offset=offset, limit=limit)
+                return EvaluationSeriesReadResponse.model_validate(
+                    {"success": True, "mode": "discovery", **result, **limits}
+                )
+            rows = service.evaluation_series_rows_page(
+                artifact_id, offset=offset, limit=limit
+            )
+            return EvaluationSeriesReadResponse.model_validate(
+                {
+                    "success": True,
+                    "mode": "rows",
+                    "artifact_id": artifact_id,
+                    **rows,
+                    **limits,
+                }
+            )
+        except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
+            return ErrorResponse(
+                success=False, error=str(exc), code="series_unavailable"
+            )
+
+    @mcp.tool(annotations=read_only)
+    def export_evaluation_series(
+        artifact_id: str,
+    ) -> EvaluationSeriesExportResponse | ErrorResponse:
+        """Read one verified series, or report it unavailable."""
+        try:
+            result = service.evaluation_series_export(artifact_id)
+        except (ValueError, TypeError, KeyError, FileNotFoundError) as exc:
+            return ErrorResponse(
+                success=False, error=str(exc), code="series_unavailable"
+            )
+        return EvaluationSeriesExportResponse.model_validate(
+            {"success": True, **result}
+        )

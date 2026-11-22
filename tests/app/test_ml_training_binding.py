@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 _ROWS = 600
 _TRAIN = ("2024-01-01", "2024-01-12")
 _LATER = ("2024-01-13", "2024-01-25")
+
+
+def _without_series_artifact(record: dict[str, Any]) -> dict[str, Any]:
+    """A re-evaluation intentionally points at a fresh content-bound artifact."""
+    return {key: value for key, value in record.items() if key != "series_artifact_id"}
 
 
 def _write_bars(workspace: WorkspacePaths) -> None:
@@ -112,7 +117,9 @@ class TestTrainingDatasetBinding:
         assert caller["recorded"]["entry_id"] != backend_id
         assert caller["signal_fingerprint"] != backend["signal_fingerprint"]
         assert len(LeaderboardStore(workspace.ml_leaderboard).entries()) == 2
-        assert _recorded_entry(workspace, backend_id).to_record() == snapshot
+        assert _without_series_artifact(
+            _recorded_entry(workspace, backend_id).to_record()
+        ) == _without_series_artifact(snapshot)
         assert (
             backend["producer_source"]
             == backend["recorded"]["producer_source"]
@@ -142,7 +149,13 @@ class TestTrainingDatasetBinding:
         )
         assert backend_again["recorded"]["replaced"] is True
         assert backend_again["recorded"]["n_candidates"] == 2
-        assert _recorded_entry(workspace, backend_id).to_record() == snapshot
+        updated = _recorded_entry(workspace, backend_id).to_record()
+        assert _without_series_artifact(updated) == _without_series_artifact(snapshot)
+        assert updated["series_artifact_id"] != snapshot["series_artifact_id"]
+        assert (
+            backend_again["recorded"]["series_artifact_id"]
+            == updated["series_artifact_id"]
+        )
 
     def test_backend_reevaluation_does_not_upgrade_a_legacy_row(
         self, service: MLService, workspace: WorkspacePaths
