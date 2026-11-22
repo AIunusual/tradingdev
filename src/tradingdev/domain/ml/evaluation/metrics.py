@@ -83,12 +83,19 @@ def _rowwise_corr(
     left: NDArray[np.floating[Any]], right: NDArray[np.floating[Any]]
 ) -> NDArray[np.float64]:
     """Row-wise Pearson correlation of two (rows, width) blocks."""
+    # Centering a repeated decimal can leave rounding residue. Detect equality
+    # before arithmetic, without rejecting distinct near-constant observations.
+    constant = (left.min(axis=1) == left.max(axis=1)) | (
+        right.min(axis=1) == right.max(axis=1)
+    )
     left = left - left.mean(axis=1, keepdims=True)
     right = right - right.mean(axis=1, keepdims=True)
     numerator = (left * right).sum(axis=1)
     denominator = np.sqrt((left * left).sum(axis=1) * (right * right).sum(axis=1))
     with np.errstate(invalid="ignore", divide="ignore"):
-        result = np.where(denominator > 0, numerator / denominator, np.nan)
+        result = np.where(
+            (denominator > 0) & ~constant, numerator / denominator, np.nan
+        )
     return result
 
 
@@ -98,7 +105,8 @@ def _window_correlation(values: NDArray[np.float64], method: str) -> float:
     fwd = values[:, 1]
     if pred.size < 2:
         return float("nan")
-    if np.nanstd(pred) == 0.0 or np.nanstd(fwd) == 0.0:
+    # Variance can underflow for distinct values whose ranks remain usable.
+    if pred.min() == pred.max() or fwd.min() == fwd.max():
         return float("nan")
     left = pd.Series(pred).rank().to_numpy() if method == "spearman" else pred
     right = pd.Series(fwd).rank().to_numpy() if method == "spearman" else fwd

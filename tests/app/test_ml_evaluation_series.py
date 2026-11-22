@@ -142,6 +142,41 @@ def test_saved_series_matches_the_dataset_rows_independently(
     assert rows[19]["pearson_ic"] is not None
 
 
+def test_recorded_constant_windows_reproduce_the_scored_ic_summaries(
+    workspace: WorkspacePaths,
+) -> None:
+    service = MLService(workspace=workspace)
+    dataset_id = _dataset(service)
+    frame = pd.read_parquet(workspace.ml_datasets / dataset_id / "dataset.parquet")
+    realized = frame["forward_return"].astype(float).tolist()
+    signal = [0.2, 0.3] + [0.1] * (len(frame) - 2)
+
+    recorded = service.evaluate_signal(
+        signal, realized, dataset_id=dataset_id, window=3, record=True
+    )
+    rows = service.evaluation_series_export(str(recorded["series_artifact_id"]))["rows"]
+
+    assert all(row["availability_reason"] == "constant_window" for row in rows[4:])
+    assert all(row["pearson_ic"] is None for row in rows[4:])
+    assert all(row["spearman_ic"] is None for row in rows[4:])
+    for column, prefix in (("pearson_ic", ""), ("spearman_ic", "rank_")):
+        expected = []
+        # Only the two windows containing the varying prefix can be scored.
+        for start in (0, 1):
+            left = pd.Series(signal[start : start + 3])
+            right = pd.Series(realized[start : start + 3])
+            if column == "spearman_ic":
+                left, right = left.rank(), right.rank()
+            expected.append(float(np.corrcoef(left, right)[0, 1]))
+        saved = [row[column] for row in rows if row[column] is not None]
+        assert saved == pytest.approx(expected)
+        mean = float(np.mean(expected))
+        spread = float(np.std(expected, ddof=1))
+        assert recorded["metrics"][prefix + "ic_mean"] == pytest.approx(mean)
+        assert recorded["metrics"][prefix + "ic_std"] == pytest.approx(spread)
+        assert recorded["metrics"][prefix + "icir"] == pytest.approx(mean / spread)
+
+
 def test_manifest_binds_candidate_identity_and_declared_settings(
     workspace: WorkspacePaths,
 ) -> None:

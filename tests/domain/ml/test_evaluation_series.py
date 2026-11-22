@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from tradingdev.domain.ml.evaluation import series as series_module
+from tradingdev.domain.ml.evaluation.metrics import signal_metrics_with_series
 from tradingdev.domain.ml.evaluation.series import (
     FOLD_COLUMNS,
     SIGNAL_COLUMNS,
@@ -71,6 +72,33 @@ def test_warmup_and_constant_windows_keep_their_original_coordinates() -> None:
     assert frame.loc[5, "availability_reason"] == "constant_window"
     assert pd.isna(frame.loc[5, "spearman_ic"])
     assert frame.loc[2, "availability_reason"] == "ok"
+
+
+def test_pearson_underflow_preserves_the_scored_spearman_values() -> None:
+    signal = [1e-200, 2e-200, 3e-200, 4e-200]
+    forward = [0.1, 0.3, 0.2, 0.7]
+    metrics, pearson, spearman = signal_metrics_with_series(signal, forward, window=3)
+
+    frame = build_signal_series(
+        signal,
+        forward,
+        _TIMESTAMPS[:4],
+        window=3,
+        pearson_ic=pearson,
+        spearman_ic=spearman,
+    )
+
+    assert metrics["ic_mean"] is None
+    assert metrics["rank_ic_mean"] == pytest.approx(0.5)
+    assert frame["pearson_ic"].isna().all()
+    assert frame["pearson_availability_reason"].tolist() == [
+        "ic_warmup",
+        "ic_warmup",
+        "non_finite",
+        "non_finite",
+    ]
+    assert frame["spearman_ic"].iloc[2:].tolist() == pytest.approx([0.5, 0.5])
+    assert frame["spearman_availability_reason"].iloc[2:].tolist() == ["ok", "ok"]
 
 
 def test_changed_values_are_rejected_against_the_saved_content_hash() -> None:
