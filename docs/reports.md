@@ -73,9 +73,10 @@ expose only discovery, row paging and export. Default cleanup protection,
 explicit protected sets, partial cleanup and lock behavior are in the
 [series lifecycle](ml_research.md#saved-pointwise-evaluation-series).
 
-Reports do not read the series to recompute metrics: generation verifies that a
-cited artifact exists and is intact, then snapshots only the leaderboard
-reference and its scope metadata. The artifact exists so a reader can later
+Report generation verifies each cited series and preserves the complete selected
+leaderboard evidence in the report's ML block, including each scope's series
+reference and metadata. The series rows are not embedded in the report or used to
+recompute metrics. The separate artifact lets a reader later
 inspect the exact scored rows, their original coordinates and unavailable-value
 reasons without the model file. Missing or tampered series are reported
 unavailable or rejected by the row paging and export operations, never silently
