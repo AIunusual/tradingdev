@@ -133,6 +133,50 @@ def test_successive_row_pages_reuse_the_verified_snapshot(
     assert calls == 1
 
 
+def test_warm_row_pages_do_not_copy_the_complete_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(_bundle())
+    first = store.rows_page(artifact_id, limit=2)
+    copied_rows: list[int] = []
+    original = pd.DataFrame.copy
+
+    def counted(frame: pd.DataFrame, deep: bool = True) -> pd.DataFrame:
+        if deep:
+            copied_rows.append(len(frame))
+        return original(frame, deep=deep)
+
+    monkeypatch.setattr(pd.DataFrame, "copy", counted)
+    second = store.rows_page(artifact_id, offset=2, limit=2)
+    third = store.rows_page(artifact_id, offset=4, limit=2)
+
+    assembled = [row for page in (first, second, third) for row in page["rows"]]
+    assert [row["source_row"] for row in assembled] == [0, 1, 2, 3, 4, 5]
+    assert all(count <= 2 for count in copied_rows), copied_rows
+
+
+@pytest.mark.parametrize("page", [True, False], ids=["page", "export"])
+def test_json_reads_do_not_expose_mutable_cached_state(
+    tmp_path: Path, page: bool
+) -> None:
+    store = EvaluationSeriesStore(tmp_path)
+    artifact_id = store.save(
+        _bundle(settings={"window": 3, "candidate": {"thresholds": [1, 2]}})
+    )
+    read = store.rows_page if page else store.export
+    response = read(artifact_id)
+    response["rows"][0]["signal"] = 999.0
+    response["manifest"]["settings"]["candidate"]["thresholds"][0] = 999
+
+    subsequent = read(artifact_id)
+    assert subsequent["rows"][0]["signal"] == _SIGNAL[0]
+    assert subsequent["manifest"]["settings"]["candidate"]["thresholds"] == [1, 2]
+    loaded = store.load(artifact_id)
+    assert loaded.frame["signal"].iloc[0] == _SIGNAL[0]
+    assert loaded.manifest.settings["candidate"] == {"thresholds": [1, 2]}
+
+
 def test_cached_bundle_is_isolated_from_caller_mutation(tmp_path: Path) -> None:
     store = EvaluationSeriesStore(tmp_path)
     artifact_id = store.save(_bundle())

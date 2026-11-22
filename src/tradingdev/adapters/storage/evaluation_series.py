@@ -115,21 +115,13 @@ class EvaluationSeriesStore:
         return artifact_id
 
     def load(self, artifact_id: str) -> EvaluationSeriesBundle:
-        """Read a bundle, refusing a missing or altered artifact."""
-        path = self.path_for(artifact_id)
-        if not path.exists():
-            raise FileNotFoundError(f"evaluation series {artifact_id} is unavailable")
-        return self._load_verified(artifact_id, path)
+        """Read an independently mutable copy of a verified artifact."""
+        return deepcopy(self._load_verified(artifact_id))
 
     @staticmethod
     def _signature(path: Path) -> tuple[int, int, int]:
         stat = path.stat()
         return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
-
-    @staticmethod
-    def _copy_bundle(bundle: EvaluationSeriesBundle) -> EvaluationSeriesBundle:
-        """Detach cache state from objects callers are free to mutate."""
-        return deepcopy(bundle)
 
     def _remember(
         self,
@@ -142,7 +134,11 @@ class EvaluationSeriesStore:
         while len(self._verified) > self._verified_cache_size:
             self._verified.popitem(last=False)
 
-    def _load_verified(self, artifact_id: str, path: Path) -> EvaluationSeriesBundle:
+    def _load_verified(self, artifact_id: str) -> EvaluationSeriesBundle:
+        """Borrow the private snapshot; callers must not mutate or expose it."""
+        path = self.path_for(artifact_id)
+        if not path.exists():
+            raise FileNotFoundError(f"evaluation series {artifact_id} is unavailable")
         manifest_path = path / "manifest.json"
         series_path = path / "series.parquet"
         if not manifest_path.exists() or not series_path.exists():
@@ -151,11 +147,11 @@ class EvaluationSeriesStore:
         cached = self._verified.get(artifact_id)
         if cached is not None and cached[0] == signature:
             self._verified.move_to_end(artifact_id)
-            return self._copy_bundle(cached[1])
+            return cached[1]
         raw = series_path.read_bytes()
         bundle = self._load_from(path, raw)
         self._remember(artifact_id, signature, bundle)
-        return self._copy_bundle(bundle)
+        return bundle
 
     def _load_from(
         self, path: Path, raw: bytes | None = None
@@ -221,7 +217,7 @@ class EvaluationSeriesStore:
             raise ValueError(f"limit must be between 1 and {self.MAX_PAGE_SIZE}")
         if offset < 0:
             raise ValueError("offset must not be negative")
-        bundle = self.load(artifact_id)
+        bundle = self._load_verified(artifact_id)
         total = int(len(bundle.frame))
         if offset > total:
             raise ValueError(f"offset exceeds series row count ({total})")
@@ -236,7 +232,7 @@ class EvaluationSeriesStore:
 
     def export(self, artifact_id: str) -> dict[str, Any]:
         """Return the full saved series; oversized artifacts fail explicitly."""
-        bundle = self.load(artifact_id)
+        bundle = self._load_verified(artifact_id)
         if bundle.manifest.row_count > self.MAX_EXPORT_ROWS:
             raise ValueError(
                 f"evaluation series has {bundle.manifest.row_count} rows, above "
@@ -261,10 +257,7 @@ class EvaluationSeriesStore:
             self._protect_locked(artifact_id)
 
     def _protect_locked(self, artifact_id: str) -> None:
-        path = self.path_for(artifact_id)
-        if not path.exists():
-            raise FileNotFoundError(f"evaluation series {artifact_id} is unavailable")
-        self._load_verified(artifact_id, path)
+        self._load_verified(artifact_id)
         (self._protected / artifact_id).touch(exist_ok=True)
 
     def prune(self, *, protected: set[str] | frozenset[str]) -> list[str]:
