@@ -23,6 +23,7 @@ from tradingdev.domain.ml.evaluation.metrics import (
     ic_statistics,
     rolling_ic,
     signal_metrics,
+    signal_metrics_with_series,
     signal_turnover,
 )
 from tradingdev.domain.ml.evaluation.simulated_returns import (
@@ -51,6 +52,7 @@ __all__ = [
     "rolling_ic",
     "signal_metric_catalog",
     "signal_metrics",
+    "signal_metrics_with_series",
     "signal_turnover",
     "simulate_strategy_returns",
     "strata_records",

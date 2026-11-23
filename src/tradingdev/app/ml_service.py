@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import numpy as np
 import pandas as pd
 
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import (
     WorkspacePaths,
+    now_iso,
 )
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
 from tradingdev.app.data_service import DataService
@@ -36,7 +38,7 @@ from tradingdev.domain.ml.calendar import (
 from tradingdev.domain.ml.evaluation import (
     forward_returns,
     quantile_strata,
-    signal_metrics,
+    signal_metrics_with_series,
     simulate_strategy_returns,
     strata_statistics,
 )
@@ -46,6 +48,7 @@ from tradingdev.domain.ml.evaluation.performance import (
     periods_per_year,
     return_metrics,
 )
+from tradingdev.domain.ml.evaluation.series import build_bundle, build_signal_series
 from tradingdev.domain.ml.feature_cache import (
     FeatureCacheIdentity,
     data_fingerprint,
@@ -202,6 +205,50 @@ _ML_GUIDANCE = {
         "Panel-trained models may be evaluated on a separate compatible "
         "single-symbol dataset; panel datasets themselves are refused."
     ),
+    "evaluation_series": (
+        "Saved pointwise series are discovered with get_evaluation_series_page. "
+        "The discovery page reports max_page_size, max_export_rows and "
+        "max_export_bytes; pass an artifact_id to the same tool to page rows "
+        "with bounded offset/limit. export_evaluation_series returns all rows "
+        "only below both export bounds and fails explicitly above them; use "
+        "row paging instead. The ledger/ranked and skipped rows carry the "
+        "current series_artifact_id."
+    ),
+    "evaluation_series_rows": (
+        "source_row is the original dataset coordinate; signal series keep the "
+        "0..row_count-1 order and UTC ISO timestamps. Each IC keeps its own "
+        "availability_reason so one family's failure does not erase the other. "
+        "Fold rows carry the actual fold prediction, the dataset symbol when "
+        "one was saved, and inclusive first/last train/eval row and time "
+        "endpoints; these are bounds, not complete membership. Manifest "
+        "settings bind candidate identity and effective parameters, and "
+        "training_status is derived from producer_source: caller arrays stay "
+        "unknown even when they name a model; a backend artifact with no saved "
+        "training_dataset_id, including legacy models, stays unknown; "
+        "no_fitting is reserved for backend rules."
+    ),
+    "evaluation_series_recovery": (
+        "Discovery pages are summary lookups; row paging and export verify "
+        "published bytes against the manifest on first read or when a "
+        "manifest/Parquet signature changes. An unchanged (mtime_ns, size, "
+        "inode) signature reuses one bounded verified snapshot without "
+        "rereading bytes; each read receives a detached copy and the cache "
+        "evicts least-recently-used artifacts. An artifact directory "
+        "without manifest.json is skipped, but a present unreadable or "
+        "schema-invalid manifest, or a mismatched directory ID, fails the "
+        "whole discovery page. Publication is not rolled "
+        "back if a later leaderboard write or final model save fails, so a "
+        "failed evaluation can still leave a discoverable artifact. After a "
+        "failed train_model, page unfiltered summaries with "
+        "get_evaluation_series_page, match kind fold_validation and dataset_id, "
+        "then pass that artifact_id to row paging or export_evaluation_series. "
+        "Cleanup is not transactional; publication, protection and pruning "
+        "share a lock with a 30-second default timeout. protect requires the "
+        "artifact to exist and has no removal API; reports protect cited "
+        "artifacts before publication and do not roll those markers back if "
+        "publication later fails, and successful fold validation protects its "
+        "own series."
+    ),
     "simulated_returns": (
         "Position thresholds use earlier signals only; positions open after "
         "warm-up on a non-overlapping horizon-bar grid. Returns exclude costs "
@@ -317,11 +364,21 @@ class MLService:
         )
         # Allow explicit feature-version identity; otherwise derive it from source.
         self._injected_code_fingerprint = feature_code_fingerprint
+        self._series_store: EvaluationSeriesStore | None = None
 
     @property
     def workspace(self) -> WorkspacePaths:
         """The workspace this service reads; shared, not copied, by ranking."""
         return self._workspace
+
+    @property
+    def series_store(self) -> EvaluationSeriesStore:
+        """The store holding immutable pointwise evaluation artifacts."""
+        if self._series_store is None:
+            self._series_store = EvaluationSeriesStore(
+                self._workspace.ml_evaluation_series
+            )
+        return self._series_store
 
     def _code_fingerprint(self) -> str:
         """The fingerprint of the code that would build these features."""
@@ -371,6 +428,15 @@ class MLService:
             "missing_policies": [policy.value for policy in MissingPolicy],
             "leaderboard_metrics": list(rankable_metrics()),
             "method_families": list(METHOD_FAMILIES),
+            "evaluation_series_limits": {
+                "default_page_size": 50,
+                "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
+                "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,
+                "max_export_bytes": EvaluationSeriesStore.MAX_EXPORT_BYTES,
+                "overflow_read": (
+                    "get_evaluation_series_page(artifact_id, offset, limit)"
+                ),
+            },
             "guidance": dict(_ML_GUIDANCE),
         }
 
@@ -481,7 +547,9 @@ class MLService:
         pred = pd.Series(signal, dtype=float)
         fwd = pd.Series(forward_returns, dtype=float)
 
-        raw_metrics = signal_metrics(pred, fwd, window=window)
+        raw_metrics, pearson_ic, spearman_ic = signal_metrics_with_series(
+            pred, fwd, window=window
+        )
         metrics = {key: self._finite(value) for key, value in raw_metrics.items()}
 
         strata_df = quantile_strata(pred, fwd, n_bins=n_quantiles)
@@ -539,12 +607,17 @@ class MLService:
             "simulated": simulated_summary,
         }
         if record:
-            payload["recorded"] = self._record_evaluation(
+            recorded = self._record_evaluation(
                 {
                     **metrics,
                     "strata_monotonicity": payload["strata_monotonicity"],
                     "long_short_spread": payload["long_short_spread"],
                 },
+                signal=signal,
+                forward_returns=forward_returns,
+                pearson_ic=pearson_ic,
+                spearman_ic=spearman_ic,
+                evaluation_id=evaluation_id,
                 fingerprint=fingerprint,
                 manifest=manifest,
                 n_observations=int(len(aligned)),
@@ -556,6 +629,8 @@ class MLService:
                 identity=identity,
                 producer_source=producer_source,
             )
+            payload["recorded"] = recorded
+            payload["series_artifact_id"] = recorded["series_artifact_id"]
         return payload
 
     def _recording_horizon(
@@ -651,6 +726,11 @@ class MLService:
         self,
         metrics: dict[str, Any],
         *,
+        signal: list[float],
+        forward_returns: list[float],
+        pearson_ic: pd.Series[float] | Sequence[float] | None,
+        spearman_ic: pd.Series[float] | Sequence[float] | None,
+        evaluation_id: str,
         fingerprint: str,
         manifest: dict[str, Any] | None,
         n_observations: int,
@@ -692,44 +772,91 @@ class MLService:
         label, parameters, training_dataset_id = self._candidate_identity(
             model_id, fingerprint, identity
         )
-        entry = LeaderboardEntry(
-            entry_id=build_entry_id(
-                model_id=model_id or "",
-                dataset_id=dataset_id,
-                context=context,
-                # Named methods use family/name/settings; anonymous signals
-                # need the fingerprint to distinguish candidates.
-                signal_fingerprint="" if (model_id or identity.name) else fingerprint,
-                method_name=identity.name,
-                method_family=identity.family,
-                method_parameters=identity.parameters,
-                producer_source=producer_source,
-            ),
-            label=label,
-            context=context,
-            metrics=stored_metrics,
-            n_observations=n_observations,
+        entry_id = build_entry_id(
             model_id=model_id or "",
             dataset_id=dataset_id,
-            parameters=parameters,
-            signal_fingerprint=fingerprint,
-            method_family=identity.family,
+            context=context,
+            # Named methods use family/name/settings; anonymous signals
+            # need the fingerprint to distinguish candidates.
+            signal_fingerprint="" if (model_id or identity.name) else fingerprint,
             method_name=identity.name,
-            training_dataset_id=training_dataset_id,
+            method_family=identity.family,
+            method_parameters=identity.parameters,
             producer_source=producer_source,
         )
-        store = LeaderboardStore(self._workspace.ml_leaderboard)
-        replaced = store.record(entry)
+        if producer_source == ProducerSource.BACKEND_RULE:
+            training_status = "no_fitting"
+        elif producer_source == ProducerSource.BACKEND_MODEL and training_dataset_id:
+            training_status = "fitted"
+        else:
+            training_status = "unknown"
+        frame, _ = self._load_dataset(dataset_id)
+        series_frame = build_signal_series(
+            signal,
+            forward_returns,
+            frame["timestamp"].tolist(),
+            window=window,
+            pearson_ic=pearson_ic,
+            spearman_ic=spearman_ic,
+        )
+        bundle = build_bundle(
+            series_frame,
+            kind="signal_evaluation",
+            evaluation_id=evaluation_id,
+            dataset_id=dataset_id,
+            dataset_hash=str(manifest["content_hash"]),
+            settings={
+                "horizon": horizon,
+                "window": window,
+                "n_quantiles": n_quantiles,
+                "ic_methods": ["pearson", "spearman"],
+                "candidate": {
+                    "model_id": model_id or "",
+                    "method_name": identity.name,
+                    "parameters": dict(parameters),
+                },
+            },
+            method_family=identity.family,
+            producer_source=producer_source.value,
+            signal_fingerprint=fingerprint,
+            entry_id=entry_id,
+            training_dataset_id=training_dataset_id,
+            training_status=training_status,  # type: ignore[arg-type]
+            created_at=now_iso(),
+        )
+        store = self.series_store
+        with store.lock:
+            artifact_id = store.save(bundle)
+            entry = LeaderboardEntry(
+                entry_id=entry_id,
+                label=label,
+                context=context,
+                metrics=stored_metrics,
+                n_observations=n_observations,
+                model_id=model_id or "",
+                dataset_id=dataset_id,
+                parameters=parameters,
+                signal_fingerprint=fingerprint,
+                method_family=identity.family,
+                method_name=identity.name,
+                training_dataset_id=training_dataset_id,
+                producer_source=producer_source,
+                series_artifact_id=artifact_id,
+            )
+            leaderboard = LeaderboardStore(self._workspace.ml_leaderboard)
+            replaced = leaderboard.record(entry)
+            candidates = len(leaderboard.entries())
         return {
             "entry_id": entry.entry_id,
             "replaced": replaced,
             "context": context.describe(),
-            "n_candidates": len(store.entries()),
+            "n_candidates": candidates,
             "signal_fingerprint": fingerprint,
             "method_family": identity.family,
             "method_name": identity.name,
             "training_dataset_id": training_dataset_id,
             "producer_source": producer_source.value,
+            "series_artifact_id": artifact_id,
         }
 
     def _candidate_identity(
@@ -838,6 +965,7 @@ class MLService:
                 "source": "signal",
                 "rank": item.rank,
                 "entry_id": item.entry.entry_id,
+                "series_artifact_id": item.entry.series_artifact_id,
                 "label": item.entry.label,
                 "model_id": item.entry.model_id,
                 "dataset_id": item.entry.dataset_id,
@@ -884,6 +1012,7 @@ class MLService:
                 {
                     "source": "signal",
                     "entry_id": item.entry.entry_id,
+                    "series_artifact_id": item.entry.series_artifact_id,
                     "label": item.entry.label,
                     "method_family": item.entry.family,
                     "method_name": item.entry.method_name,
@@ -949,6 +1078,88 @@ class MLService:
             "limit": limit,
             "next_offset": end if end < total else None,
         }
+
+    def evaluation_series_page(
+        self,
+        *,
+        kind: str | None = None,
+        dataset_id: str | None = None,
+        entry_id: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Discover bounded saved series without loading any model."""
+        raw = self.series_store.page(
+            kind=kind,
+            dataset_id=dataset_id,
+            entry_id=entry_id,
+            offset=offset,
+            limit=limit,
+        )
+        keys = (
+            "artifact_id",
+            "kind",
+            "evaluation_id",
+            "dataset_id",
+            "entry_id",
+            "row_count",
+            "training_status",
+            "holdout_relationship",
+            "created_at",
+        )
+        return {
+            **raw,
+            "items": [{key: item[key] for key in keys} for item in raw["items"]],
+        }
+
+    def evaluation_series_export(self, artifact_id: str) -> dict[str, Any]:
+        """Read one complete saved series; missing evidence stays unavailable."""
+        try:
+            return self.series_store.export(artifact_id)
+        except FileNotFoundError as error:
+            raise ValueError(
+                f"evaluation series {artifact_id} is unavailable"
+            ) from error
+
+    def evaluation_series_rows_page(
+        self, artifact_id: str, *, offset: int = 0, limit: int = 50
+    ) -> dict[str, Any]:
+        """Read one artifact's rows in pages that reassemble to the export."""
+        try:
+            return self.series_store.rows_page(artifact_id, offset=offset, limit=limit)
+        except FileNotFoundError as error:
+            raise ValueError(
+                f"evaluation series {artifact_id} is unavailable"
+            ) from error
+
+    def cleanup_evaluation_series(
+        self, *, protected: Sequence[str] | None = None
+    ) -> dict[str, Any]:
+        """Remove unreferenced series; reports must name what they protect."""
+        store = self.series_store
+        with store.lock:
+            if protected is None:
+                referenced = {
+                    entry.series_artifact_id
+                    for entry in LeaderboardStore(
+                        self._workspace.ml_leaderboard
+                    ).entries()
+                    if entry.series_artifact_id
+                }
+            else:
+                referenced = set(protected)
+            removed = store.prune(protected=frozenset(referenced))
+        return {
+            "success": True,
+            "removed": removed,
+            "protected_count": len(referenced),
+        }
+
+    def protect_evaluation_series(self, artifact_ids: Sequence[str]) -> int:
+        """Keep artifacts cited by a saved report out of later cleanup."""
+        for artifact_id in artifact_ids:
+            self.series_store.protect(artifact_id)
+        return len(set(artifact_ids))
 
     def rank_signal_candidates(
         self,

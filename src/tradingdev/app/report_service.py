@@ -25,6 +25,7 @@ from tradingdev.adapters.reporting.tables import (
     ledger_table,
     trade_table,
 )
+from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.contracts.reports import ReportAnalysis
@@ -52,6 +53,48 @@ from tradingdev.domain.presentation.reports import (
     SCOPED_REPORT_SECTIONS,
     report_navigation_instructions,
 )
+
+
+def _validate_report_series_scope(manifest: Any, scope: dict[str, Any]) -> None:
+    """A cited series must describe the exact scope being published."""
+    metadata = scope.get("metadata", {})
+    settings = manifest.settings or {}
+    candidate = settings.get("candidate") or {}
+    pairs = {
+        "entry_id": (manifest.entry_id, scope.get("scope_id")),
+        "dataset_id": (manifest.dataset_id, metadata.get("dataset_id")),
+        "training_dataset_id": (
+            manifest.training_dataset_id,
+            metadata.get("training_dataset_id"),
+        ),
+        "signal_fingerprint": (
+            manifest.signal_fingerprint,
+            metadata.get("signal_fingerprint"),
+        ),
+        "producer_source": (
+            manifest.producer_source,
+            metadata.get("producer_source"),
+        ),
+        "row_count": (manifest.row_count, metadata.get("n_observations")),
+        "method_family": (manifest.method_family, metadata.get("method_family")),
+        "method_name": (
+            candidate.get("method_name") or "",
+            metadata.get("method_name"),
+        ),
+        "model_id": (candidate.get("model_id") or "", metadata.get("model_id")),
+        "parameters": (candidate.get("parameters"), scope.get("parameters")),
+        "horizon": (settings.get("horizon"), metadata.get("horizon")),
+        "window": (settings.get("window"), metadata.get("window")),
+        "n_quantiles": (settings.get("n_quantiles"), metadata.get("n_quantiles")),
+    }
+    mismatched = [
+        name for name, (actual, expected) in pairs.items() if actual != expected
+    ]
+    if mismatched:
+        raise ValueError(
+            "cited evaluation series does not match report scope: "
+            + ", ".join(sorted(mismatched))
+        )
 
 
 class ReportService:
@@ -382,6 +425,15 @@ class ReportService:
             if ml_entry_ids is not None:
                 manifest["ml_entry_ids"] = list(ml_entry_ids)
                 manifest["ml"] = payload["ml"]
+            if "ml" in payload:
+                series = EvaluationSeriesStore(self._workspace.ml_evaluation_series)
+                for scope in payload["ml"]["scopes"]:
+                    artifact_id = scope.get("metadata", {}).get("series_artifact_id")
+                    if not artifact_id:
+                        continue
+                    series_manifest = series.load(str(artifact_id)).manifest
+                    _validate_report_series_scope(series_manifest, scope)
+                    series.protect(str(artifact_id))
             published = publish_report(
                 self._workspace,
                 self._store,

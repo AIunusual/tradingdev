@@ -234,8 +234,15 @@ class TestScope:
         scope = ml_signal_scope(_entry("aaa", ic_mean=0.05))
         assert scope["metadata"]["model_id"] == "aaa"
         assert scope["metadata"]["signal_fingerprint"] == "0123456789abcdef"
+        assert scope["metadata"]["series_artifact_id"] == ""
         assert scope["metadata"]["n_observations"] == 200
         assert scope["metadata"]["dataset_id"] == "ds_h1"
+
+    def test_a_scope_keeps_the_series_reference_it_must_protect(self) -> None:
+        artifact_id = "a" * 64
+        entry = replace(_entry("aaa", ic_mean=0.05), series_artifact_id=artifact_id)
+
+        assert ml_signal_scope(entry)["metadata"]["series_artifact_id"] == artifact_id
 
     def test_a_legacy_scope_preserves_unknown_signal_origin(self) -> None:
         record = _entry("legacy", ic_mean=0.05).to_record()

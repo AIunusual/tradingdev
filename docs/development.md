@@ -609,7 +609,7 @@ Codex 產品流程的預設參考配置為 `gpt-6.1-sol` 與 `high`。解析順�
 | 執行計畫、使用者決策、訓練、已保存結果查詢與生成策略隔離／資源限制／清理復原指引 | [test_llm_execution_plans.py](../tests/e2e/test_llm_execution_plans.py)、[test_llm_strategy_execution_guidance.py](../tests/e2e/test_llm_strategy_execution_guidance.py) |
 | 自動 walk-forward 設定、尾端覆蓋與結果交付 | [test_llm_automatic_walk_forward.py](../tests/e2e/test_llm_automatic_walk_forward.py)（`-k automatic_walk_forward`） |
 | 固定參數比較、已保存 scope 比較／排名與參數提案 | [test_llm_comparison.py](../tests/e2e/test_llm_comparison.py)、[test_llm_research_proposal.py](../tests/e2e/test_llm_research_proposal.py) |
-| ML 研究 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py) |
+| ML 研究與已保存序列 | [test_llm_ml.py](../tests/e2e/test_llm_ml.py)、[test_llm_evaluation_series.py](../tests/e2e/test_llm_evaluation_series.py)（序列情境用 `-k evaluation_series`） |
 | 已保存結果解讀、研究筆記更新、封存匯出與既有封存續讀 | [test_llm_research_delivery.py](../tests/e2e/test_llm_research_delivery.py) |
 | HTTP 確認單可讀／不可讀、使用者拒絕執行、既有報告與封存網址交付 | [test_llm_http_delivery.py](../tests/e2e/test_llm_http_delivery.py)（`-k http_delivery`） |
 | 授權後的草稿清理 | [test_llm_cleanup.py](../tests/e2e/test_llm_cleanup.py) |
@@ -840,7 +840,7 @@ uv run --no-sync python -m tooling.review_docs \
 | 要確認的問題 | 輸出與讀法 |
 | --- | --- |
 | 變更由哪個範圍審查？ | `path_owners`、`selected_scopes` 列出負責範圍；owner 不代表所有背景都必須載入。 |
-| 為何選到這些文件？ | `behavior_contexts`、`requirement_contracts`、`development_contexts` 與各批 `document_sections` 列出責任及來源；`fallback_scope` 表示仍採該 owner 的保守背景。 |
+| 為何選到這些文件？ | `behavior_contexts`、`requirement_contracts`、`development_contexts` 與各批 `document_sections` 列出責任及來源；`fallback_scope` 表示仍採該 owner 的保守背景。各 owner 批次都會承接同 owner 其他變更路徑的 registered behavior／development obligations，即使那些路徑在不同的 source units。 |
 | 必要來源是否在同一批？ | `source_contexts` 列出登錄來源及 Git 版本，再核對各批完整檔案與章節；交付清單或雜湊不等於原文，也不是審查通過證明。 |
 | 容量花在哪裡？ | `evidence_utf8_bytes` 是唯一原文；`delivered_original_*` 與 `repeated_original_*` 顯示交付及重複量，`prompt_overhead_*` 是指引與封裝成本。 |
 | 模型實際收到多少輸入？ | 查看各 `batches` 的 prompt 大小及 `total_prompt_*` 合計；`source_pool_utf8_bytes` 只是本機資料池，不是模型輸入。 |
@@ -849,8 +849,11 @@ uv run --no-sync python -m tooling.review_docs \
 `--plan-only` 中止，可明示容量選項取得完整計畫；這不代表已核實模型容量。
 先檢查內容歸屬與重複，再核對所選模型容量並預留輸出空間，才設定實際審查上限。
 容量不足時，依錯誤訊息確認超量來自完整 diff、固定來源或文件脈絡。工具可將
-文件脈絡分批；若完整 diff、必要來源或不可拆章節仍超過上限，須拆分變更，
-或核實模型容量後調整上限。
+文件脈絡分批，且每批都會重複完整的 assigned files 與 diff；partition 不能拆開
+assigned files。各 owner 批次的跨路徑承接會把同 owner 的 registered obligations
+放進該批的 selected context，即使那些路徑不在同一 source unit；這不限於保守 fallback，
+估容量時要一併計入。
+若單批 prompt 仍超過上限，須拆分變更，或核實模型容量後調整上限。
 
 無工具 reviewer 無法自行開啟參照。必要原文須出現在需要它的批次；來源清單或
 其他批次的結論不能代替原文。缺少來源時，以 `--review-context-for SCOPE:PATH`

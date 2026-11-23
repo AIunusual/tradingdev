@@ -252,6 +252,13 @@ class LeaderboardEntry:
     producer_source: ProducerSource = ProducerSource.UNKNOWN
     """Saved signal origin; never inferred from labels or current artifacts."""
 
+    series_artifact_id: str = ""
+    """Content-bound reference to the saved pointwise evaluation series.
+
+    An empty value means the row predates series publication or was never
+    recorded with one; it is never reconstructed from the model or metrics.
+    """
+
     def __post_init__(self) -> None:
         # Validate direct construction as well as records loaded from JSON.
         object.__setattr__(
@@ -294,6 +301,7 @@ class LeaderboardEntry:
             "method_name": self.method_name,
             "training_dataset_id": self.training_dataset_id,
             "producer_source": self.producer_source.value,
+            "series_artifact_id": self.series_artifact_id,
             "n_observations": self.n_observations,
             "metrics": {
                 key: _stored_metric(value) for key, value in self.metrics.items()
@@ -363,6 +371,7 @@ class LeaderboardEntry:
             method_name=str(record.get("method_name", "")),
             training_dataset_id=str(record.get("training_dataset_id") or ""),
             producer_source=ProducerSource(record.get("producer_source", "unknown")),
+            series_artifact_id=str(record.get("series_artifact_id") or ""),
             n_observations=int(record.get("n_observations", 0)),
             # A stored null is a measured-and-failed score, not a missing key,
             # so it must come back as None instead of being converted or dropped.

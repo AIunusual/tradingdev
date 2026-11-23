@@ -13,16 +13,16 @@
 ## FR-ML-002 訓練、驗證與預測
 
 - **需求**：訓練固定模型參數及種子，保存模型與特徵身分；分折驗證與最後使用全部訓練列擬合的模型分開解讀。預測核對特徵順序與模型內容。
-- **驗收**：不把分折分數當作最終模型的樣本外證明。預測核對資料集與模型產物的完整性及特徵順序，不符時拒絕；保存的訓練資料集身分用於來源追溯，不要求預測資料集等同訓練資料集。分折以 panel 共用的相異時間戳切分，排除實際標籤區間與測試區間重疊的訓練時間點，包含 K-fold 右側重疊；含前向填補觀察的 panel 拒絕分折驗證。完整預測與回覆預覽分開，預覽分頁不裁減實際評估的訊號。模型檔案需可信，身分檢查不使 pickle 成為安全格式。
-- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[模型保存](../ml_research.md#trained-models)。
-- **驗證**：[訓練驗證](../../tests/app/test_ml_training_validation.py)、[時間完整性](../../tests/app/test_ml_temporal_integrity.py)、[預測 service](../../tests/app/test_ml_predict.py) 核對分折、標籤區間與預測邊界。
+- **驗收**：不把分折分數當作最終模型的樣本外證明。預測核對資料集與模型產物的完整性及特徵順序，不符時拒絕；保存的訓練資料集身分用於來源追溯，不要求預測資料集等同訓練資料集。分折以 panel 共用的相異時間戳切分，排除實際標籤區間與測試區間重疊的訓練時間點，包含 K-fold 右側重疊；含前向填補觀察的 panel 拒絕分折驗證。完整預測與回覆預覽分開，預覽分頁不裁減實際評估的訊號。模型檔案需可信，身分檢查不使 pickle 成為安全格式。成功的分折驗證須保存每折實際預測為 content-bound artifact，在訓練回覆公開 `fold_series_artifact_id`，並讓 MCP 能發現、依 artifact 分頁讀取列或 bounded 完整匯出；列須保留原座標、可用的標的及 inclusive train/eval bounds。該 artifact 預設受清理保護；最終模型保存失敗後，已保存的 fold evidence 仍須可依契約發現與讀取。對已知 artifact 的讀取遇到缺檔或無效內容時須明確失敗，不得重建或補零；復原、驗證與發現的限制依契約。
+- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[模型保存](../ml_research.md#trained-models)、[Fold prediction series](../ml_research.md#fold-prediction-series)、[已保存逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)。
+- **驗證**：[訓練驗證](../../tests/app/test_ml_training_validation.py)、[時間完整性](../../tests/app/test_ml_temporal_integrity.py)、[預測 service](../../tests/app/test_ml_predict.py) 核對分折、標籤區間與預測邊界；[訓練 fold 序列](../../tests/app/test_ml_training_series.py)、[序列 store](../../tests/adapters/test_evaluation_series_store.py) 與 [MCP 序列工具](../../tests/mcp/test_ml_evaluation_series_tools.py) 核對 fold artifact 保存、保護、發現、分頁、完整匯出與竄改拒絕；[真實模型序列情境](../../tests/e2e/test_llm_evaluation_series.py) 檢查自然需求下的探索、座標解讀與匯出交付。
 
 ## FR-ML-003 訊號與手設規則評估
 
 - **需求**：模型訊號及手設規則可在明示資料與持有期間下評估，核對完整資料對齊；綁定資料集的評估只支援單一標的，panel 須拒絕。評估回覆須區分實際產生來源與呼叫端宣告的方法。選擇記錄評估時，保存來源、方法家族、可取得的參數、訊號指紋與評估條件。
-- **驗收**：來源由實際執行入口決定，公開 caller 不可自稱後端模型或規則。未選擇記錄時只回傳評估結果，不寫入排名資料。未宣告設定時空參數表示未知，不是擬合預設值，不能事後推測補齊；caller 宣告的模型產物不存在或載入驗證失敗時可記錄未知參數，後端模型評估仍須有效產物；其他讀取錯誤則使記錄失敗且不寫入排名資料。呼叫端自備訊號的模型訓練欄位只描述被命名的模型，來源確認不代表樣本外。評估保留未啟動交易的列，並說明暖機及不重疊持有的限制；常數訊號無法形成多空組合，須拒絕評估。簡化無成本統計不宣稱等同交易回測或具有成交／權益證據。看過資料後選門檻保留樣本內選擇偏誤；未保存的序列不事後猜測補算。
-- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[已記錄訊號評估](../ml_research.md#recorded-signal-evaluations)。
-- **驗證**：[規則評估](../../tests/app/test_ml_rule_evaluation.py)、[訊號收益](../../tests/domain/ml/test_simulated_returns.py) 核對持有區間、評估與無成本口徑；[評估來源與訓練綁定](../../tests/app/test_ml_training_binding.py) 核對入口來源、模型宣告及來源保護。
+- **驗收**：來源由實際執行入口決定，公開 caller 不可自稱後端模型或規則。未選擇記錄時只回傳評估結果，不寫入排名資料。未宣告設定時空參數表示未知，不是擬合預設值，不能事後推測補齊；caller 宣告的模型產物不存在或載入驗證失敗時可記錄未知參數，後端模型評估仍須有效產物；其他讀取錯誤則使記錄失敗且不寫入排名資料。呼叫端自備訊號的模型訓練欄位只描述被命名的模型，來源確認不代表樣本外。評估保留未啟動交易的列，並說明暖機及不重疊持有的限制；常數訊號無法形成多空組合，須拒絕評估。簡化無成本統計不宣稱等同交易回測或具有成交／權益證據。看過資料後選門檻保留樣本內選擇偏誤；未保存的序列不事後猜測補算。記錄成功的候選須保存可獨立驗證的逐點序列引用；MCP 須能分頁發現摘要、以 artifact 分頁讀取列或 bounded 完整匯出，保留原座標與不可用原因；對已知 artifact 的讀取遇到缺檔或無效內容時須明確失敗，不得靜默重算或補零；復原、驗證與發現的限制依契約。
+- **契約**：[分折與訊號解讀](../ml_research.md#fold-validation-and-signal-interpretation)、[已記錄訊號評估](../ml_research.md#recorded-signal-evaluations)、[已保存逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)。
+- **驗證**：[規則評估](../../tests/app/test_ml_rule_evaluation.py)、[訊號收益](../../tests/domain/ml/test_simulated_returns.py) 核對持有區間、評估與無成本口徑；[評估來源與訓練綁定](../../tests/app/test_ml_training_binding.py) 核對入口來源、模型宣告及來源保護；[逐點序列契約](../../tests/domain/ml/test_evaluation_series.py)、[序列 store](../../tests/adapters/test_evaluation_series_store.py)、[評估 service](../../tests/app/test_ml_evaluation_series.py)、[訓練 fold 序列](../../tests/app/test_ml_training_series.py) 與 [MCP 序列工具](../../tests/mcp/test_ml_evaluation_series_tools.py) 核對保存、發現、分頁、完整匯出與竄改拒絕；[真實模型序列情境](../../tests/e2e/test_llm_evaluation_series.py) 檢查自然需求下的續讀、不可用 IC 解讀、容量超限復原與缺檔失敗。這些連結標示應執行的檢查，不是通過收據。
 
 ## FR-ML-004 排名與比較條件
 
