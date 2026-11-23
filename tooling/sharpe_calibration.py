@@ -130,7 +130,7 @@ SMOKE_CONFIG = Config(
 CONFIGS: dict[str, Config] = {"full": FULL_CONFIG, "smoke": SMOKE_CONFIG}
 _DSR_TRIALS = 10
 _BURN_IN = 1000
-_CORRELATION = 0.7
+_CROSS_TRIAL_CORRELATION = 0.7
 
 
 def population_sharpe(spec: ProcessSpec) -> float:
@@ -186,12 +186,12 @@ def generate_returns(
         if spec.kind == "volatility":
             low, high = spec.regime_scales
             scales = np.where(states == 0, low, high)
-            return spec.mean + scales * innovations
+            return (spec.mean + scales * innovations)[_BURN_IN:]
         low_mean, high_mean = spec.regime_means
         low_sd, high_sd = spec.regime_scales
         means = np.where(states == 0, low_mean, high_mean)
         scales = np.where(states == 0, low_sd, high_sd)
-        return means + scales * innovations
+        return (means + scales * innovations)[_BURN_IN:]
 
     if spec.kind == "fat_tail":
         if spec.df <= 2:
@@ -239,6 +239,24 @@ def _summarize_width(widths: Sequence[float]) -> dict[str, float]:
     return {"mean": mean, "mcse": sd / math.sqrt(count)}
 
 
+def _classification_mcse(nominal: float, repetitions: int) -> float:
+    """Monte Carlo standard error evaluated at the nominal rate."""
+    if repetitions <= 0:
+        raise ValueError("repetitions must be positive")
+    return math.sqrt(nominal * (1.0 - nominal) / repetitions)
+
+
+def _classification_fields(nominal: float, repetitions: int) -> dict[str, float]:
+    """Explicit tolerance fields so a reader can reproduce every label."""
+    mcse = _classification_mcse(nominal, repetitions)
+    return {
+        "nominal": nominal,
+        "repetitions": float(repetitions),
+        "mcse": mcse,
+        "tolerance": 2.0 * mcse,
+    }
+
+
 def _interpret(rate: float, nominal: float, repetitions: int) -> str:
     """Classify a deviation after allowing two Monte Carlo standard errors.
 
@@ -246,10 +264,8 @@ def _interpret(rate: float, nominal: float, repetitions: int) -> str:
     plug-in estimate collapses to zero at rates of 0 or 1 and would label
     ordinary boundary samples as real deviations.
     """
-    if repetitions <= 0:
-        raise ValueError("repetitions must be positive")
-    mcse = math.sqrt(nominal * (1.0 - nominal) / repetitions)
-    if abs(rate - nominal) <= 2.0 * mcse:
+    tolerance = _classification_fields(nominal, repetitions)["tolerance"]
+    if abs(rate - nominal) <= tolerance:
         return "within_simulation_error"
     return "below_nominal" if rate < nominal else "above_nominal"
 
@@ -324,10 +340,9 @@ def run_matrix(
                 per_period.append(point)
                 annualised.append(annual)
 
+            psr_nominal = 1.0 - config.confidence
             psr_summary = _summarize_proportion(psr_flags)
-            psr_label = _interpret(
-                psr_summary["rate"], 1.0 - config.confidence, len(psr_flags)
-            )
+            psr_label = _interpret(psr_summary["rate"], psr_nominal, len(psr_flags))
             if psr_label != "within_simulation_error":
                 limits.append(f"{spec.name}/{sample_name}: PSR {psr_label}")
 
@@ -362,6 +377,9 @@ def run_matrix(
                 interval_summaries[_block_label(block_size)] = {
                     "coverage": unconditional,
                     "conditional_coverage": conditional,
+                    "classification": _classification_fields(
+                        config.confidence, len(block_records)
+                    ),
                     "coverage_label": coverage_label,
                     "width": _summarize_width([record.width for record in valid]),
                     "unavailable_rate": unavailable,
@@ -376,7 +394,13 @@ def run_matrix(
                     "sample": sample_name,
                     "observations": observations,
                     "population_sharpe_per_period": truth,
-                    "psr_reject": {**psr_summary, "label": psr_label},
+                    "psr_reject": {
+                        **psr_summary,
+                        "classification": _classification_fields(
+                            psr_nominal, len(psr_flags)
+                        ),
+                        "label": psr_label,
+                    },
                     "intervals": interval_summaries,
                     "point_estimate": {
                         "mean_per_period": float(np.mean(per_period)),
@@ -389,6 +413,18 @@ def run_matrix(
     return cells, limits
 
 
+def _correlated_trials(seed: int, observations: int) -> list[npt.NDArray[np.float64]]:
+    """Return trials whose pairwise population correlation is exactly 0.7."""
+    rng = np.random.default_rng(seed)
+    common = rng.normal(size=observations)
+    shared_sd = math.sqrt(_CROSS_TRIAL_CORRELATION)
+    idiosyncratic_sd = math.sqrt(1.0 - _CROSS_TRIAL_CORRELATION)
+    return [
+        shared_sd * common + idiosyncratic_sd * rng.normal(size=observations)
+        for _ in range(_DSR_TRIALS)
+    ]
+
+
 def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, object]:
     """Fixed independent-trial baseline plus a correlated-trial limitation."""
     if deadline is None:
@@ -397,7 +433,6 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
         "independent_trials": {"dsr": [], "hurdle": [], "reject": []},
         "correlated_trials": {"dsr": [], "hurdle": [], "reject": []},
     }
-    idiosyncratic_sd = math.sqrt(1.0 - _CORRELATION**2)
 
     for seed in config.seeds:
         if time.monotonic() > deadline:
@@ -406,13 +441,7 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
         independent = [
             independent_rng.normal(size=config.long_n) for _ in range(_DSR_TRIALS)
         ]
-        correlated_rng = np.random.default_rng(seed + 1_000_000)
-        common = correlated_rng.normal(size=config.long_n)
-        correlated = [
-            _CORRELATION * common
-            + idiosyncratic_sd * correlated_rng.normal(size=config.long_n)
-            for _ in range(_DSR_TRIALS)
-        ]
+        correlated = _correlated_trials(seed + 1_000_000, config.long_n)
 
         for label, trials in (
             ("independent_trials", independent),
@@ -445,7 +474,7 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
         summaries[label] = {
             "trials": _DSR_TRIALS,
             "cross_trial_correlation": (
-                0.0 if label == "independent_trials" else _CORRELATION
+                0.0 if label == "independent_trials" else _CROSS_TRIAL_CORRELATION
             ),
             "within_series_time_correlation": 0.0,
             # Each candidate has N(0, 1) marginals; selecting on sample Sharpe
@@ -479,6 +508,11 @@ def build_report(config: Config) -> dict[str, object]:
             "interpretation_rule": (
                 "abs(observed - nominal) <= 2 * Monte Carlo standard error "
                 "means within_simulation_error"
+            ),
+            "mcse_basis": (
+                "rate summaries report the observed plug-in mcse; labels use "
+                "classification.mcse = sqrt(nominal * (1 - nominal) / repetitions) "
+                "and classification.tolerance = 2 * classification.mcse"
             ),
         },
         "configuration": {

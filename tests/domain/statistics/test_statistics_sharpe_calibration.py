@@ -15,6 +15,8 @@ from tooling.sharpe_calibration import (
     FULL_CONFIG,
     PROCESSES,
     SMOKE_CONFIG,
+    _classification_fields,
+    _correlated_trials,
     _interpret,
     _markov_states,
     _summarize_proportion,
@@ -62,6 +64,15 @@ class TestPopulationTargets:
             0.01 / math.sqrt(0.75), rel=0.02
         )
 
+    @pytest.mark.parametrize("spec", PROCESSES, ids=lambda spec: spec.name)
+    @pytest.mark.parametrize("observations", [60, 500])
+    def test_every_generator_returns_the_requested_length(
+        self, spec: Any, observations: int
+    ) -> None:
+        values = generate_returns(spec, observations, seed=2000)
+
+        assert values.shape == (observations,)
+
 
 class TestFixedMatrix:
     def test_process_family_order_is_frozen(self) -> None:
@@ -93,6 +104,14 @@ class TestFixedMatrix:
         with pytest.raises(ValueError, match="repetitions"):
             _interpret(0.5, 0.5, 0)
 
+    def test_classification_fields_expose_the_nominal_basis(self) -> None:
+        fields = _classification_fields(0.95, 100)
+
+        assert fields["nominal"] == 0.95
+        assert fields["repetitions"] == 100.0
+        assert fields["mcse"] == pytest.approx(math.sqrt(0.95 * 0.05 / 100))
+        assert fields["tolerance"] == pytest.approx(2 * math.sqrt(0.95 * 0.05 / 100))
+
 
 class TestMatrixReport:
     @staticmethod
@@ -105,18 +124,27 @@ class TestMatrixReport:
         assert len(cells) == 12
         assert all(isinstance(item, str) for item in limits)
         for cell in cells:
-            psr = cast("dict[str, float | str]", cell["psr_reject"])
+            psr = cast("dict[str, object]", cell["psr_reject"])
             intervals = cast("dict[str, object]", cell["intervals"])
             point = cast("dict[str, float]", cell["point_estimate"])
-            assert 0.0 <= float(psr["rate"]) <= 1.0
-            assert float(psr["mcse"]) >= 0.0
+            psr_rate = cast("float", psr["rate"])
+            psr_mcse = cast("float", psr["mcse"])
+            assert 0.0 <= psr_rate <= 1.0
+            assert psr_mcse >= 0.0
             assert set(intervals) == {"auto", "20"}
+            psr_fields = cast("dict[str, float]", psr["classification"])
+            expected_psr_mcse = math.sqrt(0.05 * 0.95 / 3)
+            assert psr_fields["mcse"] == pytest.approx(expected_psr_mcse)
+            assert psr_fields["tolerance"] == pytest.approx(2 * expected_psr_mcse)
             for summary in intervals.values():
                 interval = cast("dict[str, object]", summary)
                 coverage = cast("dict[str, float]", interval["coverage"])
                 conditional = cast("dict[str, float]", interval["conditional_coverage"])
+                classification = cast("dict[str, float]", interval["classification"])
                 assert 0.0 <= coverage["rate"] <= 1.0
                 assert 0.0 <= conditional["rate"] <= 1.0
+                expected_coverage_mcse = math.sqrt(0.95 * 0.05 / 3)
+                assert classification["mcse"] == pytest.approx(expected_coverage_mcse)
                 unavailable = cast("float", interval["unavailable_rate"])
                 assert 0.0 <= unavailable <= 1.0
                 assert interval["coverage_label"] in {
@@ -177,6 +205,13 @@ class TestKnownRisks:
 
 
 class TestDsrBaseline:
+    def test_correlated_trial_generator_matches_declared_correlation(self) -> None:
+        trials = np.vstack(_correlated_trials(seed=2000, observations=200_000))
+        correlations = cast("Any", np.corrcoef(trials))
+        off_diagonal = correlations[np.triu_indices(len(trials), k=1)]
+
+        assert float(np.mean(off_diagonal)) == pytest.approx(0.7, abs=0.01)
+
     def test_independent_and_correlated_trials_are_reported_separately(self) -> None:
         config = replace(SMOKE_CONFIG, seeds=tuple(range(2000, 2010)))
         report = run_dsr(config)
