@@ -749,9 +749,10 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | 開發政策／已登錄開發工具及其已登錄的 Markdown 指引／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
-PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
-依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
-開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更需要完整分流的有效證據。
+PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 的 `classify_changes`，
+依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode。`_tooling_path` 判定開發工具
+與指引是否已登錄，`ChangeScope` 的 `delivery_profile` 和 `candidate_checks` 分別給出交付分流與候選檢查順序。
+未登錄的 `scripts/`、`tooling/` 或其他未知路徑，以及混入產品程式的變更，都需要完整分流的有效證據。
 若將登錄與導入工具拆成兩個 PR，先核對工具的使用端、預定路徑及測試責任，並驗證新增該路徑的
 Git 差異會選到預期分流。隨後在實際加入檔案的 PR 審查其內容、權限與執行結果。
 
