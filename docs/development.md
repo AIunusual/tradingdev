@@ -34,7 +34,7 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
-| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策及已登錄的開發工具、Markdown 指引與工具專用測試支援檔案。適用路徑見[候選分流](#2-在-github-建立-pr交由審閱者檢查)。 |
+| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 修改已登錄工具或其 Markdown 指引時，依[分流表](#2-在-github-建立-pr交由審閱者檢查)確認適用範圍。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
@@ -274,9 +274,7 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 使用 `cross_scope`。參照本身不證明內容正確，也不會自動載入來源；必要內容缺失時
 依 finding 補齊證據後重查，不為通過審查把 schema 重抄回文件。
 
-一般文件走文件檢查，已登錄簡報走簡報專項。已登錄、供開發工具讀取的 Markdown 指引屬於
-工具分流；交付時仍以[整體差異的計畫](#1-分階段提交並推送)選擇檢查。分類規則見
-[AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
+交付文件、簡報或工具指引前，依[整體差異的計畫](#1-分階段提交並推送)選擇檢查。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
 
 ### SRS 維護與檢核
@@ -747,12 +745,8 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | 開發政策／已登錄開發工具及其已登錄的 Markdown 指引／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
-PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 的 `classify_changes`，
-依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode。`_tooling_path` 判定開發工具
-與指引是否已登錄，`ChangeScope` 的 `delivery_profile` 和 `candidate_checks` 分別給出交付分流與候選檢查順序。
-未登錄的 `scripts/`、`tooling/` 或其他未知路徑，以及混入產品程式的變更，都需要完整分流的有效證據。
-若將登錄與導入工具拆成兩個 PR，先核對工具的使用端、預定路徑及測試責任，並驗證新增該路徑的
-Git 差異會選到預期分流。隨後在實際加入檔案的 PR 審查其內容、權限與執行結果。
+查詢路徑登錄與分流時，參閱 [change_scope.py](../tooling/git/change_scope.py) 的
+`classify_changes` 與 `ChangeScope`。PR 與本機候選均依 Git 差異兩側的路徑及檔案模式判定。
 
 ### 測試證據與文件修正
 
@@ -767,10 +761,8 @@ PR 與本機合併候選先按整體差異決定檢查範圍，文件語意審�
 
 - 測試輸入的路徑、Git blob 與 mode 全部相同，只有已登錄的一般文件改變時，
   沿用測試結果並補做文件格式、連結及 SRS 結構檢查。
-- 程式、測試、政策、已登錄的開發工具、模型提示詞、依賴、簡報或未知路徑改變，
-  或環境指紋不同時，舊證據失效，重新執行候選所需的完整分流。變更限於已登錄的開發工具及其
-  已登錄的 Markdown 指引時執行 `scripts/check-tooling.sh`，混入產品程式時執行 `scripts/check-full.sh`。
-  `AGENTS.md` 也按開發政策處理。
+- 程式、測試、政策、已登錄的開發工具與指引、模型提示詞、依賴、簡報或未知路徑改變，
+  或環境指紋不同時，重新執行該候選所需的完整分流。`AGENTS.md` 按開發政策處理。
 - 紀錄缺失、無法解析、執行中、失敗或不完整時不重用；不以最後一個文件 commit
   掩蓋更早的未驗證程式修改，也不退回較舊的成功紀錄。
 
