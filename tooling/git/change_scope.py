@@ -25,6 +25,10 @@ _TOOLING_FILES = frozenset(
         "AGENTS.md",
         "CLAUDE.md",
         ".agents/skills/wait-for-check/SKILL.md",
+        # Reserve the advisory workflow and the Markdown it reads for tooling checks
+        # beginning with the separate change that first adds those files.
+        ".github/workflows/pr-agent.yml",
+        "docs/pr_review.md",
         "tests/tooling/git_check_scenarios.py",
         "tooling/documentation.py",
         "tooling/requirements.py",

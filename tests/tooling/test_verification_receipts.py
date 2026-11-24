@@ -83,6 +83,7 @@ def test_documentation_refresh_reuses_success_without_relabelling_tested_tree(
         "policy",
         "tooling_helper",
         "wait_skill",
+        "pr_review_instructions",
         "prompt",
         "mode",
         "symlink",
@@ -112,6 +113,7 @@ def test_executable_or_unknown_changes_invalidate_even_after_a_docs_commit(
             "policy": "AGENTS.md",
             "tooling_helper": "tests/tooling/git_check_scenarios.py",
             "wait_skill": ".agents/skills/wait-for-check/SKILL.md",
+            "pr_review_instructions": "docs/pr_review.md",
             "prompt": "src/prompt.md",
             "presentation": "docs/talks/tradingdev-introduction/slides.md",
         }[change]
