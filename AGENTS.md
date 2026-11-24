@@ -373,7 +373,7 @@
   都重新執行候選驗證，由工具判定哪些測試證據仍適用。純本機結果只代表當次版本，
   不能鎖住網站或消除檢查後競態。
   合併前的本機候選檢查由審閱者執行。GitHub 的 PR-Agent 提供選用初審，留言處理見
-  [PR 初審回覆](docs/pr_review.md)；初審結果不能作為合併候選的檢查證據。
+  [開發指南的 PR 審閱步驟](docs/development.md#2-在-github-建立-pr交由審閱者檢查)；初審結果不能作為合併候選的檢查證據。
 - 尚未建立 PR 時，可在乾淨且已提交的 checkout 執行
   `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
   此命令採用相同的文件／簡報／程式候選分流，仍核對本機 refs 與工作樹未變；

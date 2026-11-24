@@ -727,12 +727,15 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
-如需 GitHub 網頁初審，啟用 Actions 並設定 `OPENAI_KEY` secret。[PR-Agent 工作流程](../.github/workflows/pr-agent.yml)
-會在協作者的非草稿 PR 開啟、重開、轉為可審查或更新時，將 PR 內容、差異、commit 訊息與先前發現交給
-OpenAI 審查，包含從 fork 提出的 PR。意見與未結案項目的處理方式見[初審與覆審回覆原則](pr_review.md)。
+啟用 Actions 並設定 `OPENAI_KEY` secret 後，以 GitHub 使用者帳號提出的非草稿 PR 在開啟、重開、轉為可審查或更新時
+可自動觸發[網頁初審](pr_review.md)。[工作流程](../.github/workflows/pr-agent.yml)使用目標 repository 的設定與 GitHub API，
+也能審查 fork PR，過程中不執行 PR 程式碼。確認作者具協作者資格後才將 PR 內容、差異、commit 訊息及先前發現送交 OpenAI。
 
-額度耗盡時，當次初審會標記為未完成，下次更新仍會嘗試。可在 **Actions → PR-Agent 初審** 查看原因，
-或用 **Disable workflow** 暫停請求。初審為選用，準備合併時仍須執行本機候選檢查：
+作者在 **Files changed → Conversations** 核對未結討論，包含行號已過時的項目。僅見於一般留言或摘要的問題，
+推送前逐項列為 PR 描述待辦，附原留言連結、受查 commit 與驗證情境。在原處回覆修正 commit 與驗證結果，再由審閱者結案。
+
+身分查詢失敗或額度用完時，可在 **Actions → PR-Agent 初審** 查看原因。額度用完會標記當次初審未完成，
+下次更新仍會嘗試，可用 **Disable workflow** 暫停。準備合併時仍須執行本機候選檢查：
 
 ```bash
 ./scripts/check-pr.sh 27
