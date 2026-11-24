@@ -319,7 +319,7 @@
   各路徑都驗證
   暫存內容的獨立 snapshot，核對暫存 tree 未變，不以未暫存修正掩蓋錯誤。
   文件與簡報專項不執行 Ruff、Mypy、自動 Codex 審查或完整 pytest。
-- 一般 task branch push 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
+- 本機 task branch push hook 不跑完整 pytest 或呼叫模型。Hook 的主線推送保護
   僅限 GitHub，依 Git 傳入的實際目的地拒絕直接推送或刪除主線；本機 hook
   不能攔截 GitHub 網頁合併，也不能攔截不建立 commit 的本機 fast-forward。
   不得把 hook 描述為遠端強制門禁。
@@ -333,7 +333,7 @@
   涉及 `docs/requirements.md` 或 `docs/requirements/**/*.md` 的新增、修改、
   刪除或改名時，文件／簡報 snapshot 通過後另執行既有 Codex 語意審查，
   核對需求、契約、驗收及所需來源；不因此加入 Ruff、Mypy 或產品 pytest。
-  此例外僅用於明確執行的 PR／本機候選檢查，commit／push 不呼叫模型。
+  此例外僅用於明確執行的 PR／本機候選檢查，commit／push hooks 不呼叫模型。
   差異審閱仍須確認語意、命令、讀者用途與必要的視覺／操作行為。
 - 開發工具與完整程式候選若涉及簡報、其編譯模組／scripts 或 `tooling/marp/`，
   先執行簡報 snapshot；失敗即停止，不進入 Codex 或 pytest。其後由 Codex
@@ -372,7 +372,8 @@
   審閱者在 GitHub 網頁合併前，須確認目前 base／head 仍相同；任一改變
   都重新執行候選驗證，由工具判定哪些測試證據仍適用。純本機結果只代表當次版本，
   不能鎖住網站或消除檢查後競態。
-  本專案不要求雲端 Codex CI 或上傳憑證；目前採審閱者遵守流程。
+  合併前的本機候選檢查由審閱者執行。GitHub 的 PR-Agent 提供選用初審，留言處理見
+  [開發指南的 PR 審閱步驟](docs/development.md#2-在-github-建立-pr交由審閱者檢查)；初審結果不能作為合併候選的檢查證據。
 - 尚未建立 PR 時，可在乾淨且已提交的 checkout 執行
   `uv run --no-sync python -m tooling.git.gate full --base <主線ref>`。
   此命令採用相同的文件／簡報／程式候選分流，仍核對本機 refs 與工作樹未變；

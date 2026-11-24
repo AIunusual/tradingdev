@@ -652,7 +652,7 @@ codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
 
 CLI 參數以 `codex review --help` 核對。已由獨立 reviewer 涵蓋且無未解疑慮的相同內容
 可沿用審查結果。程式碼審查、離線測試、文件一致性與真實模型流程驗證各有用途，
-不能互相替代；一般 commit／push 不會自動執行模型 code review。
+不能互相替代。本機 commit／push hooks 不會自動執行模型 code review。
 
 ## 撰寫 issue
 
@@ -707,8 +707,8 @@ git switch -c feature/my-task origin/main
 git push -u origin feature/my-task
 ```
 
-已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查；一般 push
-不執行完整 pytest 或呼叫模型。本機 hook 的主線推送保護限於 GitHub remote。
+已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查。
+一般 push 的本機 hook 不執行完整 pytest 或呼叫模型。主線推送保護限於 GitHub remote。
 
 交付前對整個任務差異取得機械可讀的檢查計畫；以下 `origin/main` 應替換成實際任務基準：
 
@@ -726,6 +726,16 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 不再傳檔名。工具失敗時不能假設可走較輕的分流。
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
+
+啟用 Actions 並設定 `OPENAI_KEY` secret 後，以 GitHub 使用者帳號提出的非草稿 PR 在開啟、重開、轉為可審查或更新時
+可自動觸發[網頁初審](pr_review.md)。[工作流程](../.github/workflows/pr-agent.yml)使用目標 repository 的設定與 GitHub API，
+也能審查 fork PR，過程中不執行 PR 程式碼。確認作者具協作者資格後才將 PR 內容、差異、commit 訊息及先前發現送交 OpenAI。
+
+作者在 **Files changed → Conversations** 核對未結討論，包含行號已過時的項目。僅見於一般留言或摘要的問題，
+推送前逐項列為 PR 描述待辦，附原留言連結、受查 commit 與驗證情境。在原處回覆修正 commit 與驗證結果，再由審閱者結案。
+
+身分查詢失敗或額度用完時，可在 **Actions → PR-Agent 初審** 查看原因。額度用完會標記當次初審未完成，
+下次更新仍會嘗試，可用 **Disable workflow** 暫停。準備合併時仍須執行本機候選檢查：
 
 ```bash
 ./scripts/check-pr.sh 27
