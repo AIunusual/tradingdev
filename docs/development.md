@@ -727,7 +727,7 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
 
-啟用 Actions 並設定 `OPENAI_KEY` secret 後，以 GitHub 使用者帳號提出的非草稿 PR 在開啟、重開、轉為可審查或更新時
+啟用 Actions 並設定 `OPENAI_API_KEY` secret 後，以 GitHub 使用者帳號提出的非草稿 PR 在開啟、重開、轉為可審查或更新時
 可自動觸發[網頁初審](pr_review.md)。[工作流程](../.github/workflows/pr-agent.yml)使用目標 repository 的設定與 GitHub API，
 也能審查 fork PR，過程中不執行 PR 程式碼。確認作者具協作者資格後才將 PR 內容、差異、commit 訊息及先前發現送交 OpenAI。
 

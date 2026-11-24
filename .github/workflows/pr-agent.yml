@@ -40,7 +40,7 @@ jobs:
         # Official 0.50.0-github_action image
         uses: docker://pragent/pr-agent@sha256:548e894a88071180832b2f4233f734d0acd0db1a879e2fcbaa70bac8b8372ebe
         env:
-          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_ACTION_CONFIG__PR_ACTIONS: '["opened", "reopened", "ready_for_review", "synchronize"]'
           GITHUB_ACTION_CONFIG__AUTO_REVIEW: "true"
