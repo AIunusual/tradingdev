@@ -34,7 +34,7 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
-| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策與已登錄開發工具；分類來源為 `tooling/git/change_scope.py`。 |
+| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策及已登錄的開發工具、Markdown 指引與工具專用測試支援檔案。適用路徑見[候選分流](#2-在-github-建立-pr交由審閱者檢查)。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
@@ -94,10 +94,8 @@ stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
 ### 執行離線測試
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
-`check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
-`check-tooling.sh`；已登錄且專供開發工具使用的測試支援檔案亦依此分流。
-產品、依賴、產品共用測試設施及無法確認的變更仍跑完整套件。
-提交與 PR 的檢查分流見下方流程。
+手動執行 `check-full.sh` 一律跑完整離線套件。`check-tooling.sh` 執行開發工具套件；
+交付時先[產生整個任務差異的檢查計畫](#1-分階段提交並推送)，依 `delivery_profile` 執行相應命令。
 
 ### 平行執行離線測試
 
@@ -276,8 +274,8 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 使用 `cross_scope`。參照本身不證明內容正確，也不會自動載入來源；必要內容缺失時
 依 finding 補齊證據後重查，不為通過審查把 schema 重抄回文件。
 
-一般文件只走文件檢查；已登錄簡報走簡報專項；開發政策與已登錄開發工具走工具
-檢查，其餘程式／依賴或未知變更走完整檢查。分類規則見
+一般文件走文件檢查，已登錄簡報走簡報專項。已登錄、供開發工具讀取的 Markdown 指引屬於
+工具分流；交付時仍以[整體差異的計畫](#1-分階段提交並推送)選擇檢查。分類規則見
 [AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
 
