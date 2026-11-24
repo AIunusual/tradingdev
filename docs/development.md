@@ -745,8 +745,8 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | 開發政策／已登錄開發工具及其已登錄的 Markdown 指引／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
-查詢路徑登錄與分流時，參閱 [change_scope.py](../tooling/git/change_scope.py) 的
-`classify_changes` 與 `ChangeScope`。PR 與本機候選均依 Git 差異兩側的路徑及檔案模式判定。
+查詢 PR 與本機候選的分流規則時，參閱 [change_scope.py](../tooling/git/change_scope.py) 的
+`classify_changes` 與 `ChangeScope`。
 
 ### 測試證據與文件修正
 
