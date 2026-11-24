@@ -54,6 +54,9 @@ def repository() -> Iterator[tuple[Path, str]]:
         ("pyproject.toml", "code"),
         ("uv.lock", "code"),
         (".githooks/pre-commit", "tooling"),
+        (".github/workflows/pr-agent.yml", "tooling"),
+        (".github/workflows/deploy.yml", "code"),
+        ("docs/pr_review.md", "tooling"),
         ("tests/test_app.py", "code"),
         ("tooling/git/claim_issue.py", "tooling"),
         ("tooling/git/change_scope.py", "tooling"),
@@ -133,6 +136,7 @@ def test_registered_support_files_use_tooling_checks(
         (".agents/skills/wait-for-check/SKILL.md", "rename"),
         ("tests/tooling/git_check_scenarios.py", "mixed"),
         (".agents/skills/wait-for-check/SKILL.md", "mixed"),
+        (".github/workflows/pr-agent.yml", "mixed"),
     ],
 )
 def test_support_registration_preserves_full_check_boundaries(
