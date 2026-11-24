@@ -656,7 +656,7 @@ codex -c 'review_model="gpt-6.1-sol"' -c 'model_reasoning_effort="high"' \
 
 CLI 參數以 `codex review --help` 核對。已由獨立 reviewer 涵蓋且無未解疑慮的相同內容
 可沿用審查結果。程式碼審查、離線測試、文件一致性與真實模型流程驗證各有用途，
-不能互相替代；一般 commit／push 不會自動執行模型 code review。
+不能互相替代。本機 commit／push hooks 不會自動執行模型 code review。
 
 ## 撰寫 issue
 
@@ -711,8 +711,8 @@ git switch -c feature/my-task origin/main
 git push -u origin feature/my-task
 ```
 
-已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查；一般 push
-不執行完整 pytest 或呼叫模型。本機 hook 的主線推送保護限於 GitHub remote。
+已有開發分支時沿用。Commit hook 依暫存內容執行文件、簡報或快速檢查。
+一般 push 的本機 hook 不執行完整 pytest 或呼叫模型。主線推送保護限於 GitHub remote。
 
 交付前對整個任務差異取得機械可讀的檢查計畫；以下 `origin/main` 應替換成實際任務基準：
 
@@ -730,6 +730,11 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 不再傳檔名。工具失敗時不能假設可走較輕的分流。
 
 ### 2. 在 GitHub 建立 PR，交由審閱者檢查
+
+協作者可以先在 GitHub 閱讀 PR-Agent 的初審，依[初審與覆審回覆原則](pr_review.md)處理留言。
+在 **Files changed** 的討論串清單查看未解決的項目，包括已過時的行號，再對照 PR 描述中的待辦。
+PR-Agent 會更新同一則摘要；模型可能漏列舊問題，摘要中的「已解決」仍須核對原討論串。
+準備合併時，審閱者依下列流程執行本機候選檢查及該分流適用的 Codex 審查。
 
 ```bash
 ./scripts/check-pr.sh 27
@@ -752,6 +757,20 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
 依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
 開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更需要完整分流的有效證據。
+
+#### 設定 GitHub 初審
+
+在目標 repository 啟用 Actions，將 `OPENAI_KEY` 存為 Actions secret。GitHub 自動提供
+`GITHUB_TOKEN`，工作流程需要讀取 repository 內容及寫入 PR 留言的權限。
+[PR-Agent 工作流程](../.github/workflows/pr-agent.yml)以 PR 作者的協作者身分判定資格，包含來自
+fork 的 PR。非草稿 PR 開啟、重開、轉為可審查或來源分支收到新提交時均可觸發。
+送交 OpenAI 的內容包括 PR 標題與描述、commit 訊息、程式差異與相鄰程式碼、先前的發現，
+以及預設分支上的回覆原則。指引更新後會在下一次初審或覆審生效。
+
+初審可用時才提供意見，請將此工作流程保留為選用檢查。API 拒絕請求時，本次不重試或切換備援模型。
+在 **Actions → PR-Agent 初審** 查看執行摘要與錯誤日誌；額度耗盡時仍可照常執行本機審查。
+下一個符合條件的 PR 事件會再嘗試。要暫停所有後續請求，可在該工作流程的選單選擇
+**Disable workflow**，要恢復時選擇 **Enable workflow**。
 
 ### 測試證據與文件修正
 
