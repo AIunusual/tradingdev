@@ -27,6 +27,7 @@ def test_only_confirmed_pr_authors_reach_paid_review(
     assert steps.index(author) < steps.index(review)
     assert author["env"]["PR_AUTHOR"] == "${{ github.event.pull_request.user.login }}"
     assert review["if"] == "steps.author.outputs.eligible == 'true'"
+    assert review["env"]["OPENAI_KEY"] == "${{ secrets.OPENAI_API_KEY }}"
 
     # Check the membership in the target repository, even for a fork author.
     curl = tmp_path / "curl"
