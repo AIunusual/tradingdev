@@ -34,7 +34,7 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/check-presentations.sh` | 文件品質、簡報來源建置、頁碼及離線資源。 | 改建置／檢查行為時維護 `tests/tooling/test_presentations.py`；打包與發布 staging 維護 `tests/tooling/test_presentation_bundle.py`；視覺與瀏覽器操作另行確認。 |
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
-| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 開發政策與已登錄開發工具；分類來源為 `tooling/git/change_scope.py`。 |
+| `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 修改已登錄工具或其 Markdown 指引時，依[分流表](#2-在-github-建立-pr交由審閱者檢查)確認適用範圍。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
@@ -94,10 +94,8 @@ stub 的 `Any` 預設值，使不存在的方法或錯誤輸入失去檢查。
 ### 執行離線測試
 
 離線測試可直接使用 `uv run --all-extras pytest`，加檔案路徑或 `-k` 執行相關範圍。
-`check-full.sh` 一律跑完整離線套件；純開發政策／已登錄開發工具使用
-`check-tooling.sh`；已登錄且專供開發工具使用的測試支援檔案亦依此分流。
-產品、依賴、產品共用測試設施及無法確認的變更仍跑完整套件。
-提交與 PR 的檢查分流見下方流程。
+手動執行 `check-full.sh` 一律跑完整離線套件。`check-tooling.sh` 執行開發工具套件；
+交付時先[產生整個任務差異的檢查計畫](#1-分階段提交並推送)，依 `delivery_profile` 執行相應命令。
 
 ### 平行執行離線測試
 
@@ -276,9 +274,7 @@ PR 文件 reviewer 無法自行開啟參照。審查需要的正式定義若未�
 使用 `cross_scope`。參照本身不證明內容正確，也不會自動載入來源；必要內容缺失時
 依 finding 補齊證據後重查，不為通過審查把 schema 重抄回文件。
 
-一般文件只走文件檢查；已登錄簡報走簡報專項；開發政策與已登錄開發工具走工具
-檢查，其餘程式／依賴或未知變更走完整檢查。分類規則見
-[AGENTS.md](../AGENTS.md#git-hooks-與本機-pr-審查)。
+交付文件、簡報或工具指引前，依[整體差異的計畫](#1-分階段提交並推送)選擇檢查。
 文件檢查不執行文件中的命令或驗證外部網址，也不代替語意與操作審閱。
 
 ### SRS 維護與檢核
@@ -746,12 +742,11 @@ uv run --no-sync python -m tooling.git.change_scope --base origin/main --tree HE
 | --- | --- |
 | 一般文件 | 文件格式、連結與 SRS 結構；涉及 SRS 時再執行 Codex 一致性審查。 |
 | 已登錄簡報 | 文件與簡報專項；混合 SRS 時再執行 Codex 審查；視覺操作仍須人工確認。 |
-| 開發政策／已登錄開發工具／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
+| 開發政策／已登錄開發工具及其已登錄的 Markdown 指引／已登錄工具專用測試支援檔案 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整 `tests/tooling`。 |
 | 產品／依賴／產品共用測試設施／未知或混合產品變更 | 必要的簡報專項、Codex 文件一致性審查、快速品質與完整離線 pytest。 |
 
-PR 與本機候選共用 [change_scope.py](../tooling/git/change_scope.py) 分類器，
-依不可變 Git tree 核對新增、修改、刪除、改名兩側及檔案 mode；未知內容保留完整檢查。
-開發工具分流不等於整個 `scripts/` 或 `tooling/` 白名單，混入產品變更需要完整分流的有效證據。
+查詢 PR 與本機候選的分流規則時，參閱 [change_scope.py](../tooling/git/change_scope.py) 的
+`classify_changes` 與 `ChangeScope`。
 
 ### 測試證據與文件修正
 
@@ -766,8 +761,8 @@ PR 與本機合併候選先按整體差異決定檢查範圍，文件語意審�
 
 - 測試輸入的路徑、Git blob 與 mode 全部相同，只有已登錄的一般文件改變時，
   沿用測試結果並補做文件格式、連結及 SRS 結構檢查。
-- 程式、測試、政策、模型提示詞、依賴、簡報或未知路徑改變，或環境指紋不同時，
-  重新執行對應的完整分流。`AGENTS.md` 不屬於一般文件例外。
+- 程式、測試、政策、已登錄的開發工具與指引、模型提示詞、依賴、簡報或未知路徑改變，
+  或環境指紋不同時，重新執行該候選所需的完整分流。`AGENTS.md` 按開發政策處理。
 - 紀錄缺失、無法解析、執行中、失敗或不完整時不重用；不以最後一個文件 commit
   掩蓋更早的未驗證程式修改，也不退回較舊的成功紀錄。
 
