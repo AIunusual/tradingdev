@@ -545,7 +545,15 @@ class StatisticsService:
             if not _same_trial_basis(trial, settings):
                 return _unavailable("trial_basis_differs", source, trial_id), None
             observations = trial.observations
-            assert observations.timestamps is not None
+            if observations.timestamps is None or not observations.timestamps:
+                return (
+                    _unavailable(
+                        "timestamps_unavailable",
+                        source,
+                        f"{trial_id} has no timestamps",
+                    ),
+                    None,
+                )
             trial_gap = _gap_reason(observations.timestamps, settings.frequency)
             if trial_gap is not None:
                 return _unavailable(trial_gap, source), None
@@ -662,6 +670,8 @@ def _read_settings(scope: LoadedHistoryScope) -> _Settings:
         periods = None
         missing.append("periods_per_year")
     risk_free = _finite_or_none(settings.get("risk_free_rate"))
+    if risk_free is None and "risk_free_rate" not in missing:
+        missing.append("risk_free_rate")
     frequency = settings.get("frequency")
     if not isinstance(frequency, str) or not frequency:
         frequency = ""

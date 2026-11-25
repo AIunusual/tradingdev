@@ -101,6 +101,7 @@ def _publish(
     summary: bool = False,
     trial_slopes: dict[str, float] | None = None,
     trial_skip_days: dict[str, int] | None = None,
+    trial_missing_timestamps: set[str] | None = None,
 ) -> None:
     equity = _equity(30) if equity is None else equity
     timestamps = _timestamps(len(equity)) if timestamps is None else timestamps
@@ -187,7 +188,9 @@ def _publish(
             init_cash=observations.init_cash,
             equity_curve=equity if name == names[0] else scalars,
             returns=None,
-            timestamps=scope_timestamps,
+            timestamps=None
+            if name in (trial_missing_timestamps or set())
+            else scope_timestamps,
             trades=trades,
         )
         raw[name] = value
@@ -439,6 +442,40 @@ def test_dsr_only_for_verified_selected_training_scope(
     assert test.inference.dsr.status == "unavailable"
     assert test.inference.dsr.unavailable is not None
     assert test.inference.dsr.unavailable.reason == "not_selected_training_scope"
+
+
+def test_non_selected_trial_without_timestamps_makes_dsr_unavailable(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    _publish(
+        workspace,
+        store,
+        optimization=True,
+        trial_missing_timestamps={"trial/0/train"},
+    )
+    response = StatisticsAnalysisResponse.model_validate(
+        service.analyze("run", "trial/1/train")
+    )
+    assert response.summary.status == "available"
+    assert response.inference.dsr.status == "unavailable"
+    assert response.inference.dsr.unavailable is not None
+    assert response.inference.dsr.unavailable.reason == "timestamps_unavailable"
+
+
+def test_null_risk_free_rate_reports_unavailable_without_crashing(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    settings = _settings()
+    settings["risk_free_rate"] = None
+    _publish(workspace, store, settings=settings)
+    response = StatisticsAnalysisResponse.model_validate(service.analyze("run"))
+    assert response.settings.risk_free_rate is None
+    assert response.summary.status == "unavailable"
+    assert response.summary.unavailable is not None
+    assert response.summary.unavailable.reason == "missing_risk_free_rate"
+    assert response.breakeven.status == "available"
 
 
 def test_weekly_cadence_does_not_produce_daily_inference(
