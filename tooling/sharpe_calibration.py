@@ -12,9 +12,9 @@ Usage::
     uv run --no-sync python -m tooling.sharpe_calibration \
         --profile smoke --output /tmp/tradingdev-sharpe-smoke.json
 
-The command is offline, writes only the requested JSON file and creates no
-temporary workspace files. ``--output`` must be an absolute path outside the
-repository checkout.
+The command is offline. It creates missing output parent directories and writes
+only the requested JSON file; it creates no temporary workspace files.
+``--output`` must be an absolute path outside the repository checkout.
 """
 
 from __future__ import annotations

@@ -94,7 +94,7 @@ Bundled 策略隨 Git／套件發佈；生成策略、行情與執行結果存�
 | `tooling/review_scope.py`、`tooling/review_plan.py` | 固定責任範圍、文件原文章節、完整變更涵蓋與有容量上限的審查規劃 |
 | `tooling/review_docs.py`、`tooling/review_options.py` | 共用操作參數，協調模型批次、共同期限、清理與判定 |
 | `tooling/process_guard.py`、`tooling/codex_binary.py` | 開發工具與測試共用的程序觀測／清理及 Codex 執行檔定位 |
-| `tooling/sharpe_calibration.py` | 固定 Sharpe 推論校準矩陣：預先登錄生成程序、seed、樣本量、block size 與判讀規則；離線產生 JSON，不讀取 run、artifact 或 workspace |
+| `tooling/sharpe_calibration.py` | 固定 Sharpe 推論校準矩陣的離線入口；產生 JSON，不讀取 run、artifact 或 workspace |
 | `tests/` | 測試案例、fixtures、MCP 與模型測試情境 |
 | `research/` | 獨立研究原型；MAE 原型直接讀取指定行情檔案，與正式 Dashboard 分開 |
 
