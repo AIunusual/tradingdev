@@ -86,7 +86,7 @@ class ThresholdRule:
 
     @property
     def parameters(self) -> dict[str, float]:
-        """The exact numeric setting; threshold surfaces are not supported."""
+        """The exact numeric level, retained for saved parameter analysis."""
         return {"threshold": float(self.threshold)}
 
     def signal(
