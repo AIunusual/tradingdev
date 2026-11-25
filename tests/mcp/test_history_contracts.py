@@ -32,7 +32,13 @@ from tradingdev.app.contracts.history import (
     RunTradesResponse,
 )
 from tradingdev.app.contracts.reports import ReportResponse, ReportSectionCatalog
+from tradingdev.app.contracts.statistics import (
+    StatisticsAnalysisResponse,
+    StatisticsQueryError,
+)
 from tradingdev.app.report_service import ReportService
+from tradingdev.app.run_service import RunService
+from tradingdev.app.statistics_service import StatisticsService
 from tradingdev.app.trade_history_service import TradeHistoryService
 from tradingdev.domain.execution import ExecutionManifest
 from tradingdev.domain.performance.artifacts import (
@@ -42,7 +48,7 @@ from tradingdev.domain.performance.artifacts import (
 )
 from tradingdev.domain.strategies.execution import StrategyExecution
 from tradingdev.mcp.strict_server import StrictMCPServer
-from tradingdev.mcp.tools import history
+from tradingdev.mcp.tools import history, runs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -114,7 +120,20 @@ def _publish(
             "mode": "signal",
             "values": {"total_pnl": 15.0},
             "parameters": params,
-            "metadata": {"execution_context": config["backtest"]},
+            "metadata": {
+                "execution_context": config["backtest"],
+                "settings": {
+                    "initial_cash": 1000.0,
+                    "frequency": "1d",
+                    "periods_per_year": 365.0,
+                    "risk_free_rate": 0.0,
+                    "return_std_ddof": 1,
+                    "period_pnl_ddof": 0,
+                    "missing_dates": "not_filled",
+                    "trade_scope": "closed",
+                    "calendar_timezone": "UTC",
+                },
+            },
         }
     )
     observations = ScopeObservations(
@@ -606,3 +625,42 @@ def test_service_schema_drift_is_not_returned_as_an_unvalidated_payload(
     ) as caught:
         asyncio.run(server.call_tool(name, arguments))
     assert isinstance(caught.value.__cause__, ValidationError)
+
+
+def test_statistics_tools_share_one_service_and_keep_unavailable_explicit(
+    context: tuple[
+        WorkspacePaths, SQLiteStore, MCPServer, TradeHistoryService, ReportService
+    ],
+) -> None:
+    workspace, store, _, _, _ = context
+    server = MCPServer("statistics-contract-test")
+    statistics = StatisticsService(workspace=workspace, store=store)
+    runs.register(server, RunService(workspace=workspace, store=store), statistics)
+
+    async def check() -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+        assert "analyze_run_statistics" in tools
+        assert tools["analyze_run_statistics"].annotations is not None
+        assert tools["analyze_run_statistics"].annotations.read_only_hint is False
+        payload = await _call(
+            server, "analyze_run_statistics", {"run_id": "run", "scope": "full"}
+        )
+        response = StatisticsAnalysisResponse.model_validate(payload)
+        assert response.summary.status == "available"
+        assert response.inference.interval.status == "unavailable"
+        assert response.inference.interval.unavailable is not None
+        assert response.inference.interval.unavailable.next_step
+        saved = await _call(
+            server,
+            "analyze_run_statistics",
+            {"run_id": "run", "scope": "full", "save_artifact": True},
+        )
+        artifact = StatisticsAnalysisResponse.model_validate(saved).artifact
+        assert artifact is not None and artifact.artifact_type == "statistics_analysis"
+        missing = await _call(
+            server, "analyze_run_statistics", {"run_id": "unknown", "scope": None}
+        )
+        error = StatisticsQueryError.model_validate(missing)
+        assert error.success is False and error.code == "run_not_found"
+
+    asyncio.run(check())

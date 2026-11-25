@@ -107,6 +107,32 @@ class PerformanceSummary:
     unavailable: Mapping[str, str]
 
 
+def daily_excess_returns(
+    equity_curve: npt.ArrayLike,
+    timestamps: npt.ArrayLike,
+    *,
+    init_cash: float,
+    periods_per_year: float,
+    risk_free_rate: float,
+) -> pd.Series[float]:
+    """Daily returns above the run's fixed risk-free rate.
+
+    The first daily opening equity is the run's original capital, not the
+    first observation. This is the exact excess-return series used by
+    :func:`summarize_performance` for its Sharpe ratio, exposed so inference
+    callers do not substitute the generic first-observation return series.
+    Missing calendar days are omitted, never filled. The sample standard
+    deviation used by the Sharpe functions is ``ddof=1``.
+    """
+    capital = _positive(init_cash, "init_cash")
+    periods = _positive(periods_per_year, "periods_per_year")
+    risk_free = _finite(risk_free_rate, "risk_free_rate")
+    if risk_free <= -1:
+        raise ValueError("risk_free_rate must be greater than -1")
+    equity = equity_series(equity_curve, timestamps)
+    return _daily_returns(equity, capital, periods, risk_free)[1]
+
+
 def summarize_performance(
     equity_curve: npt.ArrayLike,
     timestamps: npt.ArrayLike,
@@ -210,14 +236,7 @@ def summarize_performance(
             unavailable["sharpe_ratio"] = "insufficient_data"
             unavailable["return_information_ratio"] = "insufficient_data"
         else:
-            daily_opening = daily.shift(1).fillna(initial)
-            returns = daily_pnl / daily_opening
-            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-                daily_rate = _finite(
-                    float(np.expm1(np.log1p(risk_free) / periods)),
-                    "daily risk-free rate",
-                )
-            excess = returns - daily_rate
+            returns, excess = _daily_returns(equity, initial, periods, risk_free)
             sharpe = _ratio(excess, periods, "sharpe_ratio", unavailable)
             return_information = _ratio(
                 returns, periods, "return_information_ratio", unavailable
@@ -268,6 +287,21 @@ def _ratio(
         unavailable[name] = "unbounded"
         return None
     return ratio
+
+
+def _daily_returns(
+    equity: pd.Series[float], initial: float, periods: float, risk_free: float
+) -> tuple[pd.Series[float], pd.Series[float]]:
+    """Raw and risk-free-adjusted daily returns on the capital-inclusive basis."""
+    daily = equity.resample("D").last().dropna()
+    daily_opening = daily.shift(1).fillna(initial)
+    returns = _period_changes(daily, initial) / daily_opening
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        daily_rate = _finite(
+            float(np.expm1(np.log1p(risk_free) / periods)),
+            "daily risk-free rate",
+        )
+    return returns, returns - daily_rate
 
 
 def _period_changes(closing: pd.Series[float], initial: float) -> pd.Series[float]:

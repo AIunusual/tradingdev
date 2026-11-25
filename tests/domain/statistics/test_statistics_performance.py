@@ -15,6 +15,7 @@ from tradingdev.domain.backtest.signal_engine import SignalBacktestEngine
 from tradingdev.domain.backtest.volume_engine import VolumeBacktestEngine
 from tradingdev.domain.statistics.performance import (
     PerformanceSummary,
+    daily_excess_returns,
     summarize_performance,
 )
 from tradingdev.domain.statistics.periods import period_pnl
@@ -483,3 +484,24 @@ def test_summary_independently_reconciles_current_engine_outputs(mode: str) -> N
     assert result.closed_trades == result.marked_trades
     assert result.marked_trades.net_pnl == pytest.approx(result.total_pnl)
     assert result.closed_trades.win_rate == pytest.approx(run.metrics["win_rate"])
+
+
+def test_daily_excess_returns_start_from_original_capital_not_first_observation() -> (
+    None
+):
+    equity = [990.0, 1010.0, 1005.0]
+    timestamps = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    actual = daily_excess_returns(
+        equity,
+        timestamps,
+        init_cash=1000.0,
+        periods_per_year=365.0,
+        risk_free_rate=0.02,
+    )
+    closing = pd.Series(equity, index=timestamps)
+    opening = closing.shift(1).fillna(1000.0)
+    expected = (closing - opening) / opening - math.expm1(math.log1p(0.02) / 365.0)
+    np.testing.assert_allclose(actual.to_numpy(), expected.to_numpy(), rtol=1e-15)
+    # A generic first-observation baseline would give 0 for day 1 and omit
+    # the 10-point loss that happened before the first observation.
+    assert actual.iloc[0] == pytest.approx(-0.01 - math.expm1(math.log1p(0.02) / 365.0))

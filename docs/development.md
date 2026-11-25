@@ -630,7 +630,8 @@ uv run --no-sync python -m tooling.prompt_contracts
 
 兩者使用可清理的臨時工作區，不呼叫模型、下載行情或執行回測。Bytes 不是 tokens；
 指定工具集合的量測也不能當成完整產品成本。預算集中於 `prompt_contracts.py`，
-超量須檢查內容歸屬，不以截斷內容通過檢查。
+超量須檢查內容歸屬，不以截斷內容通過檢查。新增工具時先量測其 input projection；
+`#240` 的 `analyze_run_statistics` 實測為 912 bytes，因此明確調高模型工具與初始總量預算。
 Local 真實模型測試另記錄 request 增量與峰值；Codex 完整上下文及內部壓縮不在此量測範圍。
 
 ## 開發階段的程式碼審查

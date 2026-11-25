@@ -22,6 +22,7 @@ from tradingdev.app.ml_service import MLService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.research_note_service import ResearchNoteService
 from tradingdev.app.run_service import RunService
+from tradingdev.app.statistics_service import StatisticsService
 from tradingdev.app.strategy_cleanup_service import StrategyCleanupService
 from tradingdev.app.strategy_service import StrategyService
 from tradingdev.app.trade_history_service import TradeHistoryService
@@ -138,7 +139,11 @@ def create_server(
     data.register(mcp, data_service)
     execution.register(mcp, execution_service)
     jobs.register(mcp, job_service)
-    runs.register(mcp, run_service)
+    runs.register(
+        mcp,
+        run_service,
+        StatisticsService(workspace=workspace, store=store),
+    )
     history.register(
         mcp,
         TradeHistoryService(workspace=workspace, store=store),

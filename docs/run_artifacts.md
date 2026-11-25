@@ -610,6 +610,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | Optimization grid progress and partial trial scope discovery | `get_job_status`, `get_optimization_trials` |
 | Training trials behind a ranked optimization | `get_selection_evidence` with the [ranking reference](#ranking-saved-run-scopes) |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
+| Statistical analysis of one saved run/scope | `analyze_run_statistics`; see [statistics analysis](statistics_analysis.md) |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
 

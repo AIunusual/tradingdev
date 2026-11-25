@@ -17,9 +17,11 @@ BUDGETS = {
     "instructions": 11000,
     # Raised from 70000 and 80000 to fit the strategy-ranking surface planned
     # in #38: about 2.6 KB for one new tool plus a wider compare_runs schema,
-    # with room for one revision round.
-    "model_tools": 76000,
-    "initial_total": 87000,
+    # with room for one revision round. Raised again for #240 after measuring
+    # one analyze_run_statistics tool at 912 bytes: 76,725 model_tools bytes
+    # and 87,706 instructions+tools bytes on the final candidate.
+    "model_tools": 78000,
+    "initial_total": 89000,
     "strategy_section": 16000,
     "indicator_reference": 10000,
     "discovery_response": 20000,

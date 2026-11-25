@@ -16,6 +16,13 @@
 - **契約**：[績效解讀與基準](../performance_artifacts.md)。
 - **驗證**：[歷史績效查詢](../../tests/app/test_run_metrics.py)、[績效數值](../../tests/domain/backtest/test_performance_metrics.py)、[基準 service](../../tests/app/test_benchmark_service.py) 核對定義、缺值與對齊。
 
+單一 run/scope 統計分析（仍屬本節範圍）：
+
+- 分析需求：使用者可從已保存且完整性已核驗的單一 run/scope 取得描述摘要、可用的推論及其限制；MCP 與 CLI 必須共用同一分析入口，並可交付衍生且不可變的可讀分析檔。
+- 分析驗收：分析不重跑策略、不下載行情、不改寫原始指標或舊報告。本金、模式、頻率、年化與無風險利率取自該次執行的凍結設定；描述摘要可獨立於推論可用。時間缺口不壓縮成連續樣本，volume 模式不計算報酬型 Sharpe，DSR 僅在可驗證的選定訓練 scope 與原始試驗母體下計算；每個 unavailable 都有原因、下一步與來源，不以零或 NaN／inf 冒充結果。相同來源與設定可重現，衍生檔記錄設定、限制、結果與來源。
+- 分析契約：[統計分析契約](../statistics_analysis.md)。
+- 分析驗證：[統計分析 service](../../tests/app/test_statistics_analysis.py)、[MCP 歷史契約](../../tests/mcp/test_history_contracts.py)、[CLI 入口](../../tests/adapters/test_statistics_cli.py) 核對共用入口、不可用語意與衍生檔。
+
 ## FR-RES-003 紀錄查詢與可離線報告
 
 - **需求**：以已保存證據產生可離線閱讀的 HTML，提供設定、績效、交易及適用的委託／帳戶明細；計算結果、模型解讀與診斷限制分開標示。

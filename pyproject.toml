@@ -51,6 +51,7 @@ dashboard = [
 tradingdev = "tradingdev.adapters.cli.main:main"
 tradingdev-mcp = "tradingdev.mcp.server:main"
 tradingdev-report = "tradingdev.adapters.cli.reports:main"
+tradingdev-statistics = "tradingdev.adapters.cli.statistics:main"
 tradingdev-conversation = "tradingdev.adapters.cli.conversations:main"
 tradingdev-codex = "tradingdev.adapters.cli.codex:main"
 

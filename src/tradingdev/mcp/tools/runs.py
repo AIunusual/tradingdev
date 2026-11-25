@@ -27,6 +27,11 @@ from tradingdev.app.contracts.research import (
     RunScopeSelection,
     RunSummary,
 )
+from tradingdev.app.contracts.statistics import (
+    StatisticsAnalysisResponse,
+    StatisticsQueryError,
+)
+from tradingdev.app.statistics_service import StatisticsService
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
@@ -34,8 +39,13 @@ if TYPE_CHECKING:
     from tradingdev.app.run_service import RunService
 
 
-def register(mcp: MCPServer, service: RunService) -> None:
+def register(
+    mcp: MCPServer,
+    service: RunService,
+    statistics: StatisticsService | None = None,
+) -> None:
     """Register run tools."""
+    statistics = statistics or StatisticsService()
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -214,3 +224,28 @@ def register(mcp: MCPServer, service: RunService) -> None:
         if payload.get("success") is False:
             return MetricQueryError.model_validate(payload)
         return RunMetricsResponse.model_validate(payload)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def analyze_run_statistics(
+        run_id: str, scope: str | None = None, save_artifact: bool = False
+    ) -> StatisticsAnalysisResponse | StatisticsQueryError:
+        """Analyze one saved run/scope from validated observations; no rerun.
+
+        Uses frozen capital, frequency, annualization and risk-free settings.
+        Summaries may be available when inference is not; each absence has a
+        reason, next step and source. Return inference is unavailable for
+        volume mode, timestamp gaps or incomplete settings. PSR is iid; DSR
+        only for a verified selected training scope. save_artifact publishes
+        a derived immutable Markdown artifact; source reports stay unchanged.
+        """
+        payload = statistics.analyze(run_id, scope, save_artifact=save_artifact)
+        if payload.get("success") is False:
+            return StatisticsQueryError.model_validate(payload)
+        return StatisticsAnalysisResponse.model_validate(payload)
