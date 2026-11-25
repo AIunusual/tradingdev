@@ -15,11 +15,8 @@ from tooling.context_budget import audit_environment, json_size, tool_context_re
 # Maintenance budgets, not model token limits or a client compatibility promise.
 BUDGETS = {
     "instructions": 11000,
-    # Raised from 70000 and 80000 to fit the strategy-ranking surface planned
-    # in #38: about 2.6 KB for one new tool plus a wider compare_runs schema,
-    # with room for one revision round. Raised again for #240 after measuring
-    # one analyze_run_statistics tool at 912 bytes: 76,725 model_tools bytes
-    # and 87,706 instructions+tools bytes on the final candidate.
+    # Maintenance budgets: fit the registered tool surface with room for
+    # revisions. Measure with tooling.context_budget before changing them.
     "model_tools": 78000,
     "initial_total": 89000,
     "strategy_section": 16000,

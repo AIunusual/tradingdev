@@ -765,7 +765,7 @@ def _same_trial_basis(trial: LoadedHistoryScope, settings: _Settings) -> bool:
 
 
 def _source_hash(loaded: LoadedHistoryRun, scope: LoadedHistoryScope) -> str:
-    """Hash one validated snapshot; every result and artifact binds to it."""
+    """Hash the whole validated snapshot, including DSR trial evidence."""
     payload = {
         "run": {
             key: loaded.run.get(key)
@@ -794,8 +794,15 @@ def _source_hash(loaded: LoadedHistoryRun, scope: LoadedHistoryScope) -> str:
                 for key, value in loaded.performance.definitions.items()
             },
         },
-        "scope": scope.performance.model_dump(mode="json"),
-        "observations": scope.observations.model_dump(mode="json"),
+        "selected_scope": scope.scope_id,
+        "scopes": {
+            key: value.model_dump(mode="json")
+            for key, value in loaded.performance.scopes.items()
+        },
+        "observations": {
+            key: value.model_dump(mode="json")
+            for key, value in loaded.observations.scopes.items()
+        },
         "parameters": scope.parameters,
         "execution_config": scope.execution_config,
     }

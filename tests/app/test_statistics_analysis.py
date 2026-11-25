@@ -99,6 +99,7 @@ def _publish(
     settings: dict[str, Any] | None = None,
     optimization: bool = False,
     summary: bool = False,
+    trial_slopes: dict[str, float] | None = None,
 ) -> None:
     equity = _equity(30) if equity is None else equity
     timestamps = _timestamps(len(equity)) if timestamps is None else timestamps
@@ -173,9 +174,8 @@ def _publish(
     scopes: dict[str, PerformanceScope] = {}
     raw: dict[str, ScopeObservations] = {}
     for name in names:
-        scalars = _equity(
-            len(equity), mode=mode, slope=1.0 if name != "trial/1/train" else 2.0
-        )
+        slope = (trial_slopes or {}).get(name, 2.0 if name == "trial/1/train" else 1.0)
+        scalars = _equity(len(equity), mode=mode, slope=slope)
         value = ScopeObservations(
             init_cash=observations.init_cash,
             equity_curve=equity if name == names[0] else scalars,
@@ -432,6 +432,28 @@ def test_dsr_only_for_verified_selected_training_scope(
     assert test.inference.dsr.status == "unavailable"
     assert test.inference.dsr.unavailable is not None
     assert test.inference.dsr.unavailable.reason == "not_selected_training_scope"
+
+
+def test_source_hash_binds_trial_evidence_used_for_dsr(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    _publish(workspace, store, run_id="run_a", optimization=True)
+    _publish(
+        workspace,
+        store,
+        run_id="run_b",
+        optimization=True,
+        trial_slopes={"trial/0/train": 3.0},
+    )
+    first = StatisticsAnalysisResponse.model_validate(
+        service.analyze("run_a", "trial/1/train")
+    )
+    second = StatisticsAnalysisResponse.model_validate(
+        service.analyze("run_b", "trial/1/train")
+    )
+    assert _dsr(first) is not None and _dsr(second) is not None
+    assert first.source.source_hash != second.source.source_hash
 
 
 def test_derived_artifact_is_reproducible_and_source_bundle_unchanged(

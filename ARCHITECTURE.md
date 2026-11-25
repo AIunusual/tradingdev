@@ -347,6 +347,12 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
 | `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。獨立計算，尚未接入績效發布或 MCP 查詢 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
+| `app/statistics_service.py`、`mcp/tools/runs.py`、`adapters/cli/statistics.py` | 單一 saved run/scope 統計分析；透過 `TradeHistoryService.load_run` 取得已核驗 snapshot，呼叫 domain 統計函式，MCP 與 CLI 共用同一結果，可出版衍生 artifact |
+
+表中 `domain/statistics/` 純函式本身仍不讀取 runs／artifacts，也不自行註冊 MCP 工具；
+新增的 `StatisticsService` 是產品整合入口，讀取完整保存觀察值與凍結設定後呼叫
+`summarize_performance`、`summarize_breakeven` 與 Sharpe 推論函式。此路徑只新增分析回覆
+與衍生 artifact，不改寫原始績效指標或舊報告，也不把推論登錄為排名指標。
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
 不可用值保留原因，不能以零代替。解讀使用當次保存的定義、單位與設定；詳細查詢不重跑策略

@@ -713,7 +713,7 @@ HTML 報告位於 `reports/`，可分享的研究 ZIP 位於 `research_archives/
 只使用可信來源的工作區與模型檔案。升級 Python 或 ML 套件後，舊模型可能無法載入，
 請在新環境重新訓練；相容性與保存方式見[ML 研究產物](docs/ml_research.md#ml-research-artifacts)。
 
-MCP 與報告 CLI `tradingdev-report` 的 `--workspace` 優先於環境變數
+MCP、`tradingdev-report` 與 `tradingdev-statistics` 的 `--workspace` 優先於環境變數
 `TRADINGDEV_WORKSPACE`；兩者都未設定時，使用啟動目錄下的 `workspace/`。
 回測 CLI 與 Dashboard 使用同一環境變數及預設目錄，但沒有 `--workspace` 參數。
 每次開新終端機時，請重新設定環境變數，或在自己的 shell 設定中保存它。
@@ -810,6 +810,23 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 候選，可加 `--ml-allow-mixed`，報告會標明限制。用 `--ml-require-verified-baseline`
 要求原始行情基線通過驗證，混合展示時也適用。評估列一致性可另看報告的核對結果。
 詳見[報告選項與比較規則](docs/reports.md#composable-offline-reports)。
+
+### 分析已保存的單一結果
+
+不透過助手也可對一個已保存的 run/scope 做統計分析：
+
+```bash
+uv run --locked tradingdev-statistics \
+  --workspace /absolute/path/to/tradingdev-workspace \
+  --run-id YOUR_RUN_ID \
+  --scope trial/1/train \
+  --save-artifact
+```
+
+`--run-id` 必要；省略 `--scope` 時使用該 run 的預設 scope；
+`--save-artifact` 會另外保存一份衍生分析檔。命令在終端機輸出 JSON，
+只讀取已保存的觀察值，不重跑策略或下載行情。
+結果欄位、限制與不可用原因見[統計分析契約](docs/statistics_analysis.md)。
 
 ### 從終端機操作研究筆記
 
