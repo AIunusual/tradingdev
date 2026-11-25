@@ -441,6 +441,27 @@ def test_dsr_only_for_verified_selected_training_scope(
     assert test.inference.dsr.unavailable.reason == "not_selected_training_scope"
 
 
+def test_weekly_cadence_does_not_produce_daily_inference(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    weekly = [(FIRST + pd.Timedelta(weeks=index)).isoformat() for index in range(30)]
+    _publish(
+        workspace,
+        store,
+        timestamps=weekly,
+        settings=_settings(frequency="1W", periods_per_year=52.0),
+    )
+    response = StatisticsAnalysisResponse.model_validate(service.analyze("run"))
+    assert response.inference.interval.status == "unavailable"
+    assert response.inference.interval.unavailable is not None
+    assert (
+        response.inference.interval.unavailable.reason == "unsupported_daily_sampling"
+    )
+    assert response.inference.psr.status == "unavailable"
+    assert response.inference.dsr.status == "unavailable"
+
+
 def test_dsr_is_unavailable_when_a_non_selected_trial_has_a_gap(
     storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
 ) -> None:

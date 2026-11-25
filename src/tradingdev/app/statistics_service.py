@@ -26,7 +26,10 @@ from tradingdev.adapters.storage.filesystem import (
 )
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
 from tradingdev.app.trade_history_service import HistoryReadError, TradeHistoryService
-from tradingdev.domain.performance.sampling import bar_duration_ns
+from tradingdev.domain.performance.sampling import (
+    bar_duration_ns,
+    daily_observation_unavailable_reason,
+)
 from tradingdev.domain.statistics.breakeven import summarize_breakeven
 from tradingdev.domain.statistics.performance import (
     daily_excess_returns,
@@ -740,7 +743,10 @@ def _daily_returns(
 
 
 def _gap_reason(timestamps: list[str], frequency: str) -> str | None:
-    """Refuse to turn missing bars into adjacent bootstrap observations."""
+    """Refuse missing bars and cadences that cannot supply daily observations."""
+    unsupported = daily_observation_unavailable_reason(frequency)
+    if unsupported is not None:
+        return unsupported
     duration = bar_duration_ns(frequency)
     if duration is None:
         return "bar_cadence_unknown"

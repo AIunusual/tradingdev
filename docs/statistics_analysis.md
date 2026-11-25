@@ -69,9 +69,12 @@ DSR 公式及限制由 [`domain/statistics/sharpe.py`](../src/tradingdev/domain/
 
 觀測日曆政策固定為 **exact declared bar cadence**：有 timestamp 時，相鄰 bar 必須
 等於 [`bar_duration_ns(frequency)`](../src/tradingdev/domain/performance/sampling.py)。
-時間缺口回報 `observation_gap_unsupported`，
-不把缺值壓縮成相鄰的 bootstrap 樣本；unknown frequency 回報 `bar_cadence_unknown`。
-各分析各自 unavailable，不讓一個缺值掩蓋其他可用摘要。
+推論先要求 declared cadence 能形成日觀測；粗於日頻的 cadence 回報
+`unsupported_daily_sampling`，unknown frequency 回報 `unknown_bar_frequency`。
+時間缺口回報 `observation_gap_unsupported`，不把缺值壓縮成相鄰的 bootstrap 樣本；
+已知頻率但無法換算固定 bar duration 時回報 `bar_cadence_unknown`。
+因此每週或每月 bar 即使在 UTC 日分桶後每週只留下一個非空欄位，也不會被當成
+每日報酬或以 daily periods 年化。各分析各自 unavailable，不讓一個缺值掩蓋其他可用摘要。
 
 每個 **unavailable 分析 outcome**（`summary`、`breakeven`、`interval`、`psr`、`dsr`）
 至少有 `reason`、`next_step`、`source`，可附 `detail`。摘要內的逐指標 unavailable
