@@ -24,7 +24,9 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
   `frequency`、`periods_per_year`、`risk_free_rate` 與 `return_std_ddof` 取自該 scope
   的 `metadata.settings`，不使用目前政策預設。缺少 frequency 或 risk-free rate 時，
   需要這些值的摘要與推論回報 unavailable；缺少 annualization 時，描述摘要仍可計算，
-  但 Sharpe 類結果回報 `missing_annualization`。
+  但 Sharpe 類結果回報 `missing_annualization`。`return_std_ddof` 可為 `null`：
+  歷史設定缺值時不補現行預設，描述摘要仍回傳，Sharpe 與其相依推論回報
+  `unsupported_return_std_ddof`。
 - signal 模式要求 observations 有正且有限的 `init_cash`；volume 模式的累積 P&L
   沒有本金基準，所有報酬型結果回報 `not_applicable`。trial scope 必須以相同 mode、
   本金、frequency、annualization 與 risk-free rate 才可進入 DSR 母體。
