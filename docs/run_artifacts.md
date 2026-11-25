@@ -717,6 +717,7 @@ the following files are independently registered under `runs/<run_id>/`:
 | --- | --- |
 | `result.json` | Numerical result projection; normal job/run responses may select only a summary. |
 | `performance.json`, `observations.json` | Complete saved metrics, definitions and observations by scope; see [Performance Artifacts](performance_artifacts.md). |
+| `statistics_analysis/<digest>.md` | Derived immutable single-run/scope analysis; see [Statistics Analysis](statistics_analysis.md). |
 | `manifest.json` | Approved execution specification; single-job publication occurs at submission, child publication when saving its approved result. |
 | `config.yaml` | Inspection projection checked against the executed manifest, without reloading caller YAML. |
 | `strategy.py` | Source snapshot when a source path is available; generated source is from the selected immutable revision. |

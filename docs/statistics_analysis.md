@@ -57,7 +57,8 @@ DSR 公式及限制由 [`domain/statistics/sharpe.py`](../src/tradingdev/domain/
 | DSR | deflated Sharpe | 只對 `selected_train_scope` 計算；試驗 Sharpe 由同一 snapshot 的所有 trial observations 以同口徑重算，`n_trials` 使用 `optimization_selection.raw_attempted`。test scope 回報 `not_selected_training_scope`，不套用 train hurdle。缺少完整試驗、搜尋母體或同口徑 trial Sharpe 時回報 `search_evidence_incomplete`；不從排名頁數、test 分數或未知值臆造搜尋履歷。DSR 假設試驗獨立；相關試驗可能讓 hurdle 低估或高估，修正方向未知。 |
 
 觀測日曆政策固定為 **exact declared bar cadence**：有 timestamp 時，相鄰 bar 必須
-等於 `bar_duration_ns(frequency)`。時間缺口回報 `observation_gap_unsupported`，
+等於 [`bar_duration_ns(frequency)`](../src/tradingdev/domain/performance/sampling.py)。
+時間缺口回報 `observation_gap_unsupported`，
 不把缺值壓縮成相鄰的 bootstrap 樣本；unknown frequency 回報 `bar_cadence_unknown`。
 各分析各自 unavailable，不讓一個缺值掩蓋其他可用摘要。
 
@@ -75,6 +76,13 @@ DSR 公式及限制由 [`domain/statistics/sharpe.py`](../src/tradingdev/domain/
 已註冊身分不符時失敗。檔案置於該 run 的 `statistics_analysis/` 下，只新增 artifact
 metadata，不修改 `performance.json`、`observations.json` 或既有報告。
 服務不自動刪除舊分析；保留期限由使用者依工作區政策處理。
+
+回傳的 `path` 可能只是 MCP server 本機路徑，不能當作下載網址。MCP 用戶端應使用
+回傳的 `artifact_id` 呼叫 `get_artifact(include_content=true,
+expected_sha256=<回傳 sha256>)` 讀取 UTF-8 內容；依
+[artifact 文字分頁契約](run_artifacts.md#reading-artifact-text) 跟隨
+`content_page.next_offset`，並讓 `content_sha256` 與每次讀取的 expected hash 對齊。
+目前 HTTP artifact download 不服務 `statistics_analysis` 類型。
 
 ## 驗證入口
 

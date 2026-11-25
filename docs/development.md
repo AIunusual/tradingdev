@@ -250,6 +250,7 @@ MCP runtime target 含 Docker CLI，Compose 只把本機 socket 掛給可信控�
 | [執行產物](run_artifacts.md) | Workspace、身分、保存格式及歷史查詢入口。 |
 | [ML 研究](ml_research.md)、[執行計畫](execution_plans.md) | 各自的輸入、驗證、保存及執行邊界。 |
 | [績效產物](performance_artifacts.md)、[報告](reports.md) | 保存數值及觀察值的語意、報告呈現與交付。 |
+| [統計分析](statistics_analysis.md) | 單一已保存 run/scope 的摘要、推論限制與衍生分析檔。 |
 | [簡報編輯指南](talks/tradingdev-introduction/README.md) | 編輯者的內容與版型維護、預覽、打包及日常發布。 |
 | 本指南 | 工具入口、負責範圍、操作方式與測試維護位置。 |
 | [AGENTS.md](../AGENTS.md) | 唯一代理開發政策來源。 |
