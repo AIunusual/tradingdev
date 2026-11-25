@@ -35,8 +35,11 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
 
 - 整段淨損益從原始本金起算（volume 為 0）；「首筆觀察後變化」是另一個欄位，
   兩者不可互換。初始成本或第一筆觀察前的虧損不得被丟棄。
-- 交易分為 `closed_trades` 與 `marked_trades`：保存為 `open` 的部位只用最後 mark，
-  不補造出場成交、手續費或滑價。交易成本與週轉成本只來自保存的 `fee` 欄位。
+- 交易分為 `closed_trades` 與 `marked_trades`：保存為 `open` 的部位只用最後 mark
+  計入 P&L，不補造出場成交、手續費或滑價；此分析不另行估算滑價。已實現成本
+  只加總保存交易的 `fee`；traded notional 則由 `size_quote`、`entry_price`、
+  `exit_price` 與 `status` 推導，`annual_turnover` 與 `annual_cost_drag` 另用服務
+  傳入的 `init_cash` 作為 capital basis。
 - 日／月 UTC 分桶使用 `domain/statistics/periods.py` 的 observed-period 規則：
   缺日期不填零，period P&L 使用 `ddof=0`，Sharpe 使用 `ddof=1` 與執行時固定的
   annualization / risk-free rate。通用 `period_returns` 以首筆權益為基準，
@@ -44,8 +47,12 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
   [`daily_excess_returns`](../src/tradingdev/domain/statistics/performance.py)，
   首日 opening equity 是原始本金。
 - 描述摘要與 breakeven 可獨立於推論計算。[`summarize_breakeven`](../src/tradingdev/domain/statistics/breakeven.py)
-  只使用保存交易紀錄的 `fee`、成本與 mark；未平倉 mark 不產生假想出場成本。
-  volume 模式沒有 capital-relative turnover / cost drag。
+  由每筆交易的 `net_pnl`（勝敗與平均損益）、`size_quote`、`entry_price`、
+  `exit_price`、`fee` 與 `status`，加上 observations 首／末 timestamp 界定的
+  評估期間，以及服務傳入的 `init_cash`（可為 `None`）計算。`status="open"`
+  只計入進場 notional；其 `exit_price` 是 mark，只讓已保存的 `net_pnl` 參與 P&L，
+  不構成假想出場成交或額外成本。volume 模式沒有 capital basis，因此
+  `annual_turnover` 與 `annual_cost_drag` 不可用。
 
 ## 推論與不可用語意
 
