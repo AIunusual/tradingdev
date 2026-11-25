@@ -6,6 +6,7 @@ import asyncio
 import base64
 import csv
 import io
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -702,3 +703,31 @@ def test_statistics_mcp_reports_missing_return_ddof(tmp_path: Path) -> None:
         assert unavailable["sharpe_ratio"] == "unsupported_return_std_ddof"
 
     asyncio.run(check())
+
+
+def test_statistics_output_schema_documents_result_semantics(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    server = MCPServer("statistics-schema-description-test")
+    runs.register(
+        server,
+        RunService(workspace=workspace, store=store),
+        StatisticsService(workspace=workspace, store=store),
+    )
+
+    async def check() -> str:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+        schema = tools["analyze_run_statistics"].output_schema
+        assert schema is not None
+        return json.dumps(schema, ensure_ascii=False)
+
+    text = asyncio.run(check())
+    for phrase in (
+        "total_pnl",
+        "observed_equity_change",
+        "closed_trades",
+        "marked_trades",
+        "365.25",
+        "slippage",
+    ):
+        assert phrase in text

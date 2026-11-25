@@ -206,11 +206,26 @@ class StatisticsAnalysisResponse(ContractModel):
     algorithm_version: str
     source: StatisticsSource
     settings: StatisticsSettings
-    # Detailed result records remain declared below for validators and docs;
-    # the tool schema keeps one bounded JSON object per outcome so the MCP
-    # discovery surface does not duplicate every field definition.
-    summary: StatisticsOutcome[dict[str, JsonValue]]
-    breakeven: StatisticsOutcome[dict[str, JsonValue]]
+    # Descriptions are part of the advertised outputSchema so MCP clients can
+    # interpret the bounded JSON objects without reading repository files.
+    summary: StatisticsOutcome[dict[str, JsonValue]] = Field(
+        description=(
+            "Result keys: total_pnl is net P&L from original capital; "
+            "observed_equity_change is last minus first observation and is not "
+            "total_pnl. closed_trades are executed closed records; marked_trades "
+            "include open positions at saved marks without invented exit costs. "
+            "unavailable maps metric names to reason codes; null means unavailable."
+        )
+    )
+    breakeven: StatisticsOutcome[dict[str, JsonValue]] = Field(
+        description=(
+            "Costs are the saved trade fee sum. Traded notional uses size_quote, "
+            "entry_price, exit_price and status; open trades contribute entry "
+            "notional only. annual_turnover and annual_cost_drag use capital when "
+            "present; years is elapsed UTC time divided by 365.25 days, not "
+            "periods_per_year. No slippage is estimated."
+        )
+    )
     inference: InferenceSection
     limitations: list[str]
     artifact: StatisticsArtifact | None = None

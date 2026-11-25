@@ -10,6 +10,12 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
 `run_id`、`scope` 與 `save_artifact`，不會各自計算。回傳契約見
 [`app/contracts/statistics.py`](../src/tradingdev/app/contracts/statistics.py)。
 
+MCP 用戶端無法讀取 repository 路徑；`analyze_run_statistics` 的 advertised
+`outputSchema` 在 `summary` 與 `breakeven` 欄位描述中直接提供 result keys 與語意，
+包括 `total_pnl` 對 `observed_equity_change`、closed 對 marked trades，以及成本、
+notional、365.25 天時間基準與不估算滑價的說明。MCP 讀取該 `outputSchema` 即可取得使用者可存取的契約；
+repository contract 是維護來源。
+
 ## 輸入與來源綁定
 
 - 來源必須由 [`TradeHistoryService`](../src/tradingdev/app/trade_history_service.py)

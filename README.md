@@ -821,11 +821,11 @@ uv run --locked tradingdev-report --workspace /absolute/path/to/tradingdev-works
 uv run --locked tradingdev-statistics \
   --workspace /absolute/path/to/tradingdev-workspace \
   --run-id YOUR_RUN_ID \
-  --scope trial/1/train \
   --save-artifact
 ```
 
 `--run-id` 必要；省略 `--scope` 時使用該 run 的預設 scope；
+若要分析 optimization 的特定 trial，可加 `--scope trial/1/train`（前提是該 run 有此 scope）。
 `--save-artifact` 會另外保存一份衍生分析檔。命令在終端機輸出 JSON，
 讀取並核驗該 run 已保存的證據與設定：績效 bundle、原始 observations、
 run／manifest 資料與凍結設定；DSR 另使用已保存的 trial observations 與
