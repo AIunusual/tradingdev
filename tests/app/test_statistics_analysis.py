@@ -100,6 +100,7 @@ def _publish(
     optimization: bool = False,
     summary: bool = False,
     trial_slopes: dict[str, float] | None = None,
+    trial_skip_days: dict[str, int] | None = None,
 ) -> None:
     equity = _equity(30) if equity is None else equity
     timestamps = _timestamps(len(equity)) if timestamps is None else timestamps
@@ -176,11 +177,17 @@ def _publish(
     for name in names:
         slope = (trial_slopes or {}).get(name, 2.0 if name == "trial/1/train" else 1.0)
         scalars = _equity(len(equity), mode=mode, slope=slope)
+        skip_day = (trial_skip_days or {}).get(name)
+        scope_timestamps = (
+            _timestamps(len(equity) + 1, skip_day=skip_day)
+            if skip_day is not None
+            else timestamps
+        )
         value = ScopeObservations(
             init_cash=observations.init_cash,
             equity_curve=equity if name == names[0] else scalars,
             returns=None,
-            timestamps=timestamps,
+            timestamps=scope_timestamps,
             trades=trades,
         )
         raw[name] = value
@@ -434,6 +441,25 @@ def test_dsr_only_for_verified_selected_training_scope(
     assert test.inference.dsr.unavailable.reason == "not_selected_training_scope"
 
 
+def test_dsr_is_unavailable_when_a_non_selected_trial_has_a_gap(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    _publish(
+        workspace,
+        store,
+        optimization=True,
+        trial_skip_days={"trial/0/train": 7},
+    )
+    response = StatisticsAnalysisResponse.model_validate(
+        service.analyze("run", "trial/1/train")
+    )
+    outcome = response.inference.dsr
+    assert outcome.status == "unavailable"
+    assert outcome.unavailable is not None
+    assert outcome.unavailable.reason == "observation_gap_unsupported"
+
+
 def test_source_hash_binds_trial_evidence_used_for_dsr(
     storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
 ) -> None:
@@ -479,3 +505,24 @@ def test_derived_artifact_is_reproducible_and_source_bundle_unchanged(
     text = Path(str(artifact["path"])).read_text(encoding="utf-8")
     assert first.source.source_hash in text
     assert "Fixed settings and limits" in text
+
+
+def test_tampered_published_artifact_is_rejected(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+) -> None:
+    workspace, store, service = storage
+    _publish(workspace, store)
+    first = StatisticsAnalysisResponse.model_validate(
+        service.analyze("run", save_artifact=True)
+    )
+    assert first.artifact is not None
+    digest_prefix = first.artifact.artifact_id.rsplit(":", 1)[-1]
+    path = workspace.runs / "run" / "statistics_analysis" / f"{digest_prefix}.md"
+    assert path.exists()
+    original = path.read_text(encoding="utf-8")
+    path.write_text(original[: len(original) // 2], encoding="utf-8")
+    error = StatisticsQueryError.model_validate(
+        service.analyze("run", save_artifact=True)
+    )
+    assert error.success is False
+    assert error.code == "statistics_artifact_failed"

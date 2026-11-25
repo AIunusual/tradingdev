@@ -543,6 +543,9 @@ class StatisticsService:
                 return _unavailable("trial_basis_differs", source, trial_id), None
             observations = trial.observations
             assert observations.timestamps is not None
+            trial_gap = _gap_reason(observations.timestamps, settings.frequency)
+            if trial_gap is not None:
+                return _unavailable(trial_gap, source), None
             try:
                 summary = summarize_performance(
                     _equity_values(trial),
@@ -598,6 +601,10 @@ class StatisticsService:
         if path.is_symlink() or not path.resolve().is_relative_to(self._workspace.root):
             raise ValueError("Analysis artifact path leaves the workspace")
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and (
+            not path.is_file() or path.read_text(encoding="utf-8") != document
+        ):
+            raise ValueError("Existing analysis artifact differs")
         if not path.exists():
             with NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=path.parent, delete=False
@@ -761,6 +768,7 @@ def _same_trial_basis(trial: LoadedHistoryScope, settings: _Settings) -> bool:
         trial_settings.get("frequency") == settings.frequency
         and trial_settings.get("periods_per_year") == settings.periods_per_year
         and trial_settings.get("risk_free_rate") == settings.risk_free_rate
+        and trial_settings.get("return_std_ddof") == settings.return_std_ddof
     )
 
 

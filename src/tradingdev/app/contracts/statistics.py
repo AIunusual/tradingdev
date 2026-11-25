@@ -26,7 +26,7 @@ class StatisticsSettings(ContractModel):
     periods_per_year: float | None
     risk_free_rate: float | None
     period_pnl_ddof: int
-    return_std_ddof: int
+    return_std_ddof: int | None
     missing_periods: Literal["not_filled"]
     calendar_timezone: Literal["UTC"]
     gap_policy: Literal["exact_declared_bar_cadence"]

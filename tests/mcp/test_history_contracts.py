@@ -77,6 +77,7 @@ def _publish(
     run_id: str = "run",
     missing_entry: bool = False,
     timestamps: bool = True,
+    settings: dict[str, Any] | None = None,
 ) -> None:
     params = {"fast": 12, "slow": 26, "nested": {"signal": 9}}
     config = {
@@ -122,7 +123,9 @@ def _publish(
             "parameters": params,
             "metadata": {
                 "execution_context": config["backtest"],
-                "settings": {
+                "settings": settings
+                if settings is not None
+                else {
                     "initial_cash": 1000.0,
                     "frequency": "1d",
                     "periods_per_year": 365.0,
@@ -662,5 +665,40 @@ def test_statistics_tools_share_one_service_and_keep_unavailable_explicit(
         )
         error = StatisticsQueryError.model_validate(missing)
         assert error.success is False and error.code == "run_not_found"
+
+    asyncio.run(check())
+
+
+def test_statistics_mcp_reports_missing_return_ddof(tmp_path: Path) -> None:
+    workspace = WorkspacePaths(tmp_path / "workspace")
+    store = SQLiteStore(workspace)
+    settings = {
+        "initial_cash": 1000.0,
+        "frequency": "1d",
+        "periods_per_year": 365.0,
+        "risk_free_rate": 0.0,
+        "period_pnl_ddof": 0,
+        "missing_dates": "not_filled",
+        "trade_scope": "closed",
+        "calendar_timezone": "UTC",
+    }
+    _publish(workspace, store, settings=settings)
+    server = MCPServer("statistics-missing-ddof-test")
+    runs.register(
+        server,
+        RunService(workspace=workspace, store=store),
+        StatisticsService(workspace=workspace, store=store),
+    )
+
+    async def check() -> None:
+        payload = await _call(
+            server, "analyze_run_statistics", {"run_id": "run", "scope": "full"}
+        )
+        response = StatisticsAnalysisResponse.model_validate(payload)
+        assert response.settings.return_std_ddof is None
+        assert response.summary.result is not None
+        unavailable = response.summary.result.get("unavailable")
+        assert isinstance(unavailable, dict)
+        assert unavailable["sharpe_ratio"] == "unsupported_return_std_ddof"
 
     asyncio.run(check())
