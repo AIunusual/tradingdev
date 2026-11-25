@@ -14,7 +14,8 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
 
 - 來源必須由 [`TradeHistoryService`](../src/tradingdev/app/trade_history_service.py)
   的 `load_run` / `select_scope` 取得；aggregated `test_summary` 沒有原始 observations，
-  回報 `fold_summary_unsupported` 並列出可選 scope。
+  回報 `fold_summary_unsupported` 並列出可選 scope。省略 `scope` 時，
+  服務使用該 run 儲存的 `performance.default_scope`，與 CLI／MCP 的可選參數一致。
 - `source_hash` 是同一 validated snapshot 的 run 身分、bundle 定義、**所有 scalar scope
   與其 observations**（包含 DSR 使用的全部 `trial/<index>/train`）、所選 scope 參數與
   執行設定的正規化 JSON SHA-256。所有摘要、推論、artifact 與 DSR 試驗母體都綁定此值；
@@ -40,7 +41,8 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
   不能當作引擎的完整日報酬；服務改用
   [`daily_excess_returns`](../src/tradingdev/domain/statistics/performance.py)，
   首日 opening equity 是原始本金。
-- 描述摘要與 breakeven 可獨立於推論計算。勝率、損益平衡與週轉成本只使用交易紀錄；
+- 描述摘要與 breakeven 可獨立於推論計算。[`summarize_breakeven`](../src/tradingdev/domain/statistics/breakeven.py)
+  只使用保存交易紀錄的 `fee`、成本與 mark；未平倉 mark 不產生假想出場成本。
   volume 模式沒有 capital-relative turnover / cost drag。
 
 ## 推論與不可用語意
