@@ -51,8 +51,10 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
   `exit_price`、`fee` 與 `status`，加上 observations 首／末 timestamp 界定的
   評估期間，以及服務傳入的 `init_cash`（可為 `None`）計算。`status="open"`
   只計入進場 notional；其 `exit_price` 是 mark，只讓已保存的 `net_pnl` 參與 P&L，
-  不構成假想出場成交或額外成本。volume 模式沒有 capital basis，因此
-  `annual_turnover` 與 `annual_cost_drag` 不可用。
+  不構成假想出場成交或額外成本。`years` 由 observations 首／末 UTC 時間的實際
+  經過期間除以 365.25 天取得，與 run 儲存的 `periods_per_year` 無關；因此
+  `annual_turnover` 與 `annual_cost_drag` 使用獨立的日曆時間基準。volume 模式
+  沒有 capital basis，兩者不可用。
 
 ## 推論與不可用語意
 

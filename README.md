@@ -827,7 +827,9 @@ uv run --locked tradingdev-statistics \
 
 `--run-id` 必要；省略 `--scope` 時使用該 run 的預設 scope；
 `--save-artifact` 會另外保存一份衍生分析檔。命令在終端機輸出 JSON，
-只讀取已保存的觀察值，不重跑策略或下載行情。
+讀取並核驗該 run 已保存的證據與設定：績效 bundle、原始 observations、
+run／manifest 資料與凍結設定；DSR 另使用已保存的 trial observations 與
+optimization selection。它不重跑策略或下載行情。
 最外層 `success: false` 時 process 以狀態 1 結束；個別分析 unavailable 而整體
 `success: true` 仍以狀態 0 結束，腳本應同時檢查 JSON 內容。
 結果欄位、限制與不可用原因見[統計分析契約](docs/statistics_analysis.md)。
