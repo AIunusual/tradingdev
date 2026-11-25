@@ -75,6 +75,8 @@ _MUTATING_HINTS = {
     "cancel_job": (False, True, True, False),
     "record_feature_request": (False, False, False, False),
     "generate_report": (False, False, True, False),
+    # Optional derived artifact write; identical input reuses one artifact.
+    "analyze_run_statistics": (False, False, True, False),
     "save_research_note": (False, True, False, False),
     "export_research_note": (False, False, True, False),
     # Recording can replace an evaluation; dataset/panel builds can evict
