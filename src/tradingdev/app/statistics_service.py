@@ -317,8 +317,9 @@ class StatisticsService:
             "unavailable": dict(result.unavailable),
         }
         if settings.return_std_ddof != 1:
-            record["unavailable"]["sharpe_ratio"] = "unsupported_return_std_ddof"
-            record["sharpe_ratio"] = None
+            for name in ("sharpe_ratio", "return_information_ratio"):
+                record["unavailable"][name] = "unsupported_return_std_ddof"
+                record[name] = None
         return _outcome("available", result=record)
 
     @staticmethod

@@ -11,10 +11,11 @@ MCP 的 `analyze_run_statistics` 與 CLI `tradingdev-statistics` 都只轉送
 [`app/contracts/statistics.py`](../src/tradingdev/app/contracts/statistics.py)。
 
 MCP 用戶端無法讀取 repository 路徑；`analyze_run_statistics` 的 advertised
-`outputSchema` 在 `summary` 與 `breakeven` 欄位描述中直接提供 result keys 與語意，
-包括 `total_pnl` 對 `observed_equity_change`、closed 對 marked trades，以及成本、
-notional、365.25 天時間基準與不估算滑價的說明。MCP 讀取該 `outputSchema` 即可取得使用者可存取的契約；
-repository contract 是維護來源。
+`outputSchema` 在 `summary`、`breakeven` 與 `inference.interval`、`inference.psr`、
+`inference.dsr` 欄位描述中直接提供 result keys 與語意：包括 `total_pnl` 對
+`observed_equity_change`、closed 對 marked trades、成本／notional／365.25 天時間基準／
+不估算滑價，以及 bootstrap、PSR、DSR 的 result keys、config 與限制。MCP 讀取該
+`outputSchema` 即可取得使用者可存取的完整契約；repository contract 是維護來源。
 
 ## 輸入與來源綁定
 
@@ -31,8 +32,9 @@ repository contract 是維護來源。
   的 `metadata.settings`，不使用目前政策預設。缺少 frequency 或 risk-free rate 時，
   需要這些值的摘要與推論回報 unavailable；缺少 annualization 時，描述摘要仍可計算，
   但 Sharpe 類結果回報 `missing_annualization`。`return_std_ddof` 可為 `null`：
-  歷史設定缺值時不補現行預設，描述摘要仍回傳，Sharpe 與其相依推論回報
-  `unsupported_return_std_ddof`。
+  歷史設定缺值時不補現行預設，描述摘要仍回傳，但 `sharpe_ratio`、
+  `return_information_ratio` 與其相依推論都回報 `unsupported_return_std_ddof`，
+  不以 ddof=1 的既有算法冒充歷史口徑。
 - signal 模式要求 observations 有正且有限的 `init_cash`；volume 模式的累積 P&L
   沒有本金基準，所有報酬型結果回報 `not_applicable`。trial scope 必須以相同 mode、
   本金、frequency、annualization 與 risk-free rate 才可進入 DSR 母體。

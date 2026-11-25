@@ -183,9 +183,28 @@ class InferenceOutcome[T](ContractModel):
 class InferenceSection(ContractModel):
     """Each inference is independently available or unavailable."""
 
-    interval: InferenceOutcome[dict[str, JsonValue]]
-    psr: InferenceOutcome[dict[str, JsonValue]]
-    dsr: InferenceOutcome[dict[str, JsonValue]]
+    interval: InferenceOutcome[dict[str, JsonValue]] = Field(
+        description=(
+            "interval result keys: sharpe, lower, upper, confidence, block_size, "
+            "reps and valid_reps. config carries the fixed seed, reps, block size "
+            "and effective observations for the stationary bootstrap."
+        )
+    )
+    psr: InferenceOutcome[dict[str, JsonValue]] = Field(
+        description=(
+            "psr result keys: psr and benchmark_sr. The benchmark is zero per "
+            "period and the normal iid variance assumption is used; config "
+            "carries the periodic Sharpe inputs."
+        )
+    )
+    dsr: InferenceOutcome[dict[str, JsonValue]] = Field(
+        description=(
+            "dsr result keys: dsr, psr_vs_zero, hurdle_annualised, n_trials, "
+            "trial_sharpe_std_annualised, trial_scope_count and "
+            "search_population. It is computed only for the selected training "
+            "scope; correlated trials may under- or over-correct the hurdle."
+        )
+    )
     limitations: list[str]
 
 

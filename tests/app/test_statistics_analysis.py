@@ -478,6 +478,29 @@ def test_null_risk_free_rate_reports_unavailable_without_crashing(
     assert response.breakeven.status == "available"
 
 
+@pytest.mark.parametrize("ddof", [None, 0])
+def test_non_ddof_one_hides_both_return_ratios(
+    storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
+    ddof: int | None,
+) -> None:
+    workspace, store, service = storage
+    settings = _settings()
+    if ddof is None:
+        settings.pop("return_std_ddof")
+    else:
+        settings["return_std_ddof"] = ddof
+    _publish(workspace, store, settings=settings)
+    response = StatisticsAnalysisResponse.model_validate(service.analyze("run"))
+    result = response.summary.result
+    assert result is not None
+    assert result["sharpe_ratio"] is None
+    assert result["return_information_ratio"] is None
+    unavailable = result["unavailable"]
+    assert isinstance(unavailable, dict)
+    assert unavailable["sharpe_ratio"] == "unsupported_return_std_ddof"
+    assert unavailable["return_information_ratio"] == "unsupported_return_std_ddof"
+
+
 def test_weekly_cadence_does_not_produce_daily_inference(
     storage: tuple[WorkspacePaths, SQLiteStore, StatisticsService],
 ) -> None:

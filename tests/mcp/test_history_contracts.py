@@ -698,9 +698,12 @@ def test_statistics_mcp_reports_missing_return_ddof(tmp_path: Path) -> None:
         response = StatisticsAnalysisResponse.model_validate(payload)
         assert response.settings.return_std_ddof is None
         assert response.summary.result is not None
+        assert response.summary.result["sharpe_ratio"] is None
+        assert response.summary.result["return_information_ratio"] is None
         unavailable = response.summary.result.get("unavailable")
         assert isinstance(unavailable, dict)
         assert unavailable["sharpe_ratio"] == "unsupported_return_std_ddof"
+        assert unavailable["return_information_ratio"] == "unsupported_return_std_ddof"
 
     asyncio.run(check())
 
@@ -729,5 +732,10 @@ def test_statistics_output_schema_documents_result_semantics(tmp_path: Path) -> 
         "marked_trades",
         "365.25",
         "slippage",
+        "interval result keys",
+        "psr result keys",
+        "dsr result keys",
+        "correlated trials",
+        "selected training scope",
     ):
         assert phrase in text
