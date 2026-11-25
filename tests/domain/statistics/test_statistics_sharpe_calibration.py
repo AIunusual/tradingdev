@@ -164,6 +164,31 @@ class TestMatrixReport:
         assert decision["unverified"] != []
         assert isinstance(cast("list[object]", report["matrix"]), list)
 
+    def test_annualisation_unit_does_not_change_coverage(self) -> None:
+        base = self._tiny_config()
+        per_period = run_matrix(replace(base, periods_per_year=1.0))[0]
+        annualised = run_matrix(replace(base, periods_per_year=365.0))[0]
+
+        def verdicts(
+            cells: list[dict[str, object]],
+        ) -> list[tuple[str, str, float, str]]:
+            result = []
+            for cell in cells:
+                intervals = cast("dict[str, object]", cell["intervals"])
+                auto = cast("dict[str, object]", intervals["auto"])
+                coverage = cast("dict[str, float]", auto["coverage"])
+                result.append(
+                    (
+                        str(cell["process"]),
+                        str(cell["sample"]),
+                        coverage["rate"],
+                        str(auto["coverage_label"]),
+                    )
+                )
+            return result
+
+        assert verdicts(annualised) == verdicts(per_period)
+
 
 class TestKnownRisks:
     def test_positive_autocorrelation_inflates_iid_psr_rejection(self) -> None:

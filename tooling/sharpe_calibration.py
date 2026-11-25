@@ -287,9 +287,11 @@ def run_matrix(
         deadline = time.monotonic() + config.max_seconds
     cells: list[dict[str, object]] = []
     limits: list[str] = []
+    annualisation = math.sqrt(config.periods_per_year)
 
     for spec in PROCESSES:
         truth = population_sharpe(spec)
+        interval_truth = truth * annualisation
         for sample_name, observations in (
             ("short", config.short_n),
             ("long", config.long_n),
@@ -325,7 +327,7 @@ def run_matrix(
                         records[block_size].append(
                             IntervalRecord(
                                 True,
-                                outcome.lower <= truth <= outcome.upper,
+                                outcome.lower <= interval_truth <= outcome.upper,
                                 outcome.upper - outcome.lower,
                                 outcome.block_size,
                             )
@@ -394,6 +396,7 @@ def run_matrix(
                     "sample": sample_name,
                     "observations": observations,
                     "population_sharpe_per_period": truth,
+                    "interval_comparison_target": interval_truth,
                     "psr_reject": {
                         **psr_summary,
                         "classification": _classification_fields(
@@ -502,7 +505,11 @@ def build_report(config: Config) -> dict[str, object]:
         "conventions": {
             "frequency": "one supplied period; no resampling of the input",
             "risk_free": "zero; callers supply excess returns",
-            "inference_annualisation": "sqrt(1) = 1",
+            "inference_annualisation": (
+                f"sqrt({config.periods_per_year}) = "
+                f"{math.sqrt(config.periods_per_year)}; interval comparison "
+                "uses the population target scaled by the same factor"
+            ),
             "reporting_annualisation": "sqrt(365) applied only to the point estimate",
             "compounding": "simple per-period returns; no holding-period compounding",
             "interpretation_rule": (
