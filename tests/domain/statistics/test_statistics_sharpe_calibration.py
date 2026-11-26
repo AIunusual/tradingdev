@@ -156,6 +156,41 @@ class TestMatrixReport:
                 point["mean_per_period"] * math.sqrt(365.0), rel=1e-9
             )
 
+    def test_coverage_counts_both_bounds_misses_and_unavailable(
+        self, monkeypatch: Any
+    ) -> None:
+        # The iid population Sharpe is 0.05 per period; with four periods per
+        # year its annualised target is 0.10.
+        bounds = [(0.08, 0.10), (0.10, 0.12), (0.09, 0.11), (0.02, 0.07), (0.11, 0.14)]
+
+        def fixed_interval(
+            returns: Any, *, seed: int, confidence: float, reps: int, **_kwargs: object
+        ) -> SharpeInterval | IntervalUnavailable:
+            if seed == len(bounds):
+                return IntervalUnavailable(
+                    "no_valid_resample", 0.1, len(returns), 20, reps
+                )
+            lower, upper = bounds[seed]
+            sample_sharpe = (lower + upper) / 2
+            return SharpeInterval(
+                sample_sharpe, lower, upper, confidence, 5, reps, reps
+            )
+
+        monkeypatch.setattr(calibration, "PROCESSES", (_spec("iid_normal"),))
+        monkeypatch.setattr(calibration, "sharpe_interval_outcome", fixed_interval)
+        config = replace(
+            SMOKE_CONFIG, seeds=tuple(range(6)), periods_per_year=4, block_sizes=(5,)
+        )
+        cells, _ = run_matrix(config)
+
+        short = cells[0]
+        assert short["interval_comparison_target"] == pytest.approx(0.10)
+        summary = cast("dict[str, Any]", short["intervals"])["5"]
+        assert summary["valid_repetitions"] == 5
+        assert summary["unavailable_rate"] == pytest.approx(1 / 6)
+        assert summary["coverage"]["rate"] == pytest.approx(3 / 6)
+        assert summary["conditional_coverage"]["rate"] == pytest.approx(3 / 5)
+
     def test_report_states_the_no_change_decision(self) -> None:
         report = build_report(self._tiny_config())
 
