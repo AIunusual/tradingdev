@@ -260,8 +260,9 @@ RunService 查詢 run 與指標，ArtifactService 探索與讀取檔案。Dashbo
 PipelineResult；最佳化沒有此 pickle。讀取依保存路徑，不用目前 YAML 重建查找鍵，
 也不自動重用以前的回測。格式與查詢入口見[執行產物契約](docs/run_artifacts.md)。
 
-`ArtifactService.read_download` 透過 storage adapter 核對已登錄確認單、報告與
-研究 ZIP 的固定路徑、雜湊及實際回傳 bytes；研究封存附件也共用此讀取驗證。
+`ArtifactService.read_download` 透過 storage adapter 核對已登錄確認單、報告、
+研究 ZIP 與 `PlateauStore` 登錄之參數平臺 JSON 的固定路徑、雜湊及實際回傳 bytes；
+研究封存附件也共用此讀取驗證。
 MCP 的 `ArtifactDownloads` 負責短效網址、公開路徑設定與 HTTP 回應，簽發與下載
 皆核對檔案，不把簽章或 HTTP 細節放進 domain。完整交付與失敗語意見
 [產物交付契約](docs/run_artifacts.md#reading-artifact-delivery)。
