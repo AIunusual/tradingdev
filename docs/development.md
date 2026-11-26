@@ -35,7 +35,7 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/check-fast.sh` | Ruff、格式、strict Mypy、文件品質與 MCP 契約探索／上下文預算。 | 改工具契約時維護對應 MCP 測試；改機械檢查時維護 `tests/tooling/`。 |
 | `scripts/check-full.sh` | 快速品質檢查與完整離線 pytest；不呼叫模型。 | 行為變更補對應模組及使用端回歸，修復問題須能重現原本失敗。 |
 | `scripts/check-tooling.sh` | 快速品質檢查與完整 `tests/tooling`；不呼叫模型。 | 修改已登錄工具或其 Markdown 指引時，依[分流表](#2-在-github-建立-pr交由審閱者檢查)確認適用範圍。 |
-| `uv run --no-sync python -m tooling.sharpe_calibration` | 離線執行固定 Sharpe 推論校準矩陣，輸出 JSON 至 checkout 外。 | 改程序生成公式、seed、block size 或判讀規則時維護 `tests/domain/statistics/test_statistics_sharpe_calibration.py`。 |
+| `uv run --no-sync python -m tooling.sharpe_calibration --output /tmp/tradingdev-sharpe-calibration.json` | 離線執行固定 Sharpe 推論校準矩陣，輸出 JSON 至 checkout 外。 | 改程序生成公式、seed、block size 或判讀規則時維護 `tests/domain/statistics/test_statistics_sharpe_calibration.py`。 |
 | `scripts/check-llm.sh codex\|local` | 模型實際使用 MCP 的探索、互動、確認及成果交付。 | 改模型可見契約或流程時維護受影響的 `tests/e2e/` 情境。 |
 | `scripts/check-pr.sh PR編號` | 固定合併候選的文件／程式檢查與遠端版本核對。 | 改 Git 流程、範圍規則或審查證據時維護 `tests/tooling/` 對應測試。 |
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
