@@ -46,7 +46,8 @@ Sharpe 校準入口以 `--profile full` 執行完整固定矩陣，`--profile sm
 最後一個 seed 若超時，後面的 `run_dsr` 仍會在第一個 seed 前檢查並丟出 `TimeoutError`；
 但若 `run_dsr` 最後一個 seed 才超時，後面沒有檢查點，命令仍可能成功寫出 JSON。期限
 不能保證阻止延遲的成功輸出；只有後續檢查發現逾時時才會丟出 `TimeoutError` 且不寫出
-JSON。兩者都要求絕對路徑的 `--output`，且路徑必須在 checkout 外。報告欄位與適用限制
+JSON。兩種模式都要求 `--output` 指向 checkout 外的絕對路徑。成功寫出報告時會覆寫同名檔案，
+要保留先前結果請使用不同檔名。報告欄位與適用限制
 見 [`build_report`／`main`](../tooling/sharpe_calibration.py)。
 
 檢查與格式化入口在開始工作前，以 [tooling/environment.py](../tooling/environment.py)
