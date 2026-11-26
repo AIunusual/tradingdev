@@ -279,6 +279,14 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _check_deadline(deadline: float) -> float:
+    """Return the current monotonic time if the calibration is within budget."""
+    now = time.monotonic()
+    if now > deadline:
+        raise TimeoutError("calibration exceeded the time limit")
+    return now
+
+
 def run_matrix(
     config: Config, *, deadline: float | None = None
 ) -> tuple[list[dict[str, object]], list[str]]:
@@ -304,8 +312,7 @@ def run_matrix(
             annualised: list[float] = []
 
             for seed in config.seeds:
-                if time.monotonic() > deadline:
-                    raise TimeoutError("calibration exceeded the time limit")
+                _check_deadline(deadline)
                 values = generate_returns(spec, observations, seed)
                 psr = probabilistic_sharpe_ratio(values, benchmark_sr=truth)
                 psr_flags.append(psr is not None and psr > config.confidence)
@@ -415,6 +422,7 @@ def run_matrix(
                 }
             )
 
+    _check_deadline(deadline)
     return cells, limits
 
 
@@ -440,8 +448,7 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
     }
 
     for seed in config.seeds:
-        if time.monotonic() > deadline:
-            raise TimeoutError("calibration exceeded the time limit")
+        _check_deadline(deadline)
         independent_rng = np.random.default_rng(seed)
         independent = [
             independent_rng.normal(size=config.long_n) for _ in range(_DSR_TRIALS)
@@ -492,6 +499,7 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
             # descriptive baseline, not as a calibrated rejection rate.
             "dsr_reject": {**reject, "label": "descriptive_only"},
         }
+    _check_deadline(deadline)
     return summaries
 
 
@@ -557,7 +565,7 @@ def build_report(config: Config) -> dict[str, object]:
                 "any claim of nominal coverage for PSR or DSR",
             ],
         },
-        "elapsed_seconds": time.monotonic() - started,
+        "elapsed_seconds": _check_deadline(deadline) - started,
     }
 
 

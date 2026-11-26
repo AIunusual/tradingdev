@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -32,6 +33,7 @@ from tooling.sharpe_calibration import (
 from tradingdev.domain.statistics.sharpe import (
     IntervalUnavailable,
     SharpeInterval,
+    deflated_sharpe_ratio,
     probabilistic_sharpe_ratio,
     sharpe_interval_outcome,
 )
@@ -374,6 +376,30 @@ class TestDefensiveBranches:
 
 
 class TestCommandLine:
+    def test_last_dsr_seed_crossing_deadline_preserves_output(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        config = replace(
+            SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10, max_seconds=1.5
+        )
+        now = 0.0
+
+        def timed_dsr(*args: Any, **kwargs: Any) -> Any:
+            nonlocal now
+            result = deflated_sharpe_ratio(*args, **kwargs)
+            now += 1.0
+            return result
+
+        monkeypatch.setitem(CONFIGS, "smoke", config)
+        monkeypatch.setattr(calibration, "time", SimpleNamespace(monotonic=lambda: now))
+        monkeypatch.setattr(calibration, "deflated_sharpe_ratio", timed_dsr)
+        output = tmp_path / "report.json"
+        output.write_text("previous report", encoding="utf-8")
+        with pytest.raises(TimeoutError, match="exceeded"):
+            main(["--profile", "smoke", "--output", str(output)])
+        assert now == 2.0
+        assert output.read_text(encoding="utf-8") == "previous report"
+
     def test_repository_root_is_independent_of_cwd(self, monkeypatch: Any) -> None:
         root = calibration._repository_root()
         assert (root / "tooling" / "sharpe_calibration.py").exists()

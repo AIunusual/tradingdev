@@ -41,12 +41,10 @@ Python 簡報 build／watch 命令未加 `--ensure-toolchain` 時，以及 check
 | `scripts/claim-issue.sh 編號 --repo OWNER/REPO --user LOGIN` | 核對 CLI 登入者並將本人加入 issue assignees。 | 改指派流程時維護 `tests/tooling/test_claim_issue.py`。 |
 | `scripts/cleanup-pr.sh PR編號 --branch 分支` | 核對已合併 PR 後刪除符合條件的本地分支。 | 改清理條件時維護 `tests/tooling/test_pr_cleanup.py`。 |
 
-Sharpe 校準入口以 `--profile full` 執行完整固定矩陣，`--profile smoke` 做快速抽樣；
-900 與 120 秒是在每個 seed 前檢查的合作式期限，進行中的計算不會被中斷。`run_matrix`
-最後一個 seed 若超時，後面的 `run_dsr` 仍會在第一個 seed 前檢查並丟出 `TimeoutError`；
-但若 `run_dsr` 最後一個 seed 才超時，後面沒有檢查點，命令仍可能成功寫出 JSON。期限
-不能保證阻止延遲的成功輸出；只有後續檢查發現逾時時才會丟出 `TimeoutError` 且不寫出
-JSON。兩種模式都要求 `--output` 指向 checkout 外的絕對路徑。成功寫出報告時會覆寫同名檔案，
+Sharpe 校準入口以 `--profile full` 執行完整固定矩陣（900 秒），以 `--profile smoke`
+做快速抽樣（120 秒）。兩者都在每個 seed 開始前與計算完成時檢查期限。單次計算可執行到結束。
+若超時，命令會拋出 `TimeoutError`，保留既有檔案。期限涵蓋校準計算與報告彙整，JSON 寫檔另計。
+兩種模式都要求 `--output` 指向 checkout 外的絕對路徑。成功寫出報告時會覆寫同名檔案，
 要保留先前結果請使用不同檔名。報告欄位與適用限制
 見 [`build_report`／`main`](../tooling/sharpe_calibration.py)。
 
