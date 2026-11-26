@@ -277,14 +277,11 @@ class TestDefensiveBranches:
             _markov_states(0, 0.1, seed=np.random.default_rng(0))
 
     def test_empty_and_bounded_summaries_are_explicit(self) -> None:
-        assert _summarize_proportion([]) == {
-            "rate": 0.0,
-            "mcse": 0.0,
-            "low": 0.0,
-            "high": 0.0,
-        }
-        assert _summarize_width([]) == {"mean": 0.0, "mcse": 0.0}
-        assert _summarize_width([1.5])["mcse"] == 0.0
+        with pytest.raises(ValueError, match="at least one"):
+            _summarize_proportion([])
+        assert _summarize_width([]) is None
+        assert _summarize_width([1.5]) == {"mean": 1.5, "mcse": None}
+        assert _summarize_width([1.5, 1.5]) == {"mean": 1.5, "mcse": 0.0}
         assert _summarize_proportion([False, False])["low"] == 0.0
         assert _summarize_proportion([True, True])["high"] == 1.0
 
@@ -298,17 +295,19 @@ class TestDefensiveBranches:
         with pytest.raises(TimeoutError, match="exceeded"):
             run_dsr(config)
 
-    def test_unavailable_intervals_are_counted(self, monkeypatch: Any) -> None:
-        def unavailable(*_args: object, **_kwargs: object) -> IntervalUnavailable:
-            return IntervalUnavailable("no_valid_resample", 0.1, 60, 20, 5)
-
-        monkeypatch.setattr(calibration, "sharpe_interval_outcome", unavailable)
-        config = replace(SMOKE_CONFIG, seeds=(2000,), bootstrap_reps=10)
+    def test_unavailable_intervals_are_counted(self) -> None:
+        config = replace(
+            SMOKE_CONFIG, short_n=19, seeds=(2000, 2001), bootstrap_reps=10
+        )
         cells, _ = run_matrix(config)
 
-        intervals = cast("dict[str, object]", cells[0]["intervals"])
-        summary = cast("dict[str, object]", intervals["auto"])
-        assert cast("float", summary["unavailable_rate"]) == 1.0
+        summary = json.loads(json.dumps(cells[0], allow_nan=False))["intervals"]["auto"]
+        assert summary["repetitions"] == 2
+        assert summary["valid_repetitions"] == 0
+        assert summary["unavailable_rate"] == 1.0
+        assert summary["coverage"]["rate"] == 0.0
+        assert summary["conditional_coverage"] is None
+        assert summary["width"] is None
 
     def test_unexpected_interval_type_raises(self, monkeypatch: Any) -> None:
         monkeypatch.setattr(

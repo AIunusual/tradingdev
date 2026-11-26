@@ -219,7 +219,7 @@ def _markov_states(
 def _summarize_proportion(flags: Sequence[bool]) -> dict[str, float]:
     count = len(flags)
     if count == 0:
-        return {"rate": 0.0, "mcse": 0.0, "low": 0.0, "high": 0.0}
+        raise ValueError("a proportion requires at least one observation")
     rate = sum(flags) / count
     mcse = math.sqrt(rate * (1.0 - rate) / count)
     return {
@@ -230,13 +230,13 @@ def _summarize_proportion(flags: Sequence[bool]) -> dict[str, float]:
     }
 
 
-def _summarize_width(widths: Sequence[float]) -> dict[str, float]:
+def _summarize_width(widths: Sequence[float]) -> dict[str, float | None] | None:
     count = len(widths)
     if count == 0:
-        return {"mean": 0.0, "mcse": 0.0}
+        return None
     mean = float(np.mean(widths))
-    sd = float(np.std(widths, ddof=1)) if count > 1 else 0.0
-    return {"mean": mean, "mcse": sd / math.sqrt(count)}
+    mcse = float(np.std(widths, ddof=1)) / math.sqrt(count) if count > 1 else None
+    return {"mean": mean, "mcse": mcse}
 
 
 def _classification_mcse(nominal: float, repetitions: int) -> float:
@@ -360,8 +360,10 @@ def run_matrix(
                 unconditional = _summarize_proportion(
                     [record.ok and record.covered for record in block_records]
                 )
-                conditional = _summarize_proportion(
-                    [record.covered for record in valid]
+                conditional = (
+                    _summarize_proportion([record.covered for record in valid])
+                    if valid
+                    else None
                 )
                 coverage_label = _interpret(
                     unconditional["rate"], config.confidence, len(block_records)
@@ -494,7 +496,12 @@ def run_dsr(config: Config, *, deadline: float | None = None) -> dict[str, objec
 
 
 def build_report(config: Config) -> dict[str, object]:
-    """Build the complete report for one fixed configuration."""
+    """Build the complete report for one fixed configuration.
+
+    Coverage counts unavailable intervals as misses. Conditional coverage and
+    width are null when no interval is available. A single valid interval has
+    a mean width but no estimated standard error for that mean.
+    """
     started = time.monotonic()
     deadline = started + config.max_seconds
     cells, limits = run_matrix(config, deadline=deadline)
