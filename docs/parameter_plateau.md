@@ -71,7 +71,7 @@ Run parameters always use JSON pointers, even a parameter named `window`; bare
 `horizon`, `window` and `n_quantiles` denote only signal-evaluation settings.
 
 Capacity definitions are `MAX_CANDIDATES`, `MAX_GRID_CELLS` and `MAX_DIMENSIONS`
-in `app.contracts.plateau`. Exceeding them refuses
+in [app/contracts/plateau.py](../src/tradingdev/app/contracts/plateau.py). Exceeding them refuses
 the collection rather than analyzing a truncated subset. `radius` is a positive
 Chebyshev distance in sorted grid indices; `min_neighborhood` optionally limits
 which available cells can become plateau-best. There is no default trade-count or
