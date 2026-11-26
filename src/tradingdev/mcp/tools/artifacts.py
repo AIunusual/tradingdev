@@ -49,7 +49,7 @@ def register(
         expected_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")],
         ctx: Context[Any, Any],
     ) -> ArtifactDownload | ErrorResponse:
-        """Get a readable HTTP URL for saved confirmation/report HTML or research ZIP.
+        """Get an HTTP URL for confirmation/report HTML, research ZIP or plateau JSON.
 
         Use the producer's artifact ID/hash (or get_artifact metadata). Verifies
         registered bytes at issuance and each GET; at most 64 MiB. Never reruns.
@@ -57,6 +57,7 @@ def register(
         download_expires_at is Unix time. Restart invalidates links;
         call again to refresh.
         HTML opens inline; ZIP requires full extraction/opening index.html.
+        Plateau JSON downloads the complete fixed analysis and its source evidence.
         Refreshing does not extend plan expiry or approve execution.
         Stdio returns artifact_delivery_unavailable: use verified host file delivery
         via get_artifact. Missing/changed/unsupported files fail; do not invent URLs.

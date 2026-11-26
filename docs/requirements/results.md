@@ -51,6 +51,13 @@
 - **契約**：[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)、[搜尋證據](../performance_artifacts.md#optimization-selection-evidence)。
 - **驗證**：[排序與證據續讀](../../tests/app/test_selection_evidence.py) 核對搜尋規模、分頁及歷史證據，[最佳化 MCP 流程](../../tests/integration/test_mcp_optimization.py) 核對 worker 發布及部分結果的排名行為。
 
+## FR-RES-009 保存集合的參數平臺分析
+
+- **需求**：對明確選定的保存最佳化或訊號候選集合，依指標方向、數值搜尋軸與鄰域設定提供平臺摘要及有容量限制的網格明細／artifact，不啟動新實驗或改寫排名。
+- **驗收**：保留中間缺值及整層 undefined 格點，區分無有效指標、選定集合沒有紀錄與不完整搜尋；來源條件不相容或歷史證據不足時說明原因。跨 horizon 核對行情與評估列證據；重複座標不靜默聚合。最小化保留原始值與單位，算法 score 分開呈現；摘要、分頁與 artifact 綁定同一固定集合，平臺穩定不冒充樣本外或獲利證明。
+- **契約**：[保存的參數平臺分析](../parameter_plateau.md)。
+- **驗證**：[保存集合與缺值回歸](../../tests/app/test_parameter_plateau.py)、[MCP 合約](../../tests/mcp/test_plateau_tools.py)、[自然需求驗收](../../tests/e2e/test_llm_plateau.py)；自然需求須另啟模型測試，入口不代表已通過。
+
 ## NFR-DATA-001 保存完整性與可追溯性
 
 - **需求**：歷史結果固定各自保存的設定與來源身分；回測 run 另保存當時指標定義。讀取及發佈須核對相關證據，區分完整結果、部分狀態與不可用資料，並區分指標定義的取得時點。

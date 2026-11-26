@@ -20,7 +20,7 @@ MAX_DELIVERY_BYTES = 64 * 1024 * 1024
 class ArtifactBytes:
     artifact_id: str
     sha256: str
-    mime_type: Literal["text/html", "application/zip"]
+    mime_type: Literal["text/html", "application/zip", "application/json"]
     filename: str
     content: bytes
 
@@ -41,7 +41,7 @@ def read_delivery_artifact(
     if row is None or row["sha256"] != expected_sha256:
         raise ValueError("Unknown artifact or mismatched saved SHA-256")
     kind = row["artifact_type"]
-    mime_type: Literal["text/html", "application/zip"] = "text/html"
+    mime_type: Literal["text/html", "application/zip", "application/json"] = "text/html"
     if kind == "execution_confirmation":
         match = re.fullmatch(r"([0-9a-f]{32}):confirmation_html", artifact_id)
         directory, basename, prefix = (
@@ -56,13 +56,22 @@ def read_delivery_artifact(
         match = re.fullmatch(r"research:([0-9a-f]{64}):zip", artifact_id)
         directory, basename, prefix = "research_archives", "research.zip", "research"
         mime_type = "application/zip"
+    elif kind == "parameter_plateau":
+        match = re.fullmatch(r"plateau:([0-9a-f]{64})", artifact_id)
+        directory, basename, prefix = "analyses", "", "plateau"
+        mime_type = "application/json"
     else:
         raise ValueError(
-            "Delivery supports only confirmation HTML, report HTML and research ZIP"
+            "Delivery supports confirmation/report HTML, research ZIP and plateau JSON"
         )
     if match is None:
         raise ValueError("Invalid reading artifact identity")
-    path = workspace.root / directory / match[1] / basename
+    if kind == "parameter_plateau":
+        if match[1] != expected_sha256:
+            raise ValueError("Plateau identity differs from the saved SHA-256")
+        path = workspace.root / directory / "plateau" / f"{match[1]}.json"
+    else:
+        path = workspace.root / directory / match[1] / basename
     if row["path"] != str(path):
         raise ValueError("Artifact path differs from its canonical identity")
     content = WorkspaceFiles(workspace.root).read(path, MAX_DELIVERY_BYTES)

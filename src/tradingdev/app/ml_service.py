@@ -268,7 +268,9 @@ _ML_GUIDANCE = {
         "and row bookkeeping are forbidden; constant signals are unsupported. "
         "Sweeping the threshold stores one candidate per level, each with its "
         "level in parameters; parameter_axes covers only horizon, window and "
-        "n_quantiles, so a rule sweep is not reported as a parameter surface."
+        "n_quantiles. For saved threshold/model-parameter stability, use "
+        "analyze_parameter_plateau with explicit entry_ids and numeric axes "
+        "such as /threshold; never rebuild a grid from ranked pages alone."
     ),
     "ranking": (
         "The metric id selects the source. A bare name or signal.<metric> "

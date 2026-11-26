@@ -28,6 +28,9 @@ metric definitions. The derived artifact freezes that chosen definition.
   not reconstructed from a leaderboard, and worker failure persistence is unchanged.
   Coordinates use the manifest's effective constructor overlay, including captured
   defaults and recursively merged objects, rather than raw trial overrides.
+  All training scopes must share the complete timestamp sequence after UTC
+  normalization; equal bounds or row counts alone are insufficient. Changed
+  interior timestamps reject the collection; equivalent timezone spellings do not.
 - Signal reads one complete atomic leaderboard generation, then selects all
   specified entries, including rows with undefined or unrecorded metrics. Dataset
   bytes and manifest are verified against each entry's saved context. Selection is
@@ -63,9 +66,12 @@ booleans, non-finite values and duplicate levels are rejected; do not invent a
 numeric distance for categories. Every varying parameter must be declared, while
 non-axis parameters remain fixed. Duplicate coordinates are rejected with source
 identities for explicit selection; there is no hidden averaging or winner picking.
+An unknown axis is refused with a bounded list of exact saved coordinate names.
+Run parameters always use JSON pointers, even a parameter named `window`; bare
+`horizon`, `window` and `n_quantiles` denote only signal-evaluation settings.
 
-Capacity definitions are `MAX_CANDIDATES` in `plateau_sources`,
-`MAX_GRID_CELLS` and `MAX_DIMENSIONS` in `plateau_service`. Exceeding them refuses
+Capacity definitions are `MAX_CANDIDATES`, `MAX_GRID_CELLS` and `MAX_DIMENSIONS`
+in `app.contracts.plateau`. Exceeding them refuses
 the collection rather than analyzing a truncated subset. `radius` is a positive
 Chebyshev distance in sorted grid indices; `min_neighborhood` optionally limits
 which available cells can become plateau-best. There is no default trade-count or
@@ -85,6 +91,8 @@ higher-is-better algorithm scale: minimizing negates the input. The response
 keeps those names distinct. Plateau-best's own metric is distinct from its
 neighbors' average score. Undefined statistics are null. Empty and all-undefined
 selections still return their declared grid, counts and null best candidates.
+`derived_definitions` carries the public response models' field descriptions in
+every page and the frozen artifact, including the score-gap and spikiness formulas.
 
 A stable plateau does not establish out-of-sample validity, profitability or
 removal of data-mining bias. Optimization train cells are in-sample. Scores depend
@@ -118,3 +126,27 @@ refuse absent or inconsistent registration, missing files and changed bytes.
 
 Failure responses give an explanation and a next step. Resolve selection or saved
 evidence first; failure never authorizes a new experiment automatically.
+
+## MCP workflow and delivery
+
+Discover saved signal candidates with `leaderboard`; jobs, generic artifacts and
+optional pointwise-series artifacts are separate inventories. An empty series
+list does not establish that no saved candidates exist.
+
+`analyze_parameter_plateau` exposes the shared service with source selection,
+metric, axes, radius and optional minimum neighborhood. The input schema provides
+field bounds. It writes only the derived artifact, so its tool annotation is
+mutating and idempotent. It does not acquire market data or execute experiments.
+`get_parameter_plateau(analysis_id, offset, limit)` is the read-only continuation;
+follow `cells.next_offset` until null. Its output schema describes original values,
+algorithm scores, cell states and the fixed artifact identity. The ordinary ML
+contract points threshold-sweep users here instead of presenting ranking pages as
+a complete parameter grid.
+
+Use `get_artifact` to inspect registered metadata or hash-bound text pages.
+For HTTP, `get_artifact_download` supports the `parameter_plateau` artifact as
+`application/json`, with the same canonical path, content digest and portable
+file checks on issuance and every GET. Over stdio, use the host's verified file
+or attachment delivery; a remote server path alone is not a usable user link.
+The [artifact delivery contract](run_artifacts.md#reading-artifact-delivery) owns
+expiry, headers, byte capacity, changed-file failures and client limitations.

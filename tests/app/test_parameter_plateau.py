@@ -121,6 +121,12 @@ def test_minimize_ties_and_sample_threshold(collection: Collection) -> None:
     assert result["summary"]["plateau_best"]["identity"]["entry_id"] == "1"
     assert result["summary"]["plateau_best_score"] == -1.5
     assert result["summary"]["plateau_best_value"] == 1.0
+    assert result["summary"]["score_gap"] == 0.0
+    assert "own score" in result["derived_definitions"]["summary.score_gap"]
+    assert "ddof=1" in result["derived_definitions"]["summary.best_neighborhood_std"]
+    assert (
+        "not a significance test" in result["derived_definitions"]["summary.spikiness"]
+    )
     assert result["cells"]["items"][0]["value"] == 2.0
     assert result["cells"]["items"][0]["score"] == -2.0
 
@@ -324,6 +330,24 @@ def test_saved_optimization_uses_every_training_scope(
     )
     assert not extra["success"]
     assert "exactly match" in extra["error"]
+
+
+def test_run_axis_typo_reports_exact_saved_paths(collection: Collection) -> None:
+    from tests.app.test_selection_evidence import _publish
+
+    workspace, sql, service = collection
+    _publish(workspace, sql, "axis-repair", 3)
+    refused = service.analyze(
+        metric="run.sharpe_ratio", axes={"window": [1, 2, 3]}, run_id="axis-repair"
+    )
+    assert not refused["success"]
+    assert "'/window'" in refused["error"]
+    assert "signal" in refused["error"] and "JSON" in refused["error"]
+    assert not service.artifacts.root.exists()
+    repaired = service.analyze(
+        metric="run.sharpe_ratio", axes={"/window": [1, 2, 3]}, run_id="axis-repair"
+    )
+    assert repaired["success"], repaired
 
 
 def test_partial_or_historical_optimization_is_refused(
@@ -605,6 +629,9 @@ def _publish_custom_optimization(
     *,
     nested: bool = False,
     wrong_dates: bool = False,
+    invalid_reason: bool = False,
+    different_grid: bool = False,
+    timezone_alias: bool = False,
 ) -> None:
     from tests.app.test_run_ranking import _manifest
     from tests.app.test_selection_evidence import _publish
@@ -623,6 +650,16 @@ def _publish_custom_optimization(
     assert manifest is not None
     assert manifest.optimization is not None
     scopes = dict(original.performance.scopes)
+    if invalid_reason:
+        unavailable = scopes["trial/1/train"]
+        scopes["trial/1/train"] = unavailable.model_copy(
+            update={
+                "metadata": {
+                    **unavailable.metadata,
+                    "unavailable": {"sharpe_ratio": ["bad"]},
+                }
+            }
+        )
     if nested:
         base = _manifest()
         manifest = ExecutionManifest.create(
@@ -648,10 +685,42 @@ def _publish_custom_optimization(
             }
             scopes[scope_id] = scope.model_copy(update={"parameters": params})
     observed = dict(original.observations.scopes)
-    if wrong_dates:
+    if different_grid:
+        for scope_id, values in list(observed.items()):
+            if scope_id.endswith("/train"):
+                observed[scope_id] = values.model_copy(
+                    update={
+                        "equity_curve": [1000.0, 1050.0, 1100.0],
+                        "returns": [0.0, 0.05, 1100.0 / 1050.0 - 1.0],
+                        "timestamps": [
+                            "2024-01-01T00:00:00Z",
+                            "2024-01-02T00:00:00Z",
+                            "2024-01-03T00:00:00Z",
+                        ],
+                    }
+                )
+    if different_grid or timezone_alias:
         observed["trial/2/train"] = observed["trial/2/train"].model_copy(
-            update={"timestamps": ["2025-01-01T00:00:00Z", "2025-01-02T00:00:00Z"]}
+            update={
+                "timestamps": (
+                    [
+                        "2024-01-01T00:00:00Z",
+                        "2024-01-02T12:00:00Z",
+                        "2024-01-03T00:00:00Z",
+                    ]
+                    if different_grid
+                    else ["2023-12-31T19:00:00-05:00", "2024-01-01T19:00:00-05:00"]
+                )
+            }
         )
+    if wrong_dates:
+        for scope_id, values in list(observed.items()):
+            if scope_id.endswith("/train"):
+                observed[scope_id] = values.model_copy(
+                    update={
+                        "timestamps": ["2025-01-01T00:00:00Z", "2025-01-02T00:00:00Z"]
+                    }
+                )
     ExecutionManifestStore(workspace).publish("custom-grid", manifest)
     sql.create_run(
         run_id="custom-grid",
@@ -773,3 +842,38 @@ def test_real_model_hyperparameter_sweep(collection: Collection) -> None:
     assert {
         cell["parameters"]["/n_estimators"] for cell in result["cells"]["items"]
     } == {12, 18}
+
+
+def test_optimization_nontext_unavailability_is_refused(collection: Collection) -> None:
+    workspace, sql, service = collection
+    _publish_custom_optimization(workspace, sql, invalid_reason=True)
+    result = service.analyze(
+        metric="run.sharpe_ratio", axes={"/window": [1, 2, 3]}, run_id="custom-grid"
+    )
+    assert not result["success"]
+    assert "unavailable reason" in result["error"]
+    assert not service.artifacts.root.exists()
+
+
+def test_optimization_requires_same_interior_training_grid(
+    collection: Collection,
+) -> None:
+    workspace, sql, service = collection
+    _publish_custom_optimization(workspace, sql, different_grid=True)
+    result = service.analyze(
+        metric="run.sharpe_ratio", axes={"/window": [1, 2, 3]}, run_id="custom-grid"
+    )
+    assert not result["success"]
+    assert "training timestamp grids differ" in result["error"]
+    assert "trial/2/train" in result["error"]
+    assert not service.artifacts.root.exists()
+
+
+def test_optimization_grid_compares_utc_instants(collection: Collection) -> None:
+    workspace, sql, service = collection
+    _publish_custom_optimization(workspace, sql, timezone_alias=True)
+    result = service.analyze(
+        metric="run.sharpe_ratio", axes={"/window": [1, 2, 3]}, run_id="custom-grid"
+    )
+    assert result["success"], result
+    assert result["n_candidates"] == 3

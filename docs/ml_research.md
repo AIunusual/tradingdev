@@ -972,11 +972,14 @@ unsupported by the quantile evaluator; observing both values in the full sample
 does not guarantee a trade. Choosing a threshold after viewing this dataset
 introduces in-sample selection; the backend does not verify selection history.
 A threshold sweep is stored as one
-candidate per level, each carrying its level in `parameters`. It is not reported
-as a parameter surface: `parameter_axes` covers only horizon, IC window and
-quantile count, so the surface, its caveats and the plateau analysis built on
-them do not apply to rule settings yet. Reading a sweep as a surface today would
-compare separate candidates as if they were one measurement.
+candidate per level, each carrying its level in `parameters`. Ranking's
+`parameter_axes` still covers only horizon, IC window and quantile count.
+For a threshold or numeric model-parameter plateau, select the saved entry IDs
+and declare numeric axes through `analyze_parameter_plateau`; it reads all selected
+records, including undefined metrics, independently of ranking pages. Fixed
+method/evaluation conditions and cross-horizon evidence are checked before analysis.
+See [saved parameter plateau analysis](parameter_plateau.md) for source boundaries,
+duplicate-coordinate refusal, missing cells and fixed artifact continuation.
 
 The recorded metrics include annualised return, maximum drawdown, Sharpe, alpha
 and beta alongside the signal-quality ones. They describe the simulated

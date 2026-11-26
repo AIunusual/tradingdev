@@ -19,6 +19,7 @@ from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.ml_service import MLService
+from tradingdev.app.plateau_service import PlateauService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.research_note_service import ResearchNoteService
 from tradingdev.app.run_service import RunService
@@ -36,6 +37,7 @@ from tradingdev.mcp.tools import (
     history,
     jobs,
     ml,
+    plateau,
     research_notes,
     runs,
     strategy,
@@ -150,6 +152,7 @@ def create_server(
     research_notes.register(mcp, ResearchNoteService(workspace, store), downloads)
     feature_requests.register(mcp, feature_request_service)
     ml.register(mcp, MLService(workspace=workspace, data_service=data_service))
+    plateau.register(mcp, PlateauService(workspace=workspace, store=store))
     return mcp
 
 

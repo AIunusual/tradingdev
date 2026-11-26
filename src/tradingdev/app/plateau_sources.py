@@ -7,7 +7,10 @@ import json
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 from tradingdev.adapters.storage.ml_datasets import MLDatasetStore
+from tradingdev.app.contracts.plateau import MAX_CANDIDATES
 from tradingdev.app.ml_surface import compare_market_evidence, validate_dataset_context
 from tradingdev.domain.ml.evaluation.catalog import SIGNAL_METRIC_CATALOG
 from tradingdev.domain.ml.leaderboard import ProducerSource
@@ -23,8 +26,6 @@ if TYPE_CHECKING:
     from tradingdev.adapters.storage.filesystem import WorkspacePaths
     from tradingdev.app.trade_history_service import TradeHistoryService
     from tradingdev.domain.ml.leaderboard import LeaderboardEntry
-
-MAX_CANDIDATES = 1024
 
 
 def canonical(value: Any) -> bytes:
@@ -70,15 +71,31 @@ def optimization_collection(
             "Metric needs a saved scalar definition and optimization direction"
         )
     rows: list[dict[str, Any]] = []
+    training_grid: tuple[pd.Timestamp, ...] | None = None
     for index in range(search.total_combinations):
         scope_id = f"trial/{index}/train"
         scope = loaded.performance.scopes[scope_id]
+        timestamps = loaded.observations.scopes[scope_id].timestamps
+        if not timestamps:
+            raise ValueError(f"Training timestamps are unavailable: {scope_id}")
+        grid = tuple(pd.to_datetime(timestamps, utc=True, format="mixed"))
+        if training_grid is not None and grid != training_grid:
+            raise ValueError(
+                f"Optimization training timestamp grids differ: {scope_id}"
+            )
+        training_grid = grid
         unavailable = scope.metadata.get("unavailable", {})
         reason = (
             unavailable.get(metric, "undefined_metric")
             if isinstance(unavailable, dict)
             else "undefined_metric"
         )
+        if (
+            metric in scope.values
+            and scope.values[metric] is None
+            and (not isinstance(reason, str) or not reason.strip())
+        ):
+            raise ValueError("Saved metric unavailable reason must be nonempty text")
         rows.append(
             {
                 "identity": {"run_id": run_id, "scope": scope_id},

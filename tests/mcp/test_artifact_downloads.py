@@ -161,3 +161,42 @@ def test_report_download_and_explicit_proxy_prefix(
 def test_public_base_url_rejects_ambiguous_or_credentialed_values(value: str) -> None:
     with pytest.raises(ValueError):
         validate_public_base_url(value)
+
+
+def test_parameter_plateau_json_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.app.test_parameter_plateau import _record
+
+    from tradingdev.app.plateau_service import PlateauService
+
+    async def check() -> None:
+        async with (
+            http_plan_server(monkeypatch) as runtime,
+            runtime.connect() as client,
+        ):
+            workspace = WorkspacePaths(runtime.root / "workspace")
+            sql = SQLiteStore(workspace)
+            result = PlateauService(workspace=workspace, store=sql).analyze(
+                metric="signal.ic_mean",
+                axes={"/threshold": [1, 2, 3]},
+                entry_ids=_record(workspace, [0.5, None, 0.6]),
+            )
+            descriptor = result["artifact"]
+            response = await client.call(
+                "get_artifact_download",
+                artifact_id=descriptor["artifact_id"],
+                expected_sha256=descriptor["sha256"],
+            )
+            assert response["success"] and response["mime_type"] == "application/json"
+            async with httpx.AsyncClient() as reader:
+                delivered = await reader.get(response["download_url"])
+                assert delivered.status_code == 200
+                assert delivered.headers["content-type"] == "application/json"
+                assert delivered.content == Path(descriptor["path"]).read_bytes()
+                assert delivered.json()["source_hash"] == result["source_hash"]
+                assert delivered.json()["cells"][1]["status"] == "undefined"
+                Path(descriptor["path"]).write_bytes(b"{}")
+                assert (await reader.get(response["download_url"])).status_code == 404
+            assert runtime.context.runner.calls == []
+            assert runtime.context.service.jobs.list_all_jobs() == []
+
+    asyncio.run(check())

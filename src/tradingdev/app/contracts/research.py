@@ -208,7 +208,7 @@ class ArtifactDownload(ContractModel):
     success: Literal[True] = True
     artifact_id: str
     sha256: str
-    mime_type: Literal["text/html", "application/zip"]
+    mime_type: Literal["text/html", "application/zip", "application/json"]
     download_url: str
     download_expires_at: int
 

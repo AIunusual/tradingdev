@@ -22,6 +22,7 @@ _SCENARIOS = (
     "discovery",
     "novice_intake",
     "comparison",
+    "plateau",
     "research_proposal",
     "strategy_execution_guidance",
     "research_delivery",

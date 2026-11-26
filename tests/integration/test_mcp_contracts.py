@@ -32,6 +32,7 @@ _READ_ONLY_TOOLS = {
     "list_runs",
     "get_run",
     "get_metric_catalog",
+    "get_parameter_plateau",
     "get_run_metrics",
     "get_optimization_trials",
     "get_selection_evidence",
@@ -58,6 +59,7 @@ _READ_ONLY_TOOLS = {
 # readOnly, destructive, idempotent, openWorld: expected public behavior,
 # intentionally independent of the server's annotation helper.
 _MUTATING_HINTS = {
+    "analyze_parameter_plateau": (False, False, True, False),
     "save_strategy": (False, True, False, False),
     "save_research_evidence": (False, False, False, False),
     "validate_strategy": (False, True, False, True),

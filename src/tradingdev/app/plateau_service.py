@@ -11,8 +11,13 @@ from typing import TYPE_CHECKING, Any
 from tradingdev.adapters.storage.filesystem import WorkspacePaths
 from tradingdev.adapters.storage.plateau import PlateauStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore, get_sqlite_store
-from tradingdev.app.plateau_sources import (
+from tradingdev.app.contracts.plateau import (
     MAX_CANDIDATES,
+    MAX_DIMENSIONS,
+    MAX_GRID_CELLS,
+    plateau_definitions,
+)
+from tradingdev.app.plateau_sources import (
     canonical,
     optimization_collection,
     signal_collection,
@@ -28,8 +33,6 @@ from tradingdev.domain.statistics.plateau import (
 if TYPE_CHECKING:
     from tradingdev.app.plateau_sources import PlateauCollection
 
-MAX_GRID_CELLS = 4096
-MAX_DIMENSIONS = 6
 LIMITATIONS = [
     (
         "Neighborhoods use Chebyshev distance on sorted grid indices, not "
@@ -211,8 +214,11 @@ def _analyze(
         parameters = row["parameters"]
         if any(name not in parameters for name in names):
             raise ValueError(
-                "Selected axis is missing from saved parameters; historical search"
-                " cannot be inferred"
+                "Requested axes are missing from saved parameters. Exact saved "
+                f"coordinate names (first 20 of {len(parameters)}): "
+                f"{sorted(parameters)[:20]}. Parameter JSON pointers start with /; "
+                "bare horizon/window/n_quantiles apply only to signal evaluation. "
+                "Historical coordinates cannot be invented."
             )
         selected = _axes({name: [parameters[name]] for name in names})
         point = tuple(selected[name][0] for name in names)
@@ -341,6 +347,7 @@ def _analyze(
             "n_below_min_neighborhood": summary.n_below_min_neighborhood,
         },
         "limitations": LIMITATIONS,
+        "derived_definitions": plateau_definitions(),
         "cells": cells,
         "evidence": collection.evidence,
     }

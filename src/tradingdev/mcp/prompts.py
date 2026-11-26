@@ -25,7 +25,7 @@ Strategy development workflow
 2. Discover capabilities and parameter proposals.
    - Call list_strategies before coding; get_strategy reads source/configuration.
      execution_capabilities describes requirements and modes, not fitted state or
-     proven execution. Unknown means unknown. get_ml_contract covers separate ML
+     proven execution. get_ml_contract covers separate ML
      research; train_model does not fit a bundled strategy and fit() is not a tool.
    - Read get_strategy_contract(section="evidence") for rules, formulas and parameter
      origins. Preserve explicit parameters; otherwise propose a small fixed set.
@@ -88,9 +88,9 @@ Strategy development workflow
      An approved optimization needs no second worker-side confirmation.
 
 7. Inspect saved results and evidence.
-   - Poll get_job_status; cancel_job aborts an active job. Use list_runs/get_run for
-     summaries, find_runs for historical effective parameters. Follow pagination and
-     incomplete-discovery warnings before claiming completeness.
+   - Poll get_job_status; cancel_job aborts an active job. list_runs/get_run give
+     summaries; find_runs locates historical effective parameters. Follow all pages
+     and incomplete-discovery warnings before claiming completeness.
    - get_run_metrics supplies saved values, definitions and available_scopes;
      get_metric_catalog discovers metrics. Use display_metrics for presentation.
      Missing summary fields are not missing metrics; null is not zero. Check
@@ -99,12 +99,13 @@ Strategy development workflow
      Never invent absent records or call an open trade's final mark an executed exit.
    - For incomplete optimization, get_optimization_trials shows grid and test status.
      Read saved scopes with get_run_metrics(job ID, explicit scope). Qualify any leader.
+   - Saved grid stability: analyze_parameter_plateau uses train trials or signal
+     candidates (discover with leaderboard). Jobs/artifacts/pointwise-series lists
+     do not inventory signal candidates.
    - Inspect successful comparison children and retain every failed, cancelled or
      unexecuted candidate with its reason; neither omit them nor infer zero returns.
 
 8. Generate and deliver the complete result report.
-   - Saved ML research also supports reports: discover the ML reporting path in
-     get_ml_contract and get_report_sections; select recorded candidates explicitly.
    - Performance/risk interpretation includes an offline HTML report by default;
      only an explicit summary/metrics-only or no-report request opts out.
      Read get_report_sections; generate_report after inspecting results, omitting

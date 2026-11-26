@@ -125,3 +125,30 @@ def test_delivery_rejects_untrusted_registration_or_file(
     service = ArtifactService(workspace=workspace, store=store)
     with pytest.raises((ValueError, OSError)):
         service.read_download(identity, "0" * 64 if damage == "expected_hash" else sha)
+
+
+def test_parameter_plateau_json_delivery_uses_canonical_digest_path(
+    tmp_path: Path,
+) -> None:
+    from pathlib import Path
+
+    from tests.app.test_parameter_plateau import _record
+
+    from tradingdev.app.plateau_service import PlateauService
+
+    workspace = WorkspacePaths(tmp_path)
+    sql = SQLiteStore(workspace)
+    result = PlateauService(workspace=workspace, store=sql).analyze(
+        metric="signal.ic_mean",
+        axes={"/threshold": [1, 2, 3]},
+        entry_ids=_record(workspace, [0.5, None, 0.6]),
+    )
+    descriptor = result["artifact"]
+    service = ArtifactService(workspace=workspace, store=sql)
+    delivery = service.read_download(descriptor["artifact_id"], descriptor["sha256"])
+    assert delivery.mime_type == "application/json"
+    assert delivery.content == Path(descriptor["path"]).read_bytes()
+    assert delivery.filename.endswith(".json")
+    Path(descriptor["path"]).write_bytes(b"{}")
+    with pytest.raises(ValueError, match="bytes changed"):
+        service.read_download(descriptor["artifact_id"], descriptor["sha256"])

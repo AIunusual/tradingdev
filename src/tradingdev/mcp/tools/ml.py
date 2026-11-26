@@ -348,7 +348,12 @@ def register(mcp: MCPServer, service: MLService) -> None:
         offset: int = 0,
         limit: int = 50,
     ) -> EvaluationSeriesReadResponse | ErrorResponse:
-        """Page artifact summaries, or one artifact's rows by artifact_id."""
+        """Page saved pointwise-series artifacts, or their rows by artifact_id.
+
+        This does not inventory signal candidates: discover them with leaderboard.
+        Missing optional series do not imply missing candidates. Saved parameter
+        stability uses analyze_parameter_plateau with selected candidate entry IDs.
+        """
         limits = {
             "max_page_size": EvaluationSeriesStore.MAX_PAGE_SIZE,
             "max_export_rows": EvaluationSeriesStore.MAX_EXPORT_ROWS,

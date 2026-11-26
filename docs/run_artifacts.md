@@ -45,6 +45,7 @@ result exists. Standard roots are resolved by
 | `execution_plans/<plan_id>/` | Saved confirmation text/HTML and approval lock; see [Execution Plans](execution_plans.md). |
 | `ml_datasets/`, `ml_feature_cache/`, `models/`, `ml_leaderboard/` | Independent [ML stores](ml_research.md#ml-research-artifacts). Under `ml_leaderboard/evaluation_series/`, `artifacts/<artifact_id>/` holds immutable Parquet series and manifests, `protected/` holds permanent cleanup markers, and `.evaluation-series.lock` serializes publication, protection and cleanup; see [Saved pointwise evaluation series](ml_research.md#saved-pointwise-evaluation-series). |
 | `reports/`, `research_archives/`, `feature_requests/` | Derived reports, notebook exports and recorded unsupported requests; see [Reports](reports.md). |
+| `analyses/plateau/` | Immutable saved parameter-grid analysis with its source evidence and fixed paging identity; see [parameter plateau analysis](parameter_plateau.md). |
 | `conversations/<export_id>/` | Fixed-version conversation HTML, JSON and manifest; see [recorded conversations](reports.md#recorded-conversations). |
 | `.conversation-clients/<conversation_id>/` | Native client state and logs used for live conversation resume, not sharing artifacts; see [Codex recording](reports.md#codex-cli-recording-adapter). The original Codex profile is also required for resume. |
 
@@ -662,8 +663,8 @@ A server-local path is not a public download URL.
 ### Reading Artifact Delivery
 
 `get_artifact_download(artifact_id, expected_sha256)` provides a short-lived HTTP
-URL for registered execution confirmation HTML, research report HTML and research
-archive ZIP. Obtain the identity/hash from the producer response or `get_artifact`
+URL for registered execution confirmation HTML, research report HTML, research
+archive ZIP and parameter plateau JSON. Obtain the identity/hash from the producer response or `get_artifact`
 metadata. The [response schema](../src/tradingdev/app/contracts/research.py)
 defines `ArtifactDownload`; [the tool](../src/tradingdev/mcp/tools/artifacts.py)
 provides the client-visible contract. Other artifacts, including conversation
@@ -690,7 +691,7 @@ return 403; valid capabilities whose artifact is no longer available return 404.
 
 HTML opens inline with an opaque sandbox origin; its CSP permits embedded scripts
 and downloads but blocks network connections, forms and embedding by other pages.
-ZIP uses attachment disposition. Responses use no-store, no-referrer and nosniff
+ZIP and JSON use attachment disposition. Responses use no-store, no-referrer and nosniff
 headers. These browser restrictions are not a sandbox for generated Python.
 URL issuance returns metadata only to the MCP client, without file bytes in the
 tool response or model context. The subsequent HTTP GET returns the file bytes.
