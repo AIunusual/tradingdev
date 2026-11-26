@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import replace
+from itertools import cycle
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -158,21 +159,52 @@ class TestMatrixReport:
                 point["mean_per_period"] * math.sqrt(365.0), rel=1e-9
             )
 
+    def test_bootstrap_streams_are_separate_from_the_preserved_samples(
+        self, monkeypatch: Any
+    ) -> None:
+        config = replace(SMOKE_CONFIG, seeds=(2000, 2001))
+        calls: dict[bytes, list[int]] = {}
+
+        def record_interval(
+            returns: Any, *, seed: int, reps: int, **_kwargs: object
+        ) -> IntervalUnavailable:
+            calls.setdefault(returns.tobytes(), []).append(seed)
+            return IntervalUnavailable(
+                "no_valid_resample", None, len(returns), 20, reps
+            )
+
+        monkeypatch.setattr(calibration, "sharpe_interval_outcome", record_interval)
+        run_matrix(config)
+
+        bootstrap_seeds = set()
+        for spec in PROCESSES:
+            for n in (config.short_n, config.long_n):
+                for seed in config.seeds:
+                    sample = generate_returns(spec, n, seed)
+                    first, second = calls[sample.tobytes()]
+                    assert first == second  # Paired comparison of both block sizes.
+                    bootstrap_seeds.add(first)
+        assert bootstrap_seeds.isdisjoint(config.seeds)
+        assert len(bootstrap_seeds) == len(PROCESSES) * 2 * len(config.seeds)
+
     def test_coverage_counts_both_bounds_misses_and_unavailable(
         self, monkeypatch: Any
     ) -> None:
         # The iid population Sharpe is 0.05 per period; with four periods per
         # year its annualised target is 0.10.
-        bounds = [(0.08, 0.10), (0.10, 0.12), (0.09, 0.11), (0.02, 0.07), (0.11, 0.14)]
+        bounds = cycle(
+            [(0.08, 0.10), (0.10, 0.12), (0.09, 0.11), (0.02, 0.07), (0.11, 0.14), None]
+        )
 
         def fixed_interval(
-            returns: Any, *, seed: int, confidence: float, reps: int, **_kwargs: object
+            returns: Any, *, confidence: float, reps: int, **_kwargs: object
         ) -> SharpeInterval | IntervalUnavailable:
-            if seed == len(bounds):
+            interval = next(bounds)
+            if interval is None:
                 return IntervalUnavailable(
                     "no_valid_resample", 0.1, len(returns), 20, reps
                 )
-            lower, upper = bounds[seed]
+            lower, upper = interval
             sample_sharpe = (lower + upper) / 2
             return SharpeInterval(
                 sample_sharpe, lower, upper, confidence, 5, reps, reps

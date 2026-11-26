@@ -297,7 +297,7 @@ def run_matrix(
     limits: list[str] = []
     annualisation = math.sqrt(config.periods_per_year)
 
-    for spec in PROCESSES:
+    for process_index, spec in enumerate(PROCESSES):
         truth = population_sharpe(spec)
         interval_truth = truth * annualisation
         for sample_name, observations in (
@@ -317,13 +317,19 @@ def run_matrix(
                 psr = probabilistic_sharpe_ratio(values, benchmark_sr=truth)
                 psr_flags.append(psr is not None and psr > config.confidence)
 
+                bootstrap_stream = np.random.SeedSequence(
+                    seed, spawn_key=(process_index, observations)
+                )
+                bootstrap_seed = int(
+                    bootstrap_stream.generate_state(1, dtype=np.uint64)[0]
+                )
                 for block_size in config.block_sizes:
                     outcome = sharpe_interval_outcome(
                         values,
                         periods_per_year=config.periods_per_year,
                         confidence=config.confidence,
                         reps=config.bootstrap_reps,
-                        seed=seed,
+                        seed=bootstrap_seed,
                         block_size=block_size,
                     )
                     if isinstance(outcome, IntervalUnavailable):
@@ -527,6 +533,13 @@ def build_report(config: Config) -> dict[str, object]:
             ),
             "reporting_annualisation": "sqrt(365) applied only to the point estimate",
             "compounding": "simple per-period returns; no holding-period compounding",
+            "bootstrap_seed": (
+                "Data generation uses each configuration seed unchanged. "
+                "The seed shared by all block sizes for that sample is "
+                "int(SeedSequence(seed, spawn_key=(process_index, observations))"
+                ".generate_state(1, dtype=uint64)[0]). The process_index is the "
+                "zero-based position in configuration.processes."
+            ),
             "interpretation_rule": (
                 "abs(observed - nominal) <= 2 * Monte Carlo standard error "
                 "means within_simulation_error"
