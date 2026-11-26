@@ -119,8 +119,9 @@ is trusted, not an attacker controlling both files and database.
 
 Publication uses a same-directory staging file and non-replacing link. Identical
 retries verify existing bytes; changed artifacts fail without replacement. Staging
-files are removed after successful, failed and timed-out writes. Artifact file
-publication and SQLite registration are separate operations: registration failure
+cleanup is attempted in `finally` after completion or exceptions. A cleanup failure
+can leave a staging file and fails the request; publication has no internal write
+timeout. Artifact file publication and SQLite registration are separate operations: registration failure
 may leave a valid unregistered file, and an identical retry can register it. Reads
 refuse absent or inconsistent registration, missing files and changed bytes.
 
