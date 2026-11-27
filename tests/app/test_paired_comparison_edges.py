@@ -138,6 +138,19 @@ def test_inferential_requires_a_recorded_producer(
     assert payload["unavailable"]["reason"] == "source_qualification_unknown"
 
 
+def test_inferential_rejects_interior_invalid_observations(
+    service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    values: list[float | None] = [0.01] * 30
+    values[15] = float("nan")
+    monkeypatch.setattr(service, "_load", lambda *_: _loaded(values=values))
+    descriptive = service.compare(_SELECTION, _SELECTION, mode="descriptive")
+    inferential = service.compare(_SELECTION, _SELECTION, mode="inferential")
+    assert descriptive["status"] == "available"
+    assert descriptive["alignment"]["excluded_counts"]["interior_gap:a"] == 1
+    assert inferential["unavailable"]["reason"] == "cadence_gap_unsupported"
+
+
 def test_unknown_producer_is_not_inferential(
     service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

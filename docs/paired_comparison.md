@@ -40,11 +40,14 @@ signal fingerprint 與可用的 fold 範圍，由讀者判斷資格。
 基準則使用其保存設定宣告的頻率。交集之前不做 dropna、補零或
 名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的時間順序判斷是前段
 warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報原始長度、共同
-日期數、共同有效樣本數、各類排除原因與被排除座標，以及共同有效遮罩。
+時間戳數、共同有效樣本數、各類排除原因與被排除座標，以及共同有效遮罩。
 
-共同期間缺少預期日曆點時，日曆視為不完整：描述性比較仍可計算並標明缺口，
-`mode="inferential"` 回報 `cadence_gap_unsupported`。第一版沒有新的缺口
-bootstrap；不完整日曆不壓縮成連續序列。完全沒有共同日期回報
+共同期間缺少預期日曆點時，日曆視為不完整；共同時間戳上存在任一侧中途無效值
+也視為缺口。描述性比較仍可計算並保留完整缺口稽核，bootstrap 會按有效觀察的
+序列位置重抽樣，因此描述結果實際上會把有效觀察之間的位置視為相鄰。推論模式
+不接受這種相鄰化：`mode="inferential"` 對日曆缺口或中途無效值回報
+`cadence_gap_unsupported`。前段 warm-up 不視為中途缺口。第一版沒有新的缺口
+bootstrap。完全沒有共同日期回報
 `no_common_timestamps`，共同有效觀察不足
 `MIN_BOOTSTRAP_OBSERVATIONS`（定義於
 [`domain/statistics/sharpe.py`](../src/tradingdev/domain/statistics/sharpe.py)）

@@ -282,11 +282,15 @@ class PairedComparisonService:
                 [],
                 aligned,
             )
-        if mode == "inferential" and not aligned.cadence_complete:
+        interior_gaps = sum(aligned.gap_excluded.values())
+        if mode == "inferential" and (
+            not aligned.cadence_complete or interior_gaps > 0
+        ):
             return self._unavailable_payload(
                 _LoadFailure(
                     "cadence_gap_unsupported",
-                    f"{len(aligned.missing_timestamps)} missing calendar periods",
+                    f"{len(aligned.missing_timestamps)} missing calendar periods, "
+                    f"{interior_gaps} interior invalid observations",
                 ),
                 mode,
                 [left_loaded.identity, right_loaded.identity],
