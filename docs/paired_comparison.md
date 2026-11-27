@@ -10,8 +10,8 @@
 | `kind` | 需要的欄位 | 序列與成本 |
 | ---- | ---- | ---- |
 | `run` | `run_id`、`scope`（省略用預設） | 從保存的 run/scope observations 重建每期報酬；signal 模式用帳戶權益，成本已在成交中；volume 模式沒有本金相對報酬，回報 `not_applicable` |
-| `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；不逆推原始 closes |
-| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`scope`（省略用預設）、`price_artifact_id` | 服務先讀取該 run 的固定 snapshot，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；否則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
+| `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；不逆推原始 closes |
+| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
 | `signal` | `artifact_id`、`column` | 已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
@@ -29,9 +29,10 @@ signal fingerprint 與可用的 fold 範圍，由讀者判斷資格。
 
 ## 對齊與缺口政策
 
-第一版對 run、產品基準與訊號序列都只支援**精確 UTC 日頻與小時頻**的共同時間戳；
-訊號序列的頻率由保存時間戳推斷，不規則或不足兩個時間點標為 `unsupported`，
-不能冒充日頻。run 與產品基準則使用其保存設定宣告的頻率。交集之前不做 dropna、補零或
+推論模式只接受**精確 UTC 日頻與小時頻**的共同時間戳；其他相同頻率的序列仍可做
+描述性比較，但 cadence 標為 `unsupported`，不能進入推論。訊號序列的頻率由保存
+時間戳推斷，不規則或不足兩個時間點標為 `unsupported`，不能冒充日頻。run 與產品
+基準則使用其保存設定宣告的頻率。交集之前不做 dropna、補零或
 名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的時間順序判斷是前段
 warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報原始長度、共同
 日期數、共同有效樣本數、各類排除原因與被排除座標，以及共同有效遮罩。
@@ -54,8 +55,10 @@ bootstrap；不完整日曆不壓縮成連續序列。完全沒有共同日期�
 
 `mode="descriptive"` 是預設：p 值標為 `descriptive_only`，不承載顯著性結論。
 `mode="inferential"` 另要求完整日曆與可識別的 producer；p 值是 percentile
-尾端機率，只對選定的這一對有意義。兩者都不做多重比較校正，第一版只處理
-單一 pair，不自動宣稱已修正先前搜尋造成的偏誤。
+尾端機率，只對選定的這一對有意義。stationary bootstrap 不保證任意非平穩報酬
+過程下的有效推論，區間也不保證名目涵蓋率；完整日曆與可識別來源只是必要檢查，
+不是充分條件。兩者都不做多重比較校正，第一版只處理單一 pair，不自動宣稱已修正
+先前搜尋造成的偏誤。
 
 無法比較（來源不存在、損壞、無序列、定義不相容、資料不足）回傳
 `status="unavailable"`，附 `reason`、`next_step`、`source`、`detail`；
