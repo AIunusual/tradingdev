@@ -33,8 +33,8 @@ dataset ID 不同本身不證明 holdout，也不證明未調參。
 `verified_out_of_sample`；訊號序列與基準來源一律保持 `in_sample_or_unknown`，
 所以與它們配對也不會取得該標記。這只是保存關係的呈現，不保證沒有
 先前選擇或多重比較偏誤。訊號序列來源另保留 training/evaluation 關係、producer source、
-signal fingerprint 與可用的 fold 範圍；run 與基準來源則保存 run/scope 身分與
-`claim_scope`，由讀者判斷資格。
+signal fingerprint 與可用的 fold 範圍；run 與基準來源則保存 run/scope 身分。
+`claim_scope` 只出現在整份回覆的一層，不是各別來源的欄位。
 
 ## 對齊與缺口政策
 

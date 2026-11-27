@@ -17,6 +17,7 @@ MCP 是主要產品介面；CLI 與 dashboard 共用 application services 的執
 | [ML 研究](docs/ml_research.md) | 資料、模型、驗證解讀與獨立保存契約 |
 | [執行計畫](docs/execution_plans.md) | 確認文件、使用者決策與提交狀態 |
 | [績效產物](docs/performance_artifacts.md)、[報告](docs/reports.md) | 指標與觀察值、離線呈現及匯出契約 |
+| [配對比較](docs/paired_comparison.md) | 保存序列的來源選擇、對齊／cadence、推論資格與 Markdown／HTML 成果契約 |
 | [開發指南](docs/development.md) | 開發環境、品質檢查、測試及 Git／PR 流程 |
 | [代理開發政策](AGENTS.md) | 代理修改 repository 時遵循的政策 |
 
