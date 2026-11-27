@@ -635,7 +635,7 @@ uv run --no-sync python -m tooling.prompt_contracts
 | 工具 | 負責範圍與維護入口 |
 | --- | --- |
 | [context_budget](../tooling/context_budget.py) | 量測實際註冊的指引、工具投影及 MCP wire metadata；修改量測時維護 `tests/tooling/test_context_budget.py`。 |
-| [prompt_contracts](../tooling/prompt_contracts.py) | 機械檢查契約探索、schema、明示章節引用與 UTF-8 預算；已納入 `check-fast.sh`，修改時維護 `tests/tooling/test_prompt_contracts.py`。 |
+| [prompt_contracts](../tooling/prompt_contracts.py) | 機械檢查契約探索、schema、明示章節引用與 UTF-8 預算；已納入 `check-fast.sh`，修改時維護 `tests/tooling/test_prompt_contracts.py` 與 `tests/tooling/test_prompt_contracts_edges.py`。 |
 
 兩者使用可清理的臨時工作區，不呼叫模型、下載行情或執行回測。Bytes 不是 tokens；
 指定工具集合的量測也不能當成完整產品成本。預算集中於 `prompt_contracts.py`，

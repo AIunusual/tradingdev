@@ -45,7 +45,9 @@ signal fingerprint 與可用的 fold 範圍；run 與產品基準來源保存 ru
 推論模式只接受**精確 UTC 日頻與小時頻**的共同時間戳；其他相同頻率的序列仍可做
 描述性比較，但 cadence 標為 `unsupported`，不能進入推論。訊號序列的頻率由保存
 時間戳推斷，不規則或不足兩個時間點標為 `unsupported`，不能冒充日頻。run 與產品
-基準則使用其保存設定宣告的頻率。交集之前不做 dropna、補零或
+基準則使用其保存設定宣告的頻率。純 `align_masked_pair` 要求兩側都是 timezone-aware
+的 `DatetimeIndex`，任一侧 naive 都會被拒絕；公開服務會先把保存來源的時間戳正規化為
+UTC 再對齊。交集之前不做 dropna、補零或
 名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的時間順序判斷是前段
 warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報原始長度、共同
 時間戳數、共同有效樣本數、各類排除原因與排除計數；回覆只有
@@ -83,9 +85,9 @@ bootstrap。完全沒有共同日期回報
 
 無法比較（來源不存在、損壞、無序列、定義不相容、資料不足）回傳
 `status="unavailable"`，附 `reason`、`next_step`、`source`、`detail`；
-比較選項無效（`mode`、`reps` 需 100..10000 的整數、`seed` 需非負整數、`block_size` 需正整數、
-`confidence` 需嚴格介於 0 與 1 的 float）或出版失敗時，
-Python service 會拋出 `PairedComparisonError`（`invalid_comparison_request` 或
+比較選項無效（`reps` 需 100..10000 的整數、`seed` 需非負整數、`block_size` 需正整數、
+`confidence` 需嚴格介於 0 與 1 的 float；`mode` 在 MCP schema 中是 Literal，非列舉值
+會先被工具輸入驗證拒絕）或出版失敗時，Python service 會拋出 `PairedComparisonError`（`invalid_comparison_request` 或
 `artifact_publication_failed`）；MCP 工具捕捉後回傳 `success=false` 與對應的
 `code`。若 selector 在 MCP 輸入 schema 驗證時就
 不完整（例如 signal 缺少 `column`），則是工具輸入錯誤（`ToolError`），不會
