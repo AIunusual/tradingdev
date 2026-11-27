@@ -1008,13 +1008,11 @@ A paired comparison publishes two content-addressed files under
 external resources). Both SHA-256 values are registered in the artifact table
 and returned as `artifact` / `html_artifact`. They are derived artifacts:
 neither the source performance/observation bundles nor older reports are
-rewritten. A repeated publication retries the same target only after its file
-and registry entry match the planned digest. When reading, pass the returned
-SHA-256 as `expected_sha256` to `get_artifact` so paged content is bound to the
-registered hash; the page hash alone does not prove registry agreement. The HTML
-can be opened offline in a browser. Source identities,
-calendar policy, exclusion audit and interpretation limits are defined in
-[Paired Comparison](paired_comparison.md).
+rewritten. A retry checks any existing file and registration against the planned digest;
+a missing file may be republished when its registration still matches. See
+[Paired Comparison](paired_comparison.md) for hashes, paging with
+`expected_sha256`, source identities, calendar policy, exclusion audit and
+interpretation limits.
 
 ## JSON Values
 

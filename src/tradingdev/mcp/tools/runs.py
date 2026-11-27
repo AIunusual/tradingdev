@@ -260,8 +260,10 @@ def register(
         a controlled comparison. reps accepts 100..10000, seed must be a
         nonnegative integer and confidence must be a float strictly between
         0 and 1; the service enforces these bounds.
-        Run pairs must match saved init_cash, periods_per_year and
-        risk_free_rate; IC pairs must match evaluation settings. This never
+        Run-to-run, run-to-product-benchmark and benchmark-to-benchmark pairs
+        must match saved init_cash, periods_per_year and risk_free_rate;
+        zero-cost price pairs are exempt. IC pairs must match evaluation
+        settings. This never
         runs a strategy, trains a model, or downloads prices.
         Warm-up NaNs keep their coordinates; only jointly valid dates pair.
         mode=descriptive labels p as non-inferential; mode=inferential also
