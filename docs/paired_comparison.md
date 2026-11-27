@@ -27,9 +27,8 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 服務實際檢查的是：頻率相同（run 與產品基準用保存設定宣告的頻率，訊號序列則由
 保存時間戳推斷）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（包含候選身分與參數；
 即使 horizon／window／quantile 相同，候選設定不同仍回報不相容），`realized_return`
-配對不檢查這些設定；run 之間、
-run 與產品基準之間的 `init_cash`、`periods_per_year`、`risk_free_rate` 相同
-（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
+配對不檢查這些設定；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
+`periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
 dataset ID 不同本身不證明 holdout，也不證明未調參。
 
