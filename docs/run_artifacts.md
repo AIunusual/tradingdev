@@ -611,6 +611,7 @@ the registered MCP schemas. Tool definitions and response models are maintained 
 | Training trials behind a ranked optimization | `get_selection_evidence` with the [ranking reference](#ranking-saved-run-scopes) |
 | Current metric definitions or saved values/comparisons | `get_metric_catalog`, `get_run_metrics`, `compare_runs` |
 | Selected saved observations | `get_run_trades`, `get_run_equity`, `get_run_executions`, `get_run_account_history` |
+| Paired difference between two saved series | `compare_saved_series`, `compare_signal_series`; see [Paired Comparison](paired_comparison.md) |
 | Artifact metadata or original file text | `list_artifacts`, `get_artifact` |
 
 ### Discovery Pages

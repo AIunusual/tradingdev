@@ -197,9 +197,8 @@ def test_artifact_publication_failure_is_explicit(
         raise OSError("disk full")
 
     monkeypatch.setattr(service, "_publish_text", broken)
-    payload = service.compare(_SELECTION, _SELECTION, save_artifact=True)
-    assert payload["unavailable"]["reason"] == "comparison_error"
-    assert "disk full" in payload["unavailable"]["detail"]
+    with pytest.raises(PairedComparisonError, match="artifact failed: disk full"):
+        service.compare(_SELECTION, _SELECTION, save_artifact=True)
 
 
 def test_signal_settings_must_match(

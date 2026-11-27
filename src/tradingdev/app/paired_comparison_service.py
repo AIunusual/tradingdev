@@ -409,13 +409,9 @@ class PairedComparisonService:
                 payload["artifact"] = markdown
                 payload["html_artifact"] = html
             except (OSError, ValueError) as exc:
-                return self._unavailable_payload(
-                    _LoadFailure("comparison_error", f"artifact failed: {exc}"),
-                    mode,
-                    [left_loaded.identity, right_loaded.identity],
-                    [],
-                    aligned,
-                )
+                raise PairedComparisonError(
+                    "artifact_publication_failed", f"artifact failed: {exc}"
+                ) from exc
         return payload
 
     # -- source resolution -------------------------------------------------
@@ -825,6 +821,13 @@ class PairedComparisonService:
         body["artifact"] = None
         body["html_artifact"] = None
         body["audit"] = audit
+        # Preflight both targets before writing either one, so a known file or
+        # registry conflict cannot leave a half-published pair.
+        for document, prefix, suffix in (
+            (_render_markdown(body), "paired-comparison", ".md"),
+            (_render_html(body), "paired-comparison-html", ".html"),
+        ):
+            self._check_publication_target(document, prefix, suffix)
         markdown = self._publish_text(
             body,
             document=_render_markdown(body),
@@ -844,6 +847,24 @@ class PairedComparisonService:
             payload=payload,
         )
         return markdown, html
+
+    def _check_publication_target(
+        self, document: str, prefix: str, suffix: str
+    ) -> None:
+        digest = sha256_text(document)
+        artifact_id = f"{prefix}:{digest[:16]}"
+        path = self._workspace.root / "paired_comparisons" / f"{digest[:16]}{suffix}"
+        if path.is_symlink() or not path.resolve().is_relative_to(self._workspace.root):
+            raise ValueError("comparison artifact path leaves the workspace")
+        if path.exists() and (
+            not path.is_file() or path.read_text(encoding="utf-8") != document
+        ):
+            raise ValueError("existing comparison artifact differs")
+        existing = self._store.get_artifact(artifact_id)
+        if existing is not None and (
+            existing.get("path") != str(path) or existing.get("sha256") != digest
+        ):
+            raise ValueError("registered comparison artifact identity differs")
 
     def _publish_text(
         self,
