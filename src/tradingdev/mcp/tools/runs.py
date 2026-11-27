@@ -246,13 +246,18 @@ def register(
 
         Sources are run/scope observations, a saved product benchmark, a
         verified zero-cost price artifact, or a saved pointwise signal series.
-        This never runs a strategy, trains a model, or downloads prices.
+        Run pairs must match saved init_cash, periods_per_year and
+        risk_free_rate; IC pairs must match evaluation settings. This never
+        runs a strategy, trains a model, or downloads prices.
         Warm-up NaNs keep their coordinates; only jointly valid dates pair.
         mode=descriptive labels p as non-inferential; mode=inferential also
         requires an exact UTC daily/hourly calendar and a recorded producer,
         but still does not guarantee nominal bootstrap coverage or correct
         nonstationarity. No multiple-comparison correction is applied, and
-        claim_scope=verified_out_of_sample only reflects saved evidence.
+        claim_scope=verified_out_of_sample requires BOTH sides to be test
+        run scopes with saved research evidence; benchmarks and signals never
+        qualify. Response samples cap excluded and missing coordinates at 20;
+        the published artifact holds the full audit.
         A zero-cost price baseline is unavailable unless a verified raw price
         artifact exists; saved net benchmark values are never reversed into closes.
         save_artifact publishes immutable Markdown and self-contained offline

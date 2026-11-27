@@ -2,8 +2,10 @@
 
 `compare_saved_series` 與 `compare_signal_series` 共用 `PairedComparisonService`。
 比較只讀取兩側已保存、完整性核驗通過的 snapshot，然後把共同有效的觀察值交給
-`domain.statistics.comparison.difference_interval_outcome`。比較請求不會回測、
-訓練、下載行情、重新 predict，也不會重建原始序列或改寫舊報告。
+`domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的
+`returns` 不存在時，會由已保存的權益與固定本金推導每期報酬；這是對保存觀察值的
+衍生，不是重跑策略或重建原始行情／訊號。比較請求不會回測、訓練、下載行情、
+重新 predict，也不會改寫舊報告。
 
 ## 來源與資格
 
