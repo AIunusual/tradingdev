@@ -249,9 +249,12 @@ def register(
         This never runs a strategy, trains a model, or downloads prices.
         Warm-up NaNs keep their coordinates; only jointly valid dates pair.
         mode=descriptive labels p as non-inferential; mode=inferential also
-        requires an exact UTC calendar and a recorded producer. A zero-cost
-        price baseline is unavailable unless a verified raw price artifact
-        exists; saved net benchmark values are never reversed into closes.
+        requires an exact UTC daily/hourly calendar and a recorded producer,
+        but still does not guarantee nominal bootstrap coverage or correct
+        nonstationarity. No multiple-comparison correction is applied, and
+        claim_scope=verified_out_of_sample only reflects saved evidence.
+        A zero-cost price baseline is unavailable unless a verified raw price
+        artifact exists; saved net benchmark values are never reversed into closes.
         save_artifact publishes immutable Markdown and self-contained offline
         HTML artifacts from one analysis; page either with get_artifact using
         the returned ID and hash.

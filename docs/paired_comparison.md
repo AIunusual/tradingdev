@@ -41,7 +41,9 @@ warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報
 `mode="inferential"` 回報 `cadence_gap_unsupported`。第一版沒有新的缺口
 bootstrap；不完整日曆不壓縮成連續序列。完全沒有共同日期回報
 `no_common_timestamps`，共同有效觀察不足
-`MIN_BOOTSTRAP_OBSERVATIONS` 回報 `insufficient_observations`；兩點不會補成三對。
+`MIN_BOOTSTRAP_OBSERVATIONS`（定義於
+[`domain/statistics/sharpe.py`](../src/tradingdev/domain/statistics/sharpe.py)）
+回報 `insufficient_observations`；兩點不會補成三對。
 
 ## 統計量與輸出
 

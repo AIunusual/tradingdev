@@ -427,8 +427,11 @@ def register(
         predicts again or drops warm-up rows before pairing. Different dataset
         or model IDs do not establish holdout status. IC is never mixed with
         returns, and cost-free signal simulation is never trade performance.
-        The response records the common valid mask, excluded coordinates,
-        training/evaluation identity and any reason inference is unavailable.
+        The response records a bounded alignment summary; the full valid mask
+        and excluded coordinates are in the optional artifact. Inference needs
+        an exact UTC daily/hourly calendar and a recorded producer; it does not
+        provide nominal bootstrap coverage or a multiple-comparison correction.
+        Different dataset or model IDs alone never prove out-of-sample validity.
         """
         from tradingdev.app.contracts.paired_comparison import SeriesSelection
         from tradingdev.app.paired_comparison_service import (
