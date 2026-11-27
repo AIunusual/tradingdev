@@ -574,13 +574,14 @@ class PairedComparisonService:
             return _LoadFailure(
                 "zero_cost_prices_unavailable", "price artifact file is unavailable"
             )
-        sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        raw_bytes = path.read_bytes()
+        sha = hashlib.sha256(raw_bytes).hexdigest()
         if sha != record.get("sha256"):
             return _LoadFailure(
                 "zero_cost_prices_unavailable", "price artifact hash differs"
             )
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(raw_bytes.decode("utf-8"))
             prices = raw["closes"]
             timestamps = raw["timestamps"]
             source = raw["source"]

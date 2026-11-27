@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import json
+from pathlib import Path  # noqa: TC003
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -30,9 +32,6 @@ from tradingdev.app.paired_comparison_service import (
 )
 from tradingdev.domain.statistics.alignment import _utc_index, align_masked_pair
 from tradingdev.domain.statistics.sharpe import IntervalUnavailable
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _series(values: list[float | None] | None = None) -> pd.Series:
@@ -333,6 +332,50 @@ def test_zero_cost_artifact_refusal_branches(
     assert (
         _reason(service._zero_cost_source(selected)) == "zero_cost_prices_unavailable"
     )
+
+
+def test_zero_cost_hashes_and_parses_one_buffer(
+    service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tradingdev.adapters.storage.filesystem import sha256_text
+    from tradingdev.app.contracts.paired_comparison import SeriesSelection
+
+    document = json.dumps(
+        {
+            "timestamps": [
+                "2024-01-01T00:00:00+00:00",
+                "2024-01-02T00:00:00+00:00",
+            ],
+            "closes": [100.0, 101.0],
+            "source": "verified-fixture",
+        }
+    )
+    path = service._workspace.root / "prices.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(document, encoding="utf-8")
+    monkeypatch.setattr(
+        service._store,
+        "get_artifact",
+        lambda _: {
+            "artifact_type": RAW_PRICE_ARTIFACT_TYPE,
+            "path": str(path),
+            "sha256": sha256_text(document),
+        },
+    )
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda *_args, **_kwargs: pytest.fail("price file was reopened after hashing"),
+    )
+    selected = SeriesSelection(
+        kind="benchmark",
+        run_id="r",
+        benchmark_mode="zero_cost",
+        price_artifact_id="p",
+    )
+    loaded = service._zero_cost_source(selected)
+    assert not isinstance(loaded, _LoadFailure)
+    assert loaded.definition == "zero_cost_price_return"
 
 
 def test_signal_source_refusal_branches(
