@@ -12,7 +12,7 @@
 
 | `kind` | 需要的欄位 | 序列與成本 |
 | ---- | ---- | ---- |
-| `run` | `run_id`、`scope`（省略用預設） | 從保存的 run/scope observations 重建每期報酬；signal 模式用帳戶權益，成本已在成交中；volume 模式沒有本金相對報酬，回報 `not_applicable` |
+| `run` | `run_id`、`scope`（省略用預設） | 只接受有 observations 的 signal 模式 scalar backtest scope：從保存資料重建每期報酬，成本已在成交中；volume 模式回報 `not_applicable`，彙總 fold summary 沒有觀察值而回報不可用 |
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
@@ -48,7 +48,8 @@ signal fingerprint 與可用的 fold 範圍；run 與產品基準來源保存 ru
 基準則使用其保存設定宣告的頻率。純 `align_masked_pair` 要求兩側都是 timezone-aware
 的 `DatetimeIndex`，任一侧 naive 都會被拒絕；公開服務會先把保存來源的時間戳正規化為
 UTC 再對齊。交集之前不做 dropna、補零或
-名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的時間順序判斷是前段
+名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的 UTC 時間順序（不是傳入的 row 順序）
+判斷是前段
 warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報原始長度、共同
 時間戳數、共同有效樣本數、各類排除原因與排除計數；回覆只有
 `valid_mask_count`，完整有效遮罩與全部座標需明確出版成果才會提供。

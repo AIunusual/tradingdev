@@ -122,6 +122,10 @@ def align_masked_pair(
     right = _numeric(b, _Y)
     left.index = a_index
     right.index = b_index
+    # Classify warm-up by chronological position, not by incoming row order;
+    # timestamps themselves are never renumbered or shifted.
+    left = left.sort_index()
+    right = right.sort_index()
 
     common = a_index.intersection(b_index).sort_values()
     frame = pd.concat(

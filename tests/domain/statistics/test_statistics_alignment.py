@@ -65,6 +65,24 @@ def test_warm_up_nan_keeps_coordinates_and_is_not_shifted() -> None:
     assert result.valid_mask == (False, False, True, True)
 
 
+def test_unsorted_input_is_classified_by_timestamp_order() -> None:
+    index = pd.to_datetime(
+        [
+            "2024-01-01T00:00:00",
+            "2024-01-02T00:00:00",
+            "2024-01-03T00:00:00",
+            "2024-01-04T00:00:00",
+        ],
+        utc=True,
+    )
+    a = pd.Series([0.04, np.nan, 0.02, np.nan], index=index, dtype="float64")
+    b = pd.Series([0.04, 0.03, 0.02, 0.01], index=index, dtype="float64")
+    result = align_masked_pair(a.iloc[np.array([2, 0, 3, 1])], b)
+    assert result.warmup_excluded == {"a": 0, "b": 0}
+    assert result.gap_excluded["a"] == 2
+    assert list(result.paired.index) == [index[0], index[2]]
+
+
 def test_interior_gap_is_not_relabelled_as_warmup() -> None:
     a = _series((1, 2, 3, 4), (0.01, None, 0.03, 0.04))
     b = _series((1, 2, 3, 4), (0.01, 0.02, 0.03, 0.04))
