@@ -252,9 +252,14 @@ def register(
         The statistic is mean with direction a minus b; fewer than 20 jointly
         valid observations return insufficient_observations; an omitted
         block_size is estimated automatically from the paired difference.
+        Run returns prefer saved per-period values and are derived from saved
+        equity and capital only when absent; warm-up nulls keep their rows and
+        are excluded from the paired mask, never shifted earlier.
         The service does not verify that both sides use the same instrument,
         date range, fees or slippage, so an available result is not necessarily
-        a controlled comparison.
+        a controlled comparison. reps accepts 100..10000, seed must be a
+        nonnegative integer and confidence must be a float strictly between
+        0 and 1; the service enforces these bounds.
         Run pairs must match saved init_cash, periods_per_year and
         risk_free_rate; IC pairs must match evaluation settings. This never
         runs a strategy, trains a model, or downloads prices.
