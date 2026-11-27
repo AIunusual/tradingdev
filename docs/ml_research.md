@@ -864,8 +864,6 @@ discovery to see what remains; a failed cleanup is not evidence that no artifact
 was removed. Historical rows without `series_artifact_id` stay unavailable rather
 than being recomputed.
 
-MCP `compare_signal_series` can compare two of these verified artifacts; see [Paired Comparison](paired_comparison.md) for source selection, response identity and limits.
-
 Publication (`save`), protection (`protect`), default cleanup reference
 snapshotting and cleanup (`prune`) serialize on `.evaluation-series.lock` in that
 root, with a 30-second default acquisition timeout. Application recording holds
