@@ -25,8 +25,9 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 混淆，也不能把零成本訊號模擬冒充成交績效。IC 只能與同類 IC 相比。
 
 服務實際檢查的是：頻率相同（run 與產品基準用保存設定宣告的頻率，訊號序列則由
-保存時間戳推斷）；Pearson／Spearman IC 配對的 evaluation
-settings 相同（`realized_return` 配對不檢查 horizon／window／quantile）；run 之間、
+保存時間戳推斷）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（包含候選身分與參數；
+即使 horizon／window／quantile 相同，候選設定不同仍回報不相容），`realized_return`
+配對不檢查這些設定；run 之間、
 run 與產品基準之間的 `init_cash`、`periods_per_year`、`risk_free_rate` 相同
 （含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
@@ -58,8 +59,9 @@ warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報
 共同期間缺少預期日曆點時，日曆視為不完整；共同時間戳上存在任一侧中途無效值
 也視為缺口。描述性比較仍可計算；回覆只保留有上限的缺口摘要，完整稽核只在成果出版時提供。bootstrap 會按有效觀察的
 序列位置重抽樣，因此描述結果實際上會把有效觀察之間的位置視為相鄰。推論模式
-不接受這種相鄰化：`mode="inferential"` 對日曆缺口、間隔與宣告 cadence 不符或中途無效值回報
-`cadence_gap_unsupported`。前段 warm-up 不視為中途缺口。第一版沒有新的缺口
+不接受這種相鄰化：通過共同有效樣本數檢查後，`mode="inferential"` 對日曆缺口、間隔與宣告 cadence
+不符或中途無效值回報 `cadence_gap_unsupported`；樣本數不足時以
+`insufficient_observations` 優先。前段 warm-up 不視為中途缺口。第一版沒有新的缺口
 bootstrap。完全沒有共同日期回報
 `no_common_timestamps`，共同有效觀察不足
 `MIN_BOOTSTRAP_OBSERVATIONS`（定義於
@@ -70,7 +72,8 @@ bootstrap。完全沒有共同日期回報
 
 比較統計量固定為 `mean`，差額方向固定為 `a_minus_b`。**可用結果**回報
 `estimate`、`estimate_a`、`estimate_b`、`lower`、`upper`、`p_value`、
-`confidence`、`reps`、`valid_reps`、`seed`、`block_size`、`correlation`、
+`confidence`、`reps`、`valid_reps`、`seed`、`block_size`、`correlation`
+（兩條對齊後輸入序列的 Pearson 相關；任一侧為常數時為 `null`，不是重抽樣統計量的相關）、
 共同期間、排除摘要、兩側來源身分與方法限制。**不可用結果**的 `result` 為
 `null`，不帶這些統計欄位；若失敗發生在對齊之前，連共同期間也只是預設值。`block_size=None` 時交由既有
 [`comparison.difference_interval_outcome`](../src/tradingdev/domain/statistics/comparison.py)

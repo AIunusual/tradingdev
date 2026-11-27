@@ -252,6 +252,9 @@ def register(
         The statistic is mean with direction a minus b; fewer than 20 jointly
         valid observations return insufficient_observations; an omitted
         block_size is estimated automatically from the paired difference.
+        The service does not verify that both sides use the same instrument,
+        date range, fees or slippage, so an available result is not necessarily
+        a controlled comparison.
         Run pairs must match saved init_cash, periods_per_year and
         risk_free_rate; IC pairs must match evaluation settings. This never
         runs a strategy, trains a model, or downloads prices.
