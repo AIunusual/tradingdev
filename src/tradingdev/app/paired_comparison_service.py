@@ -1127,13 +1127,16 @@ def _run_returns(scope: LoadedHistoryScope) -> list[float] | None:
 
 def _returns_from_equity(equity: list[float | None], capital: float) -> list[float]:
     result: list[float] = []
-    previous = capital
+    previous: float | None = capital
     for value in equity:
         if value is None or not np.isfinite(value):
             result.append(np.nan)
+            # Do not bridge a missing observation: the next interval has no
+            # trustworthy previous close and must stay unavailable too.
+            previous = None
             continue
         current = float(value)
-        if previous == 0:
+        if previous is None or previous == 0:
             result.append(np.nan)
         else:
             result.append(current / previous - 1.0)

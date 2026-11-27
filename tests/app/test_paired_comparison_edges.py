@@ -372,7 +372,9 @@ def test_numeric_helpers_cover_degenerate_inputs() -> None:
     Observations.init_cash = None
     assert _run_returns(cast("Any", Scope())) is None
 
-    assert np.isnan(_returns_from_equity([None, 10.0], 0.0)[0])
+    bridged = _returns_from_equity([1000.0, None, 1020.0], 1000.0)
+    assert np.isnan(bridged[1])
+    assert np.isnan(bridged[2])
     assert np.isnan(_returns_from_equity([10.0], 0.0)[0])
     assert _run_settings(cast("Any", Scope())) == {"init_cash": None}
 

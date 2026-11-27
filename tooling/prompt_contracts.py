@@ -18,7 +18,6 @@ BUDGETS = {
     # Raised from 70000 and 80000 to fit the strategy-ranking surface planned
     # in #38: about 2.6 KB for one new tool plus a wider compare_runs schema,
     # with room for one revision round.
-    # Leave room for one revision round after adding discovery surfaces.
     "model_tools": 82000,
     "initial_total": 93000,
     "strategy_section": 16000,
