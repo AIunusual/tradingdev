@@ -249,6 +249,9 @@ def register(
         run and benchmark selections require run_id; benchmarks must state
         benchmark_mode=product or zero_cost; zero_cost also requires
         price_artifact_id; signal selections require artifact_id and column.
+        The statistic is mean with direction a minus b; fewer than 20 jointly
+        valid observations return insufficient_observations; an omitted
+        block_size is estimated automatically from the paired difference.
         Run pairs must match saved init_cash, periods_per_year and
         risk_free_rate; IC pairs must match evaluation settings. This never
         runs a strategy, trains a model, or downloads prices.
