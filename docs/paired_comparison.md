@@ -59,17 +59,19 @@ bootstrap。完全沒有共同日期回報
 
 ## 統計量與輸出
 
-比較統計量固定為 `mean`，差額方向固定為 `a_minus_b`。每次回報
+比較統計量固定為 `mean`，差額方向固定為 `a_minus_b`。**可用結果**回報
 `estimate`、`estimate_a`、`estimate_b`、`lower`、`upper`、`p_value`、
 `confidence`、`reps`、`valid_reps`、`seed`、`block_size`、`correlation`、
-共同期間、排除原因、兩側來源身分與方法限制。`block_size=None` 時交由既有
+共同期間、排除摘要、兩側來源身分與方法限制。**不可用結果**的 `result` 為
+`null`，不帶這些統計欄位；若失敗發生在對齊之前，連共同期間也只是預設值。`block_size=None` 時交由既有
 [`comparison.difference_interval_outcome`](../src/tradingdev/domain/statistics/comparison.py)
 的 difference jackknife 自動估計；指定值必須是正整數。重抽樣次數限制在
 `100..10000`。
 
 `mode="descriptive"` 是預設：p 值標為 `descriptive_only`，不承載顯著性結論。
 `mode="inferential"` 另要求完整日曆與可識別的 producer；p 值是 percentile
-尾端機率，只對選定的這一對有意義。stationary bootstrap 不保證任意非平穩報酬
+由線性插值的 percentile 區邊界反解而得，只對選定的這一對有意義，不是直接
+以重抽樣差值的正負比例計算。stationary bootstrap 不保證任意非平穩報酬
 過程下的有效推論，區間也不保證名目涵蓋率；完整日曆與可識別來源只是必要檢查，
 不是充分條件。兩者都不做多重比較校正，第一版只處理單一 pair，不自動宣稱已修正
 先前搜尋造成的偏誤。
