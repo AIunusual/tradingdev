@@ -1006,7 +1006,10 @@ def _render_html(payload: dict[str, Any]) -> str:
         rows.extend(
             [
                 ("估計差額 (a - b)", result["estimate"]),
-                ("95% 區間", f"{result['lower']} … {result['upper']}"),
+                (
+                    "{:.0%} 區間".format(result["confidence"]),
+                    f"{result['lower']} … {result['upper']}",
+                ),
                 ("p 值", f"{result['p_value']} ({result['p_value_interpretation']})"),
                 (
                     "confidence / reps / valid_reps",

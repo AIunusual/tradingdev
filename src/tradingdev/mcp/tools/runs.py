@@ -246,6 +246,9 @@ def register(
 
         Sources are run/scope observations, a saved product benchmark, a
         verified zero-cost price artifact, or a saved pointwise signal series.
+        run and benchmark selections require run_id; benchmarks must state
+        benchmark_mode=product or zero_cost; zero_cost also requires
+        price_artifact_id; signal selections require artifact_id and column.
         Run pairs must match saved init_cash, periods_per_year and
         risk_free_rate; IC pairs must match evaluation settings. This never
         runs a strategy, trains a model, or downloads prices.

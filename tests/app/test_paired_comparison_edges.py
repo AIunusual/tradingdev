@@ -245,6 +245,32 @@ def test_html_without_a_result_still_renders(service: PairedComparisonService) -
     assert "完整分析 JSON" in document
 
 
+def test_html_interval_label_follows_confidence(
+    service: PairedComparisonService,
+) -> None:
+    payload = service._unavailable_payload(
+        _LoadFailure("x", "y"), "descriptive", [], []
+    )
+    payload["result"] = {
+        "estimate": 0.0,
+        "estimate_a": 0.0,
+        "estimate_b": 0.0,
+        "lower": -1.0,
+        "upper": 1.0,
+        "p_value": 1.0,
+        "p_value_interpretation": "descriptive_only",
+        "confidence": 0.9,
+        "reps": 100,
+        "valid_reps": 100,
+        "seed": 1,
+        "block_size": 2,
+        "correlation": None,
+    }
+    document = _render_html(payload)
+    assert "90% 區間" in document
+    assert "95% 區間" not in document
+
+
 def test_zero_cost_artifact_refusal_branches(
     service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

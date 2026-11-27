@@ -14,7 +14,8 @@
 | ---- | ---- | ---- |
 | `run` | `run_id`、`scope`（省略用預設） | 從保存的 run/scope observations 重建每期報酬；signal 模式用帳戶權益，成本已在成交中；volume 模式沒有本金相對報酬，回報 `not_applicable` |
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；不逆推原始 closes |
-| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
+| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。此來源固定以日頻
+（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
 | `signal` | `artifact_id`、`column` | 已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
@@ -96,7 +97,8 @@ Python service 會拋出 `PairedComparisonError`（`invalid_comparison_request` 
 兩份各自以本身的內容計算 digest、檔名與 artifact ID，分開註冊到 artifact
 registry，分別回傳在 `artifact` 與 `html_artifact`。
 內容包含方法版本、模式與資格、限制、分析 JSON、兩側來源，以及完整對齊
-Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節。重複相同比較會重用同一份內容；輸出內容不同才會產生不同 ID，內容相同則重用，
+Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節；其捷徑標籤使用該次要求的 confidence，
+完整 JSON 仍保留精確設定值。重複相同比較會重用同一份內容；輸出內容不同才會產生不同 ID，內容相同則重用，
 舊檔不被改寫。
 使用 `get_artifact(include_content=true)` 搭配回傳的 SHA-256 分頁閱讀，或用
 `list_artifacts` 查找已註冊的成果；HTML 可直接在離線瀏覽器開啟。出版前會先對
