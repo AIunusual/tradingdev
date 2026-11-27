@@ -493,13 +493,34 @@ def test_artifact_is_reusable_and_does_not_change_old_content(
     assert read_back["success"] is True
     assert "paired comparison" in read_back["content"]
     assert ALGORITHM_VERSION in read_back["content"]
-    different = comparison.compare(*arguments, block_size=5, save_artifact=True)[
-        "artifact"
-    ]
-    assert different["artifact_id"] != artifact_id
-    registered = store.get_artifact(artifact_id)
-    assert registered is not None
-    assert registered["sha256"] == first["artifact"]["sha256"]
+
+    assert first["html_artifact"] == second["html_artifact"]
+    html = first["html_artifact"]
+    assert html["artifact_id"].startswith("paired-comparison-html:")
+    assert html["media_type"] == "text/html"
+    html_read = ArtifactService(workspace=workspace, store=store).get_artifact(
+        html["artifact_id"], include_content=True, expected_sha256=html["sha256"]
+    )
+    assert html_read["success"] is True
+    document = html_read["content"]
+    assert document.lstrip().lower().startswith("<!doctype html>")
+    assert "<style>" in document and "<script" not in document.lower()
+    assert "src=" not in document.lower()
+    assert "估計差额" in document or "估計差額" in document
+    assert ALGORITHM_VERSION in document
+    assert "演算法版本" in document
+    assert "完整分析 JSON" in document
+
+    different = comparison.compare(*arguments, block_size=5, save_artifact=True)
+    assert different["artifact"]["artifact_id"] != artifact_id
+    assert different["html_artifact"]["artifact_id"] != html["artifact_id"]
+    for registered_id, record in (
+        (artifact_id, first["artifact"]),
+        (html["artifact_id"], html),
+    ):
+        registered = store.get_artifact(registered_id)
+        assert registered is not None
+        assert registered["sha256"] == record["sha256"]
 
 
 def test_verified_raw_price_artifact_enables_zero_cost_benchmark(

@@ -126,7 +126,10 @@ def test_ml_annotations_disclose_replacement_and_cache_eviction(tmp_path: Path) 
         "export_evaluation_series",
     }
     publishing = {"evaluate_signal", "train_model"}
-    assert set(entries) == writers | readers
+    # A paired comparison can publish a derived artifact; it is idempotent
+    # but not read-only and does not destroy saved sources.
+    derived = {"compare_signal_series"}
+    assert set(entries) == writers | readers | derived
     for name, tool in entries.items():
         annotations = tool.annotations
         assert annotations is not None

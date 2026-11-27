@@ -54,11 +54,14 @@ difference jackknife 自動估計；指定值必須是正整數。重抽樣次�
 
 ## 可離線的成果
 
-`save_artifact=true` 會出版一份內容定址、不可變的 Markdown，放在
-`paired_comparisons/<前16碼>.md` 並註冊到 artifact registry。其內容包含
-方法版本、模式與資格、限制、完整分析 JSON、兩側來源及排除 Audit。重複
-相同比較會重用同一份內容；不同設定產生不同 ID，舊檔不被改寫。使用
-`get_artifact(include_content=true)` 搭配回傳的 SHA-256 分頁閱讀。
+`save_artifact=true` 會從同一次分析出版兩份內容定址、不可變的成果：
+`paired_comparisons/<前16碼>.md`（Markdown）與
+`paired_comparisons/<前16碼>.html`（自含 HTML，樣式內嵌、無外部資源）。
+兩份都註冊到 artifact registry，分別回傳在 `artifact` 與 `html_artifact`。
+其內容包含方法版本、模式與資格、限制、完整分析 JSON、兩側來源及排除
+Audit。重複相同比較會重用同一份內容；不同設定產生不同 ID，舊檔不被改寫。
+使用 `get_artifact(include_content=true)` 搭配回傳的 SHA-256 分頁閱讀；
+HTML 可直接在離線瀏覽器開啟。
 
 ## 驗證入口
 

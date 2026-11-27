@@ -118,7 +118,7 @@ class ComparisonResult(ContractModel):
 class ComparisonArtifact(ContractModel):
     artifact_id: str
     sha256: str
-    media_type: Literal["text/markdown"]
+    media_type: Literal["text/markdown", "text/html"]
 
 
 class PairedComparisonResponse(ContractModel):
@@ -137,6 +137,7 @@ class PairedComparisonResponse(ContractModel):
     sources: list[SourceIdentity]
     limitations: list[str]
     artifact: ComparisonArtifact | None = None
+    html_artifact: ComparisonArtifact | None = None
 
     @model_validator(mode="after")
     def outcome_matches_status(self) -> Self:

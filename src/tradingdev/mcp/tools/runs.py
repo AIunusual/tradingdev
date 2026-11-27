@@ -252,8 +252,9 @@ def register(
         requires an exact UTC calendar and a recorded producer. A zero-cost
         price baseline is unavailable unless a verified raw price artifact
         exists; saved net benchmark values are never reversed into closes.
-        save_artifact publishes one immutable Markdown artifact; retrieve it
-        with get_artifact_download using the returned ID and hash.
+        save_artifact publishes immutable Markdown and self-contained offline
+        HTML artifacts from one analysis; page either with get_artifact using
+        the returned ID and hash.
         """
         from tradingdev.app.paired_comparison_service import PairedComparisonError
 

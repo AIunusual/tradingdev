@@ -11,12 +11,13 @@ and content-addressed; source artifacts are not modified.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -58,6 +59,7 @@ DEFAULT_REPS = 1000
 DEFAULT_SEED = 20261127
 DEFAULT_CONFIDENCE = 0.95
 ARTIFACT_TYPE = "paired_comparison"
+HTML_ARTIFACT_TYPE = "paired_comparison_html"
 RAW_PRICE_ARTIFACT_TYPE = "raw_price_series"
 
 _LIMITATIONS = (
@@ -377,10 +379,13 @@ class PairedComparisonService:
             "sources": [left_loaded.identity, right_loaded.identity],
             "limitations": list(_LIMITATIONS),
             "artifact": None,
+            "html_artifact": None,
         }
         if save_artifact:
             try:
-                payload["artifact"] = self._publish_artifact(payload)
+                markdown, html = self._publish_artifacts(payload)
+                payload["artifact"] = markdown
+                payload["html_artifact"] = html
             except (OSError, ValueError) as exc:
                 return self._unavailable_payload(
                     _LoadFailure("comparison_error", f"artifact failed: {exc}"),
@@ -787,16 +792,50 @@ class PairedComparisonService:
             "sources": sources,
             "limitations": list(_LIMITATIONS),
             "artifact": None,
+            "html_artifact": None,
         }
 
-    def _publish_artifact(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Write one immutable Markdown artifact and register its hash."""
+    def _publish_artifacts(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Publish immutable Markdown and self-contained HTML from one payload."""
         body = dict(payload)
         body["artifact"] = None
-        document = _render_artifact(body)
+        body["html_artifact"] = None
+        markdown = self._publish_text(
+            body,
+            document=_render_markdown(body),
+            prefix="paired-comparison",
+            suffix=".md",
+            artifact_type=ARTIFACT_TYPE,
+            media_type="text/markdown",
+            payload=payload,
+        )
+        html = self._publish_text(
+            body,
+            document=_render_html(body),
+            prefix="paired-comparison-html",
+            suffix=".html",
+            artifact_type=HTML_ARTIFACT_TYPE,
+            media_type="text/html",
+            payload=payload,
+        )
+        return markdown, html
+
+    def _publish_text(
+        self,
+        body: dict[str, Any],
+        *,
+        document: str,
+        prefix: str,
+        suffix: str,
+        artifact_type: str,
+        media_type: Literal["text/markdown", "text/html"],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         digest = sha256_text(document)
-        artifact_id = f"paired-comparison:{digest[:16]}"
-        path = self._workspace.root / "paired_comparisons" / f"{digest[:16]}.md"
+        artifact_id = f"{prefix}:{digest[:16]}"
+        path = self._workspace.root / "paired_comparisons" / f"{digest[:16]}{suffix}"
         if path.is_symlink() or not path.resolve().is_relative_to(self._workspace.root):
             raise ValueError("comparison artifact path leaves the workspace")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -827,7 +866,7 @@ class PairedComparisonService:
         self._store.create_artifact(
             artifact_id=artifact_id,
             run_id=None,
-            artifact_type=ARTIFACT_TYPE,
+            artifact_type=artifact_type,
             path=path,
             sha256=digest,
             metadata={
@@ -835,16 +874,17 @@ class PairedComparisonService:
                 "mode": payload["mode"],
                 "claim_scope": payload["claim_scope"],
                 "status": payload["status"],
+                "media_type": media_type,
             },
         )
         return {
             "artifact_id": artifact_id,
             "sha256": digest,
-            "media_type": "text/markdown",
+            "media_type": media_type,
         }
 
 
-def _render_artifact(payload: dict[str, Any]) -> str:
+def _render_markdown(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True
     )
@@ -862,6 +902,107 @@ def _render_artifact(payload: dict[str, Any]) -> str:
         + "\n\n## Result\n\n```json\n"
         + encoded
         + "\n```\n"
+    )
+
+
+def _render_html(payload: dict[str, Any]) -> str:
+    """Render a self-contained offline HTML report from the same analysis."""
+
+    def text(value: object) -> str:
+        return html.escape("" if value is None else str(value), quote=True)
+
+    encoded_source = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True
+    )
+    encoded = html.escape(encoded_source, quote=False)
+    result = payload.get("result") or {}
+    alignment = payload["alignment"]
+    rows = [
+        ("演算法版本", payload["algorithm_version"]),
+        ("模式", payload["mode"]),
+        ("資格範圍", payload["claim_scope"]),
+        (
+            "統計量 / 方向",
+            f"{payload['statistic']} / {payload['difference_direction']}",
+        ),
+    ]
+    if result:
+        rows.extend(
+            [
+                ("估計差額 (a - b)", result["estimate"]),
+                ("95% 區間", f"{result['lower']} … {result['upper']}"),
+                ("p 值", f"{result['p_value']} ({result['p_value_interpretation']})"),
+                (
+                    "confidence / reps / valid_reps",
+                    "{confidence} / {reps} / {valid_reps}".format(**result),
+                ),
+                ("seed / block size", f"{result['seed']} / {result['block_size']}"),
+                ("相關性", result["correlation"]),
+            ]
+        )
+    summary = "\n".join(
+        f"<tr><th>{text(label)}</th><td>{text(value)}</td></tr>"
+        for label, value in rows
+    )
+    alignment_rows = [
+        ("原始長度", alignment["original_lengths"]),
+        (
+            "共同日期 / 有效觀察",
+            f"{alignment['overlap']} / {alignment['valid_observations']}",
+        ),
+        ("共同期間", alignment["common_period"]),
+        ("排除原因", alignment["excluded_counts"]),
+        ("日历 / 缺口", f"{alignment['cadence']} / {alignment['cadence_complete']}"),
+    ]
+    audit = "\n".join(
+        f"<tr><th>{text(label)}</th><td>{text(value)}</td></tr>"
+        for label, value in alignment_rows
+    )
+    source_cards = "\n".join(
+        "<article><h3>{}</h3><dl>{}</dl></article>".format(
+            text(source.get("label")),
+            "\n".join(
+                f"<dt>{text(field)}</dt><dd>{text(source.get(field))}</dd>"
+                for field in (
+                    "kind",
+                    "source_hash",
+                    "run_id",
+                    "scope",
+                    "dataset_id",
+                    "entry_id",
+                    "signal_fingerprint",
+                    "training_status",
+                    "holdout_relationship",
+                    "fold_range",
+                    "benchmark_definition",
+                    "benchmark_costs",
+                )
+            ),
+        )
+        for source in payload["sources"]
+    )
+    limits = "\n".join(f"<li>{text(line)}</li>" for line in payload["limitations"])
+    return (
+        '<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        "<title>TradingDev paired comparison</title><style>"
+        "body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;"
+        "padding:0 1rem;line-height:1.6;color:#222;background:#fff}"
+        "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;"
+        "padding:.4rem .6rem;text-align:left;vertical-align:top}th{width:14rem;"
+        "background:#f6f6f6}article{border:1px solid #ddd;padding:.6rem 1rem;"
+        "margin:.6rem 0}dt{font-weight:bold}dd{margin:0 0 .3rem}pre{white-space:"
+        "pre-wrap;word-break:break-word;background:#f6f6f6;padding:1rem}"
+        "</style></head><body>"
+        "<h1>TradingDev 配對比較</h1>"
+        "<p>這是從兩側已保存序列產生的衍生分析，不會重新回測、訓練、下載或"
+        "改寫來源；HTML 與 Markdown 內容相同，可離線閱讀。</p>"
+        f"<h2>結果</h2><table>{summary}</table>"
+        f"<h2>對齊與排除</h2><table>{audit}</table>"
+        f"<h2>來源身分</h2>{source_cards}"
+        f"<h2>限制</h2><ul>{limits}</ul>"
+        f"<h2>完整分析 JSON</h2><pre>{encoded}</pre>"
+        "</body></html>\n"
     )
 
 
