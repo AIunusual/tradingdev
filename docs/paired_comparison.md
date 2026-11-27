@@ -14,7 +14,8 @@
 | ---- | ---- | ---- |
 | `run` | `run_id`、`scope`（省略用預設） | 從保存的 run/scope observations 重建每期報酬；signal 模式用帳戶權益，成本已在成交中；volume 模式沒有本金相對報酬，回報 `not_applicable` |
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；不逆推原始 closes |
-| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。此來源固定以日頻
+| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
+artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 （`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
 | `signal` | `artifact_id`、`column` | 已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
@@ -23,9 +24,10 @@
 `cost_basis`，產品基準則以 `benchmark_costs` 記錄保存的手續費與滑價，兩者不能
 混淆，也不能把零成本訊號模擬冒充成交績效。IC 只能與同類 IC 相比。
 
-服務實際檢查的是：宣告頻率相同；IC 配對的 evaluation settings 相同；run 之間
-的 `init_cash`、`periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的
-配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間的
+服務實際檢查的是：宣告頻率相同；Pearson／Spearman IC 配對的 evaluation
+settings 相同（`realized_return` 配對不檢查 horizon／window／quantile）；run 之間、
+run 與產品基準之間的 `init_cash`、`periods_per_year`、`risk_free_rate` 相同
+（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
 dataset ID 不同本身不證明 holdout，也不證明未調參。
 
@@ -45,7 +47,8 @@ signal fingerprint 與可用的 fold 範圍；run 與基準來源則保存 run/s
 基準則使用其保存設定宣告的頻率。交集之前不做 dropna、補零或
 名稱對齊；warm-up 的 `NaN` 留在原座標，先依每側自己的時間順序判斷是前段
 warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報原始長度、共同
-時間戳數、共同有效樣本數、各類排除原因與被排除座標，以及共同有效遮罩。
+時間戳數、共同有效樣本數、各類排除原因與排除計數；回覆只有
+`valid_mask_count`，完整有效遮罩與全部座標需明確出版成果才會提供。
 
 共同期間缺少預期日曆點時，日曆視為不完整；共同時間戳上存在任一侧中途無效值
 也視為缺口。描述性比較仍可計算；回覆只保留有上限的缺口摘要，完整稽核只在成果出版時提供。bootstrap 會按有效觀察的
@@ -79,7 +82,8 @@ bootstrap。完全沒有共同日期回報
 
 無法比較（來源不存在、損壞、無序列、定義不相容、資料不足）回傳
 `status="unavailable"`，附 `reason`、`next_step`、`source`、`detail`；
-比較選項無效（`mode`、`reps`、`seed`、`block_size`、`confidence`）或出版失敗時，
+比較選項無效（`mode`、`reps` 需 100..10000 的整數、`seed` 需非負整數、`block_size` 需正整數、
+`confidence` 需嚴格介於 0 與 1 的 float）或出版失敗時，
 Python service 會拋出 `PairedComparisonError`（`invalid_comparison_request` 或
 `artifact_publication_failed`）；MCP 工具捕捉後回傳 `success=false` 與對應的
 `code`。若 selector 在 MCP 輸入 schema 驗證時就
