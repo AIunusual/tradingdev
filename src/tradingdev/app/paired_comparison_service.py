@@ -689,7 +689,13 @@ class PairedComparisonService:
                 "incompatible_definitions",
                 "saved signal evaluation settings differ",
             )
-        if not pair[0].startswith("signal_"):
+        # A verified zero-cost price benchmark has no capital basis of its own;
+        # it inherits the evaluation period from its timestamps, not a run's
+        # initial cash or annualisation setting.
+        capital_paired = (
+            not pair[0].startswith("signal_") and "zero_cost_price_return" not in pair
+        )
+        if capital_paired:
             for key in ("init_cash", "periods_per_year", "risk_free_rate"):
                 if a.settings.get(key) != b.settings.get(key):
                     return (

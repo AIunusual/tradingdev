@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -9,7 +10,7 @@ from tests.strategy_fixtures import GENERATED_PROGRAM
 
 from tradingdev.adapters.storage.evaluation_series import EvaluationSeriesStore
 from tradingdev.adapters.storage.execution_manifests import ExecutionManifestStore
-from tradingdev.adapters.storage.filesystem import WorkspacePaths
+from tradingdev.adapters.storage.filesystem import WorkspacePaths, sha256_text
 from tradingdev.adapters.storage.performance import PerformanceStore
 from tradingdev.adapters.storage.sqlite import SQLiteStore
 from tradingdev.app.artifact_service import ArtifactService
@@ -19,6 +20,8 @@ from tradingdev.app.contracts.paired_comparison import (
 )
 from tradingdev.app.paired_comparison_service import (
     ALGORITHM_VERSION,
+    RAW_PRICE_ARTIFACT_TYPE,
+    PairedComparisonError,
     PairedComparisonService,
 )
 from tradingdev.domain.execution import ExecutionManifest
@@ -497,3 +500,75 @@ def test_artifact_is_reusable_and_does_not_change_old_content(
     registered = store.get_artifact(artifact_id)
     assert registered is not None
     assert registered["sha256"] == first["artifact"]["sha256"]
+
+
+def test_verified_raw_price_artifact_enables_zero_cost_benchmark(
+    service: tuple[WorkspacePaths, SQLiteStore, PairedComparisonService],
+) -> None:
+    workspace, store, comparison = service
+    _publish_run(workspace, store, "run-a", returns=[0.01] * 30)
+    document = json.dumps(
+        {
+            "timestamps": _timestamps(30),
+            "closes": [100.0 + index for index in range(30)],
+            "source": "verified-fixture",
+        },
+        sort_keys=True,
+    )
+    path = workspace.root / "raw_prices" / "prices.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(document, encoding="utf-8")
+    store.create_artifact(
+        artifact_id="price-artifact",
+        run_id=None,
+        artifact_type=RAW_PRICE_ARTIFACT_TYPE,
+        path=path,
+        sha256=sha256_text(document),
+        metadata={},
+    )
+    payload = comparison.compare(
+        {"kind": "run", "run_id": "run-a"},
+        {
+            "kind": "benchmark",
+            "run_id": "run-a",
+            "benchmark_mode": "zero_cost",
+            "price_artifact_id": "price-artifact",
+        },
+    )
+    assert payload["status"] == "available"
+    assert payload["sources"][1]["benchmark_definition"] == "zero_cost_buy_and_hold"
+    assert payload["sources"][1]["benchmark_costs"] == "fees=0,slippage=0"
+    assert payload["alignment"]["valid_observations"] >= 20
+
+
+def test_missing_product_benchmark_is_unavailable(
+    service: tuple[WorkspacePaths, SQLiteStore, PairedComparisonService],
+) -> None:
+    workspace, store, comparison = service
+    _publish_run(workspace, store, "run-a", returns=[0.01] * 30)
+    payload = comparison.compare(
+        {"kind": "run", "run_id": "run-a"},
+        {
+            "kind": "benchmark",
+            "run_id": "run-a",
+            "benchmark_mode": "product",
+        },
+    )
+    assert payload["unavailable"]["reason"] == "benchmark_unavailable"
+
+
+def test_invalid_request_arguments_are_operation_errors(
+    service: tuple[WorkspacePaths, SQLiteStore, PairedComparisonService],
+) -> None:
+    _, _, comparison = service
+    selection = {"kind": "run", "run_id": "run-a"}
+    with pytest.raises(PairedComparisonError, match="unknown comparison mode"):
+        comparison.compare(selection, selection, mode="bad")  # type: ignore[arg-type]
+    with pytest.raises(PairedComparisonError, match="reps must be"):
+        comparison.compare(selection, selection, reps=1)
+    with pytest.raises(PairedComparisonError, match="seed must be"):
+        comparison.compare(selection, selection, seed=-1)
+    with pytest.raises(PairedComparisonError, match="block_size must be"):
+        comparison.compare(selection, selection, block_size=0)
+    with pytest.raises(PairedComparisonError, match="confidence must be"):
+        comparison.compare(selection, selection, confidence=1.0)
