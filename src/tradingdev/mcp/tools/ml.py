@@ -427,6 +427,8 @@ def register(
         predicts again or drops warm-up rows before pairing. Different dataset
         or model IDs do not establish holdout status. IC is never mixed with
         returns, and cost-free signal simulation is never trade performance.
+        IC pairs require the complete saved manifest settings to match,
+        including candidate identity and parameters.
         The response records a bounded alignment summary; the full valid mask
         and excluded coordinates are in the optional artifact. Inference needs
         an exact UTC daily/hourly calendar and a recorded producer; it does not
