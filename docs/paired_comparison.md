@@ -17,7 +17,7 @@
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 （`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程 |
-| `signal` | `artifact_id`、`column` | 已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
+| `signal` | `artifact_id`、`column` | 先用 `get_evaluation_series_page` 探索已保存序列；發現與驗證限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)。此來源是已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
 產品基準相比，也可與核驗過的原始價格零成本報酬相比；零成本來源的身分會標明
@@ -62,7 +62,7 @@ warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報
 不符或中途無效值回報 `cadence_gap_unsupported`；樣本數不足時以
 `insufficient_observations` 優先。前段 warm-up 不視為中途缺口。第一版沒有新的缺口
 bootstrap。完全沒有共同日期回報
-`no_common_timestamps`，共同有效觀察不足
+`no_common_timestamps`；保存座標重複等malformed input 會轉為 `comparison_error` 的不可用結果。共同有效觀察不足
 `MIN_BOOTSTRAP_OBSERVATIONS`（定義於
 [`domain/statistics/sharpe.py`](../src/tradingdev/domain/statistics/sharpe.py)）
 回報 `insufficient_observations`；兩點不會補成三對。
