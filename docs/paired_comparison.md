@@ -15,15 +15,20 @@
 | `signal` | `artifact_id`、`column` | 已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
-產品基準相比，也可與核驗過的原始價格零成本報酬相比，但兩者的 `cost_basis`
-不同，不能把零成本訊號模擬冒充成交績效；IC 只能與同類 IC 相比。run 之間比較
-固定本金、年化及無風險利率須一致，這個檢查不套用含有 `zero_cost_price_return`
-的配對；signal 比較須有相同的 evaluation settings。entry ID、model ID 或
+產品基準相比，也可與核驗過的原始價格零成本報酬相比；零成本來源的身分會標明
+`cost_basis`，產品基準則以 `benchmark_costs` 記錄保存的手續費與滑價，兩者不能
+混淆，也不能把零成本訊號模擬冒充成交績效。IC 只能與同類 IC 相比。
+
+服務實際檢查的是：宣告頻率相同；IC 配對的 evaluation settings 相同；run 之間
+的 `init_cash`、`periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的
+配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間的
+fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
 dataset ID 不同本身不證明 holdout，也不證明未調參。
 
-回覆的 `claim_scope` 是服務依保存證據給出的資格標記：run scope 的 split 為
-`test` 且有保存的研究證據時為 `verified_out_of_sample`，其他情況（含所有
-signal 序列）為 `in_sample_or_unknown`。這只是保存關係的呈現，不保證沒有
+回覆的 `claim_scope` 是服務依保存證據給出的**這對來源整體**資格標記：只有當
+兩側都是 split 為 `test` 且具保存研究證據的 run scope 時才是
+`verified_out_of_sample`；訊號序列與基準來源一律保持 `in_sample_or_unknown`，
+所以與它們配對也不會取得該標記。這只是保存關係的呈現，不保證沒有
 先前選擇或多重比較偏誤。結果保留 training/evaluation 關係、producer source、
 signal fingerprint 與可用的 fold 範圍，由讀者判斷資格。
 
@@ -64,10 +69,11 @@ bootstrap；不完整日曆不壓縮成連續序列。完全沒有共同日期�
 
 無法比較（來源不存在、損壞、無序列、定義不相容、資料不足）回傳
 `status="unavailable"`，附 `reason`、`next_step`、`source`、`detail`；
-請求本身無效（例如 signal 來源缺少 `column`）回傳
-`success=false` 與 `code=invalid_comparison_request`；若selector 在 MCP
-輸入 schema 驗證時就不完整（例如 signal 缺少 `column`），則是工具輸入錯誤
-（`ToolError`），不會進入 service。明細回傳的排除樣本與
+比較選項無效（`mode`、`reps`、`seed`、`block_size`、`confidence`）時，service
+回傳 `success=false` 與 `code=invalid_comparison_request`；出版失敗則是
+`code=artifact_publication_failed`。若 selector 在 MCP 輸入 schema 驗證時就
+不完整（例如 signal 缺少 `column`），則是工具輸入錯誤（`ToolError`），不會
+進入 service。明細回傳的排除樣本與
 缺日樣本各有上限；**回覆本身只帶摘要**。完整有效遮罩、全部排除座標與缺日座標
 只寫入出版的 artifact，不在 MCP 回覆中展開。
 
@@ -80,7 +86,8 @@ bootstrap；不完整日曆不壓縮成連續序列。完全沒有共同日期�
 兩份各自以本身的內容計算 digest、檔名與 artifact ID，分開註冊到 artifact
 registry，分別回傳在 `artifact` 與 `html_artifact`。
 內容包含方法版本、模式與資格、限制、分析 JSON、兩側來源，以及完整對齊
-Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節。重複相同比較會重用同一份內容；不同設定產生不同 ID，舊檔不被改寫。
+Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節。重複相同比較會重用同一份內容；輸出內容不同才會產生不同 ID，內容相同則重用，
+舊檔不被改寫。
 使用 `get_artifact(include_content=true)` 搭配回傳的 SHA-256 分頁閱讀，或用
 `list_artifacts` 查找已註冊的成果；HTML 可直接在離線瀏覽器開啟。出版前會先對
 兩份目標做路徑與註冊衝突檢查；若檢查通過但寫入途中發生 OS 錯誤，仍可能只留下
