@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -38,7 +39,6 @@ from tradingdev.domain.strategies.execution import StrategyExecution
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
 FIRST = "2024-01-01T00:00:00+00:00"
 
@@ -346,7 +346,9 @@ def test_corrupted_snapshot_is_unavailable_not_recomputed(
         {"kind": "run", "run_id": "run-b"},
     )
     assert payload["status"] == "unavailable"
-    assert payload["sources"] == []
+    assert len(payload["sources"]) == 2
+    assert all(source["source_hash"] == "unavailable" for source in payload["sources"])
+    PairedComparisonResponse.model_validate(payload)
 
 
 def test_volume_mode_and_zero_cost_benchmark_are_explicitly_unavailable(
@@ -494,16 +496,16 @@ def test_artifact_is_reusable_and_does_not_change_old_content(
     assert read_back["success"] is True
     assert "paired comparison" in read_back["content"]
     assert ALGORITHM_VERSION in read_back["content"]
+    assert '"valid_mask"' in read_back["content"]
+    assert '"excluded"' in read_back["content"]
 
     assert first["html_artifact"] == second["html_artifact"]
     html = first["html_artifact"]
     assert html["artifact_id"].startswith("paired-comparison-html:")
     assert html["media_type"] == "text/html"
-    html_read = ArtifactService(workspace=workspace, store=store).get_artifact(
-        html["artifact_id"], include_content=True, expected_sha256=html["sha256"]
-    )
-    assert html_read["success"] is True
-    document = html_read["content"]
+    html_record = store.get_artifact(html["artifact_id"])
+    assert html_record is not None
+    document = Path(html_record["path"]).read_text(encoding="utf-8")
     assert document.lstrip().lower().startswith("<!doctype html>")
     assert "<style>" in document and "<script" not in document.lower()
     assert "src=" not in document.lower()
@@ -511,6 +513,8 @@ def test_artifact_is_reusable_and_does_not_change_old_content(
     assert ALGORITHM_VERSION in document
     assert "演算法版本" in document
     assert "完整分析 JSON" in document
+    assert "完整對齊證據" in document
+    assert '"valid_mask"' in document
 
     different = comparison.compare(*arguments, block_size=5, save_artifact=True)
     assert different["artifact"]["artifact_id"] != artifact_id

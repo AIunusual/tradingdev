@@ -212,9 +212,19 @@ class PairedComparisonService:
         left_loaded = self._load(left, snapshots)
         right_loaded = self._load(right, snapshots)
         if isinstance(left_loaded, _LoadFailure):
-            return self._unavailable_payload(left_loaded, mode, [], [])
+            return self._unavailable_payload(
+                left_loaded,
+                mode,
+                [_unavailable_identity(left), _unavailable_identity(right)],
+                [],
+            )
         if isinstance(right_loaded, _LoadFailure):
-            return self._unavailable_payload(right_loaded, mode, [], [])
+            return self._unavailable_payload(
+                right_loaded,
+                mode,
+                [_unavailable_identity(left), _unavailable_identity(right)],
+                [],
+            )
 
         problem = self._incompatible(left_loaded, right_loaded)
         if problem is not None:
@@ -284,8 +294,8 @@ class PairedComparisonService:
                 aligned,
             )
         if mode == "inferential" and (
-            left_loaded.identity.get("producer_source") in {None, ""}
-            or right_loaded.identity.get("producer_source") in {None, ""}
+            left_loaded.identity.get("producer_source") in {None, "", "unknown"}
+            or right_loaded.identity.get("producer_source") in {None, "", "unknown"}
         ):
             return self._unavailable_payload(
                 _LoadFailure(
@@ -383,7 +393,19 @@ class PairedComparisonService:
         }
         if save_artifact:
             try:
-                markdown, html = self._publish_artifacts(payload)
+                audit = {
+                    "valid_mask": list(aligned.valid_mask),
+                    "excluded": [
+                        {
+                            "timestamp": item.timestamp,
+                            "absent_from": item.absent_from,
+                            "reason": item.reason,
+                        }
+                        for item in aligned.excluded
+                    ],
+                    "missing_timestamps": list(aligned.missing_timestamps),
+                }
+                markdown, html = self._publish_artifacts(payload, audit)
                 payload["artifact"] = markdown
                 payload["html_artifact"] = html
             except (OSError, ValueError) as exc:
@@ -655,7 +677,7 @@ class PairedComparisonService:
             label=str(identity["label"]),
             identity=identity,
             settings=settings,
-            cadence="1d",
+            cadence=_infer_cadence(pd.DatetimeIndex(series.index)),
             definition=definition,
             cost_basis=cost_basis,
             claim_scope=claim_scope,
@@ -796,12 +818,13 @@ class PairedComparisonService:
         }
 
     def _publish_artifacts(
-        self, payload: dict[str, Any]
+        self, payload: dict[str, Any], audit: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Publish immutable Markdown and self-contained HTML from one payload."""
         body = dict(payload)
         body["artifact"] = None
         body["html_artifact"] = None
+        body["audit"] = audit
         markdown = self._publish_text(
             body,
             document=_render_markdown(body),
@@ -884,6 +907,34 @@ class PairedComparisonService:
         }
 
 
+def _infer_cadence(index: pd.DatetimeIndex) -> str:
+    """Derive a supported cadence from saved timestamps, never assume daily."""
+    if len(index) < 2:
+        return "unsupported"
+    deltas = index[1:] - index[:-1]
+    if deltas.nunique() != 1:
+        return "unsupported"
+    step = deltas[0]
+    if step == pd.Timedelta(days=1):
+        return "1d"
+    if step == pd.Timedelta(hours=1):
+        return "1h"
+    return "unsupported"
+
+
+def _unavailable_identity(selection: SeriesSelection) -> dict[str, Any]:
+    """Keep the two-side contract intact even when a source cannot load."""
+    return {
+        "kind": selection.kind,
+        "label": f"{selection.kind}:unavailable",
+        "source_hash": "unavailable",
+        "run_id": selection.run_id,
+        "scope": selection.scope,
+        "artifact_id": selection.artifact_id,
+        "column": selection.column,
+    }
+
+
 def _render_markdown(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True
@@ -952,7 +1003,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         ),
         ("共同期間", alignment["common_period"]),
         ("排除原因", alignment["excluded_counts"]),
-        ("日历 / 缺口", f"{alignment['cadence']} / {alignment['cadence_complete']}"),
+        ("日曆 / 缺口", f"{alignment['cadence']} / {alignment['cadence_complete']}"),
     ]
     audit = "\n".join(
         f"<tr><th>{text(label)}</th><td>{text(value)}</td></tr>"
@@ -982,6 +1033,14 @@ def _render_html(payload: dict[str, Any]) -> str:
         for source in payload["sources"]
     )
     limits = "\n".join(f"<li>{text(line)}</li>" for line in payload["limitations"])
+    evidence = payload.get("audit")
+    evidence_section = ""
+    if evidence:
+        evidence_json = html.escape(
+            json.dumps(evidence, ensure_ascii=False, allow_nan=False, indent=2),
+            quote=False,
+        )
+        evidence_section = f"<h2>完整對齊證據</h2><pre>{evidence_json}</pre>"
     return (
         '<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1001,7 +1060,7 @@ def _render_html(payload: dict[str, Any]) -> str:
         f"<h2>對齊與排除</h2><table>{audit}</table>"
         f"<h2>來源身分</h2>{source_cards}"
         f"<h2>限制</h2><ul>{limits}</ul>"
-        f"<h2>完整分析 JSON</h2><pre>{encoded}</pre>"
+        f"<h2>完整分析 JSON</h2><pre>{encoded}</pre>{evidence_section}"
         "</body></html>\n"
     )
 

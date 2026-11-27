@@ -138,6 +138,32 @@ def test_inferential_requires_a_recorded_producer(
     assert payload["unavailable"]["reason"] == "source_qualification_unknown"
 
 
+def test_unknown_producer_is_not_inferential(
+    service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(service, "_load", lambda *_: _loaded(producer="unknown"))
+    payload = service.compare(_SELECTION, _SELECTION, mode="inferential")
+    assert payload["unavailable"]["reason"] == "source_qualification_unknown"
+
+
+def test_cadence_is_inferred_from_saved_timestamps() -> None:
+    from tradingdev.app.paired_comparison_service import _infer_cadence
+
+    daily = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    hourly = pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC")
+    irregular = pd.DatetimeIndex(
+        [
+            "2024-01-01T00:00:00+00:00",
+            "2024-01-02T00:00:00+00:00",
+            "2024-01-04T00:00:00+00:00",
+        ]
+    )
+    assert _infer_cadence(daily) == "1d"
+    assert _infer_cadence(hourly) == "1h"
+    assert _infer_cadence(irregular) == "unsupported"
+    assert _infer_cadence(daily[:1]) == "unsupported"
+
+
 def test_bootstrap_errors_and_unavailable_intervals_are_separate(
     service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
