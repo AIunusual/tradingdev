@@ -32,8 +32,9 @@ dataset ID 不同本身不證明 holdout，也不證明未調參。
 兩側都是 split 為 `test` 且具保存研究證據的 run scope 時才是
 `verified_out_of_sample`；訊號序列與基準來源一律保持 `in_sample_or_unknown`，
 所以與它們配對也不會取得該標記。這只是保存關係的呈現，不保證沒有
-先前選擇或多重比較偏誤。結果保留 training/evaluation 關係、producer source、
-signal fingerprint 與可用的 fold 範圍，由讀者判斷資格。
+先前選擇或多重比較偏誤。訊號序列來源另保留 training/evaluation 關係、producer source、
+signal fingerprint 與可用的 fold 範圍；run 與基準來源則保存 run/scope 身分與
+`claim_scope`，由讀者判斷資格。
 
 ## 對齊與缺口政策
 
@@ -75,9 +76,10 @@ bootstrap。完全沒有共同日期回報
 
 無法比較（來源不存在、損壞、無序列、定義不相容、資料不足）回傳
 `status="unavailable"`，附 `reason`、`next_step`、`source`、`detail`；
-比較選項無效（`mode`、`reps`、`seed`、`block_size`、`confidence`）時，service
-回傳 `success=false` 與 `code=invalid_comparison_request`；出版失敗則是
-`code=artifact_publication_failed`。若 selector 在 MCP 輸入 schema 驗證時就
+比較選項無效（`mode`、`reps`、`seed`、`block_size`、`confidence`）或出版失敗時，
+Python service 會拋出 `PairedComparisonError`（`invalid_comparison_request` 或
+`artifact_publication_failed`）；MCP 工具捕捉後回傳 `success=false` 與對應的
+`code`。若 selector 在 MCP 輸入 schema 驗證時就
 不完整（例如 signal 缺少 `column`），則是工具輸入錯誤（`ToolError`），不會
 進入 service。明細回傳的排除樣本與
 缺日樣本各有上限；**回覆本身只帶摘要**。完整有效遮罩、全部排除座標與缺日座標
