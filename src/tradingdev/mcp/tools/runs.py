@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from mcp_types import ToolAnnotations
 
@@ -18,6 +18,10 @@ from tradingdev.app.contracts.optimization import (  # noqa: TC001
     OptimizationTrialsResponse,
     SelectionEvidencePage,
 )
+from tradingdev.app.contracts.paired_comparison import (  # noqa: TC001
+    PairedComparisonResponse,
+    SeriesSelection,
+)
 from tradingdev.app.contracts.research import (
     CompareRunsResponse,
     MetricCatalogResponse,
@@ -27,6 +31,7 @@ from tradingdev.app.contracts.research import (
     RunScopeSelection,
     RunSummary,
 )
+from tradingdev.app.paired_comparison_service import PairedComparisonService
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer
@@ -34,8 +39,12 @@ if TYPE_CHECKING:
     from tradingdev.app.run_service import RunService
 
 
-def register(mcp: MCPServer, service: RunService) -> None:
-    """Register run tools."""
+def register(
+    mcp: MCPServer,
+    service: RunService,
+    paired: PairedComparisonService | None = None,
+) -> None:
+    """Register run tools and the shared paired-comparison entry point."""
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -214,3 +223,52 @@ def register(mcp: MCPServer, service: RunService) -> None:
         if payload.get("success") is False:
             return MetricQueryError.model_validate(payload)
         return RunMetricsResponse.model_validate(payload)
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
+    def compare_saved_series(
+        a: SeriesSelection,
+        b: SeriesSelection,
+        mode: Literal["descriptive", "inferential"] = "descriptive",
+        reps: int = 1000,
+        seed: int = 20261127,
+        block_size: int | None = None,
+        confidence: float = 0.95,
+        save_artifact: bool = False,
+    ) -> PairedComparisonResponse | ErrorResponse:
+        """Compare two saved series on their exact shared UTC timestamps.
+
+        Sources are run/scope observations, a saved product benchmark, a
+        verified zero-cost price artifact, or a saved pointwise signal series.
+        This never runs a strategy, trains a model, or downloads prices.
+        Warm-up NaNs keep their coordinates; only jointly valid dates pair.
+        mode=descriptive labels p as non-inferential; mode=inferential also
+        requires an exact UTC calendar and a recorded producer. A zero-cost
+        price baseline is unavailable unless a verified raw price artifact
+        exists; saved net benchmark values are never reversed into closes.
+        save_artifact publishes one immutable Markdown artifact; retrieve it
+        with get_artifact_download using the returned ID and hash.
+        """
+        from tradingdev.app.paired_comparison_service import PairedComparisonError
+
+        paired_service = paired or PairedComparisonService()
+        try:
+            payload = paired_service.compare(
+                a,
+                b,
+                mode=mode,
+                reps=reps,
+                seed=seed,
+                block_size=block_size,
+                confidence=confidence,
+                save_artifact=save_artifact,
+            )
+        except PairedComparisonError as exc:
+            return ErrorResponse(success=False, code=exc.code, error=str(exc))
+        return PairedComparisonResponse.model_validate(payload)

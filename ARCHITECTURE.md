@@ -345,8 +345,10 @@ HTML 的 ML 章節與回測證據分開呈現，不推定模型與 run 的來源
 | `domain/performance/artifacts.py`、`adapters/storage/performance.py` | 具型別的結果範圍、定義快照與觀察值保存／核驗 |
 | `domain/benchmark.py`、`app/benchmark_service.py` | 資產類別對應的固定基準、買進持有計算與基準行情取得；報告只讀已保存基準 |
 | `domain/statistics/plateau.py` | `trials_from_metrics` 將呼叫端提供的全部參數試驗列轉為網格與有效試驗，`plateau_summary` 比較最佳試驗與鄰域平台；輸入、失敗列及缺失網格語意見模組與函式 docstring。獨立計算，不讀取 jobs／runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。獨立計算，不讀取 runs，尚未接入績效發布或 MCP 查詢 |
-| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。獨立計算，尚未接入績效發布或 MCP 查詢 |
+| `domain/statistics/comparison.py` | 對齊呼叫端提供的報酬序列，以 stationary bootstrap 提供配對統計量差值推論與各序列統計量的個別區間；公開入口為 `align_returns`、`difference_interval`、`difference_interval_outcome`、`interval_table` 與 `interval_table_outcome`。各入口的回傳契約、不可用結果、區塊長度、輸入邊界與解讀限制見 `domain/statistics/comparison.py` 的模組與函式 docstring。模組本身仍不讀取 runs；配對比較 service 負責接入保存序列 |
+| `domain/statistics/benchmark.py` | 由呼叫端提供的價格序列產生買進持有報酬並對其做策略迴歸比較；公開入口為 `buy_and_hold_returns` 與 `compare_to_benchmark`，結果欄位型別為 `BenchmarkComparison`。屬研究用序列分析，與 `domain/benchmark.py` 的產品基準分屬不同職責。欄位定義、與產品基準的數值差異及解讀限制見 `domain/statistics/benchmark.py` 的模組與函式 docstring。模組本身不讀取保存資料；零成本基準只有在 service 找到核驗過的原始價格 artifact 時才會呼叫 |
+| `domain/statistics/alignment.py` | 保留兩側原始 UTC 座標，區分前段 warm-up 與中途缺值，產生共同有效遮罩與排除明細；第一版只支援精確日頻／小時頻的共同時間戳，不填值也不壓縮缺口 |
+| `app/paired_comparison_service.py`、`app/contracts/paired_comparison.py` | 從已核驗 snapshot 選取兩側序列、檢查定義與設定相容、呼叫既有配對統計函式，出版內容定址的 Markdown 分析；MCP 的 `compare_saved_series` 與 `compare_signal_series` 共用此入口 |
 | RunService／JobService | 摘要、探索與詳細查詢；摘要大小不決定保存哪些指標 |
 
 QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，專案負責成本記帳與資料轉換。
@@ -370,8 +372,10 @@ QuantStats 提供報酬／風險統計，VectorBT 提供已平倉交易統計，
 `return_information_ratio` 欄位另保留未扣無風險報酬的比率；底層
 `sharpe.sharpe_ratio` 只計算傳入的報酬序列，不自行扣除無風險報酬。
 已平倉與包含未平倉市值的交易統計分組提供，不將未發生成交的出場費假設為已扣除。
-這些計算不讀取 run／artifact，也未接入績效發佈或 MCP 結果查詢；不能自行證明呼叫端
-提供的原始資料完整或來自同次執行。保存結果仍由上述績效產物流程負責。
+這些純函式不讀取 run／artifact，也不能自行證明呼叫端提供的原始資料完整或來自
+同次執行；儲存與查詢責任在 `app/paired_comparison_service.py` 等服務層。配對比較
+經由該服務接入保存序列與 MCP，但其餘獨立計算未因此成為績效發布入口。保存結果
+仍由上述績效產物流程負責。
 
 ### 診斷擴充與替換
 

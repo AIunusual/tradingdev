@@ -999,6 +999,14 @@ See [Reports](reports.md) for section selection, detail navigation, complete exp
 and immutable HTML publication. Report delivery includes the link and instructions
 for opening the selected results; tool success alone does not establish delivery.
 
+A paired comparison publishes its own content-addressed Markdown under
+`paired_comparisons/` and registers the SHA-256 in the artifact table. It is a
+derived artifact: neither the source performance/observation bundles nor older
+reports are rewritten, and reusing it verifies the saved content before paging
+it through `get_artifact`. Its source identities, calendar policy, exclusion
+audit and interpretation limits are defined in
+[Paired Comparison](paired_comparison.md).
+
 ## JSON Values
 
 Before writing `result.json` or SQLite `runs.metrics`, metric values are

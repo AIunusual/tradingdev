@@ -55,6 +55,13 @@ _READ_ONLY_TOOLS = {
     "leaderboard",
 }
 
+# Both comparison tools can publish a derived Markdown artifact, so they are
+# idempotent but not advertised as read-only.
+_PAIR_COMPARISON_HINTS = {
+    "compare_saved_series": (False, False, True, False),
+    "compare_signal_series": (False, False, True, False),
+}
+
 # readOnly, destructive, idempotent, openWorld: expected public behavior,
 # intentionally independent of the server's annotation helper.
 _MUTATING_HINTS = {
@@ -141,6 +148,7 @@ async def test_all_tools_advertise_constrained_output_schemas_and_hints(
     expected_hints = {
         **dict.fromkeys(_READ_ONLY_TOOLS, (True, False, True, False)),
         **_MUTATING_HINTS,
+        **_PAIR_COMPARISON_HINTS,
         # URL expiry changes across reads without modifying saved artifacts.
         "get_artifact_download": (True, False, False, False),
     }

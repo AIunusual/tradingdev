@@ -19,6 +19,7 @@ from tradingdev.app.feature_request_service import FeatureRequestService
 from tradingdev.app.job_service import JobService
 from tradingdev.app.job_store import JobStore
 from tradingdev.app.ml_service import MLService
+from tradingdev.app.paired_comparison_service import PairedComparisonService
 from tradingdev.app.report_service import ReportService
 from tradingdev.app.research_note_service import ResearchNoteService
 from tradingdev.app.run_service import RunService
@@ -130,6 +131,7 @@ def create_server(
     )
     execution_service = ExecutionPlanService(workspace, job_store=job_store)
     run_service = RunService(workspace=workspace, store=store)
+    paired_service = PairedComparisonService(workspace=workspace, store=store)
     artifact_service = ArtifactService(workspace=workspace, store=store)
     feature_request_service = FeatureRequestService(workspace=workspace, store=store)
 
@@ -138,7 +140,7 @@ def create_server(
     data.register(mcp, data_service)
     execution.register(mcp, execution_service)
     jobs.register(mcp, job_service)
-    runs.register(mcp, run_service)
+    runs.register(mcp, run_service, paired_service)
     history.register(
         mcp,
         TradeHistoryService(workspace=workspace, store=store),
@@ -149,7 +151,11 @@ def create_server(
     )
     research_notes.register(mcp, ResearchNoteService(workspace, store), downloads)
     feature_requests.register(mcp, feature_request_service)
-    ml.register(mcp, MLService(workspace=workspace, data_service=data_service))
+    ml.register(
+        mcp,
+        MLService(workspace=workspace, data_service=data_service),
+        paired_service,
+    )
     return mcp
 
 

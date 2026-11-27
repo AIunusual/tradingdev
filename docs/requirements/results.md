@@ -51,6 +51,13 @@
 - **契約**：[保存結果排名](../run_artifacts.md#ranking-saved-run-scopes)、[搜尋證據](../performance_artifacts.md#optimization-selection-evidence)。
 - **驗證**：[排序與證據續讀](../../tests/app/test_selection_evidence.py) 核對搜尋規模、分頁及歷史證據，[最佳化 MCP 流程](../../tests/integration/test_mcp_optimization.py) 核對 worker 發布及部分結果的排名行為。
 
+## FR-RES-009 保存序列的配對比較
+
+- **需求**：使用者可選兩側已保存、完整性核驗通過的序列，取得同時間觀察的差額、不確定性與可離線閱讀的分析成果；不因比較請求啟動回測、訓練、下載或重新 predict。
+- **驗收**：共同日期取精確交集，warm-up 缺值保留原座標再按同位置有效觀察配對；回報各自原長度、共同期間、有效樣本數、排除原因與座標，不補零、不按順序硬湊、不壓縮時間缺口。部分／完全無重疊、重複時間、時區混用、頻率不符、來源損壞、舊資料無序列及同 run 不同 scope 都有明確結果。描述與推論資格分開，p 值在描述模式不承載顯著性結論，推論模式另要求完整日曆與可識別來源。資訊係數不與報酬混檢，無成本訊號模擬不冒充成交績效；產品基準為預設，零成本價格基準只在有核驗過的原始價格 artifact 時提供。輸出含方法版本、設定、seed、block size、兩側來源及限制，差異原因與操作錯誤分開，明細有容量界線。
+- **契約**：[保存序列配對比較](../paired_comparison.md)、[節奏與來源](../run_artifacts.md#artifact-references)、[逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)。
+- **驗證**：[純對齊](../../tests/domain/statistics/test_statistics_alignment.py)、[服務](../../tests/app/test_paired_comparison.py)、[MCP 契約](../../tests/mcp/test_paired_comparison_contracts.py) 核對共同索引與來源；[自然需求測試](../../tests/e2e/test_llm_paired_comparison.py) 須另啟模型測試。
+
 ## NFR-DATA-001 保存完整性與可追溯性
 
 - **需求**：歷史結果固定各自保存的設定與來源身分；回測 run 另保存當時指標定義。讀取及發佈須核對相關證據，區分完整結果、部分狀態與不可用資料，並區分指標定義的取得時點。

@@ -18,8 +18,11 @@ BUDGETS = {
     # Raised from 70000 and 80000 to fit the strategy-ranking surface planned
     # in #38: about 2.6 KB for one new tool plus a wider compare_runs schema,
     # with room for one revision round.
-    "model_tools": 76000,
-    "initial_total": 87000,
+    # Issue #242 adds compare_saved_series/compare_signal_series and their
+    # paired-comparison response schema. Measured on this head:
+    # model_tools 79,801 bytes and initial_total 90,782 bytes.
+    "model_tools": 82000,
+    "initial_total": 93000,
     "strategy_section": 16000,
     "indicator_reference": 10000,
     "discovery_response": 20000,
