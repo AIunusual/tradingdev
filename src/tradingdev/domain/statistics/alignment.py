@@ -157,7 +157,12 @@ def align_masked_pair(
         missing = tuple(
             timestamp.isoformat() for timestamp in expected.difference(common)
         )
-        complete = len(missing) == 0
+        observed_steps = common[1:] - common[:-1]
+        expected_step = (
+            pd.Timedelta(days=1) if cadence == "1d" else pd.Timedelta(hours=1)
+        )
+        regular = bool(np.all(observed_steps == expected_step))
+        complete = len(missing) == 0 and regular
 
     def count(reason: ExclusionReason, side: str) -> int:
         return sum(

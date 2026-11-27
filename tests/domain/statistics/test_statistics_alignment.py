@@ -93,6 +93,14 @@ def test_missing_calendar_period_is_reported_not_compressed() -> None:
     assert result.valid_count == 3
 
 
+def test_declared_daily_cadence_with_hourly_steps_is_incomplete() -> None:
+    index = pd.date_range("2024-01-01", periods=4, freq="12h", tz="UTC")
+    series = pd.Series([0.01, 0.02, 0.03, 0.04], index=index, dtype="float64")
+    result = align_masked_pair(series, series, cadence="1d")
+    assert result.valid_count == 4
+    assert result.cadence_complete is False
+
+
 def test_unsupported_cadence_refuses_inference_qualification() -> None:
     a = _series((1, 2, 3), (0.01, 0.02, 0.03))
     result = align_masked_pair(a, a, cadence="3d")

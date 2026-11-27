@@ -870,7 +870,8 @@ their original rows and are excluded by the common valid mask, never shifted
 into an earlier position. The result carries each side's evaluation settings,
 candidate identity, signal fingerprint, training status and holdout relationship.
 A fold range is included only when the artifact is a fold-validation series
-with all four range columns present; other artifacts report no fold range. A different dataset or model ID does not itself prove holdout;
+with all four range columns present; it is taken from the first row only and
+does not enumerate every fold. Other artifacts report no fold range. A different dataset or model ID does not itself prove holdout;
 see [Paired Comparison](paired_comparison.md) for the descriptive/inferential
 qualification and the refusal to mix IC with return series.
 
