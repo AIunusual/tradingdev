@@ -482,6 +482,7 @@ def test_artifact_is_reusable_and_does_not_change_old_content(
         {"kind": "run", "run_id": "run-b"},
     )
     first = comparison.compare(*arguments, save_artifact=True)
+    PairedComparisonResponse.model_validate(first)
     second = comparison.compare(*arguments, save_artifact=True)
     assert first["artifact"] == second["artifact"]
     artifact_id = first["artifact"]["artifact_id"]
