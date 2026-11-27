@@ -864,16 +864,7 @@ discovery to see what remains; a failed cleanup is not evidence that no artifact
 was removed. Historical rows without `series_artifact_id` stay unavailable rather
 than being recomputed.
 
-MCP `compare_signal_series` reads two of these verified artifacts and compares
-one named column on their shared UTC coordinates. Warm-up `null` values keep
-their original rows and are excluded by the common valid mask, never shifted
-into an earlier position. The result carries each side's evaluation settings,
-candidate identity, signal fingerprint, training status and holdout relationship.
-A fold range is included only when the artifact is a fold-validation series
-with all four range columns present; it is taken from the first row only and
-does not enumerate every fold. Other artifacts report no fold range. A different dataset or model ID does not itself prove holdout;
-see [Paired Comparison](paired_comparison.md) for the descriptive/inferential
-qualification and the refusal to mix IC with return series.
+MCP `compare_signal_series` can compare two of these verified artifacts; see [Paired Comparison](paired_comparison.md) for source selection, response identity and limits.
 
 Publication (`save`), protection (`protect`), default cleanup reference
 snapshotting and cleanup (`prune`) serialize on `.evaluation-series.lock` in that
