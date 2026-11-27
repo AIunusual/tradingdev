@@ -24,8 +24,9 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 `cost_basis`，產品基準則以 `benchmark_costs` 記錄保存的手續費與滑價，兩者不能
 混淆，也不能把零成本訊號模擬冒充成交績效。IC 只能與同類 IC 相比。
 
-服務實際檢查的是：頻率相同（run 與產品基準用保存設定宣告的頻率，訊號序列則由
-保存時間戳推斷）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（包含候選身分與參數；
+服務實際檢查的是宣告／推斷的 cadence 標籤相同而非原始間隔完全相等（run 與產品
+基準用保存設定宣告的頻率，訊號序列由時間戳推斷；非日／小時都標為 `unsupported`，
+因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（包含候選身分與參數；
 即使 horizon／window／quantile 相同，候選設定不同仍回報不相容），`realized_return`
 配對不檢查這些設定；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
 `periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
