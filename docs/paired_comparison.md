@@ -1,7 +1,9 @@
 # 保存序列的配對比較
 
 `compare_saved_series` 與 `compare_signal_series` 共用 `PairedComparisonService`。
-比較只讀取兩側已保存、完整性核驗通過的 snapshot，然後把共同有效的觀察值交給
+比較只讀取兩側已保存的 snapshot；訊號序列沿用保存時的驗證結果，若 manifest
+與 Parquet 的 `(mtime_ns, size, inode)` 未變，會重用快取而不重新讀取／雜湊 bytes，
+因此不能偵測保持這些特徵不變的改寫。然後把共同有效的觀察值交給
 `domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的 `returns` 不存在時，才會由已保存的權益與固定本金推導每期報酬；
 此路徑遇保存的 `null` 權益時，該期與下一期都保持不可用，不會跨缺口計算。若保存的
 `returns` 存在，則完全依照保存值使用。這是對保存觀察值的衍生，
@@ -16,7 +18,7 @@
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，否則同樣不可用。不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
-（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。目前 MCP 與 products 流程沒有建立此 artifact 的工具，因此在現有產品工作流程下此來源實際不可用；此處定義的是對已註冊 artifact 的讀取契約 |
+（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。此變更不包含建立此 artifact 的流程；使用前須已有已註冊並核驗過的 artifact，本文只定義讀取契約 |
 | `signal` | `artifact_id`、`column` | 先用 `get_evaluation_series_page` 探索已保存序列；發現與驗證限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)。此來源是已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
@@ -38,7 +40,7 @@ dataset ID 不同本身不證明 holdout，也不證明未調參。
 `verified_out_of_sample`；訊號序列與基準來源一律保持 `in_sample_or_unknown`，
 所以與它們配對也不會取得該標記。這只是保存關係的呈現，不保證沒有
 先前選擇或多重比較偏誤。訊號序列來源另保留 training/evaluation 關係、producer source、
-signal fingerprint 與可用的 fold 範圍；run 與產品基準來源保存 run/scope 身分，
+signal fingerprint 與可用的 fold 範圍（只有首列範圍，不是完整 fold 清單）；run 與產品基準來源保存 run/scope 身分，
 零成本價格基準則只保存價格 artifact 身分。
 `claim_scope` 只出現在整份回覆的一層，不是各別來源的欄位。
 
