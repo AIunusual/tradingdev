@@ -1,8 +1,9 @@
 # 保存序列的配對比較
 
 `compare_saved_series` 與 `compare_signal_series` 共用 `PairedComparisonService`。
-比較只讀取兩側已保存的 snapshot；訊號序列每次載入都交由既有
-`EvaluationSeriesStore` 驗證，不在比較請求中重新 predict。比較把共同有效的觀察值交給
+比較只讀取兩側已保存的 snapshot；訊號序列由既有 `EvaluationSeriesStore` 載入，
+其驗證與快取限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)，
+比較請求不重新 predict。比較把共同有效的觀察值交給
 `domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的 `returns` 不存在時，才會由已保存的權益與固定本金推導每期報酬；
 此路徑遇保存的 `null` 權益時，該期與下一期都保持不可用，不會跨缺口計算。若保存的
 `returns` 存在，則完全依照保存值使用。這是對保存觀察值的衍生，
@@ -27,8 +28,8 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 
 服務實際檢查的是宣告／推斷的 cadence 標籤相同而非原始間隔完全相等（run 與產品
 基準用保存設定宣告的頻率，訊號序列由時間戳推斷；非日／小時都標為 `unsupported`，
-因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（包含候選身分與參數；
-即使 horizon／window／quantile 相同，候選設定不同仍回報不相容），`realized_return`
+因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的 `manifest.settings` 相同（候選身分與參數是單獨儲存的
+來源證明，不參與此相容性檢查），`realized_return`
 配對不檢查這些設定；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
 `periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
