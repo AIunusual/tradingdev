@@ -65,7 +65,8 @@ warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報
 序列位置重抽樣，因此描述結果實際上會把有效觀察之間的位置視為相鄰。推論模式
 不接受這種相鄰化：通過共同有效樣本數檢查後，`mode="inferential"` 對日曆缺口、間隔與宣告 cadence
 不符或中途無效值回報 `cadence_gap_unsupported`；樣本數不足時以
-`insufficient_observations` 優先。前段 warm-up 不視為中途缺口。第一版沒有新的缺口
+`insufficient_observations` 優先。前段 warm-up 不視為中途缺口；任一侧完全沒有有限值時，共同座標全部計為
+`empty_series`，不會再細分 warm-up／interior_gap。第一版沒有新的缺口
 bootstrap。完全沒有共同日期回報
 `no_common_timestamps`；保存座標重複等malformed input 會轉為 `comparison_error` 的不可用結果。完全沒有共同有效的觀察回報 `no_valid_observations`；有共同有效觀察但不足
 `MIN_BOOTSTRAP_OBSERVATIONS`（定義於
