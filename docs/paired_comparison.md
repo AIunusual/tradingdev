@@ -41,8 +41,8 @@ dataset ID 不同本身不證明 holdout，也不證明未調參。
 
 回覆的 `claim_scope` 是服務依保存證據給出的**這對來源整體**資格標記：只有當
 兩側都是 split 為 `test` 且具保存研究證據的 run scope 時才是
-`verified_out_of_sample`；訊號序列與基準來源一律保持 `in_sample_or_unknown`，
-所以與它們配對也不會取得該標記。這只是保存關係的呈現，不保證沒有
+`verified_out_of_sample`；不可用回覆一律是 `in_sample_or_unknown`，
+訊號序列與基準來源也一律保持該值，與它們配對不會取得 verified 標記。這只是保存關係的呈現，不保證沒有
 先前選擇或多重比較偏誤。訊號序列來源另保留 training/evaluation 關係、producer source、
 signal fingerprint 與可用的 fold 範圍（只有首列範圍，不是完整 fold 清單）；run 與產品基準來源保存 run/scope 身分，
 零成本價格基準則只保存價格 artifact 身分。

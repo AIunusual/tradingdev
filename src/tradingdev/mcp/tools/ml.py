@@ -431,7 +431,10 @@ def register(
         match, including candidate model_id, method_name and parameters.
         Fewer than 20 jointly valid observations return insufficient_observations.
         The response records a bounded alignment summary; the full valid mask
-        and excluded coordinates are in the optional artifact. Inference needs
+        and excluded coordinates are in the optional artifact. save_artifact
+        defaults to false; available results may publish Markdown and HTML.
+        Read them with get_artifact using the returned artifact_id and sha256.
+        Inference needs
         an exact UTC daily/hourly calendar and a recorded producer; it does not
         provide nominal bootstrap coverage or a multiple-comparison correction.
         Different dataset or model IDs alone never prove out-of-sample validity.
