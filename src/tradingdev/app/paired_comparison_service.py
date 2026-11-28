@@ -712,7 +712,9 @@ class PairedComparisonService:
                 "frequency_mismatch",
                 f"{a.cadence} versus {b.cadence}",
             )
-        settings_paired = pair[0].startswith("signal_")
+        settings_paired = (
+            pair[0].startswith("signal_") or "zero_cost_signal_simulation" in pair
+        )
         if settings_paired and a.settings != b.settings:
             return (
                 "incompatible_definitions",

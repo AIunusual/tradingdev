@@ -5,7 +5,8 @@
 其驗證與快取限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)，
 比較請求不重新 predict。比較把共同有效的觀察值交給
 `domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的 `returns` 不存在時，才會由已保存的權益與固定本金推導每期報酬；
-此路徑遇保存的 `null` 或零權益時，該期與下一期都保持不可用，不會跨缺口計算。若保存的
+此路徑遇保存的 `null` 權益時，該期與下一期都不可用；前一期為正數而當期為零時，
+當期報酬為 −100%，下一期因前一期為零而不可用，不會跨缺口計算。若保存的
 `returns` 存在，則完全依照保存值使用。這是對保存觀察值的衍生，
 不是重跑策略或重建原始行情／訊號。比較請求不會回測、訓練、下載行情、
 重新 predict，也不會改寫舊報告。
@@ -16,8 +17,8 @@
 | ---- | ---- | ---- |
 | `run` | `run_id`、`scope`（省略用預設） | 只接受有 observations 的 signal 模式 scalar backtest scope：優先用保存的 `returns`，但須與 `equity_curve` 等長且與時間戳對齊，否則回報不可用；缺席時才由帳戶權益與固定本金推導每期報酬，成本已在成交中；volume 模式回報 `not_applicable`，彙總 fold summary 沒有觀察值而回報不可用 |
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 先選取要求的（或預設的）run scope，該 scope 必須有保存觀察值且回報基準掛在同一
-scope 下；只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，且保存淨值為 `null` 或
-零時該期與下一期都不可用，否則同樣不可用。不逆推原始 closes |
+scope 下；只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導；保存淨值為 `null` 時
+該期與下一期不可用，前一期為正數而當期為零時當期為 −100%、下一期不可用。不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 （`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。比較不會下載或建立價格資料；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有嚴格遞增的 `timestamps`、有限且為正數的 `closes` 與非空 `source`，本文定義其讀取契約 |
