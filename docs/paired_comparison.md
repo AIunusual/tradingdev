@@ -17,7 +17,7 @@
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，否則同樣不可用。不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
-（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。此變更不包含建立此 artifact 的流程；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有 `timestamps`、`closes` 与非空 `source`，本文只定義讀取契約 |
+（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。比較不會下載或建立價格資料；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有 `timestamps`、`closes` 與非空 `source`，本文定義其讀取契約 |
 | `signal` | `artifact_id`、`column` | 先用 `get_evaluation_series_page` 探索已保存序列；發現與驗證限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)。此來源是已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
@@ -117,8 +117,9 @@ Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱�
 expected_sha256=回傳的 SHA-256)` 分頁閱讀，並依 `next_offset` 讀到 `null` 後自行存檔；
 也可用 `list_artifacts` 查找已註冊的成果。HTML 可直接在離線瀏覽器開啟。出版前會先對
 兩份目標做路徑與註冊衝突檢查；若檢查通過但寫入途中發生 OS 錯誤，仍可能只留下
-先完成的 Markdown，這時可從 `list_artifacts` 找到它。出版失敗是操作錯誤，
-回傳 `success=false`、`code=artifact_publication_failed`，不冒充資料不可用。
+先完成的 Markdown，這時可從 `list_artifacts` 找到它。檔案或 registry 的出版失敗是操作錯誤，回傳 `success=false`、
+`code=artifact_publication_failed`，不冒充資料不可用；寫入順序仍可能留下先完成的
+Markdown，預檢只排除已知的路徑與註冊衝突。
 
 ## 驗證入口
 

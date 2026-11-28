@@ -569,6 +569,19 @@ def test_contract_validators() -> None:
         )
 
 
+def test_registry_failure_is_a_publication_error(
+    service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(service, "_load", lambda *_: _loaded())
+
+    def registry_error(*_: Any, **__: Any) -> None:
+        raise RuntimeError("registry offline")
+
+    monkeypatch.setattr(service._store, "create_artifact", registry_error)
+    with pytest.raises(PairedComparisonError, match="registry offline"):
+        service.compare(_SELECTION, _SELECTION, save_artifact=True)
+
+
 def test_artifact_conflict_paths(
     service: PairedComparisonService, tmp_path: Path
 ) -> None:

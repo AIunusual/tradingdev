@@ -412,7 +412,7 @@ class PairedComparisonService:
                 markdown, html = self._publish_artifacts(payload, audit)
                 payload["artifact"] = markdown
                 payload["html_artifact"] = html
-            except (OSError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - publication is an operation boundary
                 raise PairedComparisonError(
                     "artifact_publication_failed", f"artifact failed: {exc}"
                 ) from exc
