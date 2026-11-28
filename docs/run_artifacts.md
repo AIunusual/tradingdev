@@ -600,9 +600,9 @@ A plan fixes the manifest; preparing it does not start a formal job or backtest.
 ## MCP Lookup
 
 Choose queries by purpose; arguments, bounds and output fields come from the
-registered MCP schemas and tool descriptions. A few paired-comparison bounds
-are enforced by the service rather than the JSON schema and are stated in the
-tool descriptions. Tool definitions and response models are maintained in
+registered MCP schemas and tool descriptions. Some paired-comparison bounds
+are enforced by the service rather than the JSON schema and appear in the tool
+descriptions. Tool definitions and response models are maintained in
 [`mcp/tools/`](../src/tradingdev/mcp/tools/) and
 [`app/contracts/`](../src/tradingdev/app/contracts/).
 

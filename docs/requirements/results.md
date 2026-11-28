@@ -53,7 +53,7 @@
 
 ## FR-RES-009 保存序列的配對比較
 
-- **需求**：使用者可選兩側已保存且依既有保存流程驗證過的序列（訊號序列在首次讀取或簽章改變時驗證，未變可重用已驗證快照），在比較可用時取得同時間觀察的差額與不確定性；明確要求且結果可用時另可出版可離線閱讀的 Markdown 與自含 HTML 分析成果。比較請求不得啟動回測、訓練、下載或重新 predict；不可用結果須回報原因。
+- **需求**：使用者可選兩側已保存且驗證過的序列（驗證行為見配對比較契約），在比較可用時取得同時間觀察的差額與不確定性；明確要求且結果可用時另可出版可離線閱讀的 Markdown 與自含 HTML 分析成果。比較請求不得啟動回測、訓練、下載或重新 predict；不可用結果須回報原因。
 - **驗收**：可選兩側已保存且核驗通過的序列，比較可用時取得差額與不確定性；明確要求且結果可用時出版 Markdown／HTML，不可用時回報原因且不出版。比較不得啟動回測、訓練、下載或重新 predict。描述與推論資格分開，推論須有精確 UTC 日頻或小時頻的完整日曆與可識別來源；描述模式的 p 值不承載顯著性結論；推論區間不保證名目涵蓋率或多比較校正。資訊係數不與報酬混檢，無成本訊號模擬不冒充成交績效，零成本價格基準只在有核驗過的原始價格 artifact 時提供。差異原因與操作錯誤分開。時間戳處理、配對、排除、來源資格、回覆界線與成果格式的完整語意以[配對比較契約](../paired_comparison.md)為準。
 - **契約**：[保存序列配對比較](../paired_comparison.md)（對齊、cadence、來源資格與成果）、[逐點評估序列](../ml_research.md#saved-pointwise-evaluation-series)、[產物註冊](../run_artifacts.md#artifact-references)。
 - **驗證**：[純對齊](../../tests/domain/statistics/test_statistics_alignment.py)、[服務](../../tests/app/test_paired_comparison.py)、[MCP 契約](../../tests/mcp/test_paired_comparison_contracts.py) 核對共同索引與來源；[自然需求測試](../../tests/e2e/test_llm_paired_comparison.py) 須另啟模型測試。
