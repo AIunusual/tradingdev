@@ -1,9 +1,8 @@
 # 保存序列的配對比較
 
 `compare_saved_series` 與 `compare_signal_series` 共用 `PairedComparisonService`。
-比較只讀取兩側已保存的 snapshot；訊號序列沿用保存時的驗證結果，若 manifest
-與 Parquet 的 `(mtime_ns, size, inode)` 未變，會重用快取而不重新讀取／雜湊 bytes，
-因此不能偵測保持這些特徵不變的改寫。比較把共同有效的觀察值交給
+比較只讀取兩側已保存的 snapshot；訊號序列每次載入都交由既有
+`EvaluationSeriesStore` 驗證，不在比較請求中重新 predict。比較把共同有效的觀察值交給
 `domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的 `returns` 不存在時，才會由已保存的權益與固定本金推導每期報酬；
 此路徑遇保存的 `null` 權益時，該期與下一期都保持不可用，不會跨缺口計算。若保存的
 `returns` 存在，則完全依照保存值使用。這是對保存觀察值的衍生，
@@ -18,7 +17,7 @@
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，否則同樣不可用。不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
-（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。此變更不包含建立此 artifact 的流程；使用前須已有已註冊並核驗過的 artifact，本文只定義讀取契約 |
+（`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。此變更不包含建立此 artifact 的流程；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有 `timestamps`、`closes` 与非空 `source`，本文只定義讀取契約 |
 | `signal` | `artifact_id`、`column` | 先用 `get_evaluation_series_page` 探索已保存序列；發現與驗證限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)。此來源是已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是無成本訊號模擬，二者不得互換或與成交報酬混檢 |
 
 兩側必須使用**相容定義、同頻率與相容設定**。成本相對的成交報酬可與已保存的
@@ -58,8 +57,8 @@ warm-up 還是中途缺值，再以雙方同位置有效的觀察配對。回報
 時間戳數、共同有效樣本數、各類排除原因與排除計數；回覆只有
 `valid_mask_count`，完整有效遮罩與全部座標需明確出版成果才會提供。
 
-共同期間缺少預期日曆點時，日曆視為不完整；共同時間戳上存在任一侧中途無效值
-也視為缺口。描述性比較仍可計算；回覆只保留有上限的缺口摘要，完整稽核只在成果出版時提供。bootstrap 會按有效觀察的
+共同期間缺少預期日曆點時，`cadence_complete` 為 false；它只描述時間戳方格。
+共同時間戳上存在任一侧中途無效值時另計為 `interior_gap`，推論會獨立拒絕。描述性比較仍可計算；回覆只保留有上限的缺口摘要，完整稽核只在成果出版時提供。bootstrap 會按有效觀察的
 序列位置重抽樣，因此描述結果實際上會把有效觀察之間的位置視為相鄰。推論模式
 不接受這種相鄰化：通過共同有效樣本數檢查後，`mode="inferential"` 對日曆缺口、間隔與宣告 cadence
 不符或中途無效值回報 `cadence_gap_unsupported`；樣本數不足時以
@@ -114,8 +113,9 @@ registry，分別回傳在 `artifact` 與 `html_artifact`。
 Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節；其捷徑標籤使用該次要求的 confidence，
 完整 JSON 仍保留精確設定值。重複相同比較會重用同一份內容；輸出內容不同才會產生不同 ID，內容相同則重用，
 舊檔不被改寫。
-使用 `get_artifact(include_content=true)` 搭配回傳的 SHA-256 分頁閱讀，或用
-`list_artifacts` 查找已註冊的成果；HTML 可直接在離線瀏覽器開啟。出版前會先對
+用戶端可用 `get_artifact(artifact_id=回傳的 ID, include_content=true,
+expected_sha256=回傳的 SHA-256)` 分頁閱讀，並依 `next_offset` 讀到 `null` 後自行存檔；
+也可用 `list_artifacts` 查找已註冊的成果。HTML 可直接在離線瀏覽器開啟。出版前會先對
 兩份目標做路徑與註冊衝突檢查；若檢查通過但寫入途中發生 OS 錯誤，仍可能只留下
 先完成的 Markdown，這時可從 `list_artifacts` 找到它。出版失敗是操作錯誤，
 回傳 `success=false`、`code=artifact_publication_failed`，不冒充資料不可用。
