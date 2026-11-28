@@ -1003,16 +1003,9 @@ See [Reports](reports.md) for section selection, detail navigation, complete exp
 and immutable HTML publication. Report delivery includes the link and instructions
 for opening the selected results; tool success alone does not establish delivery.
 
-A paired comparison publishes two content-addressed files under
-`paired_comparisons/`: Markdown and self-contained HTML (inline styling, no
-external resources). Both SHA-256 values are registered in the artifact table
-and returned as `artifact` / `html_artifact`. They are derived artifacts:
-neither the source performance/observation bundles nor older reports are
-rewritten. A retry checks any existing file and registration against the planned digest;
-a missing file may be republished when its registration still matches. See
-[Paired Comparison](paired_comparison.md) for hashes, paging with
-`expected_sha256`, source identities, calendar policy, exclusion audit and
-interpretation limits.
+Requested paired comparisons store Markdown and self-contained HTML under
+`paired_comparisons/`. They are derived files. See [Paired Comparison](paired_comparison.md)
+for publication, hashes, paging and interpretation rules.
 
 ## JSON Values
 
