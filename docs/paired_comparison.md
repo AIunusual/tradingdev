@@ -19,7 +19,8 @@
 | `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 先選取要求的（或預設的）run scope，該 scope 必須有保存觀察值且回報基準掛在同一
 scope 下；只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導；保存淨值為 `null` 時
 該期與下一期不可用，前一期為正數而當期為零時當期為 −100%、下一期不可用。不逆推原始 closes |
-| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
+| `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先成功載入該 run 並影響其適用的保存完整性檢查，再讀註冊且 SHA-256 核對通過的
+`raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 （`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。比較不會下載或建立價格資料；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有嚴格遞增的 `timestamps`、有限且為正數的 `closes` 與非空 `source`，本文定義其讀取契約 |
 | `signal` | `artifact_id`、`column` | 先用 `get_evaluation_series_page` 探索已保存序列；發現與驗證限制見[逐點評估序列](ml_research.md#saved-pointwise-evaluation-series)。此來源是已保存的 pointwise evaluation series；`pearson_ic`／`spearman_ic` 是資訊係數，`realized_return` 是保存的 forward return，二者不得互換或與成交報酬混檢 |
@@ -116,7 +117,7 @@ bootstrap。完全沒有共同日期回報
 兩份各自以本身的內容計算 digest、檔名與 artifact ID，分開註冊到 artifact
 registry，分別回傳在 `artifact` 與 `html_artifact`。
 內容包含方法版本、模式與資格、限制、分析 JSON、兩側來源，以及完整對齊
-Audit（有效遮罩、全部排除座標與缺日）；HTML 另有可離線閱讀的對齊證據章節；其捷徑標籤使用該次要求的 confidence，
+Audit（有效遮罩、全部排除座標；缺日日曆只在 cadence 支援時計算）；HTML 另有可離線閱讀的對齊證據章節；其捷徑標籤使用該次要求的 confidence，
 完整 JSON 仍保留精確設定值。重複相同比較會重用同一份內容；輸出內容不同才會產生不同 ID，內容相同則重用，
 舊檔不被改寫。
 用戶端可用 `get_artifact(artifact_id=回傳的 ID, include_content=true,
