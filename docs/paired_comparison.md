@@ -3,7 +3,7 @@
 `compare_saved_series` 與 `compare_signal_series` 共用 `PairedComparisonService`。
 比較只讀取兩側已保存的 snapshot；訊號序列沿用保存時的驗證結果，若 manifest
 與 Parquet 的 `(mtime_ns, size, inode)` 未變，會重用快取而不重新讀取／雜湊 bytes，
-因此不能偵測保持這些特徵不變的改寫。然後把共同有效的觀察值交給
+因此不能偵測保持這些特徵不變的改寫。比較把共同有效的觀察值交給
 `domain.statistics.comparison.difference_interval_outcome`。run 來源在保存的 `returns` 不存在時，才會由已保存的權益與固定本金推導每期報酬；
 此路徑遇保存的 `null` 權益時，該期與下一期都保持不可用，不會跨缺口計算。若保存的
 `returns` 存在，則完全依照保存值使用。這是對保存觀察值的衍生，
