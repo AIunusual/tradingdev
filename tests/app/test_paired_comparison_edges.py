@@ -234,6 +234,27 @@ def test_signal_settings_must_match(
     assert payload["unavailable"]["reason"] == "incompatible_definitions"
 
 
+def test_zero_cost_signal_settings_must_match(
+    service: PairedComparisonService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _loaded(
+        definition="zero_cost_signal_simulation", settings={"horizon": 1, "window": 3}
+    )
+    second = _loaded(
+        definition="zero_cost_signal_simulation", settings={"horizon": 2, "window": 3}
+    )
+    monkeypatch.setattr(
+        service,
+        "_load",
+        lambda selection, _: first if selection.artifact_id == "a" else second,
+    )
+    payload = service.compare(
+        {"kind": "signal", "artifact_id": "a", "column": "realized_return"},
+        {"kind": "signal", "artifact_id": "b", "column": "realized_return"},
+    )
+    assert payload["unavailable"]["reason"] == "incompatible_definitions"
+
+
 def test_html_without_a_result_still_renders(service: PairedComparisonService) -> None:
     payload = service._unavailable_payload(
         _LoadFailure("x", "y"), "descriptive", [], []

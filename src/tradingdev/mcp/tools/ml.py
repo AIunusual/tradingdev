@@ -427,9 +427,9 @@ def register(
         predicts again or drops warm-up rows before pairing. Different dataset
         or model IDs do not establish holdout status. IC is never mixed with
         returns, and cost-free signal simulation is never trade performance.
-        IC pairs require full saved manifest settings to match, including
-        candidate model_id, method_name and parameters. Fewer than 20 jointly valid
-        observations return insufficient_observations.
+        IC and realized_return pairs require full saved manifest settings to
+        match, including candidate model_id, method_name and parameters.
+        Fewer than 20 jointly valid observations return insufficient_observations.
         The response records a bounded alignment summary; the full valid mask
         and excluded coordinates are in the optional artifact. Inference needs
         an exact UTC daily/hourly calendar and a recorded producer; it does not

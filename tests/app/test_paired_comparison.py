@@ -439,6 +439,30 @@ def test_signal_warm_up_keeps_coordinates_and_records_provenance(
     assert response.claim_scope == "in_sample_or_unknown"
 
 
+def test_realized_return_settings_must_match(
+    service: tuple[WorkspacePaths, SQLiteStore, PairedComparisonService],
+) -> None:
+    workspace, _, comparison = service
+    returns: list[float | None] = [0.01] * 30
+    a_id = _publish_series(
+        workspace,
+        "a",
+        ic=returns,
+        settings={"horizon": 1, "window": 3, "n_quantiles": 5},
+    )
+    b_id = _publish_series(
+        workspace,
+        "b",
+        ic=returns,
+        settings={"horizon": 2, "window": 3, "n_quantiles": 5},
+    )
+    payload = comparison.compare(
+        {"kind": "signal", "artifact_id": a_id, "column": "realized_return"},
+        {"kind": "signal", "artifact_id": b_id, "column": "realized_return"},
+    )
+    assert payload["unavailable"]["reason"] == "incompatible_definitions"
+
+
 def test_ic_and_return_are_never_mixed(
     service: tuple[WorkspacePaths, SQLiteStore, PairedComparisonService],
 ) -> None:
