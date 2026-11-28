@@ -426,7 +426,7 @@ def register(
         This is the same shared service as compare_saved_series; it never
         predicts again or drops warm-up rows before pairing. Different dataset
         or model IDs do not establish holdout status. IC is never mixed with
-        returns, and cost-free signal simulation is never trade performance.
+        returns, and saved forward returns are never trade performance.
         IC and realized_return pairs require full saved manifest settings to
         match, including candidate model_id, method_name and parameters.
         Fewer than 20 jointly valid observations return insufficient_observations.
