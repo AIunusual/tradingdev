@@ -33,7 +33,7 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（含 horizon、window、
 n_quantiles、ic_methods 與 `candidate` 的 model_id、method_name、parameters；候選
 不同會被拒絕），`realized_return`
-配對不檢查這些設定；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
+配對也要求整個 `manifest.settings` 相同；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
 `periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
 dataset ID 不同本身不證明 holdout，也不證明未調參。
