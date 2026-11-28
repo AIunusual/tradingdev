@@ -435,6 +435,8 @@ def register(
         an exact UTC daily/hourly calendar and a recorded producer; it does not
         provide nominal bootstrap coverage or a multiple-comparison correction.
         Different dataset or model IDs alone never prove out-of-sample validity.
+        Descriptive pairs may share unsupported cadence labels; resampling
+        treats jointly valid observations as adjacent.
         Any fold_range comes from the first saved fold row only. Service-enforced
         bounds apply here too: reps 100..10000, seed nonnegative, block_size
         positive and confidence a float strictly between 0 and 1.

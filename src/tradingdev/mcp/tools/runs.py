@@ -252,9 +252,10 @@ def register(
         The statistic is mean with direction a minus b; fewer than 20 jointly
         valid observations return insufficient_observations; an omitted
         block_size is estimated automatically from the paired difference.
-        Run returns prefer saved per-period values and are derived from saved
-        equity and capital only when absent; warm-up nulls keep their rows and
-        are excluded from the paired mask, never shifted earlier.
+        Run returns prefer saved values, else derive from equity/capital;
+        warm-up nulls keep their rows and are excluded, never shifted.
+        Descriptive pairs may share unsupported cadence labels; resampling
+        treats jointly valid observations as adjacent.
         The service does not verify that both sides use the same instrument,
         date range, fees or slippage, so an available result is not necessarily
         a controlled comparison. reps accepts 100..10000, seed must be a

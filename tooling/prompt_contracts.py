@@ -16,8 +16,8 @@ from tooling.context_budget import audit_environment, json_size, tool_context_re
 BUDGETS = {
     "instructions": 11000,
     # Serialized tool projection budget; keep headroom for schema revisions.
-    "model_tools": 82000,
-    "initial_total": 93000,
+    "model_tools": 83000,
+    "initial_total": 94000,
     "strategy_section": 16000,
     "indicator_reference": 10000,
     "discovery_response": 20000,
