@@ -15,7 +15,8 @@
 | `kind` | 需要的欄位 | 序列與成本 |
 | ---- | ---- | ---- |
 | `run` | `run_id`、`scope`（省略用預設） | 只接受有 observations 的 signal 模式 scalar backtest scope：優先用保存的 `returns`，但須與 `equity_curve` 等長且與時間戳對齊，否則回報不可用；缺席時才由帳戶權益與固定本金推導每期報酬，成本已在成交中；volume 模式回報 `not_applicable`，彙總 fold summary 沒有觀察值而回報不可用 |
-| `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，否則同樣不可用。不逆推原始 closes |
+| `benchmark`，`benchmark_mode="product"` | `run_id`、`scope`（`benchmark_mode` 必須明示 `product`） | 先選取要求的（或預設的）run scope，該 scope 必須有保存觀察值且回報基準掛在同一
+scope 下；只讀保存的 `BenchmarkScope` 淨值／報酬與其成本欄位；即使保存了 `returns`，也必須同時有 `timestamps` 與 `equity_curve`，否則回報 `benchmark_unavailable`；`returns` 缺席時只有在 `init_cash` 為正數下才由淨值推導，否則同樣不可用。不逆推原始 closes |
 | `benchmark`，`benchmark_mode="zero_cost"` | `run_id`、`price_artifact_id`（`scope` 被忽略） | 服務先確認該 run 的固定 snapshot 存在，再讀註冊且 SHA-256 核對通過的 `raw_price_series` artifact，用 `buy_and_hold_returns` 產生零成本報酬；比較整份已保存的原始價格序列，不依 run 的期間裁切。selector 仍要求 `run_id` 以確認保存 snapshot 存在，但回傳的來源身分只標明價格
 artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 （`frequency="daily"`、`cadence="1d"`）處理，與其他 cadence 的序列配對會被拒絕。若無此 artifact 則回報 `zero_cost_prices_unavailable`，不下載也不新增保存流程。比較不會下載或建立價格資料；使用前須已有已註冊並核驗過的 artifact，檔案 JSON 需有嚴格遞增的 `timestamps`、有限且為正數的 `closes` 與非空 `source`，本文定義其讀取契約 |
@@ -28,8 +29,9 @@ artifact，不含 `run_id` 與 `scope`。此來源固定以日頻
 
 服務實際檢查的是宣告／推斷的 cadence 標籤相同而非原始間隔完全相等（run 與產品
 基準用保存設定宣告的頻率，訊號序列由時間戳推斷；非日／小時都標為 `unsupported`，
-因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的 `manifest.settings` 相同（候選身分與參數是單獨儲存的
-來源證明，不參與此相容性檢查），`realized_return`
+因此不同間隔的訊號仍可能在描述模式下通過）；Pearson／Spearman IC 配對的整個 `manifest.settings` 相同（含 horizon、window、
+n_quantiles、ic_methods 與 `candidate` 的 model_id、method_name、parameters；候選
+不同會被拒絕），`realized_return`
 配對不檢查這些設定；run 之間、run 與產品基準之間、產品基準彼此之間的 `init_cash`、
 `periods_per_year`、`risk_free_rate` 相同（含零成本價格基準的配對除外）。它**不**核對標的、日期範圍是否完全一致，也不核對 run 之間或 run 與產品基準的
 fee/slippage 是否相同，因此可用的比較不一定是受控實驗。entry ID、model ID 或
